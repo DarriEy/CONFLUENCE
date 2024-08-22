@@ -22,19 +22,7 @@ CONFLUENCE is an advanced hydrological modeling platform designed to facilitate 
 (To be added: basic usage instructions and examples)
 
 ## Project Structure
-CONFLUENCE/
-├── 0_control_files/
-├── CONFLUENCE.py
-├── directoryTree.txt
-└── utils/
-    ├── __init__.py
-    ├── data_utils.py
-    ├── forcasting_utils.py
-    ├── model_utils.py
-    ├── optimization_utils.py
-    ├── reporting_utils.py
-    ├── uncertainty_utils.py
-    └── workflow_utils.py
+(To be added: directory structure of the project)
 
 
 ## Contributing
