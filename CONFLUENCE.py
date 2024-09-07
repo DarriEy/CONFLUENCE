@@ -7,8 +7,8 @@ import geopandas as gpd # type: ignore
 from shapely.geometry import Point # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, DataCleanupProcessor # type: ignore  
-from utils.model_utils import ModelSetupInitializer # type: ignore
+from utils.data_utils import DataAcquisitionProcessor, DataCleanupProcessor # type: ignore  
+from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 from utils.optimization_utils import OptimizationCalibrator # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.workflow_utils import WorkflowManager # type: ignore
@@ -18,7 +18,9 @@ from utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.config_utils import ConfigManager # type: ignore
 from utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.discretization_utils import DomainDiscretizer # type: ignore
-
+from utils.summa_utils import SummaPreProcessor # type: ignore
+from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
+from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 
 class CONFLUENCE:
 
@@ -160,15 +162,6 @@ class CONFLUENCE:
     @get_function_logger
     def subset_geofabric(self):
         self.logger.info("Starting geofabric subsetting process")
-        
-        # Ensure all required config keys are present
-        required_keys = ['GEOFABRIC_TYPE', 'SOURCE_GEOFABRIC_BASINS_PATH', 'SOURCE_GEOFABRIC_RIVERS_PATH',
-                         'POUR_POINT_SHP_PATH', 'OUTPUT_BASINS_PATH', 'OUTPUT_RIVERS_PATH']
-        
-        for key in required_keys:
-            if key not in self.config:
-                self.logger.error(f"Missing required configuration key: {key}")
-                return None
 
         # Create GeofabricSubsetter instance
         subsetter = GeofabricSubsetter(self.config, self.logger)
@@ -222,7 +215,8 @@ class CONFLUENCE:
         
         # Run data cleanup and checks
         try:
-            data_cleanup.cleanup_and_checks()
+            pass
+            #data_cleanup.cleanup_and_checks()
         except Exception as e:
             self.logger.error(f"Error during data cleanup: {str(e)}")
             raise
@@ -232,10 +226,18 @@ class CONFLUENCE:
     def load_project(self, project_name):
         # Load an existing project
         pass
+    
+    @get_function_logger
+    def run_models(self):
+        summa_runner = SummaRunner(self.config, self.logger)
+        mizuroute_runner = MizuRouteRunner(self.config, self.logger)
 
-    def setup_model(self, model_type, spatial_resolution, temporal_resolution):
-        # Set up a hydrological model with specified parameters
-        pass
+        try:
+            summa_runner.run_summa()
+            mizuroute_runner.run_mizuroute()
+            self.logger.info("Model runs completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during model runs: {str(e)}")
 
     def calibrate_model(self, calibration_method, objective_function, constraints):
         # Calibrate the model using specified method and objectives
@@ -276,8 +278,8 @@ class CONFLUENCE:
         workflow_steps = [
             (self.setup_project, self.project_dir.exists),
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_delineated.shp").exists()),
-            (self.process_input_data, lambda: (self.project_dir / "parameters" / "dem" / "modified_domain_stats_elv.csv").exists())
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.process_input_data, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
         ]
         
         for step_func, check_func in workflow_steps:
@@ -291,8 +293,31 @@ class CONFLUENCE:
                     raise
             else:
                 self.logger.info(f"Skipping step {step_name} as output already exists")
+
+        # Run model-specific preprocessing
+        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
+            self.run_summa_preprocessing(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"settings/_workLog")
         
+
+        # Run models
+        self.run_models(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"simulations/_workLog")
+
         self.logger.info("CONFLUENCE workflow completed")
+
+    @get_function_logger
+    def run_summa_preprocessing(self):
+        self.logger.info('Running SUMMA specific input processing')
+        if self.config.get('SUMMAFLOW') == 'stochastic':
+            summa_preprocessor = SummaPreProcessor(self.config, self.logger)
+            self.logger.info('SUMMA stochastic preprocessor initiated')
+        if self.config.get('SUMMAFLOW') == 'spatial':
+            summa_preprocessor = SummaPreProcessor_spatial(self.config, self.logger)
+            self.logger.info('SUMMA spatial preprocessor initiated')
+
+        summa_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+        
+        mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
+        mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
 
 def main():
     config_path = Path(__file__).parent / '0_config_files'

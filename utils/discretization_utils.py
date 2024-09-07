@@ -12,6 +12,7 @@ from pathlib import Path
 import pvlib # type: ignore
 import pandas as pd # type: ignore
 from pyproj import CRS # type: ignore
+import rasterstats # type: ignore
 
 class DomainDiscretizer:
     """
@@ -34,7 +35,8 @@ class DomainDiscretizer:
         self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
-        
+        self.dem_path = self._get_file_path("DEM_PATH", "attributes/elevation/dem", "elevation.tif")
+
         delineation_method = self.config.get('DOMAIN_DEFINITION_METHOD')
 
         if delineation_method == 'delineate_geofabric':
@@ -44,6 +46,30 @@ class DomainDiscretizer:
         elif delineation_method == 'subset_geofabric':
             self.delineation_suffix = self.config.get('GEOFABRIC_TYPE')
         
+    def sort_catchment_shape(self):
+        self.logger.info("Sorting catchment shape")
+        
+        self.catchment_path = self.config.get('CATCHMENT_PATH')
+        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        
+        if self.catchment_path == 'default':
+            self.catchment_path = self.project_dir / 'shapefiles' / 'catchment'
+        else:
+            self.catchment_path = Path(self.catchment_path)
+        
+        gru_id = self.config.get('CATCHMENT_SHP_GRUID')
+        hru_id = self.config.get('CATCHMENT_SHP_HRUID')
+        
+        # Open the shape
+        shp = gpd.read_file(self.catchment_path / self.catchment_name)
+        
+        # Sort
+        shp = shp.sort_values(by=[gru_id, hru_id])
+        
+        # Save
+        shp.to_file(self.catchment_path / self.catchment_name)
+        
+        self.logger.info(f"Catchment shape sorted and saved to {self.catchment_path / self.catchment_name}")
 
     def discretize_domain(self) -> Optional[Path]:
         """
@@ -56,10 +82,10 @@ class DomainDiscretizer:
         self.logger.info(f"Starting domain discretization using method: {discretization_method}")
 
         method_map = {
-            'none': self._use_grus_as_hrus,
+            'GRUs': self._use_grus_as_hrus,
             'elevation': self._discretize_by_elevation,
-            'soil_class': self._discretize_by_soil_class,
-            'land_class': self._discretize_by_land_class,
+            'soilclass': self._discretize_by_soil_class,
+            'landclass': self._discretize_by_land_class,
             'radiation': self._discretize_by_radiation,
             'combined': self._discretize_combined
         }
@@ -68,7 +94,9 @@ class DomainDiscretizer:
             self.logger.error(f"Invalid discretization method: {discretization_method}")
             raise ValueError(f"Invalid discretization method: {discretization_method}")
 
-        return method_map[discretization_method]()
+        method_map[discretization_method]()
+        self.sort_catchment_shape()
+        
 
     def _use_grus_as_hrus(self):
         """
@@ -90,7 +118,7 @@ class DomainDiscretizer:
         self.logger.info(f"GRUs saved as HRUs to {hru_output_shapefile}")
 
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_as_GRUs.png")
-        self._plot_hrus(gru_gdf, output_plot, 'elevClass', 'Elevation-based HRUs')
+        self._plot_hrus(gru_gdf, output_plot, 'hruNo', 'GRUs = HRUs')
         return hru_output_shapefile
 
     def _discretize_by_elevation(self):
@@ -100,7 +128,13 @@ class DomainDiscretizer:
         Returns:
             Optional[Path]: Path to the output HRU shapefile, or None if discretization fails.
         """
-        gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+
+        gru_shapefile = self.config.get('RIVER_BASINS_NAME')
+        if gru_shapefile == 'default':
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        else:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
+
         dem_raster = self._get_file_path("DEM_PATH", "attributes/elevation/dem", "elevation.tif")
         output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_elevation.shp")
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_elevation.png")
@@ -114,7 +148,7 @@ class DomainDiscretizer:
         if hru_gdf is not None and not hru_gdf.empty:
             hru_gdf = self._merge_small_hrus(hru_gdf, min_hru_size, 'elevClass')
             hru_gdf = self._clean_and_prepare_hru_gdf(hru_gdf)
-            
+ 
             hru_gdf.to_file(output_shapefile)
             self.logger.info(f"Elevation-based HRU Shapefile created with {len(hru_gdf)} HRUs and saved to {output_shapefile}")
 
@@ -133,8 +167,8 @@ class DomainDiscretizer:
         """
         gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
         soil_raster = self._get_file_path("SOIL_CLASS_PATH", "attributes/soil_class/", "soil_classes.tif")
-        output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_soil.shp")
-        output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_soil.png")
+        output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_soilclass.shp")
+        output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_soilclass.png")
 
         min_hru_size = float(self.config.get('MIN_HRU_SIZE'))
 
@@ -161,13 +195,18 @@ class DomainDiscretizer:
         Returns:
             Optional[Path]: Path to the output HRU shapefile, or None if discretization fails.
         """
-        gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        gru_shapefile = self.config.get('RIVER_BASINS_NAME')
+        if gru_shapefile == 'default':
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        else:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
+
         land_raster = self._get_file_path("LAND_CLASS_PATH","attributes/land_class", "land_classes.tif")
-        output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_land.shp")
-        output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_land.png")
+        output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_landclass.shp")
+        output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_landclass.png")
 
         min_hru_size = float(self.config.get('MIN_HRU_SIZE'))
-
+        print(gru_shapefile)
         gru_gdf, land_classes = self._read_and_prepare_data(gru_shapefile, land_raster)
         hru_gdf = self._process_hrus(gru_gdf, land_raster, land_classes, 'landClass')
 
@@ -314,7 +353,7 @@ class DomainDiscretizer:
         gru_gdf['geometry'] = gru_gdf['geometry'].apply(lambda geom: geom if geom.is_valid else geom.buffer(0))
 
         with rasterio.open(raster_path) as src:
-            out_image, out_transform = rasterio.mask.mask(src, gru_gdf.geometry, crop=True)
+            out_image, out_transform = rasterio.mask.mask(src, gru_gdf.geometry, crop=False)
             out_image = out_image[0]  # Get the first band
             valid_data = out_image[out_image != src.nodata]
             
@@ -365,7 +404,7 @@ class DomainDiscretizer:
             List[Dict[str, Any]]: List of HRU dictionaries.
         """
         with rasterio.open(raster_path) as src:
-            out_image, out_transform = mask(src, [row.geometry], crop=True, all_touched=True)
+            out_image, out_transform = mask(src, [row.geometry], crop=False, all_touched=False)
             out_image = out_image[0]
             
             gru_attributes = row.drop('geometry').to_dict()
@@ -510,7 +549,7 @@ class DomainDiscretizer:
         
         hru_gdf_utm = hru_gdf_utm.reset_index(drop=True)
         hru_gdf_utm['hruNo'] = range(1, len(hru_gdf_utm) + 1)
-        hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'] + '_' + hru_gdf_utm[class_column].astype(str)
+        hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
         hru_gdf_utm['area'] = hru_gdf_utm.geometry.area / 1_000_000
         
         hru_gdf_merged = hru_gdf_utm.to_crs(hru_gdf.crs)
@@ -552,9 +591,27 @@ class DomainDiscretizer:
         # Ensure all geometries are valid polygons
         hru_gdf['geometry'] = hru_gdf['geometry'].apply(self._clean_geometries)
         hru_gdf = hru_gdf[hru_gdf['geometry'].notnull()]
-        
+        hru_gdf['HRU_ID'] = range(1, len(hru_gdf) + 1)
+
+        # Calculate mean elevation for each HRU
+        self.logger.info("Calculating mean elevation for each HRU")
+        try:
+            with rasterio.open(self.dem_path) as src:
+                dem_data = src.read(1)
+                dem_affine = src.transform
+
+            # Use rasterstats to calculate zonal statistics
+            zs = rasterstats.zonal_stats(hru_gdf.geometry, dem_data, affine=dem_affine, stats=['mean'])
+            hru_gdf['elev_mean'] = [item['mean'] for item in zs]
+
+            self.logger.info("Mean elevation calculation completed")
+        except Exception as e:
+            self.logger.error(f"Error calculating mean elevation: {str(e)}")
+            # If elevation calculation fails, set a default value
+            hru_gdf['elev_mean'] = -9999
+
         # Remove any columns that might cause issues with shapefiles
-        columns_to_keep = ['COMID', 'geometry', 'gruNo', 'gruId', 'area', 'hruNo', 'hruId', 'cent_lon', 'cent_lat']
+        columns_to_keep = ['GRU_ID', 'HRU_ID', 'geometry', 'HRU_area', 'center_lon', 'center_lat', 'elev_mean']
         class_columns = [col for col in hru_gdf.columns if col.endswith('Class')]
         columns_to_keep.extend(class_columns)
         hru_gdf = hru_gdf[columns_to_keep]
@@ -600,26 +657,24 @@ class DomainDiscretizer:
         # Project to UTM for area calculation
         utm_crs = hru_gdf.estimate_utm_crs()
         hru_gdf_utm = hru_gdf.to_crs(utm_crs)
-        hru_gdf_utm['area'] = hru_gdf_utm.geometry.area / 1_000_000  # Convert m² to km²
+        hru_gdf_utm['HRU_area'] = hru_gdf_utm.geometry.area 
+        hru_gdf_utm['HRU_area'] = hru_gdf_utm['HRU_area'].astype('float64')
 
-        hru_gdf_utm['area'] = hru_gdf_utm['area'].astype('float64')
         if 'avg_elevation' in hru_gdf_utm.columns:
             hru_gdf_utm['avg_elevation'] = hru_gdf_utm['avg_elevation'].astype('float64')
 
-        hru_gdf_utm['hruNo'] = range(1, len(hru_gdf_utm) + 1)
-        
         # Determine the class column name
-        class_column = next((col for col in ['elevClass', 'soilClass', 'landClass', 'radiationClass'] if col in hru_gdf_utm.columns), None)
-        if class_column:
-            hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'] + '_' + hru_gdf_utm[class_column].astype(str)
-        else:
-            hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'] + '_' + hru_gdf_utm['hruNo'].astype(str)
+        #class_column = next((col for col in ['elevClass', 'soilClass', 'landClass', 'radiationClass'] if col in hru_gdf_utm.columns), None)
+        #if class_column:
+        #    hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
+        #else:
+        #    hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm['hruNo'].astype(str)
         
         centroids_utm = hru_gdf_utm.geometry.centroid
         centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
         
-        hru_gdf_utm['cent_lon'] = centroids_wgs84.x
-        hru_gdf_utm['cent_lat'] = centroids_wgs84.y
+        hru_gdf_utm['center_lon'] = centroids_wgs84.x
+        hru_gdf_utm['center_lat'] = centroids_wgs84.y
         
         # Convert back to the original CRS
         hru_gdf = hru_gdf_utm.to_crs(hru_gdf.crs)
@@ -636,7 +691,7 @@ class DomainDiscretizer:
 
     def _plot_hrus(self, hru_gdf, output_file, class_column, title):
         fig, ax = plt.subplots(figsize=(15, 15))
-        
+
         if class_column == 'radiationClass':
             # Use a sequential colormap for radiation
             hru_gdf.plot(column='avg_radiation', cmap='viridis', legend=True, ax=ax)

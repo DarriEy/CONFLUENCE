@@ -1,0 +1,23 @@
+! -------------
+!  attributes
+! -------------
+hruId
+latitude
+longitude     
+!
+! -----------
+!  forcings
+! -----------
+pptrate            | 1  
+airtemp            | 1  
+!
+!
+! -------------------
+!  model variables 
+! -------------------
+averageRoutedRunoff   | 1   
+scalarSWE             | 24  
+scalarGroundSnowFraction | 24
+
+
+
