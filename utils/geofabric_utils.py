@@ -97,11 +97,14 @@ class GeofabricDelineator:
 
         river_network_path, river_basins_path = self.subset_upstream_geofabric()
 
+
         self.logger.info(f"Geofabric delineation and subsetting completed for {self.domain_name}")
 
         shutil.rmtree(self.interim_dir.parent, ignore_errors=True)
 
         return river_network_path, river_basins_path
+
+
 
     def check_versions(self):
         """Check and log the versions of GDAL and TauDEM."""
@@ -123,13 +126,13 @@ class GeofabricDelineator:
             dem_path (Path): Path to the DEM file.
             pour_point_path (Path): Path to the pour point shapefile.
         """
-
+        threshold = self.config.get('STREAM_THRESHOLD')
         steps = [
             f"mpirun -n {self.mpi_processes} pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
             f"mpirun -n {self.mpi_processes} d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
             f"mpirun -n {self.mpi_processes} aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
             f"mpirun -n {self.mpi_processes} gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
-            f"mpirun -n {self.mpi_processes} threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh 1000",
+            f"mpirun -n {self.mpi_processes} threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
             f"mpirun -n {self.mpi_processes} moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md 50",
             f"mpirun -n {self.mpi_processes} streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
         ]
@@ -158,8 +161,9 @@ class GeofabricDelineator:
             pour_point = self.load_geopandas(self.pour_point_path)
             basins = self.load_geopandas(basins_path)
             rivers = self.load_geopandas(rivers_path)
-            basins['COMID'] = basins['DN']
-            rivers['COMID'] = rivers['LINKNO']
+            basins['GRU_ID'] = basins['DN']
+            rivers['GRU_ID'] = rivers['LINKNO']
+            
 
             # Ensure CRS consistency
             basins, rivers, pour_point = self.ensure_crs_consistency(basins, rivers, pour_point)
@@ -172,13 +176,20 @@ class GeofabricDelineator:
             upstream_basin_ids = self.find_upstream_basins(downstream_basin_id, river_graph)
 
             # Subset basins and rivers
-            subset_basins = basins[basins['COMID'].isin(upstream_basin_ids)].copy()
-            subset_rivers = rivers[rivers['COMID'].isin(upstream_basin_ids)].copy()
+            subset_basins = basins[basins['GRU_ID'].isin(upstream_basin_ids)].copy()
+            subset_rivers = rivers[rivers['GRU_ID'].isin(upstream_basin_ids)].copy()
+            
+            # Calculate GRU area
+            subset_basins = subset_basins.to_crs('epsg:3763')
+            subset_basins['GRU_area'] = subset_basins.geometry.area 
+            subset_basins = subset_basins.to_crs('epsg:4326')
+            subset_basins['gru_to_seg'] = subset_basins['GRU_ID']
+            subset_basins = subset_basins.drop(columns = ['DN'])
 
             # Save subsets
             subset_basins_path = self.config.get('OUTPUT_BASINS_PATH')
             subset_rivers_path = self.config.get('OUTPUT_RIVERS_PATH')
-
+            
             if subset_basins_path == 'default':
                 subset_basins_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_delineated.shp"
             else:
@@ -188,6 +199,7 @@ class GeofabricDelineator:
                 subset_rivers_path = self.project_dir / "shapefiles" / "river_network" / f"{self.domain_name}_riverNetwork_delineated.shp"
             else:
                 subset_rivers_path = Path(self.config['OUTPUT_RIVERS_PATH'])
+
 
             subset_basins.to_file(subset_basins_path)
             subset_rivers.to_file(subset_rivers_path)
@@ -259,7 +271,7 @@ class GeofabricDelineator:
         if containing_basin.empty:
             self.logger.error("No basin contains the given pour point.")
             raise ValueError("No basin contains the given pour point.")
-        return containing_basin.iloc[0]['COMID']
+        return containing_basin.iloc[0]['GRU_ID']
 
     def build_river_graph(self, rivers: gpd.GeoDataFrame) -> nx.DiGraph:
         """
@@ -273,7 +285,7 @@ class GeofabricDelineator:
         """
         G = nx.DiGraph()
         for _, row in rivers.iterrows():
-            current_basin = row['COMID']
+            current_basin = row['GRU_ID']
             for up_col in ['USLINKNO1', 'USLINKNO2']:
                 upstream_basin = row[up_col]
                 if upstream_basin != -9999:  # Assuming -9999 is the default value for no upstream link

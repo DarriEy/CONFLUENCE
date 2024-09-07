@@ -15,32 +15,29 @@ class DataAcquisitionProcessor:
 
     def prepare_maf_json(self) -> Path:
         """Prepare the JSON file for the Model Agnostic Framework."""
+
+        met_path = str(self.root_path / "installs/datatool/" / "extract-dataset.sh")
+        gis_path = str(self.root_path / "installs/gistool/" / "extract-gis.sh")
+        easymore_client = str(self.config.get('EASYMORE_CLIENT'))
+
         maf_config = {
             "exec": {
-                "met": str(self.root_path / self.config.get('DATATOOL_PATH', "installs/datatool/extract-dataset.sh")),
-                "gis": str(self.root_path / self.config.get('GISTOOL_PATH', "installs/gistool/extract-gis.sh")),
-                "remap": self.config.get('EASYMORE_PATH', "easymore cli")
+                "met": met_path,
+                "gis": gis_path,
+                "remap": easymore_client
             },
             "args": {
                 "met": [{
                     "dataset": self.config.get('FORCING_DATASET'),
                     "dataset-dir": str(Path(self.config.get('DATATOOL_DATASET_ROOT')) / "rdrsv2.1/"),
-                    "variable": self.config.get('FORCING_VARIABLES', [
-                        "RDRS_v2.1_P_P0_SFC",
-                        "RDRS_v2.1_P_HU_09944",
-                        "RDRS_v2.1_P_TT_09944",
-                        "RDRS_v2.1_P_UVC_09944",
-                        "RDRS_v2.1_A_PR0_SFC",
-                        "RDRS_v2.1_P_FB_SFC",
-                        "RDRS_v2.1_P_FI_SFC"
-                    ]),
-                    "output-dir": str(self.project_dir / "forcing/1_raw_data"),
+                    "variable": self.config.get('FORCING_VARIABLES'),
+                    "output-dir": str(self.project_dir / "forcing/raw_data"),
                     "start-date": f"{self.config.get('FORCING_START_YEAR')}-01-01T13:00:00",
                     "end-date": f"{self.config.get('FORCING_END_YEAR')}-12-31T12:00:00",
                     "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                     "prefix": f"domain_{self.domain_name}_",
                     "cache": self.config.get('DATATOOL_CACHE'),
-                    "account": self.config.get('DATATOOL_ACCOUNT'),
+                    "account": self.config.get('TOOL_ACCOUNT'),
                     "_flags": [
                         "submit-job",
                         "parsable"
@@ -51,46 +48,47 @@ class DataAcquisitionProcessor:
                         "dataset": "landsat",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "Landsat"),
                         "variable": "land-cover",
-                        "start-date": self.config.get('LANDCOVER_YEAR', "2020"),
-                        "end-date": self.config.get('LANDCOVER_YEAR', "2020"),
-                        "output-dir": str(self.project_dir / "parameters/landclass"),
+                        "start-date": self.config.get('LANDCOVER_YEAR'),
+                        "end-date": self.config.get('LANDCOVER_YEAR'),
+                        "output-dir": str(self.project_dir / "attributes/land_class"),
                         "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                         "print-geotiff": "true",
                         "stat": ["frac", "majority", "coords"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": self.config.get('GISTOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
-                        "account": self.config.get('GISTOOL_ACCOUNT'),
-                        "fid": self.config.get('RIVER_BASIN_SHP_RM_HRUID'),
+                        "account": self.config.get('TOOL_ACCOUNT'),
+                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
                         "_flags": ["include-na", "submit-job", "parsable"]
                     },
                     {
                         "dataset": "soil_class",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "soil_classes"),
                         "variable": "soil_classes",
-                        "output-dir": str(self.project_dir / "parameters/soilclass"),
+                        "output-dir": str(self.project_dir / "attributes/soil_class"),
                         "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                         "print-geotiff": "true",
                         "stat": ["majority"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": self.config.get('GISTOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
-                        "account": self.config.get('GISTOOL_ACCOUNT'),
-                        "fid": self.config.get('RIVER_BASIN_SHP_RM_HRUID'),
+                        "account": self.config.get('TOOL_ACCOUNT'),
+                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
                         "_flags": ["include-na", "submit-job", "parsable"]
                     },
                     {
                         "dataset": "merit-hydro",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "MERIT-Hydro"),
                         "variable": "elv,hnd",
-                        "output-dir": str(self.project_dir / "parameters/dem"),
+                        "output-dir": str(self.project_dir / "attributes/elevation"),
                         "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                         "print-geotiff": "true",
                         "stat": ["min", "max", "mean", "median"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": self.config.get('GISTOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
-                        "account": self.config.get('GISTOOL_ACCOUNT'),
+                        "account": self.config.get('TOOL_ACCOUNT'),
+                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
                         "_flags": ["include-na", "submit-job", "parsable"]
                     }
                 ],
@@ -98,8 +96,8 @@ class DataAcquisitionProcessor:
                     "case-name": "remapped",
                     "cache": self.config.get('EASYMORE_CACHE'),
                     "shapefile": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
-                    "shapefile-id": self.config.get('RIVER_BASIN_SHP_RM_HRUID'),
-                    "source-nc": str(self.project_dir / "forcing/1_raw_data/**/*.nc*"),
+                    "shapefile-id": self.config.get('CATCHMENT_SHP_HRUID'),
+                    "source-nc": str(self.project_dir / "forcing/raw_data/**/*.nc*"),
                     "variable-lon": "lon",
                     "variable-lat": "lat",
                     "variable": self.config.get('FORCING_VARIABLES', [
@@ -111,10 +109,10 @@ class DataAcquisitionProcessor:
                         "RDRS_v2.1_P_FB_SFC",
                         "RDRS_v2.1_P_FI_SFC"
                     ]),
-                    "remapped-var-id": self.config.get('RIVER_BASIN_SHP_RM_HRUID'),
-                    "remapped-dim-id": self.config.get('RIVER_BASIN_SHP_RM_HRUID'),
-                    "output-dir": str(self.project_dir / "forcing/3_basin_averaged_data/"),
-                    "job-conf": str(self.root_path / self.config.get('EASYMORE_JOB_CONF', "installs/MAF/02_model_agnostic_component/easymore-job.slurm")),
+                    "remapped-var-id": "hruId",
+                    "remapped-dim-id": "hru",
+                    "output-dir": str(self.project_dir / "forcing/basin_averaged_data/") + '/',
+                    "job-conf": str(Path(self.config.get('CONFLUENCE_DATA_DIR')) / self.config.get('EASYMORE_JOB_CONF')),
                     "_flags": ["submit-job"]
                 }]
             },
@@ -126,7 +124,8 @@ class DataAcquisitionProcessor:
         }
 
         # Save the JSON file
-        json_path = self.project_dir / "maf_config.json"
+        json_path = self.project_dir / "forcing/maf_config.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
         with open(json_path, 'w') as f:
             json.dump(maf_config, f, indent=2)
 
@@ -135,22 +134,37 @@ class DataAcquisitionProcessor:
 
     def run_data_acquisition(self):
         """Run the data acquisition process using MAF."""
-        maf_json_path = self.prepare_maf_json()
+        json_path = self.prepare_maf_json()
         self.logger.info("Starting data acquisition process")
 
-        # Run MAF components
-        components = ['met', 'gis', 'remap']
-        for component in components:
-            self.logger.info(f"Running MAF component: {component}")
-            command = f"maf run {component} --config {maf_json_path}"
-            try:
-                subprocess.run(command, shell=True, check=True)
-                self.logger.info(f"Successfully completed MAF component: {component}")
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error running MAF component {component}: {str(e)}")
-                raise
 
+        maf_script = self.root_path / "installs/MAF/02_model_agnostic_component/model-agnostic.sh"
+        
+        #Run the MAF script
+        try:
+            subprocess.run([str(maf_script), str(json_path)], check=True)
+            self.logger.info("Model Agnostic Framework completed successfully.")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running Model Agnostic Framework: {e}")
+            raise
         self.logger.info("Data acquisition process completed")
+    
+    def _get_file_path(self, file_type, file_def_path, file_name):
+        """
+        Construct file paths based on configuration.
+
+        Args:
+            file_type (str): Type of the file (used as a key in config).
+            file_def_path (str): Default path relative to project directory.
+            file_name (str): Name of the file.
+
+        Returns:
+            Path: Constructed file path.
+        """
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(f'{file_type}'))
 
 class DataCleanupProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -165,9 +179,9 @@ class DataCleanupProcessor:
         self.logger.info("Performing cleanup and checks on MAF output")
         
         # Define paths
-        path_soil_type = self.project_dir / f'parameters/soilclass/domain_{self.domain_name}_stats_soil_classes.csv'
-        path_landcover_type = self.project_dir / f'parameters/landclass/domain_{self.domain_name}_stats_NA_NALCMS_landcover_2020_30m.csv'
-        path_elevation_mean = self.project_dir / f'parameters/dem/domain_{self.domain_name}_stats_elv.csv'
+        path_soil_type = self.project_dir / f'attributes/soil_class/domain_{self.domain_name}_stats_soil_classes.csv'
+        path_landcover_type = self.project_dir / f'attributes/land_class/domain_{self.domain_name}_stats_NA_NALCMS_landcover_2020_30m.csv'
+        path_elevation_mean = self.project_dir / f'attributes/elevation/domain_{self.domain_name}_stats_elv.csv'
 
         # Read files
         soil_type = pd.read_csv(path_soil_type)
@@ -222,11 +236,13 @@ class DataCleanupProcessor:
         elevation_mean['mean'].fillna(0, inplace=True)
 
         # Save modified files
-        soil_type.to_csv(self.project_dir / 'parameters/soilclass/modified_domain_stats_soil_classes.csv', index=False)
-        landcover_type.to_csv(self.project_dir / 'parameters/landclass/modified_domain_stats_NA_NALCMS_landcover_2020_30m.csv', index=False)
-        elevation_mean.to_csv(self.project_dir / 'parameters/dem/modified_domain_stats_elv.csv', index=False)
+        soil_type.to_csv(self.project_dir / 'attributes/soil_class/modified_domain_stats_soil_classes.csv', index=False)
+        landcover_type.to_csv(self.project_dir / 'attributes/land_class/modified_domain_stats_NA_NALCMS_landcover_2020_30m.csv', index=False)
+        elevation_mean.to_csv(self.project_dir / 'attributes/elevation/modified_domain_stats_elv.csv', index=False)
 
         self.logger.info("Cleanup and checks completed")
+
+    
 
 class DataPreProcessor:
     def subset_hydrofabric(self, data_sources):
