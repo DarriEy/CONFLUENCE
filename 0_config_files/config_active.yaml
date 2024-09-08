@@ -22,7 +22,7 @@ EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA o
 
 # Computatational settings
 MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
-FORCE_RUN_ALL_STEPS: true                                     # Run all steps in the workflow and overwrite existing files
+FORCE_RUN_ALL_STEPS: false                                     # Run all steps in the workflow and overwrite existing files
 
 ## Geospatial settings
 # Geospatial domain representation settings
@@ -117,7 +117,6 @@ APPLY_LAPSE_RATE: True                                         # Flag for applyi
 LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
-
 
 # Data cleanup settings
 UNIFY_SOIL: false                                              # Merge small soil areas
@@ -217,4 +216,9 @@ MOO_OPTIMIZATION_METRICS: KGE,NSE                                      # Optimis
 OPTIMIZATION_RESULTS_FILE: default                                     # If 'default', uses 'root_path/domain_[name]/settings/SUMMA/basinParamInfo.txt'
 CALIBRATION_PERIOD: 2011-06-01, 2011-07-31                             # start_date, end_date in format YYYY-MM-DD
 EVALUATION_PERIOD:  2011-08-01, 2011-12-31                             # start_date, end_date in format YYYY-MM-DD
-ITERATION_RESULTS_FILE: default
+ITERATION_RESULTS_FILE: default                                        # Path to iteration results file. 
+POPULATION_SIZE: 100                                                   # Population size for genetic algorithms
+NUMBER_OF_ITERATIONS: 100                                              # Number of iterations for calibration 
+## Simulation settings
+
+SIM_REACH_ID: 122

@@ -12,22 +12,48 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from shutil import copyfile
-import shapefile # type: ignore
-import rasterio # type: ignore
 import rasterstats # type: ignore
 from pyproj import CRS, Transformer # type: ignore
-import random
 from shapely.geometry import Polygon # type: ignore
 import time
 import tempfile
 import shutil
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 from utils.logging_utils import get_function_logger # type: ignore
 
 class SummaPreProcessor_spatial:
     def __init__(self, config: Dict[str, Any], logger: Any):
+        """
+        Initialize the SummaPreProcessor_spatial class.
+
+        Args:
+            config (Dict[str, Any]): Configuration dictionary containing setup parameters.
+            logger (Any): Logger object for recording processing information.
+
+        Attributes:
+            config (Dict[str, Any]): Stored configuration dictionary.
+            logger (Any): Stored logger object.
+            project_dir (Path): Path to the project directory.
+            summa_setup_dir (Path): Path to the SUMMA setup directory.
+            hruId (str): HRU identifier from config.
+            gruId (str): GRU identifier from config.
+            domain_name (str): Name of the domain being processed.
+            merged_forcing_path (Path): Path to merged forcing data.
+            shapefile_path (Path): Path to shapefiles.
+            dem_path (Path): Path to DEM file.
+            forcing_basin_path (Path): Path to basin-averaged forcing data.
+            forcing_summa_path (Path): Path to SUMMA input forcing data.
+            catchment_path (Path): Path to catchment shapefile.
+            catchment_name (str): Name of the catchment shapefile.
+            forcing_dataset (str): Name of the forcing dataset.
+            data_step (int): Time step size for forcing data.
+            settings_path (Path): Path to SUMMA settings.
+            coldstate_name (str): Name of the cold state file.
+            parameter_name (str): Name of the trial parameters file.
+            attribute_name (str): Name of the attributes file.
+            forcing_measurement_height (float): Measurement height for forcing data.
+        """
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
@@ -40,9 +66,7 @@ class SummaPreProcessor_spatial:
         self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / 'elevation.tif'
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
-        self.catchment_path = Path(self.config.get('CATCHMENT_PATH', 'default'))
-        if self.catchment_path == 'default':
-            self.catchment_path = self.project_dir / 'shapefiles' / 'catchment'
+        self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.data_step = int(self.config.get('FORCING_TIME_STEP_SIZE'))
@@ -54,114 +78,232 @@ class SummaPreProcessor_spatial:
 
     @get_function_logger
     def run_preprocessing(self):
+        """
+        Run the complete SUMMA spatial preprocessing workflow.
+
+        This method orchestrates the entire preprocessing pipeline, including:
+        1. Sorting the catchment shape
+        2. Processing forcing data
+        3. Copying base settings
+        4. Creating the various SUMMA configuration files
+
+        The method uses a function logger decorator for detailed logging.
+
+        Raises:
+            Exception: If any step in the preprocessing pipeline fails.
+        """
         self.logger.info("Starting SUMMA spatial preprocessing")
         
-        self.sort_catchment_shape()
-        self.process_forcing_data()
-        self.copy_base_settings()
-        self.create_file_manager()
-        self.create_forcing_file_list()
-        self.create_initial_conditions()
-        self.create_trial_parameters()
-        self.create_attributes_file()
+        try:
+            self.sort_catchment_shape(work_log_dir=self.project_dir / f"shapefiles/_workLog")
+            self.process_forcing_data(work_log_dir=self.project_dir / f"forcing/_workLog")
+            self.copy_base_settings(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            self.create_file_manager(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            self.create_forcing_file_list(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            self.create_initial_conditions(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            self.create_trial_parameters(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            self.create_attributes_file(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
 
-        self.logger.info("SUMMA spatial preprocessing completed")
+            self.logger.info("SUMMA spatial preprocessing completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during SUMMA spatial preprocessing: {str(e)}")
+            raise
 
-
+    @get_function_logger
     def sort_catchment_shape(self):
+        """
+        Sort the catchment shapefile based on GRU and HRU IDs.
+
+        This method performs the following steps:
+        1. Loads the catchment shapefile
+        2. Sorts the shapefile based on GRU and HRU IDs
+        3. Saves the sorted shapefile back to the original location
+
+        The method uses GRU and HRU ID column names specified in the configuration.
+
+        Raises:
+            FileNotFoundError: If the catchment shapefile is not found.
+            ValueError: If the required ID columns are not present in the shapefile.
+        """
         self.logger.info("Sorting catchment shape")
         
-        self.catchment_path = self.config.get('CATCHMENT_PATH')
-        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        catchment_file = self.catchment_path / self.catchment_name
         
-        if self.catchment_path == 'default':
-            self.catchment_path = self.project_dir / 'shapefiles' / 'catchment'
-        else:
-            self.catchment_path = Path(self.catchment_path)
-        
-        gru_id = self.config.get('CATCHMENT_SHP_GRUID')
-        hru_id = self.config.get('CATCHMENT_SHP_HRUID')
-        
-        # Open the shape
-        shp = gpd.read_file(self.catchment_path / self.catchment_name)
-        
-        # Sort
-        shp = shp.sort_values(by=[gru_id, hru_id])
-        
-        # Save
-        shp.to_file(self.catchment_path / self.catchment_name)
-        
-        self.logger.info(f"Catchment shape sorted and saved to {self.catchment_path / self.catchment_name}")
+        try:
+            # Open the shape
+            shp = gpd.read_file(catchment_file)
+            
+            # Check if required columns exist
+            if self.gruId not in shp.columns or self.hruId not in shp.columns:
+                raise ValueError(f"Required columns {self.gruId} and/or {self.hruId} not found in shapefile")
+            
+            # Sort
+            shp = shp.sort_values(by=[self.gruId, self.hruId])
+            
+            # Save
+            shp.to_file(catchment_file)
+            
+            self.logger.info(f"Catchment shape sorted and saved to {catchment_file}")
+        except FileNotFoundError:
+            self.logger.error(f"Catchment shapefile not found at {catchment_file}")
+            raise
+        except ValueError as e:
+            self.logger.error(str(e))
+            raise
+        except Exception as e:
+            self.logger.error(f"Error sorting catchment shape: {str(e)}")
+            raise
 
+    @get_function_logger
+    def process_forcing_data(self):
+        """
+        Process the forcing data for SUMMA.
+
+        This method orchestrates the following steps:
+        1. Merge forcings if the dataset is RDRS
+        2. Create a shapefile for the forcing data
+        3. Remap the forcing data
+        4. Apply lapse rate correction if configured
+        5. Apply timestep to the forcing data
+
+        Each step is conditionally executed based on configuration settings.
+
+        Raises:
+            Exception: If any step in the forcing data processing fails.
+        """
+        self.logger.info("Starting forcing data processing")
+
+        try:
+            if self.config.get('FORCING_DATASET') == 'RDRS':
+                self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
+                self.logger.info("Forcings merged successfully")
+
+
+            #self.convert_units_and_vars()
+            self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
+            self.logger.info("Shapefile created successfully")
+
+            self.remap_forcing(work_log_dir=self.project_dir / f"forcing/_workLog")
+            self.logger.info("Forcing data remapped successfully")
+
+            if self.config.get('APPLY_LAPSE_RATE', False):
+                self.apply_lapse_rate(work_log_dir=self.project_dir / f"forcing/_workLog")
+                self.logger.info("Lapse rate correction applied successfully")
+
+            self.apply_timestep(work_log_dir=self.project_dir / f"forcing/_workLog")
+            self.logger.info("Timestep applied to forcing data successfully")
+
+            self.logger.info("Forcing data processing completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during forcing data processing: {str(e)}")
+            raise
+
+    @get_function_logger
     def copy_base_settings(self):
+        """
+        Copy SUMMA base settings from the source directory to the project's settings directory.
+
+        This method performs the following steps:
+        1. Determines the source directory for base settings
+        2. Determines the destination directory for settings
+        3. Creates the destination directory if it doesn't exist
+        4. Copies all files from the source directory to the destination directory
+
+        Raises:
+            FileNotFoundError: If the source directory or any source file is not found.
+            PermissionError: If there are permission issues when creating directories or copying files.
+        """
         self.logger.info("Copying SUMMA base settings")
         
         base_settings_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA'
+        settings_path = self._get_default_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA')
         
-        settings_path = self.config.get('SETTINGS_SUMMA_PATH')
-        if settings_path == 'default':
-            settings_path = self.project_dir / 'settings' / 'SUMMA'
-        else:
-            settings_path = Path(settings_path)
-        
-        settings_path.mkdir(parents=True, exist_ok=True)
-        
-        for file in os.listdir(base_settings_path):
-            copyfile(base_settings_path / file, settings_path / file)
-        
-        self.logger.info(f"SUMMA base settings copied to {settings_path}")
+        try:
+            settings_path.mkdir(parents=True, exist_ok=True)
+            
+            for file in os.listdir(base_settings_path):
+                source_file = base_settings_path / file
+                dest_file = settings_path / file
+                copyfile(source_file, dest_file)
+                self.logger.debug(f"Copied {source_file} to {dest_file}")
+            
+            self.logger.info(f"SUMMA base settings copied to {settings_path}")
+        except FileNotFoundError as e:
+            self.logger.error(f"Source file or directory not found: {e}")
+            raise
+        except PermissionError as e:
+            self.logger.error(f"Permission error when copying files: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error copying base settings: {e}")
+            raise
 
+    @get_function_logger
     def create_file_manager(self):
+        """
+        Create the SUMMA file manager configuration file.
+
+        This method generates a file manager configuration for SUMMA, including:
+        - Control version
+        - Simulation start and end times
+        - Output file prefix
+        - Paths for various settings and data files
+
+        The method uses configuration values and default paths where appropriate.
+
+        Raises:
+            ValueError: If required configuration values are missing or invalid.
+            IOError: If there's an error writing the file manager configuration.
+        """
         self.logger.info("Creating SUMMA file manager")
-        experiment_id = self.config.get('EXPERIMENT_ID')
-        self.sim_start = self.config.get('EXPERIMENT_TIME_START')
-        self.sim_end = self.config.get('EXPERIMENT_TIME_END')
 
-        if self.sim_start == 'default' or self.sim_end == 'default':
-            raw_time = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
-            self.sim_start = f"{raw_time[0]}-01-01 00:00" if self.sim_start == 'default' else self.sim_start
-            self.sim_end = f"{raw_time[1]}-12-31 23:00" if self.sim_end == 'default' else self.sim_end
+        try:
+            experiment_id = self.config.get('EXPERIMENT_ID')
+            if not experiment_id:
+                raise ValueError("EXPERIMENT_ID is missing from configuration")
 
-        filemanager_name = self.config.get('SETTINGS_SUMMA_FILEMANAGER')
-        filemanager_path = self.summa_setup_dir / filemanager_name
+            self.sim_start, self.sim_end = self._get_simulation_times()
 
-        with open(filemanager_path, 'w') as fm:
-            fm.write(f"controlVersion       'SUMMA_FILE_MANAGER_V3.0.0'\n")
-            fm.write(f"simStartTime         '{self.sim_start}'\n")
-            fm.write(f"simEndTime           '{self.sim_end}'\n")
-            fm.write(f"tmZoneInfo           'utcTime'\n")
-            fm.write(f"outFilePrefix        '{experiment_id}'\n")
-            fm.write(f"settingsPath         '{self.summa_setup_dir}/'\n")
-            fm.write(f"forcingPath          '{self.project_dir / 'forcing/SUMMA_input'}/'\n")
-            fm.write(f"outputPath           '{self.project_dir / 'simulations' / experiment_id / 'SUMMA'}/'\n")
+            filemanager_name = self.config.get('SETTINGS_SUMMA_FILEMANAGER')
+            if not filemanager_name:
+                raise ValueError("SETTINGS_SUMMA_FILEMANAGER is missing from configuration")
 
-            fm.write(f"initConditionFile    '{self.config.get('SETTINGS_SUMMA_COLDSTATE')}'\n")
-            fm.write(f"attributeFile        '{self.config.get('SETTINGS_SUMMA_ATTRIBUTES')}'\n")
-            fm.write(f"trialParamFile       '{self.config.get('SETTINGS_SUMMA_TRIALPARAMS')}'\n")
-            fm.write(f"forcingListFile      '{self.config.get('SETTINGS_SUMMA_FORCING_LIST')}'\n")
-            fm.write(f"decisionsFile        'modelDecisions.txt'\n")
-            fm.write(f"outputControlFile    'outputControl.txt'\n")
-            fm.write(f"globalHruParamFile   'localParamInfo.txt'\n")
-            fm.write(f"globalGruParamFile   'basinParamInfo.txt'\n")
-            fm.write(f"vegTableFile         'TBL_VEGPARM.TBL'\n")
-            fm.write(f"soilTableFile        'TBL_SOILPARM.TBL'\n")
-            fm.write(f"generalTableFile     'TBL_GENPARM.TBL'\n")
-            fm.write(f"noahmpTableFile      'TBL_MPTABLE.TBL'\n")
+            filemanager_path = self.summa_setup_dir / filemanager_name
 
-        self.logger.info(f"SUMMA file manager created at {filemanager_path}")
+            with open(filemanager_path, 'w') as fm:
+                fm.write(f"controlVersion       'SUMMA_FILE_MANAGER_V3.0.0'\n")
+                fm.write(f"simStartTime         '{self.sim_start}'\n")
+                fm.write(f"simEndTime           '{self.sim_end}'\n")
+                fm.write(f"tmZoneInfo           'utcTime'\n")
+                fm.write(f"outFilePrefix        '{experiment_id}'\n")
+                fm.write(f"settingsPath         '{self._get_default_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA')}/'\n")
+                fm.write(f"forcingPath          '{self._get_default_path('FORCING_SUMMA_PATH', 'forcing/SUMMA_input')}/'\n")
+                fm.write(f"outputPath           '{self.project_dir / 'simulations' / experiment_id / 'SUMMA'}/'\n")
 
-    def process_forcing_data(self):
-        
-        if self.config.get('FORCING_DATASET') == 'RDRS':
-            self.merge_forcings()
-        
-        self.convert_units_and_vars()
-        self.create_shapefile()
-        self.remap_forcing()
+                fm.write(f"initConditionFile    '{self.config.get('SETTINGS_SUMMA_COLDSTATE')}'\n")
+                fm.write(f"attributeFile        '{self.config.get('SETTINGS_SUMMA_ATTRIBUTES')}'\n")
+                fm.write(f"trialParamFile       '{self.config.get('SETTINGS_SUMMA_TRIALPARAMS')}'\n")
+                fm.write(f"forcingListFile      '{self.config.get('SETTINGS_SUMMA_FORCING_LIST')}'\n")
+                fm.write(f"decisionsFile        'modelDecisions.txt'\n")
+                fm.write(f"outputControlFile    'outputControl.txt'\n")
+                fm.write(f"globalHruParamFile   'localParamInfo.txt'\n")
+                fm.write(f"globalGruParamFile   'basinParamInfo.txt'\n")
+                fm.write(f"vegTableFile         'TBL_VEGPARM.TBL'\n")
+                fm.write(f"soilTableFile        'TBL_SOILPARM.TBL'\n")
+                fm.write(f"generalTableFile     'TBL_GENPARM.TBL'\n")
+                fm.write(f"noahmpTableFile      'TBL_MPTABLE.TBL'\n")
 
-        if self.config.get('APPLY_LAPSE_RATE') == True:
-            self.apply_lapse_rate()
-        self.apply_timestep()
+            self.logger.info(f"SUMMA file manager created at {filemanager_path}")
+
+        except ValueError as ve:
+            self.logger.error(f"Configuration error: {str(ve)}")
+            raise
+        except IOError as io_err:
+            self.logger.error(f"Error writing file manager configuration: {str(io_err)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error in create_file_manager: {str(e)}")
+            raise
 
     def convert_units_and_vars(self):
         self.logger.info(f"Starting in-place variable renaming and unit conversion for {self.forcing_dataset} data")
@@ -198,7 +340,7 @@ class SummaPreProcessor_spatial:
             }
         }
 
-        forcing_files = sorted(self.merged_forcing_path.glob(f"{self.forcing_dataset}_*.nc"))
+        forcing_files = sorted(self.merged_forcing_path.glob(f"{self.config.get('FORCING_DATASET')}_*.nc"))
 
         for file in forcing_files:
             self.logger.info(f"Processing {file.name}")
@@ -245,7 +387,23 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Completed in-place variable renaming and unit conversion for {self.forcing_dataset} data")
 
+    @get_function_logger
     def remap_forcing(self):
+        """
+        Remap forcing data to the catchment shapefile using EASYMORE.
+
+        This method performs the following steps:
+        1. Create one weighted forcing file
+        2. Create all weighted forcing files
+
+        The remapping process uses the EASYMORE library to perform area-weighted
+        remapping from the forcing grid to the catchment polygons.
+
+        Raises:
+            FileNotFoundError: If required input files are missing.
+            ValueError: If there are issues with EASYMORE configuration or execution.
+            IOError: If there are issues writing output files.
+        """
         self.logger.info("Starting forcing remapping process")
 
         # Step 1: Create one weighted forcing file
@@ -352,7 +510,25 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("All weighted forcing files created")
 
+    @get_function_logger
     def apply_lapse_rate(self):
+        """
+        Apply temperature lapse rate corrections to the forcing data.
+
+        This method performs the following steps:
+        1. Load area-weighted information for each basin
+        2. Calculate lapse rate corrections for each HRU
+        3. Apply lapse rate corrections to temperature data in each forcing file
+        4. Save the corrected forcing data
+
+        The lapse rate is applied based on the elevation difference between the forcing data
+        grid cells and the mean elevation of each HRU.
+
+        Raises:
+            FileNotFoundError: If required input files are missing.
+            ValueError: If there are issues with data processing or lapse rate application.
+            IOError: If there are issues reading or writing data files.
+        """
         self.logger.info("Starting to apply temperature lapse rate and add data step")
 
         # Find intersection file
@@ -414,7 +590,24 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Completed processing of {self.forcing_dataset.upper()} forcing files with temperature lapsing")
 
+    @get_function_logger
     def create_shapefile(self):
+        """
+        Create a shapefile for the RDRS forcing data.
+
+        This method performs the following steps:
+        1. Find the first RDRS monthly file
+        2. Extract latitude, longitude, and other relevant information
+        3. Create polygons for each grid cell
+        4. Calculate zonal statistics (mean elevation) for each grid cell
+        5. Create a GeoDataFrame with the extracted information
+        6. Save the GeoDataFrame as a shapefile
+
+        Raises:
+            FileNotFoundError: If no RDRS monthly file or DEM file is found.
+            ValueError: If there are issues with data extraction or processing.
+            IOError: If there are issues writing the shapefile.
+        """
         self.logger.info("Starting to create RDRS shapefile")
 
         # Find the first RDRS monthly file
@@ -484,25 +677,41 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
 
+    @get_function_logger
     def apply_timestep(self):
+        """
+        Add data step (time step) information to the forcing files.
+
+        This method performs the following steps:
+        1. Identify all forcing files in the SUMMA input directory
+        2. For each file, add a 'data_step' variable with the configured time step
+        3. Save the modified files, replacing the originals
+
+        The data step is added as a new variable to ensure SUMMA can correctly
+        interpret the temporal resolution of the forcing data.
+
+        Raises:
+            FileNotFoundError: If no forcing files are found.
+            ValueError: If there are issues with data processing or time step application.
+            IOError: If there are issues reading or writing data files.
+        """
         self.logger.info("Starting to apply data step to forcing files")
 
-        forcing_files = [f for f in self.forcing_summa_path.glob(f"{self.domain_name}_{self.forcing_dataset}_remapped_*.nc")]
-        
+        forcing_files = [f for f in self.forcing_summa_path.glob(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}*.nc")]
+
         for file in forcing_files:
-            self.logger.info(f"Processing {file.name}")
-            
+            self.logger.info(f"Processing {file}")
             # Create a temporary file
             with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                 temp_path = temp_file.name
 
             # Process the file using the temporary path
             with xr.open_dataset(file) as dat:
-                dat['data_step'] = 3600#self.data_step
+                dat['data_step'] = self.data_step
                 dat.data_step.attrs['long_name'] = 'data step length in seconds'
                 dat.data_step.attrs['units'] = 's'
                 dat.to_netcdf(temp_path)
-
+                
             # Try to replace the original file with the temporary file
             shutil.move(temp_path, file)
             self.logger.info(f"Successfully processed {file.name} using a temporary file")
@@ -510,11 +719,28 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("Completed adding data step to forcing files")
 
+    @get_function_logger
     def merge_forcings(self):
+        """
+        Merge RDRS forcing data files into monthly files.
+
+        This method performs the following steps:
+        1. Determine the year range for processing
+        2. Create output directories
+        3. Process each year and month, merging daily files into monthly files
+        4. Apply variable renaming and unit conversions
+        5. Save the merged and processed data to netCDF files
+
+        Raises:
+            FileNotFoundError: If required input files are missing.
+            ValueError: If there are issues with data processing or merging.
+            IOError: If there are issues writing output files.
+        """
         self.logger.info("Starting to merge RDRS forcing data")
+
         
         years = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
-        years = range(int(years[0]), int(years[1]) + 1)
+        years = range(int(years[0])-1, int(years[1]) + 1)
         
         file_name_pattern = f"domain_{self.domain_name}_*.nc"
         
@@ -636,7 +862,24 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("RDRS forcing data merging completed")
 
+    @get_function_logger
     def create_forcing_file_list(self):
+        """
+        Create a list of forcing files for SUMMA.
+
+        This method performs the following steps:
+        1. Determine the forcing dataset from the configuration
+        2. Find all relevant forcing files in the SUMMA input directory
+        3. Sort the files to ensure chronological order
+        4. Write the sorted file list to a text file
+
+        The resulting file list is used by SUMMA to locate and read the forcing data.
+
+        Raises:
+            FileNotFoundError: If no forcing files are found.
+            IOError: If there are issues writing the file list.
+            ValueError: If an unsupported forcing dataset is specified.
+        """
         self.logger.info("Creating forcing file list")
         forcing_dataset = self.config.get('FORCING_DATASET')
         domain_name = self.config.get('DOMAIN_NAME')
@@ -661,7 +904,25 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Forcing file list created at {file_list_path}")
 
+    @get_function_logger
     def create_initial_conditions(self):
+        """
+        Create the initial conditions (cold state) file for SUMMA.
+
+        This method performs the following steps:
+        1. Define the dimensions and variables for the cold state file
+        2. Set default values for all state variables
+        3. Create the netCDF file with the defined structure and values
+        4. Ensure consistency with the forcing data (e.g., number of HRUs)
+
+        The resulting file provides SUMMA with a starting point for model simulations.
+
+        Raises:
+            FileNotFoundError: If required input files (e.g., forcing file template) are not found.
+            IOError: If there are issues creating or writing to the cold state file.
+            ValueError: If there are inconsistencies between the cold state and forcing data.
+        """
+        self.logger.info("Creating initial conditions (cold state) file")
         self.logger.info("Creating initial conditions (cold state) file")
 
         # Find a forcing file to use as a template for hruId order
@@ -750,7 +1011,24 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Initial conditions file created at: {coldstate_path}")
 
+    @get_function_logger
     def create_trial_parameters(self):
+        """
+        Create the trial parameters file for SUMMA.
+
+        This method performs the following steps:
+        1. Read trial parameter configurations from the main configuration
+        2. Find a forcing file to use as a template for HRU order
+        3. Create a netCDF file with the trial parameters
+        4. Set the parameters for each HRU based on the configuration
+
+        The resulting file provides SUMMA with parameter values to use in simulations.
+
+        Raises:
+            FileNotFoundError: If required input files (e.g., forcing file template) are not found.
+            IOError: If there are issues creating or writing to the trial parameters file.
+            ValueError: If there are inconsistencies in the parameter configurations.
+        """
         self.logger.info("Creating trial parameters file")
 
         # Find a forcing file to use as a template for hruId order
@@ -803,7 +1081,26 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Trial parameters file created at: {parameter_path}")
 
+    @get_function_logger
     def create_attributes_file(self):
+        """
+        Create the attributes file for SUMMA.
+
+        This method performs the following steps:
+        1. Load the catchment shapefile
+        2. Get HRU order from a forcing file
+        3. Create a netCDF file with HRU attributes
+        4. Set attribute values for each HRU
+        5. Insert soil class, land class, and elevation data
+        6. Optionally set up HRU connectivity
+
+        The resulting file provides SUMMA with essential information about each HRU.
+
+        Raises:
+            FileNotFoundError: If required input files are not found.
+            IOError: If there are issues creating or writing to the attributes file.
+            ValueError: If there are inconsistencies in the attribute data.
+        """
         self.logger.info("Creating attributes file")
 
         # Load the catchment shapefile
@@ -895,6 +1192,7 @@ class SummaPreProcessor_spatial:
         self.insert_elevation(attribute_path)
 
     def insert_soil_class(self, attribute_file):
+        """Insert soil class data into the attributes file."""
         self.logger.info("Inserting soil class into attributes file")
         gistool_output = self.project_dir / "attributes/soil_class"
         soil_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_soil_classes.csv")
@@ -911,6 +1209,7 @@ class SummaPreProcessor_spatial:
                     self.logger.warning(f"No soil data found for HRU {hru_id}")
 
     def insert_land_class(self, attribute_file):
+        """Insert land class data into the attributes file."""
         self.logger.info("Inserting land class into attributes file")
         gistool_output = self.project_dir / "attributes/land_class"
         land_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_NA_NALCMS_landcover_2020_30m.csv")
@@ -927,6 +1226,7 @@ class SummaPreProcessor_spatial:
                     self.logger.warning(f"No land data found for HRU {hru_id}")
 
     def insert_elevation(self, attribute_file):
+        """Insert elevation data into the attributes file."""
         self.logger.info("Inserting elevation into attributes file")
         gistool_output = self.project_dir / "attributes/elevation"
         elev_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_elv.csv")
@@ -962,5 +1262,58 @@ class SummaPreProcessor_spatial:
                             att['downHRUindex'][idx] = sorted_hrus[i+1][0]
                         self.logger.info(f"Set downHRUindex for HRU {hru_id} to {att['downHRUindex'][idx]}")
 
+
+    def _get_default_path(self, path_key: str, default_subpath: str) -> Path:
+        """
+        Get a path from config or use a default based on the project directory.
+
+        Args:
+            path_key (str): The key to look up in the config dictionary.
+            default_subpath (str): The default subpath to use if the config value is 'default'.
+
+        Returns:
+            Path: The resolved path.
+
+        Raises:
+            KeyError: If the path_key is not found in the config.
+        """
+        try:
+            path_value = self.config.get(path_key)
+            if path_value == 'default' or path_value is None:
+                return self.project_dir / default_subpath
+            return Path(path_value)
+        except KeyError:
+            self.logger.error(f"Config key '{path_key}' not found")
+            raise
+    
+    def _get_simulation_times(self) -> tuple[str, str]:
+        """
+        Get the simulation start and end times from config or calculate defaults.
+
+        Returns:
+            tuple[str, str]: A tuple containing the simulation start and end times.
+
+        Raises:
+            ValueError: If the time format in the configuration is invalid.
+        """
+        sim_start = self.config.get('EXPERIMENT_TIME_START')
+        sim_end = self.config.get('EXPERIMENT_TIME_END')
+
+        if sim_start == 'default' or sim_end == 'default':
+            start_year = self.config.get('FORCING_START_YEAR')
+            end_year = self.config.get('FORCING_END_YEAR')
+            if not start_year or not end_year:
+                raise ValueError("FORCING_START_YEAR or FORCING_END_YEAR is missing from configuration")
+            sim_start = f"{start_year}-01-01 00:00" if sim_start == 'default' else sim_start
+            sim_end = f"{end_year}-12-31 23:00" if sim_end == 'default' else sim_end
+
+        # Validate time format
+        try:
+            datetime.strptime(sim_start, "%Y-%m-%d %H:%M")
+            datetime.strptime(sim_end, "%Y-%m-%d %H:%M")
+        except ValueError:
+            raise ValueError("Invalid time format in configuration. Expected 'YYYY-MM-DD HH:MM'")
+
+        return sim_start, sim_end
 
     
