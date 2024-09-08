@@ -50,9 +50,6 @@ class MizuRouteRunner:
             self.logger.error(f"mizuRoute run failed with error: {e}")
             raise
 
-        # Log the run
-        self._log_run(mizu_out_path)
-
     def _get_config_path(self, config_key: str, default_suffix: str) -> Path:
         path = self.config.get(config_key)
         if path == 'default':
@@ -110,9 +107,6 @@ class SummaRunner:
         except subprocess.CalledProcessError as e:
             self.logger.error(f"SUMMA run failed with error: {e}")
             raise
-
-        # Log the run
-        self._log_run(summa_out_path)
 
     def _get_config_path(self, config_key: str, default_suffix: str) -> Path:
         path = self.config.get(config_key)

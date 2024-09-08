@@ -5,15 +5,13 @@ from pathlib import Path
 from datetime import datetime
 import geopandas as gpd # type: ignore
 from shapely.geometry import Point # type: ignore
+from mpi4py import MPI # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.data_utils import DataAcquisitionProcessor, DataCleanupProcessor # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
-from utils.optimization_utils import OptimizationCalibrator # type: ignore
+from utils.optimization_utils import Optimizer # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
-from utils.workflow_utils import WorkflowManager # type: ignore
-from utils.forecasting_utils import ForecastingEngine # type: ignore
-from utils.uncertainty_utils import UncertaintyQuantifier # type:ignore
 from utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.config_utils import ConfigManager # type: ignore
 from utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
@@ -21,6 +19,8 @@ from utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.summa_utils import SummaPreProcessor # type: ignore
 from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+from utils.workflow_utils import WorkflowManager # type: ignore
+from utils.forecasting_utils import ForecastingEngine # type: ignore
 
 class CONFLUENCE:
 
@@ -80,8 +80,7 @@ class CONFLUENCE:
 
         # Log to both the general logger and the function-specific logger
         self.logger.info(f"Project directory created at: {self.project_dir}")
-        logger.info(f"Project directory created at: {self.project_dir}")
-
+        
         # Create shapefile directory and required sub-directories
         shapefile_dir = self.project_dir / f"shapefiles"
         shapefile_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +93,6 @@ class CONFLUENCE:
         riverBasins_dir = shapefile_dir / f"river_basins"
         riverBasins_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"shapefiles directories created at {shapefile_dir},\n {pourPoint_dir},\n {catchment_dir},\n {riverNetwork_dir},\n {riverBasins_dir}")
         self.logger.info(f"shapefiles directories created at {shapefile_dir},\n {pourPoint_dir},\n {catchment_dir},\n {riverNetwork_dir},\n {riverBasins_dir}")
         
         return self.project_dir
@@ -117,8 +115,7 @@ class CONFLUENCE:
                 output_path = Path(self.config['POUR_POINT_SHP_PATH'])
             
             self.logger.info(f"Creating pour point shapefile in {output_path}")
-            logger.info(f"Creating pour point shapefile in {output_path}")
-
+           
             pour_point_shp_name = self.config.get('POUR_POINT_SHP_NAME')
             if pour_point_shp_name == 'default':
                 pour_point_shp_name = f"{self.domain_name}_pourPoint.shp"
@@ -156,7 +153,7 @@ class CONFLUENCE:
         else:
             self.logger.error("Domain discretization failed.")
 
-        logger.info(f"Domain to be defined using method {domain_method}")
+        self.logger.info(f"Domain to be defined using method {domain_method}")
 
 
     @get_function_logger
@@ -223,10 +220,27 @@ class CONFLUENCE:
         
         self.logger.info("Input data processing completed")
 
-    def load_project(self, project_name):
-        # Load an existing project
-        pass
-    
+    @get_function_logger
+    def run_model_specific_preprocessing(self):
+        # Run model-specific preprocessing
+        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
+            self.run_summa_preprocessing(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"settings/_workLog")
+
+    @get_function_logger
+    def run_summa_preprocessing(self):
+        self.logger.info('Running SUMMA specific input processing')
+        if self.config.get('SUMMAFLOW') == 'stochastic':
+            summa_preprocessor = SummaPreProcessor(self.config, self.logger)
+            self.logger.info('SUMMA stochastic preprocessor initiated')
+        if self.config.get('SUMMAFLOW') == 'spatial':
+            summa_preprocessor = SummaPreProcessor_spatial(self.config, self.logger)
+            self.logger.info('SUMMA spatial preprocessor initiated')
+
+        summa_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+        
+        mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
+        mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+
     @get_function_logger
     def run_models(self):
         summa_runner = SummaRunner(self.config, self.logger)
@@ -239,16 +253,68 @@ class CONFLUENCE:
         except Exception as e:
             self.logger.error(f"Error during model runs: {str(e)}")
 
-    def calibrate_model(self, calibration_method, objective_function, constraints):
+    @get_function_logger
+    def visualise_model_output(self):\
+        # Plot streamflow comparison
+        self.logger.info('Starting model output visualisation')
+        visualizer = VisualizationReporter(self.config, self.logger)
+        model_outputs = [
+            (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-00000.nc"))
+        ]
+        obs_files = [
+            ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+        ]
+        plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+        if plot_file:
+            self.logger.info(f"Streamflow comparison plot created: {plot_file}")
+        else:
+            self.logger.error("Failed to create streamflow comparison plot")
+
+    @get_function_logger
+    def run_workflow(self):
+        self.logger.info("Starting CONFLUENCE workflow")
+        
+        # Check if we should force run all steps
+        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
+        
+        # Define the workflow steps and their output checks
+        workflow_steps = [
+            (self.setup_project, self.project_dir.exists),
+            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.calibrate_model, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}_rank1" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_rank1_timestep.nc").exists()),
+        ]
+        
+        for step_func, check_func in workflow_steps:
+            step_name = step_func.__name__
+            if force_run or not check_func():
+                self.logger.info(f"Running step: {step_name}")
+                try:
+                    step_func()
+                except Exception as e:
+                    self.logger.error(f"Error during {step_name}: {str(e)}")
+                    raise
+            else:
+                self.logger.info(f"Skipping step {step_name} as output already exists")
+
+        self.logger.info("CONFLUENCE workflow completed")
+
+    @get_function_logger
+    def calibrate_model(self):
         # Calibrate the model using specified method and objectives
-        pass
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        optimization_calibrator = Optimizer(self.config, self.logger, comm, rank)
+        optimization_calibrator.run_optimization(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"simulations/_workLog")
+
 
     def run_sensitivity_analysis(self, method, parameters):
         # Perform sensitivity analysis on model parameters
-        pass
-
-    def quantify_uncertainty(self, method, parameters):
-        # Quantify uncertainty in model outputs
         pass
 
     def generate_forecast(self, forecast_horizon, ensemble_size):
@@ -267,57 +333,6 @@ class CONFLUENCE:
         # Export results in specified format
         pass
 
-    @get_function_logger
-    def run_workflow(self):
-        self.logger.info("Starting CONFLUENCE workflow")
-        
-        # Check if we should force run all steps
-        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
-        
-        # Define the workflow steps and their output checks
-        workflow_steps = [
-            (self.setup_project, self.project_dir.exists),
-            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            (self.process_input_data, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
-        ]
-        
-        for step_func, check_func in workflow_steps:
-            step_name = step_func.__name__
-            if force_run or not check_func():
-                self.logger.info(f"Running step: {step_name}")
-                try:
-                    step_func()
-                except Exception as e:
-                    self.logger.error(f"Error during {step_name}: {str(e)}")
-                    raise
-            else:
-                self.logger.info(f"Skipping step {step_name} as output already exists")
-
-        # Run model-specific preprocessing
-        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
-            self.run_summa_preprocessing(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"settings/_workLog")
-        
-
-        # Run models
-        self.run_models(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"simulations/_workLog")
-
-        self.logger.info("CONFLUENCE workflow completed")
-
-    @get_function_logger
-    def run_summa_preprocessing(self):
-        self.logger.info('Running SUMMA specific input processing')
-        if self.config.get('SUMMAFLOW') == 'stochastic':
-            summa_preprocessor = SummaPreProcessor(self.config, self.logger)
-            self.logger.info('SUMMA stochastic preprocessor initiated')
-        if self.config.get('SUMMAFLOW') == 'spatial':
-            summa_preprocessor = SummaPreProcessor_spatial(self.config, self.logger)
-            self.logger.info('SUMMA spatial preprocessor initiated')
-
-        summa_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
-        
-        mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
-        mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
 
 def main():
     config_path = Path(__file__).parent / '0_config_files'
