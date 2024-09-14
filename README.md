@@ -10,8 +10,6 @@ CONFLUENCE is an advanced hydrological modeling platform designed to facilitate 
 - Data acquisition and preprocessing from various sources
 - Hydrological model setup and initialization
 - Model optimization and calibration
-- Uncertainty quantification
-- Real-time forecasting
 - Result visualization and reporting
 - Workflow management for complex modeling tasks
 
