@@ -6,11 +6,7 @@
 # Model domain settings
 CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
-DOMAIN_NAME: "Alakahi"
-
-# Computatational settings
-MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
-FORCE_RUN_ALL_STEPS: false                                     # Run all steps in the workflow and overwrite existing files
+DOMAIN_NAME: "Honolii"
 
 # Experiment settings
 EXPERIMENT_ID: run_1                                           # Name of experiment
@@ -24,16 +20,21 @@ EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experime
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file
 EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA output
 
+# Computatational settings
+MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
+FORCE_RUN_ALL_STEPS: false                                     # Run all steps in the workflow and overwrite existing files
+
 ## Geospatial settings
 # Geospatial domain representation settings
-DOMAIN_DEFINITION_METHOD: delineate                          # Define domain representation method. Options subset, delineate, lumped
-GEOFABRIC_TYPE: NWS                                          # Source geofabric to subset from, options Merit, TDX, NWS
-SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/shapefiles/river_basins/Hawaii_nhd_catchment.shp                                 # Path to source geofabric basins
-SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/shapefiles/river_network/Hawaii_nhd_flowline.shp                                   # Path to source geofabric rivers
+DOMAIN_DEFINITION_METHOD: subset_geofabric                     # Define domain representation method. Options subset_geofabric, delineate_geofabric, lumped_watershed
+GEOFABRIC_TYPE: Merit                                          # Source geofabric to subset from, options Merit, TDX, NWS
+SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/cat_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
+SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/riv_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric rivers
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
+DEM_PATH: default                                              # If 'default', uses 'root_path/domain_[name]/attributes/elevation/dem.tiff'
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
-STREAM_THRESHOLD: 22500                                          # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 500                                          # Threshold flow accumulation for stream vectorisation
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 
@@ -43,53 +44,46 @@ COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined method
 ELEVATION_BAND_SIZE: 50                                        # Elevation band size in meters
 MIN_HRU_SIZE: 1                                                # Minimum HRU size in km^2
 CATCHMENT_PLOT_DIR: default                                    # Directory to output plots of domain catchment
+SOIL_CLASS_PATH: default                                       # Path to soil classification raster
+LAND_CLASS_PATH: default                                       # Path to land classification raster      
 RADIATION_PATH: default                                        # Path to radiation classification raster
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes
 
-
-## Shapefile settings
 # Shapefile settings - SUMMA catchment shape
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile
-CATCHMENT_SHP_NAME: Alakahi_HRUs_GRUs.shp                    # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: Churchill_HRUs_GRUs.shp                    # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
-CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
+CATCHMENT_SHP_AREA: GRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
 CATCHMENT_SHP_HRUID: HRU_ID                                    # HRU ID column in riverBasin shapefile
 CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column in riverBasin shapefile
 
 # Shapefile settings - mizuroute catchment shape 
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile
-RIVER_BASINS_NAME: Alakahi_riverBasins_delineate.shp        # Name of river basin shapefile
-RIVER_BASIN_SHP_RM_GRUID: GRU_ID                                # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                              # Name of the column that shows which river segment each HRU connects to.
-RIVER_BASIN_SHP_AREA: GRU_area                                     # Name of the catchment area column. Area must be in units [m^2]
+RIVER_BASINS_NAME: Churchill_riverBasins_Merit.shp        # Name of river basin shapefile
+RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_AREA: area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - mizuroute riverNetwork shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile
-RIVER_NETWORK_SHP_NAME: Alakahi_riverNetwork_delineate.shp        # Name of domain river network shapefile 
-RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
-RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
-RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_NAME: Churchill_riverNetworkMerit.shp        # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_LENGTH: length                               # Name of the segment length column. Length must be in units [m].
+RIVER_NETWORK_SHP_SEGID: COMID                                 # Name of the segment ID column.
+RIVER_NETWORK_SHP_DOWNSEGID: NextDownID                          # Name of the downstream segment ID column.
+RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
-# Shapefile settings - Pour point settings
+# Pour point settings
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
-POUR_POINT_COORDS: 20.0710831/-155.6707458                             # Pour point coordinates lat/lon, if default use user provided shapefile. 
+POUR_POINT_COORDS: 55.7405/-97.005                             # Pour point coordinates lat/lon, if default use user provided shapefile. 
 
 # Intersection settings
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
-INTERSECT_SOIL_NAME: catchment_with_soilclass.shp              # Name of the shapefile with intersection between catchment and SOILGRIDS-derived USDA soil classes, stored in columns 'USDA_{1,...n}'
+INTERSECT_SOIL_NAME: catchment_with_soilgrids.shp              # Name of the shapefile with intersection between catchment and SOILGRIDS-derived USDA soil classes, stored in columns 'USDA_{1,...n}'
 INTERSECT_ROUTING_PATH: default                                # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
 INTERSECT_ROUTING_NAME: catchment_with_routing_basins.shp      # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
-INTERSECT_DEM_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
-INTERSECT_DEM_NAME: catchment_with_dem.shp                     # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
-INTERSECT_LAND_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
-INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 
-
-### Data settings 
-## HPC tool settings
 # Tool paths
 DATATOOL_PATH: default                                         # Path to datatool executable 
 GISTOOL_PATH: default                                          # Path to gistool executable
@@ -106,29 +100,23 @@ EASYMORE_CACHE: /home/darri/easymore/                          # Path to easymor
 EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" #Path to easymore job config
 
 # Data acquisition settings
-DATA_ACQUIRE: supplied                                         # Where to acquire data from options: HPC, supplied, download (tbi), earth_engine (tbi)
-
-# Forcing data settings
-FORCING_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/forcing/2_merged_data #Path to forcing data, if default self.project_dir / forcing / raw_data
-FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
+FORCING_DATASET: "RDRS"                                        # Forcing dataset to use
 FORCING_START_YEAR: "2008"                                     # Forcing start year
 FORCING_END_YEAR: "2018"                                       # Forcing end year 
-FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd                                             # Forcing dataset variables to use acquire
+FORCING_VARIABLES:                                             # Forcing dataset variables to use acquire
+  - "RDRS_v2.1_P_P0_SFC"                                       # ERA5 variables | longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd
+  - "RDRS_v2.1_P_HU_09944"                                     # CARRA variables | 10m_u_component_of_wind,10m_v_component_of_wind,2m_specific_humidity,2m_temperature,surface_net_solar_radiation,thermal_surface_radiation_downwards,surface_pressure,total_precipitation
+  - "RDRS_v2.1_P_TT_09944"                                     # RDRS variables | | RDRS_v2.1_P_FI_SFC,RDRS_v2.1_P_FB_SFC,RDRS_v2.1_A_PR0_SFC,RDRS_v2.1_P_P0_SFC,RDRS_v2.1_P_TT_1.5m,RDRS_v2.1_P_HU_1.5m,RDRS_v2.1_P_UVC_10m,RDRS_v2.1_P_UUC_10m
+  - "RDRS_v2.1_P_UVC_09944"
+  - "RDRS_v2.1_A_PR0_SFC"
+  - "RDRS_v2.1_P_FB_SFC"
+  - "RDRS_v2.1_P_FI_SFC"
 FORCING_MEASUREMENT_HEIGHT: 3                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
-
-# Geospatial data
-DEM_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/dem/Big_Island.tif # Path to elevation .tiff file, if default is .self.project_dir / attributes / elevation / dem / 
-DEM_NAME: Big_Island.tif                                      # Name of elevation .tiff file 
-SOIL_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/soilclass/soil_classes.tif                                      # Path to soil class .tiff file 
-SOIL_CLASS_NAME: soil_classes.tif                                     # Name of soil class .tiff file 
-LAND_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/landclass/7_mode_land_class/land_classes.tif                                      # Path to land class .tiff file 
-LAND_CLASS_NAME: land_classes.tif                                     # Name of soil class .tiff file 
-
 
 # Data cleanup settings
 UNIFY_SOIL: false                                              # Merge small soil areas
@@ -137,8 +125,6 @@ NUM_LAND_COVER: 20                                             # Number of land 
 
 # Other settings
 LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-LAND_CLASS_SOURCE: MERIT                                     # Source of land cover classifications, options: Landsat, MERIT
-
 
 ## Model settings
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, options: SUMMA, MESH (tbi), HYPE (tbi)
@@ -168,6 +154,9 @@ SETTINGS_SUMMA_MEM: 0
 SETTINGS_SUMMA_GRU_COUNT: 118
 SETTINGS_SUMMA_GRU_PER_JOB: 10
 SETTINGS_SUMMA_PARALLEL_EXE: summa.exe
+
+
+
 
 
 # Summaflow settings

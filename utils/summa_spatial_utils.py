@@ -24,7 +24,9 @@ from utils.logging_utils import get_function_logger # type: ignore
 
 class SummaPreProcessor_spatial:
     def __init__(self, config: Dict[str, Any], logger: Any):
+        
         """
+
         Initialize the SummaPreProcessor_spatial class.
 
         Args:
@@ -53,7 +55,9 @@ class SummaPreProcessor_spatial:
             parameter_name (str): Name of the trial parameters file.
             attribute_name (str): Name of the attributes file.
             forcing_measurement_height (float): Measurement height for forcing data.
+
         """
+
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
@@ -61,9 +65,8 @@ class SummaPreProcessor_spatial:
         self.hruId = self.config.get('CATCHMENT_SHP_HRUID')
         self.gruId = self.config.get('CATCHMENT_SHP_GRUID')
         self.domain_name = self.config.get('DOMAIN_NAME')
-        self.merged_forcing_path = self.project_dir / 'forcing' / 'merged_data'
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
-        self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / 'elevation.tif'
+        self.dem_path = self._get_default_path('DEM_PATH', f'attributes/elevation/dem/{self.config.get('DEM_NAME')}')
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
@@ -75,6 +78,8 @@ class SummaPreProcessor_spatial:
         self.parameter_name = self.config.get('SETTINGS_SUMMA_TRIALPARAMS')
         self.attribute_name = self.config.get('SETTINGS_SUMMA_ATTRIBUTES')
         self.forcing_measurement_height = float(self.config.get('FORCING_MEASUREMENT_HEIGHT'))
+        self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_data')
+
 
     @get_function_logger
     def run_preprocessing(self):
@@ -156,6 +161,7 @@ class SummaPreProcessor_spatial:
 
     @get_function_logger
     def process_forcing_data(self):
+
         """
         Process the forcing data for SUMMA.
 
@@ -171,13 +177,13 @@ class SummaPreProcessor_spatial:
         Raises:
             Exception: If any step in the forcing data processing fails.
         """
+
         self.logger.info("Starting forcing data processing")
 
         try:
             if self.config.get('FORCING_DATASET') == 'RDRS':
                 self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
                 self.logger.info("Forcings merged successfully")
-
 
             #self.convert_units_and_vars()
             self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
@@ -437,10 +443,17 @@ class SummaPreProcessor_spatial:
         # Set up source netcdf file
         forcing_files = sorted([f for f in self.merged_forcing_path.glob('*.nc')])
 
+        if self.config.get('FORCING_DATASET') == 'RDRS':
+            var_lat = 'lat'
+            var_lon = 'lon'
+        else:
+            var_lat = 'latitude'
+            var_lon = 'longitude'
+
         esmr.source_nc = str(forcing_files[0])
         esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
-        esmr.var_lat = 'lat'
-        esmr.var_lon = 'lon'
+        esmr.var_lat = var_lat 
+        esmr.var_lon = var_lon
         esmr.var_time = 'time'
 
         # Set up temporary and output directories
@@ -477,6 +490,13 @@ class SummaPreProcessor_spatial:
     def _create_all_weighted_forcing_files(self):
         self.logger.info("Creating all weighted forcing files")
 
+        if self.config.get('FORCING_DATASET') == 'RDRS':
+            var_lat = 'lat'
+            var_lon = 'lon'
+        else:
+            var_lat = 'latitude'
+            var_lon = 'longitude'
+
         # Initialize EASYMORE object
         esmr = easymore.easymore()
 
@@ -485,8 +505,8 @@ class SummaPreProcessor_spatial:
         esmr.case_name = f'{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}'
 
         esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
-        esmr.var_lat = 'lat'
-        esmr.var_lon = 'lon'
+        esmr.var_lat = var_lat
+        esmr.var_lon = var_lon
         esmr.var_time = 'time'
 
         esmr.temp_dir = ''
@@ -608,74 +628,144 @@ class SummaPreProcessor_spatial:
             ValueError: If there are issues with data extraction or processing.
             IOError: If there are issues writing the shapefile.
         """
-        self.logger.info("Starting to create RDRS shapefile")
-
-        # Find the first RDRS monthly file
-        forcing_file = next((f for f in os.listdir(self.merged_forcing_path) if f.endswith('.nc') and f.startswith('RDRS_monthly_')), None)
         
-        if not forcing_file:
-            self.logger.error("No RDRS monthly file found")
-            return
+        
 
-        # Read the RDRS file
-        with xr.open_dataset(self.merged_forcing_path / forcing_file) as ds:
-            rlat = ds.rlat.values
-            rlon = ds.rlon.values
-            lat = ds.lat.values
-            lon = ds.lon.values
+        if self.config.get('FORCING_DATASET') == 'RDRS':
+            self.logger.info("Starting to create RDRS shapefile")
 
-        # Create lists to store the data
-        geometries = []
-        ids = []
-        lats = []
-        lons = []
+            # Find the first monthly file
+            forcing_file = next((f for f in os.listdir(self.merged_forcing_path) if f.endswith('.nc') and f.startswith('RDRS_monthly_')), None)
+            
+            if not forcing_file:
+                self.logger.error("No RDRS monthly file found")
+                return
 
-        for i in range(len(rlat)):
-            for j in range(len(rlon)):
-                # Get the corners of the grid cell in rotated coordinates
-                rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
-                rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
-                
-                # Convert rotated coordinates to lat/lon
-                lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
-                               lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
-                               lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
-                lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
-                               lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
-                               lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
-                
-                # Create polygon
-                poly = Polygon(zip(lon_corners, lat_corners))
-                
-                # Append to lists
-                geometries.append(poly)
-                ids.append(i * len(rlon) + j)
-                lats.append(lat[i,j])
-                lons.append(lon[i,j])
+            # Read the forcing file
+            with xr.open_dataset(self.merged_forcing_path / forcing_file) as ds:
+                rlat = ds.rlat.values
+                rlon = ds.rlon.values
+                lat = ds.lat.values
+                lon = ds.lon.values
 
-        # Create the GeoDataFrame
-        gdf = gpd.GeoDataFrame({
-            'geometry': geometries,
-            'ID': ids,
-            self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-            self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-        }, crs='EPSG:4326')
+            # Create lists to store the data
+            geometries = []
+            ids = []
+            lats = []
+            lons = []
 
-        # Calculate zonal statistics (mean elevation) for each grid cell
-        zs = rasterstats.zonal_stats(gdf, str(self.dem_path), stats=['mean'])
+            for i in range(len(rlat)):
+                for j in range(len(rlon)):
+                    # Get the corners of the grid cell in rotated coordinates
+                    rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
+                    rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
+                    
+                    # Convert rotated coordinates to lat/lon
+                    lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
+                                lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
+                                lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
+                    lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
+                                lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
+                                lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
+                    
+                    # Create polygon
+                    poly = Polygon(zip(lon_corners, lat_corners))
+                    
+                    # Append to lists
+                    geometries.append(poly)
+                    ids.append(i * len(rlon) + j)
+                    lats.append(lat[i,j])
+                    lons.append(lon[i,j])
 
-        # Add mean elevation to the GeoDataFrame
-        gdf['elev_m'] = [item['mean'] for item in zs]
+            # Create the GeoDataFrame
+            gdf = gpd.GeoDataFrame({
+                'geometry': geometries,
+                'ID': ids,
+                self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
+                self.config.get('FORCING_SHAPE_LON_NAME'): lons,
+            }, crs='EPSG:4326')
 
-        # Drop columns that are on the edge and don't have elevation data
-        gdf.dropna(subset=['elev_m'], inplace=True)
+            # Calculate zonal statistics (mean elevation) for each grid cell
+            zs = rasterstats.zonal_stats(gdf, str(self.dem_path), stats=['mean'])
 
-        # Save the shapefile
-        self.shapefile_path.mkdir(parents=True, exist_ok=True)
-        output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
-        gdf.to_file(output_shapefile)
+            # Add mean elevation to the GeoDataFrame
+            gdf['elev_m'] = [item['mean'] for item in zs]
 
-        self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
+            # Drop columns that are on the edge and don't have elevation data
+            gdf.dropna(subset=['elev_m'], inplace=True)
+
+            # Save the shapefile
+            self.shapefile_path.mkdir(parents=True, exist_ok=True)
+            output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+            gdf.to_file(output_shapefile)
+
+            self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
+
+        elif self.config.get('FORCING_DATASET') == 'ERA5':
+            self.logger.info("Creating ERA5 shapefile")
+
+            # Find an .nc file in the forcing path
+            forcing_files = list(self.merged_forcing_path.glob('*.nc'))
+            if not forcing_files:
+                raise FileNotFoundError("No ERA5 forcing files found")
+            forcing_file = forcing_files[0]
+
+            # Set the dimension variable names
+            source_name_lat = "latitude"
+            source_name_lon = "longitude"
+
+            # Open the file and get the dimensions and spatial extent of the domain
+            with xr.open_dataset(forcing_file) as src:
+                lat = src[source_name_lat].values
+                lon = src[source_name_lon].values
+
+            # Find the spacing
+            half_dlat = abs(lat[1] - lat[0])/2
+            half_dlon = abs(lon[1] - lon[0])/2
+
+            # Create lists to store the data
+            geometries = []
+            ids = []
+            lats = []
+            lons = []
+
+            for i, center_lon in enumerate(lon):
+                for j, center_lat in enumerate(lat):
+                    vertices = [
+                        [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
+                        [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
+                        [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
+                        [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
+                        [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
+                    ]
+                    geometries.append(Polygon(vertices))
+                    ids.append(i * len(lat) + j)
+                    lats.append(float(center_lat))
+                    lons.append(float(center_lon))
+
+            # Create the GeoDataFrame
+            gdf = gpd.GeoDataFrame({
+                'geometry': geometries,
+                'ID': ids,
+                self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
+                self.config.get('FORCING_SHAPE_LON_NAME'): lons,
+            }, crs='EPSG:4326')
+
+            # Calculate zonal statistics (mean elevation) for each grid cell
+            zs = rasterstats.zonal_stats(gdf, str(self.dem_path), stats=['mean'])
+
+            # Add mean elevation to the GeoDataFrame
+            gdf['elev_m'] = [item['mean'] for item in zs]
+
+            # Drop columns that are on the edge and don't have elevation data
+            gdf.dropna(subset=['elev_m'], inplace=True)
+
+            # Save the shapefile
+            self.shapefile_path.mkdir(parents=True, exist_ok=True)
+            output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+            gdf.to_file(output_shapefile)
+
+            self.logger.info(f"ERA5 shapefile created and saved to {output_shapefile}")
 
     @get_function_logger
     def apply_timestep(self):
@@ -1194,74 +1284,187 @@ class SummaPreProcessor_spatial:
     def insert_soil_class(self, attribute_file):
         """Insert soil class data into the attributes file."""
         self.logger.info("Inserting soil class into attributes file")
-        gistool_output = self.project_dir / "attributes/soil_class"
-        soil_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_soil_classes.csv")
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
+            self._insert_soil_class_from_supplied(attribute_file)
+        
+            gistool_output = self.project_dir / "attributes/soil_class"
+            soil_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_soil_classes.csv")
 
-        with nc4.Dataset(attribute_file, "r+") as att:
-            for idx in range(len(att['hruId'])):
-                hru_id = att['hruId'][idx]
-                soil_row = soil_stats[soil_stats[self.hruId] == hru_id]
-                if not soil_row.empty:
-                    soil_class = soil_row['majority'].values[0]
-                    att['soilTypeIndex'][idx] = soil_class
-                    self.logger.info(f"Set soil class for HRU {hru_id} to {soil_class}")
-                else:
-                    self.logger.warning(f"No soil data found for HRU {hru_id}")
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    hru_id = att['hruId'][idx]
+                    soil_row = soil_stats[soil_stats[self.hruId] == hru_id]
+                    if not soil_row.empty:
+                        soil_class = soil_row['majority'].values[0]
+                        att['soilTypeIndex'][idx] = soil_class
+                        self.logger.info(f"Set soil class for HRU {hru_id} to {soil_class}")
+                    else:
+                        self.logger.warning(f"No soil data found for HRU {hru_id}")
+
+        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+            """Insert soil class data from supplied intersection file."""
+            intersect_path = self._get_default_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
+            intersect_name = self.config.get('INTERSECT_SOIL_NAME')
+            intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
+
+            shp = gpd.read_file(intersect_path / intersect_name)
+
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    attribute_hru = att['hruId'][idx]
+                    shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
+                    
+                    tmp_hist = []
+                    for j in range(13):
+                        col_name = f'USGS_{j}'
+                        if col_name in shp.columns:
+                            tmp_hist.append(shp[col_name][shp_mask].values[0])
+                        else:
+                            tmp_hist.append(0)
+                    
+                    tmp_hist[0] = -1
+                    tmp_sc = np.argmax(np.asarray(tmp_hist))
+                    
+                    if shp[f'USGS_{tmp_sc}'][shp_mask].values != tmp_hist[tmp_sc]:
+                        self.logger.warning(f'Index and mode soil class do not match at hru_id {attribute_hru}')
+                        tmp_sc = -999
+                    
+                    self.logger.info(f'Replacing soil class {att['soilTypeIndex'][idx]} with {tmp_sc} at HRU {attribute_hru}')
+                    att['soilTypeIndex'][idx] = tmp_sc
 
     def insert_land_class(self, attribute_file):
         """Insert land class data into the attributes file."""
         self.logger.info("Inserting land class into attributes file")
-        gistool_output = self.project_dir / "attributes/land_class"
-        land_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_NA_NALCMS_landcover_2020_30m.csv")
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
+            gistool_output = self.project_dir / "attributes/land_class"
+            land_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_NA_NALCMS_landcover_2020_30m.csv")
 
-        with nc4.Dataset(attribute_file, "r+") as att:
-            for idx in range(len(att['hruId'])):
-                hru_id = att['hruId'][idx]
-                land_row = land_stats[land_stats[self.hruId] == hru_id]
-                if not land_row.empty:
-                    land_class = land_row['majority'].values[0]
-                    att['vegTypeIndex'][idx] = land_class
-                    self.logger.info(f"Set land class for HRU {hru_id} to {land_class}")
-                else:
-                    self.logger.warning(f"No land data found for HRU {hru_id}")
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    hru_id = att['hruId'][idx]
+                    land_row = land_stats[land_stats[self.hruId] == hru_id]
+                    if not land_row.empty:
+                        land_class = land_row['majority'].values[0]
+                        att['vegTypeIndex'][idx] = land_class
+                        self.logger.info(f"Set land class for HRU {hru_id} to {land_class}")
+                    else:
+                        self.logger.warning(f"No land data found for HRU {hru_id}")
+        
+        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+            """Insert land class data from supplied intersection file."""
+            intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
+            intersect_name = self.config.get('INTERSECT_LAND_NAME')
+            intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
+
+            shp = gpd.read_file(intersect_path / intersect_name)
+
+            is_water = 0
+
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    attribute_hru = att['hruId'][idx]
+                    shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
+                    
+                    tmp_hist = []
+                    for j in range(1, 18):
+                        col_name = f'IGBP_{j}'
+                        if col_name in shp.columns:
+                            tmp_hist.append(shp[col_name][shp_mask].values[0])
+                        else:
+                            tmp_hist.append(0)
+                    
+                    tmp_lc = np.argmax(np.asarray(tmp_hist)) + 1
+                    
+                    if shp[f'IGBP_{tmp_lc}'][shp_mask].values != tmp_hist[tmp_lc - 1]:
+                        self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
+                        tmp_lc = -999
+                    
+                    if tmp_lc == 17:
+                        if any(val > 0 for val in tmp_hist[0:-1]):  # HRU is mostly water but other land classes are present
+                            tmp_lc = np.argmax(np.asarray(tmp_hist[0:-1])) + 1  # select 2nd-most common class
+                        else:
+                            is_water += 1  # HRU is exclusively water
+                    
+                    self.logger.info(f'Replacing land class {att['vegTypeIndex'][idx]} with {tmp_lc} at HRU {attribute_hru}')
+                    att['vegTypeIndex'][idx] = tmp_lc
+
+                self.logger.info(f'{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.')
+
 
     def insert_elevation(self, attribute_file):
         """Insert elevation data into the attributes file."""
         self.logger.info("Inserting elevation into attributes file")
-        gistool_output = self.project_dir / "attributes/elevation"
-        elev_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_elv.csv")
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
+            gistool_output = self.project_dir / "attributes/elevation"
+            elev_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_elv.csv")
 
-        do_downHRUindex = self.config.get('SETTINGS_SUMMA_CONNECT_HRUS') == 'yes'
+            do_downHRUindex = self.config.get('SETTINGS_SUMMA_CONNECT_HRUS') == 'yes'
 
-        with nc4.Dataset(attribute_file, "r+") as att:
-            gru_data = {}
-            for idx in range(len(att['hruId'])):
-                hru_id = att['hruId'][idx]
-                gru_id = att['hru2gruId'][idx]
-                elev_row = elev_stats[elev_stats[self.hruId] == hru_id]
-                if not elev_row.empty:
-                    elevation = elev_row['mean'].values[0]
-                    att['elevation'][idx] = elevation
-                    self.logger.info(f"Set elevation for HRU {hru_id} to {elevation}")
+            with nc4.Dataset(attribute_file, "r+") as att:
+                gru_data = {}
+                for idx in range(len(att['hruId'])):
+                    hru_id = att['hruId'][idx]
+                    gru_id = att['hru2gruId'][idx]
+                    elev_row = elev_stats[elev_stats[self.hruId] == hru_id]
+                    if not elev_row.empty:
+                        elevation = elev_row['mean'].values[0]
+                        att['elevation'][idx] = elevation
+                        self.logger.info(f"Set elevation for HRU {hru_id} to {elevation}")
 
-                    if do_downHRUindex:
-                        if gru_id not in gru_data:
-                            gru_data[gru_id] = []
-                        gru_data[gru_id].append((hru_id, elevation))
+                        if do_downHRUindex:
+                            if gru_id not in gru_data:
+                                gru_data[gru_id] = []
+                            gru_data[gru_id].append((hru_id, elevation))
+                    else:
+                        self.logger.warning(f"No elevation data found for HRU {hru_id}")
+
+                if do_downHRUindex:
+                    self._set_downHRUindex(att, gru_data)
+       
+        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+            """Insert elevation data from supplied intersection file."""
+            intersect_path = self._get_default_path('INTERSECT_ELEV_PATH', 'shapefiles/catchment_intersection/with_dem')
+            intersect_name = self.config.get('INTERSECT_ELEV_NAME')
+            intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
+            elev_column = self.config.get('INTERSECT_ELEV_COLUMN', 'elev_mean')
+
+            shp = gpd.read_file(intersect_path / intersect_name)
+
+            do_downHRUindex = self.config.get('SETTINGS_SUMMA_CONNECT_HRUS') == 'yes'
+
+            with nc4.Dataset(attribute_file, "r+") as att:
+                gru_data = {}
+                for idx in range(len(att['hruId'])):
+                    hru_id = att['hruId'][idx]
+                    gru_id = att['hru2gruId'][idx]
+                    shp_mask = (shp[intersect_hruId_var].astype(int) == hru_id)
+                    
+                    if any(shp_mask):
+                        elevation = shp[elev_column][shp_mask].values[0]
+                        att['elevation'][idx] = elevation
+                        self.logger.info(f"Set elevation for HRU {hru_id} to {elevation}")
+
+                        if do_downHRUindex:
+                            if gru_id not in gru_data:
+                                gru_data[gru_id] = []
+                            gru_data[gru_id].append((hru_id, elevation))
+                    else:
+                        self.logger.warning(f"No elevation data found for HRU {hru_id}")
+
+                if do_downHRUindex:
+                    self._set_downHRUindex(att, gru_data)
+
+    def _set_downHRUindex(self, att, gru_data):
+        """Set the downHRUindex based on elevation data."""
+        for gru_id, hru_list in gru_data.items():
+            sorted_hrus = sorted(hru_list, key=lambda x: x[1], reverse=True)
+            for i, (hru_id, _) in enumerate(sorted_hrus):
+                idx = np.where(att['hruId'][:] == hru_id)[0][0]
+                if i == len(sorted_hrus) - 1:
+                    att['downHRUindex'][idx] = 0  # outlet
                 else:
-                    self.logger.warning(f"No elevation data found for HRU {hru_id}")
-
-            if do_downHRUindex:
-                for gru_id, hru_list in gru_data.items():
-                    sorted_hrus = sorted(hru_list, key=lambda x: x[1], reverse=True)
-                    for i, (hru_id, _) in enumerate(sorted_hrus):
-                        idx = np.where(att['hruId'][:] == hru_id)[0][0]
-                        if i == len(sorted_hrus) - 1:
-                            att['downHRUindex'][idx] = 0  # outlet
-                        else:
-                            att['downHRUindex'][idx] = sorted_hrus[i+1][0]
-                        self.logger.info(f"Set downHRUindex for HRU {hru_id} to {att['downHRUindex'][idx]}")
-
+                    att['downHRUindex'][idx] = sorted_hrus[i+1][0]
+                self.logger.info(f"Set downHRUindex for HRU {hru_id} to {att['downHRUindex'][idx]}")
 
     def _get_default_path(self, path_key: str, default_subpath: str) -> Path:
         """

@@ -39,11 +39,11 @@ class DomainDiscretizer:
 
         delineation_method = self.config.get('DOMAIN_DEFINITION_METHOD')
 
-        if delineation_method == 'delineate_geofabric':
-            self.delineation_suffix = 'delineated'
-        elif delineation_method == 'lumped_watershed':
+        if delineation_method == 'delineate':
+            self.delineation_suffix = 'delineate'
+        elif delineation_method == 'lumped':
             self.delineation_suffix = 'lumped'
-        elif delineation_method == 'subset_geofabric':
+        elif delineation_method == 'subset':
             self.delineation_suffix = self.config.get('GEOFABRIC_TYPE')
         
     def sort_catchment_shape(self):
@@ -82,7 +82,7 @@ class DomainDiscretizer:
         self.logger.info(f"Starting domain discretization using method: {discretization_method}")
 
         method_map = {
-            'GRUs': self._use_grus_as_hrus,
+            'grus': self._use_grus_as_hrus,
             'elevation': self._discretize_by_elevation,
             'soilclass': self._discretize_by_soil_class,
             'landclass': self._discretize_by_land_class,
@@ -107,18 +107,42 @@ class DomainDiscretizer:
         """
         self.logger.info(f"config domain name {self.config.get('DOMAIN_NAME')}")
         gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
-        hru_output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_as_GRUs.shp")
+        hru_output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_GRUs.shp")
 
         gru_gdf = self._read_shapefile(gru_shapefile)
-        gru_gdf['hruNo'] = range(1, len(gru_gdf) + 1)
+        gru_gdf['HRU_ID'] = range(1, len(gru_gdf) + 1)
         gru_gdf['area'] = gru_gdf.to_crs(gru_gdf.estimate_utm_crs()).area / 1e6  # area in km²
         gru_gdf['hru_type'] = 'GRU'
+
+        # Calculate mean elevation for each HRU
+        self.logger.info("Calculating mean elevation for each HRU")
+        with rasterio.open(self.dem_path) as src:
+            dem_data = src.read(1)
+            dem_affine = src.transform
+
+        # Use rasterstats to calculate zonal statistics
+        zs = rasterstats.zonal_stats(gru_gdf.geometry, dem_data, affine=dem_affine, stats=['mean'])
+        gru_gdf['elev_mean'] = [item['mean'] for item in zs]
+        
+        centroids_utm = gru_gdf.geometry.centroid
+        centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
+        
+        gru_gdf['center_lon'] = centroids_wgs84.x
+        gru_gdf['center_lat'] = centroids_wgs84.y
+        
+        if 'COMID' in gru_gdf.columns:
+            gru_gdf['GRU_ID'] = gru_gdf['COMID']
+        elif 'fid' in gru_gdf.columns:
+            gru_gdf['GRU_ID'] = gru_gdf['fid']
+
+        gru_gdf['HRU_area'] = gru_gdf['GRU_area']
+        #gru_gdf['HRU_ID'] = gru_gdf['GRU_ID']        
 
         gru_gdf.to_file(hru_output_shapefile)
         self.logger.info(f"GRUs saved as HRUs to {hru_output_shapefile}")
 
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_as_GRUs.png")
-        self._plot_hrus(gru_gdf, output_plot, 'hruNo', 'GRUs = HRUs')
+        self._plot_hrus(gru_gdf, output_plot, 'HRU_ID', 'GRUs = HRUs')
         return hru_output_shapefile
 
     def _discretize_by_elevation(self):
@@ -141,7 +165,6 @@ class DomainDiscretizer:
 
         elevation_band_size = float(self.config.get('ELEVATION_BAND_SIZE'))
         min_hru_size = float(self.config.get('MIN_HRU_SIZE'))
-
         gru_gdf, elevation_thresholds = self._read_and_prepare_data(gru_shapefile, dem_raster, elevation_band_size)
         hru_gdf = self._process_hrus(gru_gdf, dem_raster, elevation_thresholds, 'elevClass')
 
@@ -206,7 +229,7 @@ class DomainDiscretizer:
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_landclass.png")
 
         min_hru_size = float(self.config.get('MIN_HRU_SIZE'))
-        print(gru_shapefile)
+
         gru_gdf, land_classes = self._read_and_prepare_data(gru_shapefile, land_raster)
         hru_gdf = self._process_hrus(gru_gdf, land_raster, land_classes, 'landClass')
 
@@ -548,7 +571,7 @@ class DomainDiscretizer:
                         hru_gdf_utm.at[nearest_hru, 'area'] = merged_geom.area / 1_000_000
         
         hru_gdf_utm = hru_gdf_utm.reset_index(drop=True)
-        hru_gdf_utm['hruNo'] = range(1, len(hru_gdf_utm) + 1)
+        hru_gdf_utm['HRU_ID'] = range(1, len(hru_gdf_utm) + 1)
         hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
         hru_gdf_utm['area'] = hru_gdf_utm.geometry.area / 1_000_000
         

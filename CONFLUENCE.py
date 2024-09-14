@@ -8,7 +8,7 @@ from shapely.geometry import Point # type: ignore
 from mpi4py import MPI # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataCleanupProcessor # type: ignore  
+from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 from utils.optimization_utils import Optimizer # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
@@ -64,7 +64,7 @@ class CONFLUENCE:
         self.setup_logging()
 
     def setup_logging(self):
-        log_dir = self.data_dir / 'logs'
+        log_dir = self.project_dir / f'_workLog_{self.config.get('DOMAIN_NAME')}'
         log_dir.mkdir(parents=True, exist_ok=True)
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = log_dir / f'confluence_general_{self.domain_name}_{current_time}.log'
@@ -92,6 +92,8 @@ class CONFLUENCE:
         riverNetwork_dir.mkdir(parents=True, exist_ok=True)
         riverBasins_dir = shapefile_dir / f"river_basins"
         riverBasins_dir.mkdir(parents=True, exist_ok=True)
+        Q_observations_dir = self.project_dir / 'observations' / 'streamflow' / 'raw_data'
+        Q_observations_dir.mkdir(parents=True, exist_ok=True)
 
         self.logger.info(f"shapefiles directories created at {shapefile_dir},\n {pourPoint_dir},\n {catchment_dir},\n {riverNetwork_dir},\n {riverBasins_dir}")
         
@@ -134,18 +136,8 @@ class CONFLUENCE:
         return None
 
     @get_function_logger
-    def define_domain(self):
+    def discretize_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-        
-        if domain_method == 'subset_geofabric':
-            self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'lumped_watershed':
-            self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'delineate_geofabric':
-            self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        else:
-            self.logger.error(f"Unknown domain definition method: {domain_method}")
-
         domain_discretizer = DomainDiscretizer(self.config, self.logger)
         hru_shapefile = domain_discretizer.discretize_domain()
         if hru_shapefile:
@@ -155,6 +147,18 @@ class CONFLUENCE:
 
         self.logger.info(f"Domain to be defined using method {domain_method}")
 
+    @get_function_logger
+    def define_domain(self):
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+        
+        if domain_method == 'subset':
+            self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        elif domain_method == 'lumped':
+            self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        elif domain_method == 'delineate':
+            self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        else:
+            self.logger.error(f"Unknown domain definition method: {domain_method}")
 
     @get_function_logger
     def subset_geofabric(self):
@@ -198,26 +202,22 @@ class CONFLUENCE:
         self.logger.info("Starting input data processing")
         
         # Create DataAcquisitionProcessor instance
-        data_acquisition = DataAcquisitionProcessor(self.config, self.logger)
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
+            self.logger.info('Data acquisition set to HPC')
+            data_acquisition = DataAcquisitionProcessor(self.config, self.logger)
+            
+            # Run data acquisition
+            try:
+                data_acquisition.run_data_acquisition()
+            except Exception as e:
+                self.logger.error(f"Error during data acquisition: {str(e)}")
+                raise
         
-        # Run data acquisition
-        try:
-            data_acquisition.run_data_acquisition()
-        except Exception as e:
-            self.logger.error(f"Error during data acquisition: {str(e)}")
-            raise
-        
-        # Create DataCleanupProcessor instance
-        data_cleanup = DataCleanupProcessor(self.config, self.logger)
-        
-        # Run data cleanup and checks
-        try:
-            pass
-            #data_cleanup.cleanup_and_checks()
-        except Exception as e:
-            self.logger.error(f"Error during data cleanup: {str(e)}")
-            raise
-        
+        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+            self.logger.info('Model input data set to supplied by user')
+            data_preprocessor = DataPreProcessor(self.config, self.logger)
+            data_preprocessor.process_zonal_statistics()
+            
         self.logger.info("Input data processing completed")
 
     @get_function_logger
@@ -279,14 +279,15 @@ class CONFLUENCE:
         
         # Define the workflow steps and their output checks
         workflow_steps = [
-            (self.setup_project, self.project_dir.exists),
+            (self.setup_project, (self.project_dir / 'catchment').exists),
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
+            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
-            (self.calibrate_model, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}_rank1" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_rank1_timestep.nc").exists()),
+            (self.calibrate_model, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}_rank1" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_rank87_timestep.nc").exists()),
         ]
         
         for step_func, check_func in workflow_steps:

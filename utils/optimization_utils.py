@@ -12,6 +12,8 @@ from utils.optimisation_algorithms import ( # type: ignore
     run_nsga2, run_nsga3, run_moead, run_smsemoa, run_mopso, run_borg_moea,
     get_algorithm_kwargs
 )
+from utils.calibration_utils import read_param_bounds # type: ignore
+from utils.ostrich_util import OstrichOptimizer # type: ignore
 
 class Optimizer:
     def __init__(self, config: Dict[str, Any], logger: Any, comm: MPI.Comm, rank: int):
@@ -27,6 +29,20 @@ class Optimizer:
             self.results.create_iteration_results_file()
         
         self.results.iteration_results_file = self.comm.bcast(self.results.iteration_results_file, root=0)
+
+        #Get the parameters to calibrate and their bounds
+        local_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f'domain_{self.config.get('DOMAIN_NAME')}' / 'settings/summa/localParamInfo.txt'
+        basin_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f'domain_{self.config.get('DOMAIN_NAME')}' / 'settings/summa/basinParamInfo.txt'
+        params_to_calibrate = self.config.get('PARAMS_TO_CALIBRATE').split(',')
+        basin_params_to_calibrate = self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
+
+
+        local_bounds_dict = read_param_bounds(local_parameters_file, params_to_calibrate)
+        basin_bounds_dict = read_param_bounds(basin_parameters_file, basin_params_to_calibrate)
+        local_bounds = [local_bounds_dict[param] for param in params_to_calibrate]
+        basin_bounds = [basin_bounds_dict[param] for param in basin_params_to_calibrate]
+        self.all_bounds = local_bounds + basin_bounds
+
 
     @get_function_logger
     def run_optimization(self) -> Union[Tuple[List[float], float], Tuple[List[List[float]], List[List[float]]]]:
@@ -85,9 +101,9 @@ class Optimizer:
                         if self.rank == 0:
                             self.results.process_iteration_results(params, result)
                     else:
-                        chunk_results.append([float('inf')] * len(self.config.optimization_metrics))
+                        chunk_results.append([float('inf')] * len(self.config.get('MOO_OPTIMIZATION_METRICS').split(',')))
                 else:
-                    chunk_results.append([float('inf')] * len(self.config.optimization_metrics))
+                    chunk_results.append([float('inf')] * len(self.config.get('MOO_OPTIMIZATION_METRICS').split(',')))
             
             results.extend(chunk_results)
 
@@ -103,16 +119,16 @@ class Optimizer:
             "DDS": run_dds
         }
         
-        algorithm_func = algorithm_funcs.get(self.config.algorithm)
+        algorithm_func = algorithm_funcs.get(self.config.get('OPTMIZATION_ALOGORITHM'))
         if algorithm_func is None:
-            raise ValueError(f"Unknown single-objective optimization algorithm: {self.config.algorithm}")
+            raise ValueError(f"Unknown single-objective optimization algorithm: {self.config.get('OPTMIZATION_ALOGORITHM')}")
 
         kwargs = get_algorithm_kwargs(self.config, self.size)
-        self.logger.info(f"{self.config.algorithm} parameters: {kwargs}")
+        self.logger.info(f"{self.config.get('OPTMIZATION_ALOGORITHM')} parameters: {kwargs}")
         
         best_params, best_value = algorithm_func(
             self.parallel_objective_function,
-            self.config.all_bounds,
+            self.all_bounds,
             **kwargs
         )
 
@@ -144,7 +160,7 @@ class Optimizer:
         
         best_params, best_values = algorithm_func(
             self.parallel_objective_function,
-            self.config.all_bounds,
+            self.all_bounds,
             n_obj,
             **kwargs
         )
@@ -157,5 +173,5 @@ class Optimizer:
         return best_params, best_values
 
     def run_ostrich_optimization(self) -> Tuple[List[float], float]:
-        # Implementation of OSTRICH optimization
-        pass
+        optimizer = OstrichOptimizer(self.config, self.logger)
+        optimizer.run_optimization()
