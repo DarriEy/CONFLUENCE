@@ -23,7 +23,8 @@ from pymoo.algorithms.soo.nonconvex.de import DE # type: ignore
 from pymoo.algorithms.soo.nonconvex.pso import PSO # type: ignore
 from mpi4py import MPI # type: ignore
 import logging
-
+from utils.calibration_utils import read_param_bounds # type: ignore
+from pathlib import Path
 
 class OptimizationAlgorithm(ABC):
     @abstractmethod
@@ -788,6 +789,19 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
     population_size = max(config.get('POPULATION_SIZE'), num_workers * 2)  # Ensure at least 2 evaluations per worker
     algorithm = config.get('OPTMIZATION_ALOGORITHM')
     num_iter = config.get('NUMBER_OF_ITERATIONS')
+ 
+    local_parameters_file = Path(config.get('CONFLUENCE_DATA_DIR')) / f'domain_{config.get('DOMAIN_NAME')}' / 'settings/summa/localParamInfo.txt'
+    basin_parameters_file = Path(config.get('CONFLUENCE_DATA_DIR')) / f'domain_{config.get('DOMAIN_NAME')}' / 'settings/summa/basinParamInfo.txt'
+    params_to_calibrate = config.get('PARAMS_TO_CALIBRATE').split(',')
+    basin_params_to_calibrate = config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
+
+
+    local_bounds_dict = read_param_bounds(local_parameters_file, params_to_calibrate)
+    basin_bounds_dict = read_param_bounds(basin_parameters_file, basin_params_to_calibrate)
+    local_bounds = [local_bounds_dict[param] for param in params_to_calibrate]
+    basin_bounds = [basin_bounds_dict[param] for param in basin_params_to_calibrate]
+    all_bounds = local_bounds + basin_bounds
+
     kwargs: Dict[str, Any] = {}
 
     if algorithm == "DE":
@@ -811,7 +825,7 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
     elif algorithm == "SCE-UA":
             kwargs.update({
                 "repetitions": num_iter,
-                "npg": 2 * len(config.all_bounds) + 1,  # Number of points in each complex
+                "npg": 2 * len(all_bounds) + 1,  # Number of points in each complex
                 "kstop": 10,
                 "peps": 0.001,
                 "pcento": 0.1,
@@ -826,7 +840,7 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
         })
     elif algorithm == "DDS":
         kwargs.update({
-            "r": config.dds_r,
+            "r": config.get('DDS_R'),
             "maxiter": num_iter,
         })
     elif algorithm in ["NSGA-II", "NSGA-III"]:

@@ -51,6 +51,13 @@ class GeofabricDelineator:
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
         self.interim_dir = self.project_dir / "taudem-interim-files" / "d8"
+        self.dem_path = self.config.get('DEM_PATH')
+
+        if self.dem_path == 'default':
+            self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / self.config.get('DEM_NAME')
+        else:
+            self.dem_path = Path(self.dem_path)
+        
 
     def run_command(self, command: str):
         try:
@@ -73,12 +80,6 @@ class GeofabricDelineator:
         self.check_versions()
         self.create_directories()
 
-        dem_path = self.config.get('DEM_PATH')
-
-        if dem_path == 'default':
-            dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / 'elevation.tif'
-        
-
         pour_point_path = self.config.get('POUR_POINT_SHP_PATH')
 
         if pour_point_path == 'default':
@@ -90,7 +91,7 @@ class GeofabricDelineator:
             pour_point_path = pour_point_path / f"{self.domain_name}_pourPoint.shp"
 
         self.pour_point_path = pour_point_path
-        self.run_taudem_steps(dem_path, pour_point_path)
+        self.run_taudem_steps(self.dem_path, pour_point_path)
         self.run_gdal_processing()
 
         self.logger.info(f"Geofabric delineation completed for {self.domain_name}")
@@ -191,12 +192,12 @@ class GeofabricDelineator:
             subset_rivers_path = self.config.get('OUTPUT_RIVERS_PATH')
             
             if subset_basins_path == 'default':
-                subset_basins_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_delineated.shp"
+                subset_basins_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_delineate.shp"
             else:
                 subset_basins_path = Path(self.config['OUTPUT_BASINS_PATH'])
 
             if subset_rivers_path == 'default':
-                subset_rivers_path = self.project_dir / "shapefiles" / "river_network" / f"{self.domain_name}_riverNetwork_delineated.shp"
+                subset_rivers_path = self.project_dir / "shapefiles" / "river_network" / f"{self.domain_name}_riverNetwork_delineate.shp"
             else:
                 subset_rivers_path = Path(self.config['OUTPUT_RIVERS_PATH'])
 
@@ -513,12 +514,12 @@ class GeofabricSubsetter:
             subset_rivers (gpd.GeoDataFrame): Subset of rivers to save.
         """
         if self.config['OUTPUT_BASINS_PATH'] == 'default':
-            output_basins_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('GEOFABRIC_TYPE')}.shp"
+            output_basins_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_subset_{self.config.get('GEOFABRIC_TYPE')}.shp"
         else:
             output_basins_path = Path(self.config['OUTPUT_BASINS_PATH'])
 
         if self.config['OUTPUT_RIVERS_PATH'] == 'default':
-            output_rivers_path = self.project_dir / "shapefiles" / "river_network" / f"{self.domain_name}_riverNetwork{self.config.get('GEOFABRIC_TYPE')}.shp"
+            output_rivers_path = self.project_dir / "shapefiles" / "river_network" / f"{self.domain_name}_riverNetwork_subset_{self.config.get('GEOFABRIC_TYPE')}.shp"
         else:
             output_rivers_path = Path(self.config['OUTPUT_RIVERS_PATH'])
 
@@ -582,11 +583,6 @@ class LumpedWatershedDelineator:
             Optional[Path]: Path to the delineated watershed shapefile, or None if delineation fails.
         """
         self.logger.info(f"Starting lumped watershed delineation for {self.domain_name}")
-
-        dem_path = self.config.get('DEM_PATH')
-
-        if dem_path == 'default':
-            dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / 'elevation.tif'
             
         pour_point_path = self.config.get('POUR_POINT_SHP_PATH')
 
@@ -600,10 +596,6 @@ class LumpedWatershedDelineator:
 
         self.pour_point_path = pour_point_path
 
-        if not dem_path.is_file():
-            self.logger.error(f"DEM file not found: {dem_path}")
-            return None
-
         if not pour_point_path.is_file():
             self.logger.error(f"Pour point file not found: {pour_point_path}")
             return None
@@ -613,7 +605,7 @@ class LumpedWatershedDelineator:
 
         # TauDEM processing steps for lumped watershed delineation
         steps = [
-            f"mpirun -n {self.mpi_processes} pitremove -z {dem_path} -fel {self.output_dir}/fel.tif",
+            f"mpirun -n {self.mpi_processes} pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
             f"mpirun -n {self.mpi_processes} d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
             f"mpirun -n {self.mpi_processes} aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
             f"mpirun -n {self.mpi_processes} threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
