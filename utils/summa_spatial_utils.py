@@ -1423,10 +1423,10 @@ class SummaPreProcessor_spatial:
        
         elif self.config.get('DATA_ACQUIRE') == 'supplied':
             """Insert elevation data from supplied intersection file."""
-            intersect_path = self._get_default_path('INTERSECT_ELEV_PATH', 'shapefiles/catchment_intersection/with_dem')
-            intersect_name = self.config.get('INTERSECT_ELEV_NAME')
+            intersect_path = self._get_default_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
+            intersect_name = self.config.get('INTERSECT_DEM_NAME')
             intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
-            elev_column = self.config.get('INTERSECT_ELEV_COLUMN', 'elev_mean')
+            elev_column ='elev_mean'
 
             shp = gpd.read_file(intersect_path / intersect_name)
 

@@ -6,7 +6,7 @@
 # Model domain settings
 CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
-DOMAIN_NAME: "Alakahi"
+DOMAIN_NAME: "Honolii"
 
 # Computatational settings
 MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
@@ -32,7 +32,7 @@ SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/
 SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/shapefiles/river_network/Hawaii_nhd_flowline.shp                                   # Path to source geofabric rivers
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
-OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
+OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/
 STREAM_THRESHOLD: 22500                                          # Threshold flow accumulation for stream vectorisation
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
@@ -50,7 +50,7 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 ## Shapefile settings
 # Shapefile settings - SUMMA catchment shape
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile
-CATCHMENT_SHP_NAME: Alakahi_HRUs_GRUs.shp                    # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: Honolii_HRUs_GRUs.shp                    # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -59,14 +59,14 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - mizuroute catchment shape 
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile
-RIVER_BASINS_NAME: Alakahi_riverBasins_delineate.shp        # Name of river basin shapefile
+RIVER_BASINS_NAME: Honolii_riverBasins_delineate.shp        # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                                # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                              # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                     # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - mizuroute riverNetwork shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile
-RIVER_NETWORK_SHP_NAME: Alakahi_riverNetwork_delineate.shp        # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: Honolii_riverNetwork_delineate.shp        # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
@@ -75,7 +75,7 @@ RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slo
 # Shapefile settings - Pour point settings
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
-POUR_POINT_COORDS: 20.0710831/-155.6707458                             # Pour point coordinates lat/lon, if default use user provided shapefile. 
+POUR_POINT_COORDS: 19.7643337/-155.1518402                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
 
 # Intersection settings
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
@@ -137,8 +137,8 @@ NUM_LAND_COVER: 20                                             # Number of land 
 
 # Other settings
 LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-LAND_CLASS_SOURCE: MERIT                                     # Source of land cover classifications, options: Landsat, MERIT
-
+LAND_CLASS_SOURCE: MERIT                                      # Source of land cover classifications, options: Landsat, MERIT
+ 
 
 ## Model settings
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, options: SUMMA, MESH (tbi), HYPE (tbi)
@@ -203,7 +203,6 @@ SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings
 INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path
 EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
-
 
 
 

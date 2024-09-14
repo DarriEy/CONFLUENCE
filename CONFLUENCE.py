@@ -8,7 +8,7 @@ from shapely.geometry import Point # type: ignore
 from mpi4py import MPI # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor # type: ignore  
+from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 from utils.optimization_utils import Optimizer # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
@@ -60,8 +60,8 @@ class CONFLUENCE:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-
         self.setup_logging()
+        self.project_initialisation = ProjectInitialisation(self.config, self.logger)
 
     def setup_logging(self):
         log_dir = self.project_dir / f'_workLog_{self.config.get('DOMAIN_NAME')}'
@@ -73,67 +73,28 @@ class CONFLUENCE:
     @get_function_logger
     def setup_project(self):
         self.logger.info(f"Setting up project for domain: {self.domain_name}")
-
-        # Create project directory and 
-        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        self.project_dir.mkdir(parents=True, exist_ok=True)
-
-        # Log to both the general logger and the function-specific logger
-        self.logger.info(f"Project directory created at: {self.project_dir}")
         
-        # Create shapefile directory and required sub-directories
-        shapefile_dir = self.project_dir / f"shapefiles"
-        shapefile_dir.mkdir(parents=True, exist_ok=True)
-        pourPoint_dir = shapefile_dir / f"pour_point"
-        pourPoint_dir.mkdir(parents=True, exist_ok=True)
-        catchment_dir = shapefile_dir / f"catchment"
-        catchment_dir.mkdir(parents=True, exist_ok=True)
-        riverNetwork_dir = shapefile_dir / f"river_network"
-        riverNetwork_dir.mkdir(parents=True, exist_ok=True)
-        riverBasins_dir = shapefile_dir / f"river_basins"
-        riverBasins_dir.mkdir(parents=True, exist_ok=True)
-        Q_observations_dir = self.project_dir / 'observations' / 'streamflow' / 'raw_data'
-        Q_observations_dir.mkdir(parents=True, exist_ok=True)
-
-        self.logger.info(f"shapefiles directories created at {shapefile_dir},\n {pourPoint_dir},\n {catchment_dir},\n {riverNetwork_dir},\n {riverBasins_dir}")
+        project_dir = self.project_initialisation.setup_project()
         
-        return self.project_dir
+        self.logger.info(f"Project directory created at: {project_dir}")
+        self.logger.info(f"shapefiles directories created")
+        
+        return project_dir
 
     @get_function_logger
     def create_pourPoint(self):
-
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
             self.logger.info("Using user-provided pour point shapefile")
             return None
         
-        try:
-            lat, lon = map(float, self.config['POUR_POINT_COORDS'].split('/'))
-            point = Point(lon, lat)
-            gdf = gpd.GeoDataFrame({'geometry': [point]}, crs="EPSG:4326")
-            
-            if self.config.get('POUR_POINT_SHP_PATH') == 'default':
-                output_path = self.project_dir / "shapefiles" / "pour_point"
-            else:
-                output_path = Path(self.config['POUR_POINT_SHP_PATH'])
-            
-            self.logger.info(f"Creating pour point shapefile in {output_path}")
-           
-            pour_point_shp_name = self.config.get('POUR_POINT_SHP_NAME')
-            if pour_point_shp_name == 'default':
-                pour_point_shp_name = f"{self.domain_name}_pourPoint.shp"
-            
-            output_path.mkdir(parents=True, exist_ok=True)
-            output_file = output_path / pour_point_shp_name
-            
-            gdf.to_file(output_file)
-            self.logger.info(f"Pour point shapefile created successfully: {output_file}")
-            return output_file
-        except ValueError:
-            self.logger.error("Invalid pour point coordinates format. Expected 'lat/lon'.")
-        except Exception as e:
-            self.logger.error(f"Error creating pour point shapefile: {str(e)}")
+        output_file = self.project_initialisation.create_pourPoint()
         
-        return None
+        if output_file:
+            self.logger.info(f"Pour point shapefile created successfully: {output_file}")
+        else:
+            self.logger.error("Failed to create pour point shapefile")
+        
+        return output_file
 
     @get_function_logger
     def discretize_domain(self):
