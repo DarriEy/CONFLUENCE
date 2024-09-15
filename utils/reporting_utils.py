@@ -41,6 +41,7 @@ class VisualizationReporter:
                 df.set_index('time', inplace=True)
                 sim_data.append((sim_name, df))
 
+            print(sim_data)
             # Determine common time range
             start_date = max([data.index.min() for _, data in obs_data + sim_data]) + pd.Timedelta(50, unit="d")
             end_date = min([data.index.max() for _, data in obs_data + sim_data])
@@ -360,3 +361,155 @@ class VisualizationReporter:
         ax.plot(exceedance, sorted_data, label=label, color=color, linestyle=linestyle, linewidth=linewidth)
         ax.set_xscale('log')
         ax.set_yscale('log')
+
+    def update_sim_reach_id(self):
+        try:
+            # Load the pour point shapefile
+            pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', self.config.get('POUR_POINT_SHP_NAME'))
+            pour_point_gdf = gpd.read_file(pour_point_path)
+
+            # Load the river network shapefile
+            river_network_path = self._get_file_path('RIVER_NETWORK_PATH', 'shapefiles/river_network', self.config.get('RIVER_NETWORK_SHP_NAME'))
+            river_network_gdf = gpd.read_file(river_network_path)
+
+            # Ensure both GeoDataFrames have the same CRS
+            if pour_point_gdf.crs != river_network_gdf.crs:
+                pour_point_gdf = pour_point_gdf.to_crs(river_network_gdf.crs)
+
+            # Get the pour point coordinates
+            pour_point = pour_point_gdf.geometry.iloc[0]
+
+            # Find the nearest stream segment to the pour point
+            nearest_segment = river_network_gdf.iloc[river_network_gdf.distance(pour_point).idxmin()]
+
+            # Get the ID of the nearest segment
+            reach_id = nearest_segment[self.config.get('RIVER_NETWORK_SHP_SEGID', 'COMID')]  # Use 'COMID' as default if not specified
+
+            # Update the config
+            self.config['SIM_REACH_ID'] = str(reach_id)
+            self.logger.info(f"Updated SIM_REACH_ID to {reach_id}")
+
+            return reach_id
+
+        except Exception as e:
+            self.logger.error(f"Error updating SIM_REACH_ID: {str(e)}")
+            return None
+
+    def _get_file_path(self, file_type, file_def_path, file_name):
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(f'{file_type}'))
+    
+    @get_function_logger
+    def plot_lumped_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]]):
+        try:
+            # Read observation data
+            obs_data = []
+            for obs_name, obs_file in obs_files:
+                df = pd.read_csv(obs_file, parse_dates=['datetime'])
+                df.set_index('datetime', inplace=True)
+                df = df['discharge_cms'].resample('h').mean()
+                obs_data.append((obs_name, df))
+
+            # Read simulation data
+            sim_data = []
+            for sim_name, sim_file in model_outputs:
+                ds = xr.open_dataset(sim_file, engine='netcdf4')
+                df = ds['averageRoutedRunoff'].to_dataframe().reset_index()
+                df.set_index('time', inplace=True)
+                sim_data.append((sim_name, df))
+
+            # Determine common time range
+            start_date = max([data.index.min() for _, data in obs_data + sim_data]) + pd.Timedelta(50, unit="d")
+            end_date = min([data.index.max() for _, data in obs_data + sim_data])
+
+            # Filter data to common time range
+            obs_data = [(name, data.loc[start_date:end_date]) for name, data in obs_data]
+            sim_data = [(name, data.loc[start_date:end_date]) for name, data in sim_data]
+
+            # Define calibration and evaluation periods
+            calib_start = pd.Timestamp('2011-01-01')
+            calib_end = pd.Timestamp('2014-12-31')
+            eval_start = pd.Timestamp('2015-01-01')
+            eval_end = pd.Timestamp('2018-12-31')
+
+            # Create plot
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 16))
+            fig.suptitle("Lumped Watershed Streamflow Comparison and Flow Duration Curve", fontsize=16, fontweight='bold')
+
+            # Plot time series
+            for obs_name, obs in obs_data:
+                ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
+
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+            linestyles = ['--', '-.', ':']
+            for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
+                ax1.plot(sim.index, sim['averageRoutedRunoff'], label=f'Simulated ({sim_name})', 
+                         color=color, linestyle=linestyle, linewidth=1.5)
+                
+                # Calculate and display metrics for calibration and evaluation periods
+                calib_metrics = self.calculate_metrics(
+                    obs_data[0][1].loc[calib_start:calib_end].values,
+                    sim.loc[calib_start:calib_end, 'averageRoutedRunoff'].values
+                )
+                eval_metrics = self.calculate_metrics(
+                    obs_data[0][1].loc[eval_start:eval_end].values,
+                    sim.loc[eval_start:eval_end, 'averageRoutedRunoff'].values
+                )
+                
+                metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
+                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
+                metric_text += "\n\nEvaluation (2015-2018):\n"
+                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
+                
+                # Add semi-transparent background to text
+                ax1.text(0.02, 0.98 - 0.35 * sim_data.index((sim_name, sim)), metric_text,
+                         transform=ax1.transAxes, verticalalignment='top', fontsize=8,
+                         bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+
+            # Add shaded areas for calibration and evaluation periods
+            ax1.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
+            ax1.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+
+            ax1.set_xlabel('Date', fontsize=12)
+            ax1.set_ylabel('Streamflow (m³/s)', fontsize=12)
+            ax1.set_title('Lumped Watershed Streamflow Comparison', fontsize=14)
+            ax1.legend(loc='upper right', fontsize=10)
+            ax1.grid(True, linestyle=':', alpha=0.6)
+            ax1.set_facecolor('#f0f0f0')  # Light gray background
+
+            # Format x-axis to show years
+            ax1.xaxis.set_major_locator(mdates.YearLocator())
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+            # Plot exceedance frequency
+            for obs_name, obs in obs_data:
+                self.plot_exceedance(ax2, obs.values, f'Observed ({obs_name})', color='black', linewidth=2.5)
+
+            for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
+                self.plot_exceedance(ax2, sim['averageRoutedRunoff'].values, f'Simulated ({sim_name})', 
+                                color=color, linestyle=linestyle, linewidth=1.5)
+
+            ax2.set_xlabel('Exceedance Probability', fontsize=12)
+            ax2.set_ylabel('Streamflow (m³/s)', fontsize=12)
+            ax2.set_title('Flow Duration Curve', fontsize=14)
+            ax2.legend(loc='best', fontsize=10)
+            ax2.grid(True, which='both', linestyle=':', alpha=0.6)
+            ax2.set_facecolor('#f0f0f0')  # Light gray background
+
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93)  # Adjust for main title
+
+            # Save the plot
+            plot_folder = self.project_dir / "plots" / "results"
+            plot_folder.mkdir(parents=True, exist_ok=True)
+            plot_filename = plot_folder / 'lumped_streamflow_comparison.png'
+            plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            return str(plot_filename)
+
+        except Exception as e:
+            self.logger.error(f"Error in plot_lumped_streamflow_simulations_vs_observations: {str(e)}")
+            return None

@@ -44,7 +44,7 @@ class DomainDiscretizer:
         elif delineation_method == 'lumped':
             self.delineation_suffix = 'lumped'
         elif delineation_method == 'subset':
-            self.delineation_suffix = self.config.get('GEOFABRIC_TYPE')
+            self.delineation_suffix = f'subset_{self.config.get('GEOFABRIC_TYPE')}'
         
     def sort_catchment_shape(self):
         self.logger.info("Sorting catchment shape")
@@ -111,7 +111,9 @@ class DomainDiscretizer:
 
         gru_gdf = self._read_shapefile(gru_shapefile)
         gru_gdf['HRU_ID'] = range(1, len(gru_gdf) + 1)
-        gru_gdf['area'] = gru_gdf.to_crs(gru_gdf.estimate_utm_crs()).area / 1e6  # area in km²
+        gru_gdf = gru_gdf.to_crs('epsg:3763')
+        gru_gdf['HRU_area'] = gru_gdf.geometry.area 
+        gru_gdf = gru_gdf.to_crs('epsg:4326')
         gru_gdf['hru_type'] = 'GRU'
 
         # Calculate mean elevation for each HRU

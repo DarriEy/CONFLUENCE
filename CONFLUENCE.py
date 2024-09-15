@@ -6,9 +6,11 @@ from datetime import datetime
 import geopandas as gpd # type: ignore
 from shapely.geometry import Point # type: ignore
 from mpi4py import MPI # type: ignore
+import subprocess
+
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation # type: ignore  
+from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 from utils.optimization_utils import Optimizer # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
@@ -21,6 +23,7 @@ from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 from utils.workflow_utils import WorkflowManager # type: ignore
 from utils.forecasting_utils import ForecastingEngine # type: ignore
+from utils.ostrich_util import OstrichOptimizer # type: ignore
 
 class CONFLUENCE:
 
@@ -198,9 +201,10 @@ class CONFLUENCE:
             self.logger.info('SUMMA spatial preprocessor initiated')
 
         summa_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
-        
-        mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
-        mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+
+        if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+            mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
+            mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
 
     @get_function_logger
     def run_models(self):
@@ -209,23 +213,32 @@ class CONFLUENCE:
 
         try:
             summa_runner.run_summa()
-            mizuroute_runner.run_mizuroute()
+            if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+                mizuroute_runner.run_mizuroute()
             self.logger.info("Model runs completed successfully")
         except Exception as e:
             self.logger.error(f"Error during model runs: {str(e)}")
 
     @get_function_logger
-    def visualise_model_output(self):\
+    def visualise_model_output(self):
+    
         # Plot streamflow comparison
         self.logger.info('Starting model output visualisation')
         visualizer = VisualizationReporter(self.config, self.logger)
-        model_outputs = [
-            (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-00000.nc"))
-        ]
-        obs_files = [
-            ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
-        ]
-        plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
+            plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
+        else:
+            visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+            model_outputs = [
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-00000.nc"))
+            ]
+            obs_files = [
+                ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+            ]
+            plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+        #Check if the plot was output
         if plot_file:
             self.logger.info(f"Streamflow comparison plot created: {plot_file}")
         else:
@@ -244,6 +257,7 @@ class CONFLUENCE:
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f'{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv').exists()),
             (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
@@ -266,14 +280,41 @@ class CONFLUENCE:
         self.logger.info("CONFLUENCE workflow completed")
 
     @get_function_logger
+    def process_observed_data(self):
+        self.logger.info("Processing observed data")
+        observed_data_processor = ObservedDataProcessor(self.config, self.logger)
+        try:
+            observed_data_processor.process_streamflow_data()
+            self.logger.info("Observed data processing completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during observed data processing: {str(e)}")
+            raise
+
+    @get_function_logger
     def calibrate_model(self):
         # Calibrate the model using specified method and objectives
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
-        size = comm.Get_size()
-        optimization_calibrator = Optimizer(self.config, self.logger, comm, rank)
-        optimization_calibrator.run_optimization(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"simulations/_workLog")
+        if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
+            self.run_ostrich_optimization()
+        else:
+            self.run_parallel_optimization()
 
+    def run_parallel_optimization(self):
+        cmd = [
+            'mpiexec',
+            '-np', str(self.config.get('MPI_PROCESSES')),
+            'python',
+            str(Path(__file__).parent / 'parallel_parameter_estimation.py')
+        ]
+
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running parallel optimization: {e}")
+
+    def run_ostrich_optimization(self):
+        optimizer = OstrichOptimizer(self.config, self.logger)
+        optimizer.run_optimization()
+        pass
 
     def run_sensitivity_analysis(self, method, parameters):
         # Perform sensitivity analysis on model parameters
