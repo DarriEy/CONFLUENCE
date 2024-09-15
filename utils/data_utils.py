@@ -9,6 +9,8 @@ import geopandas as gpd # type: ignore
 import rasterio # type: ignore
 from rasterstats import zonal_stats # type: ignore
 from shapely.geometry import Point # type: ignore
+import csv
+from datetime import datetime
 
 class ProjectInitialisation:
     def __init__(self, config, logger):
@@ -33,6 +35,8 @@ class ProjectInitialisation:
         riverBasins_dir.mkdir(parents=True, exist_ok=True)
         Q_observations_dir = self.project_dir / 'observations' / 'streamflow' / 'raw_data'
         Q_observations_dir.mkdir(parents=True, exist_ok=True)
+        documentation_dir = self.project_dir / "documentation"
+        documentation_dir.mkdir(parents=True, exist_ok=True)
 
         return self.project_dir
 
@@ -355,7 +359,7 @@ class DataPreProcessor:
         soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass/', self.config.get('SOIL_CLASS_NAME'))
         intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids', self.config.get('INTERSECT_SOIL_NAME'))
 
-        if not intersect_path.exists():
+        if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:
             intersect_path.parent.mkdir(parents=True, exist_ok=True)
 
             catchment_gdf = gpd.read_file(catchment_path)
@@ -366,9 +370,16 @@ class DataPreProcessor:
                 soil_data = src.read(1)
 
             stats = zonal_stats(catchment_gdf, soil_data, affine=affine, stats=['count'], categorical=True, nodata=nodata_value)
-            result_df = pd.DataFrame(stats).fillna(0)
+            result_df = pd.DataFrame(stats)
             
-            print(result_df.head(11))  # Print first 11 rows for debugging
+            # Find the most common soil class (excluding 'count' column)
+            soil_columns = [col for col in result_df.columns if col != 'count']
+            most_common_soil = result_df[soil_columns].sum().idxmax()
+            
+            # Fill NaN values with the most common soil class (fallback in case very small HRUs)
+            if result_df.isna().any().any():
+                self.logger.warning("NaN values found in soil statistics. Filling with most common soil class. Please check HRU's size or use higher resolution land class raster")
+                result_df = result_df.fillna({col: (0 if col == 'count' else most_common_soil) for col in result_df.columns})            
 
             def rename_column(x):
                 if x == 'count':
@@ -393,49 +404,57 @@ class DataPreProcessor:
                 self.logger.error(f"Failed to save file: {e}")
                 raise
 
+
     def calculate_land_stats(self):
         self.logger.info("Calculating land statistics")
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
         land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass/', self.config.get('LAND_CLASS_NAME'))
         intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass', self.config.get('INTERSECT_LAND_NAME'))
 
-        intersect_path.parent.mkdir(parents=True, exist_ok=True)
+        if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:
+            intersect_path.parent.mkdir(parents=True, exist_ok=True)
 
-        catchment_gdf = gpd.read_file(catchment_path)
-        nodata_value = self.get_nodata_value(land_path)
+            catchment_gdf = gpd.read_file(catchment_path)
+            nodata_value = self.get_nodata_value(land_path)
 
-        with rasterio.open(land_path) as src:
-            affine = src.transform
-            land_data = src.read(1)
+            with rasterio.open(land_path) as src:
+                affine = src.transform
+                land_data = src.read(1)
 
-        stats = zonal_stats(catchment_gdf, land_data, affine=affine, stats=['count'], categorical=True, nodata=nodata_value)
-        result_df = pd.DataFrame(stats).fillna(0)
-        
-        print(result_df.head(11))  # Print first 11 rows for debugging
-        print(result_df.dtypes)  # Print data types of columns
+            stats = zonal_stats(catchment_gdf, land_data, affine=affine, stats=['count'], categorical=True, nodata=nodata_value)
+            result_df = pd.DataFrame(stats)
+            
+            # Find the most common land class (excluding 'count' column)
+            land_columns = [col for col in result_df.columns if col != 'count']
+            most_common_land = result_df[land_columns].sum().idxmax()
+            
+            # Fill NaN values with the most common land class (fallback in case very small HRUs)
+            if result_df.isna().any().any():
+                self.logger.warning("NaN values found in land statistics. Filling with most common land class. Please check HRU's size or use higher resolution land class raster")
+                result_df = result_df.fillna({col: (0 if col == 'count' else most_common_land) for col in result_df.columns})
 
-        def rename_column(x):
-            if x == 'count':
-                return x
+            def rename_column(x):
+                if x == 'count':
+                    return x
+                try:
+                    return f'IGBP_{int(float(x))}'
+                except ValueError:
+                    return x
+
+            result_df = result_df.rename(columns=rename_column)
+            result_df = result_df.astype({col: int for col in result_df.columns if col != 'count'})
+
+            # Merge with original GeoDataFrame
+            for col in result_df.columns:
+                if col != 'count':
+                    catchment_gdf[col] = result_df[col]
+
             try:
-                return f'IGBP_{int(float(x))}'
-            except ValueError:
-                return x
-
-        result_df = result_df.rename(columns=rename_column)
-        result_df = result_df.astype({col: int for col in result_df.columns if col != 'count'})
-
-        # Merge with original GeoDataFrame
-        for col in result_df.columns:
-            if col != 'count':
-                catchment_gdf[col] = result_df[col]
-
-        try:
-            catchment_gdf.to_file(intersect_path)
-            self.logger.info(f"Land statistics calculated and saved to {intersect_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to save file: {e}")
-            raise
+                catchment_gdf.to_file(intersect_path)
+                self.logger.info(f"Land statistics calculated and saved to {intersect_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to save file: {e}")
+                raise
 
     def process_zonal_statistics(self):
         self.calculate_elevation_stats()
@@ -448,3 +467,93 @@ class DataPreProcessor:
             return self.project_dir / file_def_path / file_name
         else:
             return Path(self.config.get(f'{file_type}'))
+        
+class ObservedDataProcessor:
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        self.config = config
+        self.logger = logger
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.forcing_time_step_size = int(self.config.get('FORCING_TIME_STEP_SIZE'))
+        self.data_provider = self.config.get('STREAMFLOW_DATA_PROVIDER', 'USGS').upper()
+
+        self.streamflow_raw_path = self._get_file_path('STREAMFLOW_RAW_PATH', 'observations/streamflow/raw_data', '')
+        self.streamflow_processed_path = self._get_file_path('STREAMFLOW_PROCESSED_PATH', 'observations/streamflow/preprocessed', '')
+        self.streamflow_raw_name = self.config.get('STREAMFLOW_RAW_NAME')
+
+    def _get_file_path(self, file_type, file_def_path, file_name):
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(f'{file_type}'))
+
+    def get_resample_freq(self):
+        if self.forcing_time_step_size == 3600:
+            return 'h'
+        elif self.forcing_time_step_size == 86400:
+            return 'D'
+        else:
+            return f'{self.forcing_time_step_size}S'
+
+    def process_streamflow_data(self):
+        if self.data_provider == 'USGS':
+            self._process_usgs_data()
+        elif self.data_provider == 'WSC':
+            self._process_wsc_data()
+        else:
+            self.logger.error(f"Unsupported streamflow data provider: {self.data_provider}")
+            raise ValueError(f"Unsupported streamflow data provider: {self.data_provider}")
+
+    def _process_usgs_data(self):
+        self.logger.info("Processing USGS streamflow data")
+        usgs_data = pd.read_csv(self.streamflow_raw_path / self.streamflow_raw_name, 
+                                comment='#', sep='\t', 
+                                skiprows=[6],
+                                parse_dates=['datetime'],
+                                date_format='%Y-%m-%d %H:%M')
+
+        usgs_data = usgs_data.loc[1:]
+        usgs_data['discharge_cfs'] = pd.to_numeric(usgs_data[usgs_data.columns[4]], errors='coerce')
+        usgs_data['discharge_cms'] = usgs_data['discharge_cfs'] * 0.028316847
+        usgs_data['datetime'] = pd.to_datetime(usgs_data['datetime'], format='%Y-%m-%d %H:%M', errors='coerce')
+        usgs_data = usgs_data.dropna(subset=['datetime'])
+        usgs_data.set_index('datetime', inplace=True)
+
+        self._resample_and_save(usgs_data['discharge_cms'])
+
+    def _process_wsc_data(self):
+        self.logger.info("Processing WSC streamflow data")
+        wsc_data = pd.read_csv(self.streamflow_raw_path / self.streamflow_raw_name, 
+                               comment='#', 
+                               low_memory=False)
+
+        wsc_data['ISO 8601 UTC'] = pd.to_datetime(wsc_data['ISO 8601 UTC'], format='ISO8601')
+        wsc_data.set_index('ISO 8601 UTC', inplace=True)
+        wsc_data.index = wsc_data.index.tz_convert('America/Edmonton').tz_localize(None)
+        wsc_data['discharge_cms'] = pd.to_numeric(wsc_data['Value'], errors='coerce')
+
+        self._resample_and_save(wsc_data['discharge_cms'])
+
+    def _resample_and_save(self, data):
+        resample_freq = self.get_resample_freq()
+        resampled_data = data.resample(resample_freq).mean()
+        resampled_data = resampled_data.interpolate(method='time', limit=24)
+
+        output_file = self.streamflow_processed_path / f'{self.domain_name}_streamflow_processed.csv'
+        data_to_write = [('datetime', 'discharge_cms')] + list(resampled_data.items())
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_file, 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            for row in data_to_write:
+                if isinstance(row[0], datetime):
+                    formatted_datetime = row[0].strftime('%Y-%m-%d %H:%M:%S')
+                    csv_writer.writerow([formatted_datetime, row[1]])
+                else:
+                    csv_writer.writerow(row)
+
+        self.logger.info(f"Processed streamflow data saved to: {output_file}")
+        self.logger.info(f"Total rows in processed data: {len(resampled_data)}")
+        self.logger.info(f"Number of non-null values: {resampled_data.count()}")
+        self.logger.info(f"Number of null values: {resampled_data.isnull().sum()}")

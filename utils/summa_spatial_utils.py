@@ -192,12 +192,12 @@ class SummaPreProcessor_spatial:
             self.remap_forcing(work_log_dir=self.project_dir / f"forcing/_workLog")
             self.logger.info("Forcing data remapped successfully")
 
-            if self.config.get('APPLY_LAPSE_RATE', False):
-                self.apply_lapse_rate(work_log_dir=self.project_dir / f"forcing/_workLog")
-                self.logger.info("Lapse rate correction applied successfully")
+            #if self.config.get('APPLY_LAPSE_RATE', False):
+            self.apply_datastep_and_lapse_rate(work_log_dir=self.project_dir / f"forcing/_workLog")
+            self.logger.info("Datasetp and Lapse rate correction applied successfully")
 
-            self.apply_timestep(work_log_dir=self.project_dir / f"forcing/_workLog")
-            self.logger.info("Timestep applied to forcing data successfully")
+            #self.apply_timestep(work_log_dir=self.project_dir / f"forcing/_workLog")
+            #self.logger.info("Timestep applied to forcing data successfully")
 
             self.logger.info("Forcing data processing completed successfully")
         except Exception as e:
@@ -531,7 +531,7 @@ class SummaPreProcessor_spatial:
         self.logger.info("All weighted forcing files created")
 
     @get_function_logger
-    def apply_lapse_rate(self):
+    def apply_datastep_and_lapse_rate(self):
         """
         Apply temperature lapse rate corrections to the forcing data.
 
@@ -599,12 +599,19 @@ class SummaPreProcessor_spatial:
                 lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
                 addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
 
-                # Get air temperature attributes
-                tmp_units = dat['airtemp'].units
+                # Apply datastep
+                dat['data_step'] = self.data_step
+                dat.data_step.attrs['long_name'] = 'data step length in seconds'
+                dat.data_step.attrs['units'] = 's'
 
-                # Apply lapse rate correction
-                dat['airtemp'] = dat['airtemp'] + addThis
-                dat.airtemp.attrs['units'] = tmp_units
+                if self.config.get('APPLY_LAPSE_RATE') == True:
+                    # Get air temperature attributes
+                    tmp_units = dat['airtemp'].units
+                    
+                    # Apply lapse rate correction
+                    dat['airtemp'] = dat['airtemp'] + addThis
+                    dat.airtemp.attrs['units'] = tmp_units
+
                 # Save to file in new location
                 dat.to_netcdf(output_file)
 
