@@ -1,14 +1,14 @@
 from mpi4py import MPI # type: ignore
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 import numpy as np # type: ignore
 from datetime import datetime
 from typing import Union
 import sys
 
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from utils.logging_utils import get_logger # type: ignore
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.logging_utils import setup_logger # type: ignore
 from utils.optimisation_utils import run_nsga2, run_nsga3, run_moead, run_smsemoa, run_mopso, get_algorithm_kwargs, run_de, run_dds, run_basin_hopping, run_pso, run_sce_ua, run_borg_moea # type: ignore
 from utils.results_utils import Results # type: ignore
 from utils.parallel_utils import Worker # type: ignore
@@ -33,7 +33,7 @@ class Optimizer:
         iteration_results_file (Optional[str]): Path to the file storing iteration results.
     """
 
-    def __init__(self, config: 'Config', comm: MPI.Comm, rank: int):
+    def __init__(self, config: Dict[str, Any], comm: MPI.Comm, rank: int):
         """
         Initialize the Optimizer.
 
@@ -46,7 +46,13 @@ class Optimizer:
         self.comm = comm
         self.rank = rank
         self.size = comm.Get_size()
-        self.logger = get_logger('SUMMA_optimization', config.root_path, config.domain_name, config.experiment_id)
+
+        log_dir = Path(config.root_path) / f'domain_{config.domain_name}' / f'_workLog_{config.domain_name}'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f'confluence_optimization_{config.domain_name}_{current_time}.log'
+        self.logger = setup_logger('confluence_optimization', log_file)
+
         self.iteration_count = 0
         self.results = Results(config, self.logger)
         
@@ -232,9 +238,15 @@ def main() -> None:
     rank: int = comm.Get_rank()
     size: int = comm.Get_size()
 
-    config = initialize_config(rank, comm)
-    logger = get_logger(f'Main_{rank}', config.root_path, config.domain_name, config.experiment_id)
+    confluence_config_path = Path('/Users/darrieythorsson/compHydro/code/CONFLUENCE/0_config_files/config_active.yaml')  # Update this path
+    config = initialize_config(rank, comm,confluence_config_path)
 
+    log_dir = Path(config.root_path) /f'domain_{config.domain_name}' / f'_workLog_{config.domain_name}'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f'confluence_optimization_{config.domain_name}_{current_time}.log'
+    logger = setup_logger('confluence_optimization', log_file)
+    
     logger.info(f"Process {rank} initialized")
 
     optimizer = Optimizer(config, comm, rank)

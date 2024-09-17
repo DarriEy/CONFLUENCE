@@ -6,7 +6,7 @@
 # Model domain settings
 CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
-DOMAIN_NAME: "Wailuaiki"
+DOMAIN_NAME: "Hafralonsa"
 
 # Computatational settings
 MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
@@ -26,14 +26,14 @@ EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA o
 
 ## Geospatial settings
 # Geospatial domain representation settings
-DOMAIN_DEFINITION_METHOD: subset                          # Define domain representation method. Options subset, delineate, lumped
-GEOFABRIC_TYPE: NWS                                          # Source geofabric to subset from, options Merit, TDX, NWS
-SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/shapefiles/river_basins/Hawaii_nhd_catchment.shp                                   # Path to source geofabric basins
-SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/shapefiles/river_network/Hawaii_nhd_flowline.shp                                   # Path to source geofabric rivers
+DOMAIN_DEFINITION_METHOD: subset                               # Define domain representation method. Options subset, delineate, lumped
+GEOFABRIC_TYPE: TDX                                          # Source geofabric to subset from, options Merit, TDX, NWS
+SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/shapefiles/river_basins/Iceland_TDX_Basins.shp #/Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/shapefiles/river_basins/cat_pfaf_27_MERIT_Hydro_v07_Basins_v01_bugfix1.shp #                                   # Path to source geofabric basins
+SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/shapefiles/river_network/Iceland_TDX_riverNetwork.shp #/Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/shapefiles/river_network/riv_pfaf_27_MERIT_Hydro_v07_Basins_v01_bugfix1.shp #                                   # Path to source geofabric rivers
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/
-STREAM_THRESHOLD: 20000                                          # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 200                                          # Threshold flow accumulation for stream vectorisation
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
@@ -51,7 +51,7 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 ## Shapefile settings
 # Shapefile settings - SUMMA catchment shape
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile
-CATCHMENT_SHP_NAME: Wailuaiki_HRUs_GRUs.shp                       # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: Hafralonsa_HRUs_GRUs.shp                       # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -60,14 +60,14 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - mizuroute catchment shape 
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile
-RIVER_BASINS_NAME: Wailuaiki_riverBasins_subset_NWS.shp           # Name of river basin shapefile
+RIVER_BASINS_NAME: Hafralonsa_riverBasins_subset_TDX.shp           # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - mizuroute riverNetwork shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile
-RIVER_NETWORK_SHP_NAME: Wailuaiki_riverNetwork_subset_NWS.shp     # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: Hafralonsa_riverNetwork_subset_TDX.shp     # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
@@ -76,7 +76,7 @@ RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slo
 # Shapefile settings - Pour point settings
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
-POUR_POINT_COORDS: 20.8143616/-156.1429749                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
+POUR_POINT_COORDS: 66.1072629815/-15.406111316                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
 
 # Intersection settings
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
@@ -110,24 +110,24 @@ EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm"
 DATA_ACQUIRE: supplied                                         # Where to acquire data from options: HPC, supplied, download (tbi), earth_engine (tbi)
 
 # Forcing data settings
-FORCING_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/forcing/2_merged_data #Path to forcing data, if default self.project_dir / forcing / raw_data
-FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2017"                                     # Forcing start year
-FORCING_END_YEAR: "2018"                                       # Forcing end year 
+FORCING_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/forcing/1b_CARRA_raw_data #Path to forcing data, if default self.project_dir / forcing / raw_data
+FORCING_DATASET: "CARRA"                                       # Forcing dataset to use
+FORCING_START_YEAR: "2008"                                     # Forcing start year
+FORCING_END_YEAR: "2010"                                       # Forcing end year 
 FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd                                             # Forcing dataset variables to use acquire
 FORCING_MEASUREMENT_HEIGHT: 3                                  # Reference height for forcing measurements [m].
-FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
+FORCING_TIME_STEP_SIZE: 10800                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
 
 # Geospatial data
-DEM_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/dem/elevation_hawaii_copernicus.tif # Path to elevation .tiff file, if default is .self.project_dir / attributes / elevation / dem / 
-DEM_NAME: Big_Island.tif                                      # Name of elevation .tiff file 
-SOIL_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/soilclass/soil_classes.tif                                      # Path to soil class .tiff file 
+DEM_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/parameters/dem/5_elevation/elevation.tif # Path to elevation .tiff file, if default is .self.project_dir / attributes / elevation / dem / 
+DEM_NAME: elevation.tif                                      # Name of elevation .tiff file 
+SOIL_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/parameters/soilclass/2_soil_classes_domain/soil_classes.tif                                      # Path to soil class .tiff file 
 SOIL_CLASS_NAME: soil_classes.tif                                     # Name of soil class .tiff file 
-LAND_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/landclass/7_mode_land_class/land_classes.tif                                      # Path to land class .tiff file 
+LAND_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Iceland/parameters/landclass/7_mode_land_class/land_classes.tif                                      # Path to land class .tiff file 
 LAND_CLASS_NAME: land_classes.tif                                     # Name of soil class .tiff file 
 
 
@@ -141,13 +141,12 @@ LANDCOVER_YEAR: "2020"                                         # Year of land co
 LAND_CLASS_SOURCE: MERIT                                      # Source of land cover classifications, options: Landsat, MERIT
  
 # Observation data settings
-STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, options: USGS, WSC, NIWA (tbi), VI (tbi)
+STREAMFLOW_DATA_PROVIDER: VI                                 # Provider of streamflow data, options: USGS, WSC, NIWA (tbi), VI (tbi)
 STREAMFLOW_RAW_PATH: default
-STREAMFLOW_RAW_NAME: West Wailuaiki Stream near Keanae, Maui, HI_iv.txt
+STREAMFLOW_RAW_NAME: ID_28.csv
 STREAMFLOW_PROCESSED_PATH: default
 
 ## ================================= Model settings =======================================================
-
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, options: SUMMA, MESH (tbi), HYPE (tbi)
 ROUTING_MODEL: mizuroute                                       # Routing model used, options: mizuroute, HEC-RAS (tbi)
 
@@ -248,17 +247,23 @@ PSO_CONVERGENCE_VAL: 1.00E-4                                           # PSO con
 OPTMIZATION_ALOGORITHM: NSGA-II                                        # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
 OPTIMIZATION_METRIC: KGE                                               # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
 MOO_OPTIMIZATION_METRICS: KGE,NSE                                      # Optimisation metrics to use in multi objective optimisation
+NUMBER_OF_OBJECTIVES: 2                                                # Number of objectives for multi objective algorithms
 OPTIMIZATION_RESULTS_FILE: default                                     # If 'default', uses 'root_path/domain_[name]/settings/SUMMA/basinParamInfo.txt'
 CALIBRATION_PERIOD: 2016-06-01, 2016-07-31                             # start_date, end_date in format YYYY-MM-DD
 EVALUATION_PERIOD:  2016-08-01, 2016-12-31                             # start_date, end_date in format YYYY-MM-DD
 ITERATION_RESULTS_FILE: default                                        # Path to iteration results file. 
 POPULATION_SIZE: 100                                                   # Population size for genetic algorithms
 NUMBER_OF_ITERATIONS: 100                                              # Number of iterations for calibration 
+NUMBER_OF_GENERATIONS: 10                                              # Number of generations for genetic algorithms
+SWRMSIZE: 10                                                           # Swarm size for swarm based algorithms
+NGSIZE: 10                                                             # Next Generation size
+DIAGNOSTIC_FREQUENCY: 10                                               # Number of iterations between diagnostic output
+
 PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,routingGammaScale,routingGammaShape,basin__aquiferBaseflowExp,basin__aquiferScaleFactor # Basin parameters to calibrate                       
 
 
 ## Simulation v.s observations settings
 
-SIM_REACH_ID: 800015240
-
+SIM_REACH_ID: 20903
+OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Hafralonsa/observations/streamflow/preprocessed/Hafralonsa_streamflow_processed.csv 

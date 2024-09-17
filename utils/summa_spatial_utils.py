@@ -14,10 +14,15 @@ from typing import Dict, Any
 from shutil import copyfile
 import rasterstats # type: ignore
 from pyproj import CRS, Transformer # type: ignore
-from shapely.geometry import Polygon # type: ignore
+from shapely.geometry import Polygon, box, Point # type: ignore
 import time
 import tempfile
 import shutil
+import rasterio # type: ignore
+from rasterio.mask import mask # type: ignore
+from pyproj import Proj, Transformer # type: ignore
+import pyproj # type: ignore
+import shapefile # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.logging_utils import get_function_logger # type: ignore
@@ -184,6 +189,10 @@ class SummaPreProcessor_spatial:
             if self.config.get('FORCING_DATASET') == 'RDRS':
                 self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
                 self.logger.info("Forcings merged successfully")
+            elif self.config.get('FORCING_DATASET') == 'CARRA':
+                self.process_carra(work_log_dir=self.project_dir / f"forcing/_workLog")
+                self.logger.info("CARRA data processed successfully")
+
 
             #self.convert_units_and_vars()
             self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
@@ -203,6 +212,134 @@ class SummaPreProcessor_spatial:
         except Exception as e:
             self.logger.error(f"Error during forcing data processing: {str(e)}")
             raise
+
+
+    @get_function_logger
+    def process_carra(self):
+        """
+        Process CARRA data for SUMMA, handling point-based structure.
+
+        This method performs the following steps:
+        1. Load the catchment shapefile
+        2. Load and process CARRA data, subsetting to points within the catchment
+        3. Process the CARRA variables and convert units
+        4. Save the processed and subsetted CARRA data
+
+        Raises:
+            FileNotFoundError: If required input files are missing.
+            ValueError: If there are issues with data processing.
+            IOError: If there are issues reading or writing data files.
+        """
+        self.logger.info("Starting CARRA data processing")
+
+        # Load catchment shapefile
+        catchment_file = self.catchment_path / self.catchment_name
+        catchment = gpd.read_file(catchment_file)
+
+        # Find raw CARRA files
+        carra_raw_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
+        carra_files = list(carra_raw_path.glob('*.nc'))
+
+        if not carra_files:
+            raise FileNotFoundError("No CARRA raw data files found")
+
+        # Process each CARRA file
+        for carra_file in carra_files:
+            self.logger.info(f"Processing {carra_file.name}")
+
+            # Open the CARRA dataset
+            with xr.open_dataset(carra_file) as ds:
+                # Create a GeoDataFrame from CARRA points
+                gdf = gpd.GeoDataFrame(
+                    geometry=[Point(lon, lat) for lon, lat in zip(ds.longitude.values, ds.latitude.values)],
+                    crs="EPSG:4326"
+                )
+
+                # Find points within the catchment
+                points_within = gdf[gdf.within(catchment.unary_union)]
+                point_indices = points_within.index
+
+                # Subset the dataset
+                ds_subset = ds.isel(point=point_indices)
+
+                # Create a new dataset for processed data
+                new_ds = xr.Dataset()
+
+                # Copy dimensions and coordinates
+                new_ds['time'] = ds_subset['time']
+                new_ds['point'] = ds_subset['point']
+                new_ds['latitude'] = ds_subset['latitude']
+                new_ds['longitude'] = ds_subset['longitude']
+
+                # Process variables
+                new_ds['windspd'] = np.sqrt(ds_subset['10u']**2 + ds_subset['10v']**2)
+                new_ds['windspd'].attrs = {
+                    'units': 'm s**-1',
+                    'long_name': 'wind speed at 10m',
+                    'standard_name': 'wind_speed'
+                }
+
+                new_ds['airtemp'] = ds_subset['2t']
+                new_ds['airtemp'].attrs = {
+                    'units': 'K', 
+                    'long_name': 'air temperature', 
+                    'standard_name': 'air_temperature'
+                }
+
+                new_ds['airpres'] = ds_subset['sp']
+                new_ds['airpres'].attrs = {
+                    'units': 'Pa', 
+                    'long_name': 'air pressure', 
+                    'standard_name': 'air_pressure'
+                }
+
+                new_ds['spechum'] = ds_subset['2sh']
+                new_ds['spechum'].attrs = {
+                    'long_name': 'specific humidity', 
+                    'standard_name': 'specific_humidity'
+                }
+
+                # Convert shortwave radiation from J/m^2 to W/m^2
+                new_ds['SWRadAtm'] = ds_subset['ssr'] / 3600
+                new_ds['SWRadAtm'].attrs = {
+                    'units': 'W m**-2',
+                    'long_name': 'Surface solar radiation downwards',
+                    'standard_name': 'surface_downwelling_shortwave_flux_in_air'
+                }
+
+                # Convert longwave radiation from J/m^2 to W/m^2
+                new_ds['LWRadAtm'] = ds_subset['strd'] / 3600
+                new_ds['LWRadAtm'].attrs = {
+                    'units': 'W m**-2',
+                    'long_name': 'Surface thermal radiation downwards',
+                    'standard_name': 'surface_downwelling_longwave_flux_in_air'
+                }
+
+                # Convert precipitation to rate
+                new_ds['pptrate'] = ds_subset['tp'] / 3600
+                new_ds['pptrate'].attrs = {
+                    'units': 'kg m**-2 s**-1',
+                    'long_name': 'Mean total precipitation rate',
+                    'standard_name': 'precipitation_flux'
+                }
+
+                # Add global attributes
+                new_ds.attrs = {
+                    'History': f"Created {datetime.now().strftime('%a %b %d %H:%M:%S %Y')}",
+                    'Language': "Written using Python",
+                    'Reason': "Processing CARRA data to match format for SUMMA model",
+                    'Conventions': "CF-1.6",
+                }
+
+                # Save the processed dataset
+                self.carra_processed_dir = self.project_dir / 'forcing' / 'processed'
+                self.carra_processed_dir.mkdir(parents=True, exist_ok=True)
+                output_file = self.carra_processed_dir / f"processed_{carra_file.name}"
+                new_ds.to_netcdf(output_file)
+                self.logger.info(f"Processed data saved to {output_file}")
+
+        self.logger.info("CARRA data processing completed")
+
 
     @get_function_logger
     def copy_base_settings(self):
@@ -422,13 +559,18 @@ class SummaPreProcessor_spatial:
 
     def _create_one_weighted_forcing_file(self):
         self.logger.info("Creating one weighted forcing file")
+        
+        if self.config.get('FORCING_DATASET') == 'CARRA':
+            forcing_path = self.carra_processed_dir
+        else:
+            forcing_path = self.merged_forcing_path
 
         # Initialize EASYMORE object
         esmr = easymore.easymore()
 
         esmr.author_name = 'SUMMA public workflow scripts'
         esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
-        esmr.case_name = self.config.get('DOMAIN_NAME')
+        esmr.case_name = f'{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}'
 
         # Set up source and target shapefiles
         esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
@@ -441,7 +583,7 @@ class SummaPreProcessor_spatial:
         esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
 
         # Set up source netcdf file
-        forcing_files = sorted([f for f in self.merged_forcing_path.glob('*.nc')])
+        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
 
         if self.config.get('FORCING_DATASET') == 'RDRS':
             var_lat = 'lat'
@@ -490,6 +632,11 @@ class SummaPreProcessor_spatial:
     def _create_all_weighted_forcing_files(self):
         self.logger.info("Creating all weighted forcing files")
 
+        if self.config.get('FORCING_DATASET') == 'CARRA':
+            forcing_path = self.carra_processed_dir
+        else:
+            forcing_path = self.merged_forcing_path
+
         if self.config.get('FORCING_DATASET') == 'RDRS':
             var_lat = 'lat'
             var_lon = 'lon'
@@ -518,15 +665,18 @@ class SummaPreProcessor_spatial:
         esmr.fill_value_list = ['-9999']
 
         esmr.save_csv = False
-        esmr.remap_csv = str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_remapping.csv")
+        esmr.remap_csv = str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_remapping.csv")
         esmr.sort_ID = False
         esmr.overwrite_existing_remap = False
 
         # Process remaining forcing files
-        forcing_files = sorted([f for f in self.merged_forcing_path.glob('*.nc')])
+        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
         for file in forcing_files[1:]:
-            esmr.source_nc = str(file)
-            esmr.nc_remapper()
+            try:
+                esmr.source_nc = str(file)
+                esmr.nc_remapper()
+            except:
+                self.logger.info(f'issue with file: {file}')
 
         self.logger.info("All weighted forcing files created")
 
@@ -552,7 +702,7 @@ class SummaPreProcessor_spatial:
         self.logger.info("Starting to apply temperature lapse rate and add data step")
 
         # Find intersection file
-        intersect_name = f"{self.domain_name}_intersected_shapefile.csv"
+        intersect_name = f"{self.domain_name}_{self.config.get('FORCING_DATASET')}_intersected_shapefile.csv"
         
         # Get forcing files
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
@@ -589,31 +739,34 @@ class SummaPreProcessor_spatial:
         # Process each forcing file
         for file in forcing_files:
             self.logger.info(f"Processing {file}")
-            output_file = self.forcing_summa_path / file
-            if output_file.exists():
-                self.logger.info(f"{file} already exists ... skipping")
-                continue
+            try: 
+                output_file = self.forcing_summa_path / file
+                if output_file.exists():
+                    self.logger.info(f"{file} already exists ... skipping")
+                    continue
 
-            with xr.open_dataset(self.forcing_basin_path / file) as dat:
-                # Temperature lapse rates
-                lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
-                addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
+                with xr.open_dataset(self.forcing_basin_path / file) as dat:
+                    # Temperature lapse rates
+                    lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
+                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
 
-                # Apply datastep
-                dat['data_step'] = self.data_step
-                dat.data_step.attrs['long_name'] = 'data step length in seconds'
-                dat.data_step.attrs['units'] = 's'
+                    # Apply datastep
+                    dat['data_step'] = self.data_step
+                    dat.data_step.attrs['long_name'] = 'data step length in seconds'
+                    dat.data_step.attrs['units'] = 's'
 
-                if self.config.get('APPLY_LAPSE_RATE') == True:
-                    # Get air temperature attributes
-                    tmp_units = dat['airtemp'].units
-                    
-                    # Apply lapse rate correction
-                    dat['airtemp'] = dat['airtemp'] + addThis
-                    dat.airtemp.attrs['units'] = tmp_units
+                    if self.config.get('APPLY_LAPSE_RATE') == True:
+                        # Get air temperature attributes
+                        tmp_units = dat['airtemp'].units
+                        
+                        # Apply lapse rate correction
+                        dat['airtemp'] = dat['airtemp'] + addThis
+                        dat.airtemp.attrs['units'] = tmp_units
 
-                # Save to file in new location
-                dat.to_netcdf(output_file)
+                    # Save to file in new location
+                    dat.to_netcdf(output_file)
+            except:
+                self.logger.warning(f'Issue with file:{file}')
 
         self.logger.info(f"Completed processing of {self.forcing_dataset.upper()} forcing files with temperature lapsing")
 
@@ -773,6 +926,75 @@ class SummaPreProcessor_spatial:
             gdf.to_file(output_shapefile)
 
             self.logger.info(f"ERA5 shapefile created and saved to {output_shapefile}")
+
+        elif self.config.get('FORCING_DATASET') == 'CARRA':
+            self.logger.info("Creating CARRA grid shapefile")
+
+            # Find a processed CARRA file
+            carra_files = list(self.carra_processed_dir.glob('processed_*.nc'))
+            if not carra_files:
+                raise FileNotFoundError("No processed CARRA files found")
+            carra_file = carra_files[0]
+
+            # Read CARRA data
+            with xr.open_dataset(carra_file) as ds:
+                lats = ds.latitude.values
+                lons = ds.longitude.values
+
+            # Define CARRA projection
+            carra_proj = pyproj.CRS('+proj=stere +lat_0=90 +lat_ts=90 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +a=6378137 +b=6356752.3142 +units=m +no_defs')
+            wgs84 = pyproj.CRS('EPSG:4326')
+
+            transformer = Transformer.from_crs(carra_proj, wgs84, always_xy=True)
+            transformer_to_carra = Transformer.from_crs(wgs84, carra_proj, always_xy=True)
+
+            # Create shapefile
+            self.shapefile_path.mkdir(parents=True, exist_ok=True)
+            output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+
+            with shapefile.Writer(str(output_shapefile)) as w:
+                w.autoBalance = 1
+                w.field("ID", 'N')
+                w.field(self.config.get('FORCING_SHAPE_LAT_NAME'), 'F', decimal=6)
+                w.field(self.config.get('FORCING_SHAPE_LON_NAME'), 'F', decimal=6)
+
+                for i in range(len(lons)):
+                    # Convert lat/lon to CARRA coordinates
+                    x, y = transformer_to_carra.transform(lons[i], lats[i])
+                    
+                    # Define grid cell (assuming 2.5 km resolution)
+                    half_dx = 1250  # meters
+                    half_dy = 1250  # meters
+                    
+                    vertices = [
+                        (x - half_dx, y - half_dy),
+                        (x - half_dx, y + half_dy),
+                        (x + half_dx, y + half_dy),
+                        (x + half_dx, y - half_dy),
+                        (x - half_dx, y - half_dy)
+                    ]
+                    
+                    # Convert vertices back to lat/lon
+                    lat_lon_vertices = [transformer.transform(vx, vy) for vx, vy in vertices]
+                    
+                    w.poly([lat_lon_vertices])
+                    center_lon, center_lat = transformer.transform(x, y)
+                    w.record(i, center_lat, center_lon)
+
+            # Add elevation data to the shapefile
+            shp = gpd.read_file(output_shapefile)
+            shp = shp.set_crs('EPSG:4326')
+
+            # Calculate zonal statistics (mean elevation) for each grid cell
+            zs = rasterstats.zonal_stats(shp, str(self.dem_path), stats=['mean'])
+
+            # Add mean elevation to the GeoDataFrame
+            shp['elev_m'] = [item['mean'] for item in zs]
+
+            # Save the updated shapefile
+            shp.to_file(output_shapefile)
+
+            self.logger.info(f"CARRA grid shapefile created and saved to {output_shapefile}")
 
     @get_function_logger
     def apply_timestep(self):
@@ -1514,7 +1736,7 @@ class SummaPreProcessor_spatial:
             end_year = self.config.get('FORCING_END_YEAR')
             if not start_year or not end_year:
                 raise ValueError("FORCING_START_YEAR or FORCING_END_YEAR is missing from configuration")
-            sim_start = f"{start_year}-01-01 00:00" if sim_start == 'default' else sim_start
+            sim_start = f"{start_year}-01-01 01:00" if sim_start == 'default' else sim_start
             sim_end = f"{end_year}-12-31 23:00" if sim_end == 'default' else sim_end
 
         # Validate time format
