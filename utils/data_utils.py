@@ -501,9 +501,30 @@ class ObservedDataProcessor:
             self._process_usgs_data()
         elif self.data_provider == 'WSC':
             self._process_wsc_data()
+        elif self.data_provider == 'VI':
+            self._process_vi_data()
         else:
             self.logger.error(f"Unsupported streamflow data provider: {self.data_provider}")
             raise ValueError(f"Unsupported streamflow data provider: {self.data_provider}")
+
+    def _process_vi_data(self):
+        self.logger.info("Processing VI (Iceland) streamflow data")
+        vi_data = pd.read_csv(self.streamflow_raw_path / self.streamflow_raw_name, 
+                              sep=';', 
+                              header=None, 
+                              names=['YYYY', 'MM', 'DD', 'qobs', 'qc_flag'],
+                              parse_dates={'datetime': ['YYYY', 'MM', 'DD']},
+                              na_values='',
+                              skiprows = 1)
+
+        vi_data['discharge_cms'] = pd.to_numeric(vi_data['qobs'], errors='coerce')
+        vi_data.set_index('datetime', inplace=True)
+
+        # Filter out data with qc_flag values indicating unreliable measurements
+        # Adjust this based on the specific qc_flag values that indicate reliable data
+        #reliable_data = vi_data[vi_data['qc_flag'] <= 100]
+
+        self._resample_and_save(vi_data['discharge_cms'])
 
     def _process_usgs_data(self):
         self.logger.info("Processing USGS streamflow data")

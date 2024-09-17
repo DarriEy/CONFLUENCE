@@ -412,7 +412,27 @@ class GeofabricSubsetter:
             subset_basins = subset_basins.to_crs('epsg:4326')
             subset_rivers['LINKNO'] = subset_rivers['COMID']
             subset_rivers['DSLINKNO'] = subset_rivers['toCOMID']
-            
+
+        elif self.config.get('GEOFABRIC_TYPE') == 'TDX':
+            subset_basins['GRU_ID'] = subset_basins['fid']
+            subset_basins['gru_to_seg'] = subset_basins['streamID']
+            subset_basins = subset_basins.to_crs('epsg:3763')
+            subset_basins['GRU_area'] = subset_basins.geometry.area 
+            subset_basins = subset_basins.to_crs('epsg:4326')
+
+
+        elif self.config.get('GEOFABRIC_TYPE') == 'Merit':
+            subset_basins['GRU_ID'] = subset_basins['COMID']
+            subset_basins['gru_to_seg'] = subset_basins['COMID']
+            subset_basins = subset_basins.to_crs('epsg:3763')
+            subset_basins['GRU_area'] = subset_basins.geometry.area 
+            subset_basins = subset_basins.to_crs('epsg:4326')
+            subset_rivers['LINKNO'] = subset_rivers['COMID']
+            subset_rivers['DSLINKNO'] = subset_rivers['NextDownID']
+            subset_rivers = subset_rivers.to_crs('epsg:3763')
+            subset_rivers['Length'] = subset_rivers.geometry.length 
+            subset_rivers = subset_rivers.to_crs('epsg:4326')
+            subset_rivers.rename(columns={'slope':'Slope'}, inplace = True)
 
         # Save subsets
         self.save_geofabric(subset_basins, subset_rivers)

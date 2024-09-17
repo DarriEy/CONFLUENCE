@@ -46,46 +46,72 @@ def read_from_confluence_config(file_path: Path, setting: str) -> Any:
         config = yaml.safe_load(f)
     return config.get(setting)
 
+def read_param_bounds(param_file, params_to_calibrate):
+    """Read parameter bounds from the parameter file."""
+    bounds = {}
+    with open(param_file, 'r') as f:
+        for line in f:
+            parts = line.strip().split('|')
+            if len(parts) >= 4 and parts[0].strip() in params_to_calibrate:
+                param = parts[0].strip()
+                lower = float(parts[2].strip().replace('d', 'e'))
+                upper = float(parts[3].strip().replace('d', 'e'))
+                bounds[param] = (lower, upper)
+    return bounds
+
 def parse_time_period(period_str: str) -> Tuple[datetime, datetime]:
     start, end = [datetime.strptime(date.strip(), '%Y-%m-%d') for date in period_str.split(',')]
     return start, end
 
-def initialize_config(rank: int, comm: MPI.Comm) -> Config:
-    confluence_config_path = Path('/path/to/confluence/config_active.yaml')  # Update this path
+def initialize_config(rank: int, comm: MPI.Comm, confluence_config_path) -> Config:
+    
+    
+    with open(confluence_config_path, 'r') as f:
+        config = yaml.safe_load(f)
 
+    
     if rank == 0:
-        root_path = Path(read_from_confluence_config(confluence_config_path, 'CONFLUENCE_DATA_DIR'))
-        domain_name = read_from_confluence_config(confluence_config_path, 'DOMAIN_NAME')
-        experiment_id = read_from_confluence_config(confluence_config_path, 'EXPERIMENT_ID')
-        params_to_calibrate = read_from_confluence_config(confluence_config_path, 'PARAMS_TO_CALIBRATE').split(',')
-        basin_params_to_calibrate = read_from_confluence_config(confluence_config_path, 'BASIN_PARAMS_TO_CALIBRATE').split(',')
-        obs_file_path = Path(read_from_confluence_config(confluence_config_path, 'STREAMFLOW_PROCESSED_PATH')) / read_from_confluence_config(confluence_config_path, 'STREAMFLOW_PROCESSED_NAME')
-        sim_reach_ID = read_from_confluence_config(confluence_config_path, 'SIM_REACH_ID')
-        filemanager_name = read_from_confluence_config(confluence_config_path, 'SETTINGS_SUMMA_FILEMANAGER')
-        optimization_metrics = read_from_confluence_config(confluence_config_path, 'MOO_OPTIMIZATION_METRICS').split(',')
-        pop_size = int(read_from_confluence_config(confluence_config_path, 'POPULATION_SIZE'))
-        mizu_control_file = read_from_confluence_config(confluence_config_path, 'SETTINGS_MIZU_CONTROL_FILE')
-        moo_num_iter = int(read_from_confluence_config(confluence_config_path, 'MOO_NUM_ITER'))
-        nsga2_n_gen = int(read_from_confluence_config(confluence_config_path, 'NSGA2_N_GEN'))
-        nsga2_n_obj = int(read_from_confluence_config(confluence_config_path, 'NSGA2_N_OBJ'))
-        optimization_metric = read_from_confluence_config(confluence_config_path, 'OPTIMIZATION_METRIC')
-        algorithm = read_from_confluence_config(confluence_config_path, 'OPTMIZATION_ALOGORITHM')
-        num_iter = int(read_from_confluence_config(confluence_config_path, 'NUMBER_OF_ITERATIONS'))
-        calib_period_str = read_from_confluence_config(confluence_config_path, 'CALIBRATION_PERIOD')
-        eval_period_str = read_from_confluence_config(confluence_config_path, 'EVALUATION_PERIOD')
+        root_path = Path(config.get('CONFLUENCE_DATA_DIR'))
+        domain_name = config.get('DOMAIN_NAME')
+        experiment_id = config.get('EXPERIMENT_ID')
+        params_to_calibrate = config.get('PARAMS_TO_CALIBRATE').split(',')
+        basin_params_to_calibrate = config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
+
+        sim_reach_ID = config.get('SIM_REACH_ID')
+        filemanager_name = config.get('SETTINGS_SUMMA_FILEMANAGER')
+        optimization_metrics = config.get('MOO_OPTIMIZATION_METRICS').split(',')
+        pop_size = int(config.get('POPULATION_SIZE'))
+        mizu_control_file = config.get('SETTINGS_MIZU_CONTROL_FILE')
+        moo_num_iter = int(config.get('NUMBER_OF_ITERATIONS'))
+        nsga2_n_gen = int(config.get('NUMBER_OF_GENERATIONS'))
+        nsga2_n_obj = int(config.get('NUMBER_OF_OBJECTIVES'))
+        optimization_metric = config.get('OPTIMIZATION_METRIC')
+        algorithm = config.get('OPTMIZATION_ALOGORITHM')
+        num_iter = moo_num_iter
+        calib_period_str = config.get('CALIBRATION_PERIOD')
+        eval_period_str = config.get('EVALUATION_PERIOD')
         calib_period = parse_time_period(calib_period_str)
         eval_period = parse_time_period(eval_period_str)
+        obs_file_path = config.get('OBSERVATIONS_PATH')
 
-        # Add logic to read and process local_bounds_dict and basin_bounds_dict
-        # You may need to implement a function to read these from the CONFLUENCE config or other files
+        poplsize = pop_size
+        swrmsize = config.get('SWRMSIZE')
+        ngsize = config.get('NGSIZE')
+        dds_r = float(config.get('DDS_R'))
+        diagnostic_frequency = int(config.get('DIAGNOSTIC_FREQUENCY'))
+ 
+        # Read and process local_bounds_dict and basin_bounds_dict
+        local_parameters_file = Path(root_path) / f'domain_{domain_name}/settings/SUMMA/localParamInfo.txt'
+        basin_parameters_file = Path(root_path) / f'domain_{domain_name}/settings/SUMMA/basinParamInfo.txt'
+        
+        local_bounds_dict = read_param_bounds(local_parameters_file, params_to_calibrate)
+        basin_bounds_dict = read_param_bounds(basin_parameters_file, basin_params_to_calibrate)
 
-        poplsize = int(read_from_confluence_config(confluence_config_path, 'POPLSIZE'))
-        swrmsize = int(read_from_confluence_config(confluence_config_path, 'SWRMSIZE'))
-        ngsize = int(read_from_confluence_config(confluence_config_path, 'NGSIZE'))
-        dds_r = float(read_from_confluence_config(confluence_config_path, 'DDS_R'))
-        diagnostic_frequency = int(read_from_confluence_config(confluence_config_path, 'DIAGNOSTIC_FREQUENCY'))
+        local_bounds = [local_bounds_dict[param] for param in params_to_calibrate]
+        basin_bounds = [basin_bounds_dict[param] for param in basin_params_to_calibrate]
+        all_bounds = local_bounds + basin_bounds
+        all_params = params_to_calibrate + basin_params_to_calibrate
 
-        # Process bounds and params
         local_bounds = [local_bounds_dict[param] for param in params_to_calibrate]
         basin_bounds = [basin_bounds_dict[param] for param in basin_params_to_calibrate]
         all_bounds = local_bounds + basin_bounds

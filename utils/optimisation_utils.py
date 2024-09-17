@@ -23,8 +23,7 @@ from pymoo.algorithms.soo.nonconvex.de import DE # type: ignore
 from pymoo.algorithms.soo.nonconvex.pso import PSO # type: ignore
 from mpi4py import MPI # type: ignore
 import logging
-from utils.calibration_utils import read_param_bounds # type: ignore
-from pathlib import Path
+
 
 class OptimizationAlgorithm(ABC):
     @abstractmethod
@@ -786,25 +785,11 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
         Dict[str, Any]: Dictionary of keyword arguments for the algorithm.
     """
     num_workers = size - 1
-    population_size = max(config.get('POPULATION_SIZE'), num_workers * 2)  # Ensure at least 2 evaluations per worker
-    algorithm = config.get('OPTMIZATION_ALOGORITHM')
-    num_iter = config.get('NUMBER_OF_ITERATIONS')
- 
-    local_parameters_file = Path(config.get('CONFLUENCE_DATA_DIR')) / f'domain_{config.get('DOMAIN_NAME')}' / 'settings/summa/localParamInfo.txt'
-    basin_parameters_file = Path(config.get('CONFLUENCE_DATA_DIR')) / f'domain_{config.get('DOMAIN_NAME')}' / 'settings/summa/basinParamInfo.txt'
-    params_to_calibrate = config.get('PARAMS_TO_CALIBRATE').split(',')
-    basin_params_to_calibrate = config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
-
-
-    local_bounds_dict = read_param_bounds(local_parameters_file, params_to_calibrate)
-    basin_bounds_dict = read_param_bounds(basin_parameters_file, basin_params_to_calibrate)
-    local_bounds = [local_bounds_dict[param] for param in params_to_calibrate]
-    basin_bounds = [basin_bounds_dict[param] for param in basin_params_to_calibrate]
-    all_bounds = local_bounds + basin_bounds
+    population_size = max(config.poplsize, num_workers * 2)  # Ensure at least 2 evaluations per worker
 
     kwargs: Dict[str, Any] = {}
 
-    if algorithm == "DE":
+    if config.algorithm == "DE":
         kwargs.update({
             "mutation": (0.5, 1.0),
             "recombination": 0.7,
@@ -812,65 +797,65 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
             "tol": 0.01,
             "atol": 0,
         })
-    elif algorithm == "PSO":
+    elif config.algorithm == "PSO":
         kwargs.update({
             "swarmsize": population_size,
             "omega": 0.5,
             "phip": 0.5,
             "phig": 0.5,
-            "maxiter": num_iter,
+            "maxiter": config.num_iter,
             "minstep": 1e-8,
             "minfunc": 1e-8,
         })
-    elif algorithm == "SCE-UA":
+    elif config.algorithm == "SCE-UA":
             kwargs.update({
-                "repetitions": num_iter,
-                "npg": 2 * len(all_bounds) + 1,  # Number of points in each complex
+                "repetitions": config.num_iter,
+                "npg": 2 * len(config.all_bounds) + 1,  # Number of points in each complex
                 "kstop": 10,
                 "peps": 0.001,
                 "pcento": 0.1,
         })
-    elif algorithm == "Basin-hopping":
+    elif config.algorithm == "Basin-hopping":
         kwargs.update({
-            "niter": num_iter,
+            "niter": config.num_iter,
             "T": 1.0,
             "stepsize": 0.5,
             "interval": 50,
             "niter_success": None,
         })
-    elif algorithm == "DDS":
+    elif config.algorithm == "DDS":
         kwargs.update({
-            "r": config.get('DDS_R'),
-            "maxiter": num_iter,
+            "r": config.dds_r,
+            "maxiter": config.num_iter,
         })
-    elif algorithm in ["NSGA-II", "NSGA-III"]:
+    elif config.algorithm in ["NSGA-II", "NSGA-III"]:
         kwargs.update({
-            "maxiter": num_iter,
+            "maxiter": config.num_iter,
             "pop_size": population_size,
             "n_offsprings": population_size,
             "eliminate_duplicates": True,
             "crossover": SBX(prob=0.9, eta=15),
             "mutation": PolynomialMutation(eta=20),
         })
-    elif algorithm == "MOEA/D":
+    elif config.algorithm == "MOEA/D":
         kwargs.update({
-            "maxiter": num_iter,
+            "maxiter": config.num_iter,
             "n_neighbors": 15,
             "prob_neighbor_mating": 0.7,
             "crossover": SBX(prob=0.9, eta=15),
             "mutation": PolynomialMutation(eta=20),
         })
-    elif algorithm == "SMS-EMOA":
+    elif config.algorithm == "SMS-EMOA":
         kwargs.update({
-            "maxiter": num_iter,
+            "maxiter": config.num_iter,
             "pop_size": population_size,
             "eliminate_duplicates": True,
             "crossover": SBX(prob=0.9, eta=15),
             "mutation": PolynomialMutation(eta=20),
         })
-    elif algorithm == "Borg-MOEA":
+    elif config.algorithm == "Borg-MOEA":
         kwargs.update({
-            "n_gen": num_iter,
+            "n_gen": config.num_iter,
             "pop_size": population_size,
             "epsilon": 0.01,
             "sbx_prob": 0.8,
@@ -879,9 +864,9 @@ def get_algorithm_kwargs(config, size: int) -> Dict[str, Any]:
             "pm_eta": 20,
             "eliminate_duplicates": True,
         })
-    elif algorithm == "MOPSO":
+    elif config.algorithm == "MOPSO":
         kwargs.update({
-            "maxiter": num_iter,
+            "maxiter": config.num_iter,
             "pop_size": population_size,
             "w": 0.4,
             "c1": 2.0,

@@ -8,11 +8,9 @@ from shapely.geometry import Point # type: ignore
 from mpi4py import MPI # type: ignore
 import subprocess
 
-
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
-from utils.optimization_utils import Optimizer # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.config_utils import ConfigManager # type: ignore
@@ -231,7 +229,7 @@ class CONFLUENCE:
         else:
             visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
             model_outputs = [
-                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-00000.nc"))
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
@@ -303,7 +301,7 @@ class CONFLUENCE:
             'mpiexec',
             '-np', str(self.config.get('MPI_PROCESSES')),
             'python',
-            str(Path(__file__).parent / 'parallel_parameter_estimation.py')
+            str(Path(__file__).parent / 'utils' / 'parallel_parameter_estimation.py')
         ]
 
         try:

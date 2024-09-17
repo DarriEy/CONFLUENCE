@@ -1,7 +1,11 @@
 from mpi4py import MPI # type: ignore
-from utils.model_utils import ModelRunner, ModelEvaluator # type: ignore
-from utils.logging_utils import get_logger # type: ignore
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.opt_model_utils import ModelRunner, ModelEvaluator # type: ignore
+from utils.logging_utils import setup_logger # type: ignore
 from utils.optimisation_utils import calculate_objective_value # type: ignore 
+from datetime import datetime
 
 class Worker:
     """
@@ -33,8 +37,15 @@ class Worker:
         self.comm = comm
         self.rank = rank
         self.model_runner = ModelRunner(config, comm, rank)
-        self.model_evaluator = ModelEvaluator(config, get_logger(f'ModelEvaluator_{rank}', config.root_path, config.domain_name, config.experiment_id))
-        self.logger = get_logger(f'Worker_{rank}', config.root_path, config.domain_name, config.experiment_id)
+        
+        log_dir = Path(config.root_path) / f'domain_{config.domain_name}' / f'_workLog_{config.domain_name}'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f'confluence_optimization_{config.domain_name}_{current_time}.log'
+        self.logger = setup_logger('confluence_optimization', log_file)
+
+
+        self.model_evaluator = ModelEvaluator(config, self.logger)
 
     def run(self) -> None:
         """

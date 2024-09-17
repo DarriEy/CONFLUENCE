@@ -16,7 +16,7 @@ class Results:
         self.iteration_count = 0
         self.iteration_results_file: Optional[str] = None
         self.results_df = pd.DataFrame()
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(self.config.root_path) / f"domain_{self.config.domain_name}"
         self.output_folder = self.project_dir / "plots" / "calibration diagnostics"
         self.output_folder.mkdir(parents=True, exist_ok=True)   
 
@@ -24,7 +24,7 @@ class Results:
         """Create a new iteration results file with appropriate headers."""
         iteration_results_dir = self.project_dir / "optimisation"
         iteration_results_dir.mkdir(parents=True, exist_ok=True)
-        self.iteration_results_file = str(iteration_results_dir / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv")
+        self.iteration_results_file = str(iteration_results_dir / f"{self.config.experiment_id}_parallel_iteration_results.csv")
         
         Path(self.iteration_results_file).touch()
         self.logger.info(f"Created iteration results file: {self.iteration_results_file}")
