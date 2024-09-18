@@ -538,7 +538,7 @@ class Results:
 
     def plot_parameter_convergence(self, in_progress: bool = False) -> None:
         """Plot the convergence of parameter values over iterations in a grid layout."""
-        all_params = self.config.get('PARAMS_TO_CALIBRATE') + self.config.get('BASIN_PARAMS_TO_CALIBRATE')
+        all_params = self.config.params_to_calibrate + self.config.basin_params_to_calibrate
         parameter_columns = all_params
         n_params = len(parameter_columns)
         

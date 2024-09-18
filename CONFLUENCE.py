@@ -1,11 +1,7 @@
-from typing import List, Dict, Any, Optional
 from pathlib import Path
 import sys
 from pathlib import Path
 from datetime import datetime
-import geopandas as gpd # type: ignore
-from shapely.geometry import Point # type: ignore
-from mpi4py import MPI # type: ignore
 import subprocess
 
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -19,8 +15,7 @@ from utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.summa_utils import SummaPreProcessor # type: ignore
 from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.workflow_utils import WorkflowManager # type: ignore
-from utils.forecasting_utils import ForecastingEngine # type: ignore
+from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer # type: ignore
 from utils.ostrich_util import OstrichOptimizer # type: ignore
 
 class CONFLUENCE:
@@ -229,7 +224,7 @@ class CONFLUENCE:
         else:
             visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
             model_outputs = [
-                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc"))
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-04-01-00000.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
@@ -241,41 +236,6 @@ class CONFLUENCE:
             self.logger.info(f"Streamflow comparison plot created: {plot_file}")
         else:
             self.logger.error("Failed to create streamflow comparison plot")
-
-    @get_function_logger
-    def run_workflow(self):
-        self.logger.info("Starting CONFLUENCE workflow")
-        
-        # Check if we should force run all steps
-        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
-        
-        # Define the workflow steps and their output checks
-        workflow_steps = [
-            (self.setup_project, (self.project_dir / 'catchment').exists),
-            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
-            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f'{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv').exists()),
-            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
-            (self.calibrate_model, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}_rank1" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_rank87_timestep.nc").exists()),
-        ]
-        
-        for step_func, check_func in workflow_steps:
-            step_name = step_func.__name__
-            if force_run or not check_func():
-                self.logger.info(f"Running step: {step_name}")
-                try:
-                    step_func()
-                except Exception as e:
-                    self.logger.error(f"Error during {step_name}: {str(e)}")
-                    raise
-            else:
-                self.logger.info(f"Skipping step {step_name} as output already exists")
-
-        self.logger.info("CONFLUENCE workflow completed")
 
     @get_function_logger
     def process_observed_data(self):
@@ -314,25 +274,73 @@ class CONFLUENCE:
         optimizer.run_optimization()
         pass
 
-    def run_sensitivity_analysis(self, method, parameters):
-        # Perform sensitivity analysis on model parameters
-        pass
+    @get_function_logger        
+    def run_sensitivity_analysis(self):
+        self.logger.info("Starting sensitivity analysis")
+        sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
+        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
+        
+        if not results_file.exists():
+            self.logger.error(f"Calibration results file not found: {results_file}")
+            return
+        
+        if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
+            self.run_sensitivity_analysis()
 
-    def generate_forecast(self, forecast_horizon, ensemble_size):
-        # Generate hydrological forecasts
-        pass
+        sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
+        self.logger.info("Sensitivity analysis completed")
+        return sensitivity_results
 
-    def analyze_results(self, analysis_type, metrics):
-        # Analyze model outputs and forecasts
-        pass
+    @get_function_logger  
+    def run_decision_analysis(self):
+        self.logger.info("Starting decision analysis")
+        decision_analyzer = DecisionAnalyzer(self.config, self.logger)
+        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv"
+        
+        if not results_file.exists():
+            self.logger.error(f"Model decisions comparison file not found: {results_file}")
+            return
+        
+        impact_results, statistical_results = self.decision_analyzer.run_decision_analysis(results_file)
+        self.logger.info("Decision analysis completed")
+        return impact_results, statistical_results
+    
+    @get_function_logger
+    def run_workflow(self):
+        self.logger.info("Starting CONFLUENCE workflow")
+        
+        # Check if we should force run all steps
+        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
+        
+        # Define the workflow steps and their output checks
+        workflow_steps = [
+            (self.setup_project, (self.project_dir / 'catchment').exists),
+            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
+            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f'{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv').exists()),
+            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.calibrate_model, lambda: (self.project_dir / "optimization" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
+            (self.run_sensitivity_analysis, lambda: (self.project_dir / "optimization " / f"{self.config.get('EXPERIMENT_ID')}_sensitivity_analysis.csv").exists()),
+            (self.run_decision_analysis, lambda: (self.project_dir / "optimization " / f"{self.config.get('EXPERIMENT_ID')}_decision_analysis.csv").exists())    
+        ]
+        
+        for step_func, check_func in workflow_steps:
+            step_name = step_func.__name__
+            if force_run or not check_func():
+                self.logger.info(f"Running step: {step_name}")
+                try:
+                    step_func()
+                except Exception as e:
+                    self.logger.error(f"Error during {step_name}: {str(e)}")
+                    raise
+            else:
+                self.logger.info(f"Skipping step {step_name} as output already exists")
 
-    def visualize_results(self, visualization_type, output_format):
-        # Create visualizations of results
-        pass
-
-    def export_results(self, format, destination):
-        # Export results in specified format
-        pass
+        self.logger.info("CONFLUENCE workflow completed")
 
 
 def main():

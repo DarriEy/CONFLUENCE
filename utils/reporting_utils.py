@@ -20,7 +20,8 @@ class VisualizationReporter:
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
 
-    def plot_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]]):
+
+    def plot_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]], show_calib_eval_periods: bool = False):
         try:
             plot_folder = self.project_dir / "plots" / "results"
             plot_folder.mkdir(parents=True, exist_ok=True)
@@ -60,47 +61,62 @@ class VisualizationReporter:
 
             # Plot time series
             for obs_name, obs in obs_data:
-                print(obs)
                 ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
 
             colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
             linestyles = ['--', '-.', ':']
             for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-                print(sim)
                 ax1.plot(sim.index, sim['IRFroutedRunoff'], label=f'Simulated ({sim_name})', 
-                         color=color, linestyle=linestyle, linewidth=1.5)
+                        color=color, linestyle=linestyle, linewidth=1.5)
                 
+            if show_calib_eval_periods:
+                # Define calibration and evaluation periods
+                calib_start = pd.Timestamp('2011-01-01')
+                calib_end = pd.Timestamp('2014-12-31')
+                eval_start = pd.Timestamp('2015-01-01')
+                eval_end = pd.Timestamp('2018-12-31')
 
-            # Define calibration and evaluation periods
-            calib_start = pd.Timestamp('2011-01-01')
-            calib_end = pd.Timestamp('2014-12-31')
-            eval_start = pd.Timestamp('2015-01-01')
-            eval_end = pd.Timestamp('2018-12-31')
+                for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
+                    # Align data and calculate metrics for calibration period
+                    aligned_calib = pd.merge(obs_data[0][1].loc[calib_start:calib_end], 
+                                            sim.loc[calib_start:calib_end, 'IRFroutedRunoff'], 
+                                            left_index=True, right_index=True, how='inner')
+                    calib_metrics = self.calculate_metrics(aligned_calib.iloc[:, 0].values, aligned_calib.iloc[:, 1].values)
+                    
+                    # Align data and calculate metrics for evaluation period
+                    aligned_eval = pd.merge(obs_data[0][1].loc[eval_start:eval_end], 
+                                            sim.loc[eval_start:eval_end, 'IRFroutedRunoff'], 
+                                            left_index=True, right_index=True, how='inner')
+                    eval_metrics = self.calculate_metrics(aligned_eval.iloc[:, 0].values, aligned_eval.iloc[:, 1].values)
+                    
+                    metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
+                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
+                    metric_text += "\n\nEvaluation (2015-2018):\n"
+                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
+                    
+                    # Add semi-transparent background to text
+                    ax1.text(0.02, 0.98 - 0.35 * sim_data.index((sim_name, sim)), metric_text,
+                            transform=ax1.transAxes, verticalalignment='top', fontsize=8,
+                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
 
-            for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-                # Calculate and display metrics for calibration and evaluation periods
-                calib_metrics = self.calculate_metrics(
-                    obs_data[0][1].loc[calib_start:calib_end].values,
-                    sim.loc[calib_start:calib_end, 'IRFroutedRunoff'].values
-                )
-                eval_metrics = self.calculate_metrics(
-                    obs_data[0][1].loc[eval_start:eval_end].values,
-                    sim.loc[eval_start:eval_end, 'IRFroutedRunoff'].values
-                )
-                
-                metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
-                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
-                metric_text += "\n\nEvaluation (2016-2018):\n"
-                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
-                
-                # Add semi-transparent background to text
-                ax1.text(0.02, 0.98 - 0.35 * sim_data.index((sim_name, sim)), metric_text,
-                        transform=ax1.transAxes, verticalalignment='top', fontsize=8,
-                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
-
-            # Add shaded areas for calibration and evaluation periods
-            #ax1.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
-            #ax1.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+                # Add shaded areas for calibration and evaluation periods
+                ax1.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
+                ax1.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+            else:
+                # Calculate and display metrics for the entire period
+                for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
+                    # Align data for the entire period
+                    aligned_data = pd.merge(obs_data[0][1], sim['IRFroutedRunoff'], 
+                                            left_index=True, right_index=True, how='inner')
+                    metrics = self.calculate_metrics(aligned_data.iloc[:, 0].values, aligned_data.iloc[:, 1].values)
+                    
+                    metric_text = f"{sim_name} Metrics:\n"
+                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in metrics.items()])
+                    
+                    # Add semi-transparent background to text
+                    ax1.text(0.02, 0.98 - 0.15 * sim_data.index((sim_name, sim)), metric_text,
+                            transform=ax1.transAxes, verticalalignment='top', fontsize=8,
+                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
 
             ax1.set_xlabel('Date', fontsize=12)
             ax1.set_ylabel('Streamflow (m³/s)', fontsize=12)
@@ -108,7 +124,6 @@ class VisualizationReporter:
             ax1.legend(loc='upper right', fontsize=10)
             ax1.grid(True, linestyle=':', alpha=0.6)
             ax1.set_facecolor('#f0f0f0')  # Light gray background
-
 
             # Format x-axis to show years
             ax1.xaxis.set_major_locator(mdates.YearLocator())

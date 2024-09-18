@@ -233,8 +233,8 @@ def copy_mizuroute_settings(source_settings_path, destination_settings_path):
         shutil.copy(source_settings_path / file, destination_settings_path / file)
 
 def update_file_manager(file_path, rank_experiment_id, experiment_id):
-    base_settings = "/settings/SUMMA/' !"
-    rank_settings = f"/simulations/{rank_experiment_id}/SUMMA/run_settings/' !"
+    base_settings = "/settings/SUMMA/"
+    rank_settings = f"/simulations/{rank_experiment_id}/SUMMA/run_settings/"
     with open(file_path, 'r') as f: 
         content = f.read()
     
