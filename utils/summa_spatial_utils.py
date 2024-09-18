@@ -1737,7 +1737,7 @@ class SummaPreProcessor_spatial:
             if not start_year or not end_year:
                 raise ValueError("FORCING_START_YEAR or FORCING_END_YEAR is missing from configuration")
             sim_start = f"{start_year}-01-01 01:00" if sim_start == 'default' else sim_start
-            sim_end = f"{end_year}-12-31 23:00" if sim_end == 'default' else sim_end
+            sim_end = f"{end_year}-12-31 22:00" if sim_end == 'default' else sim_end
 
         # Validate time format
         try:

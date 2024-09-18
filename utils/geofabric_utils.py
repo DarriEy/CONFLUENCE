@@ -103,6 +103,7 @@ class GeofabricDelineator:
         river_network_path, river_basins_path = self.subset_upstream_geofabric()
 
 
+
         self.logger.info(f"Geofabric delineation and subsetting completed for {self.domain_name}")
 
         shutil.rmtree(self.interim_dir.parent, ignore_errors=True)
@@ -168,30 +169,15 @@ class GeofabricDelineator:
             rivers = self.load_geopandas(rivers_path)
             basins['GRU_ID'] = basins['DN']
             rivers['GRU_ID'] = rivers['LINKNO']
-            
 
-            # Ensure CRS consistency
-            basins, rivers, pour_point = self.ensure_crs_consistency(basins, rivers, pour_point)
-
-            # Find downstream basin
-            downstream_basin_id = self.find_basin_for_pour_point(pour_point, basins)
-
-            # Build river network and find upstream basins
-            river_graph = self.build_river_graph(rivers)
-            upstream_basin_ids = self.find_upstream_basins(downstream_basin_id, river_graph)
-
-            # Subset basins and rivers
-            subset_basins = basins[basins['GRU_ID'].isin(upstream_basin_ids)].copy()
-            subset_rivers = rivers[rivers['GRU_ID'].isin(upstream_basin_ids)].copy()
-            
             # Calculate GRU area
-            subset_basins = subset_basins.to_crs('epsg:3763')
-            subset_basins['GRU_area'] = subset_basins.geometry.area 
-            subset_basins = subset_basins.to_crs('epsg:4326')
-            subset_basins['gru_to_seg'] = subset_basins['GRU_ID']
-            subset_basins = subset_basins.drop(columns = ['DN'])
+            basins = basins.to_crs('epsg:3763')
+            basins['GRU_area'] = basins.geometry.area 
+            basins = basins.to_crs('epsg:4326')
+            basins['gru_to_seg'] = basins['GRU_ID']
+            basins = basins.drop(columns = ['DN'])
 
-            # Save subsets
+            # Make paths for saving subsets
             subset_basins_path = self.config.get('OUTPUT_BASINS_PATH')
             subset_rivers_path = self.config.get('OUTPUT_RIVERS_PATH')
             
@@ -206,13 +192,35 @@ class GeofabricDelineator:
                 subset_rivers_path = Path(self.config['OUTPUT_RIVERS_PATH'])
 
 
-            subset_basins.to_file(subset_basins_path)
-            subset_rivers.to_file(subset_rivers_path)
+            if self.config.get('DELINEATE_BY_POURPOINT', True) == True:
+                # Ensure CRS consistency
+                basins, rivers, pour_point = self.ensure_crs_consistency(basins, rivers, pour_point)
 
-            self.logger.info(f"Subset basins shapefile saved to: {subset_basins_path}")
-            self.logger.info(f"Subset rivers shapefile saved to: {subset_rivers_path}")
+                # Find downstream basin
+                downstream_basin_id = self.find_basin_for_pour_point(pour_point, basins)
 
-            return subset_rivers_path, subset_basins_path
+                # Build river network and find upstream basins
+                river_graph = self.build_river_graph(rivers)
+                upstream_basin_ids = self.find_upstream_basins(downstream_basin_id, river_graph)
+
+                # Subset basins and rivers
+                subset_basins = basins[basins['GRU_ID'].isin(upstream_basin_ids)].copy()
+                subset_rivers = rivers[rivers['GRU_ID'].isin(upstream_basin_ids)].copy()
+
+                subset_basins.to_file(subset_basins_path)
+                subset_rivers.to_file(subset_rivers_path)
+
+                self.logger.info(f"Subset basins shapefile saved to: {subset_basins_path}")
+                self.logger.info(f"Subset rivers shapefile saved to: {subset_rivers_path}")
+
+                return subset_rivers_path, subset_basins_path
+            
+            else:
+                basins.to_file(subset_basins_path)
+                rivers.to_file(subset_rivers_path)
+
+                self.logger.info(f"Basins shapefile saved to: {subset_basins_path}")
+                self.logger.info(f"Rivers shapefile saved to: {subset_rivers_path}")
 
         except Exception as e:
             self.logger.error(f"Error during geofabric subsetting: {str(e)}")

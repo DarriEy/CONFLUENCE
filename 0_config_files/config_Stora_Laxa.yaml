@@ -6,7 +6,7 @@
 # Model domain settings
 CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
-DOMAIN_NAME: "Nordura"
+DOMAIN_NAME: "Stora_Laxa"
 
 # Computatational settings
 MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
@@ -51,7 +51,7 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 ## Shapefile settings
 # Shapefile settings - SUMMA catchment shape
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile
-CATCHMENT_SHP_NAME: Nordura_HRUs_GRUs.shp                       # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: Stora_Laxa_HRUs_GRUs.shp                       # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -60,14 +60,14 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - mizuroute catchment shape 
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile
-RIVER_BASINS_NAME: Nordura_riverBasins_subset_Merit.shp           # Name of river basin shapefile
+RIVER_BASINS_NAME: Stora_Laxa_riverBasins_subset_Merit.shp           # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - mizuroute riverNetwork shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile
-RIVER_NETWORK_SHP_NAME: Nordura_riverNetwork_subset_Merit.shp     # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: Stora_Laxa_riverNetwork_subset_Merit.shp     # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
@@ -76,7 +76,7 @@ RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slo
 # Shapefile settings - Pour point settings
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
-POUR_POINT_COORDS: 64.7107173234/-21.603373045                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
+POUR_POINT_COORDS: 64.17509555814/-20.146934868                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
 
 # Intersection settings
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
@@ -143,7 +143,7 @@ LAND_CLASS_SOURCE: MERIT                                      # Source of land c
 # Observation data settings
 STREAMFLOW_DATA_PROVIDER: VI                                 # Provider of streamflow data, options: USGS, WSC, NIWA (tbi), VI (tbi)
 STREAMFLOW_RAW_PATH: default
-STREAMFLOW_RAW_NAME: ID_67.csv
+STREAMFLOW_RAW_NAME: ID_80.csv
 STREAMFLOW_PROCESSED_PATH: default
 
 ## ================================= Model settings =======================================================
@@ -266,5 +266,5 @@ BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,routingGammaScale,routingGammaS
 
 ## Simulation v.s observations settings
 
-SIM_REACH_ID: 20583
-OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Nordura/observations/streamflow/preprocessed/Nordura_streamflow_processed.csv 
+SIM_REACH_ID: 27001515
+OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Stora_Laxa/observations/streamflow/preprocessed/Stora_Laxa_streamflow_processed.csv 

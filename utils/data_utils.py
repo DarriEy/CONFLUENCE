@@ -491,21 +491,26 @@ class ObservedDataProcessor:
     def get_resample_freq(self):
         if self.forcing_time_step_size == 3600:
             return 'h'
+        if self.forcing_time_step_size == 10800:
+            return 'h'
         elif self.forcing_time_step_size == 86400:
             return 'D'
         else:
-            return f'{self.forcing_time_step_size}S'
+            return f'{self.forcing_time_step_size}s'
 
     def process_streamflow_data(self):
-        if self.data_provider == 'USGS':
-            self._process_usgs_data()
-        elif self.data_provider == 'WSC':
-            self._process_wsc_data()
-        elif self.data_provider == 'VI':
-            self._process_vi_data()
-        else:
-            self.logger.error(f"Unsupported streamflow data provider: {self.data_provider}")
-            raise ValueError(f"Unsupported streamflow data provider: {self.data_provider}")
+        try:
+            if self.data_provider == 'USGS':
+                self._process_usgs_data()
+            elif self.data_provider == 'WSC':
+                self._process_wsc_data()
+            elif self.data_provider == 'VI':
+                self._process_vi_data()
+            else:
+                self.logger.error(f"Unsupported streamflow data provider: {self.data_provider}")
+                raise ValueError(f"Unsupported streamflow data provider: {self.data_provider}")
+        except Exception as e:
+            self.logger.error(f'Issue in streamflow data preprocessing: {e}')
 
     def _process_vi_data(self):
         self.logger.info("Processing VI (Iceland) streamflow data")
