@@ -5,7 +5,7 @@ from datetime import datetime
 import subprocess
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor # type: ignore  
+from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
 from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.logging_utils import setup_logger, get_function_logger # type: ignore
@@ -15,7 +15,7 @@ from utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.summa_utils import SummaPreProcessor # type: ignore
 from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer # type: ignore
+from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.ostrich_util import OstrichOptimizer # type: ignore
 
 class CONFLUENCE:
@@ -97,6 +97,7 @@ class CONFLUENCE:
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
         domain_discretizer = DomainDiscretizer(self.config, self.logger)
         hru_shapefile = domain_discretizer.discretize_domain()
+
         if hru_shapefile:
             self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
         else:
@@ -224,7 +225,7 @@ class CONFLUENCE:
         else:
             visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
             model_outputs = [
-                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-04-01-00000.nc"))
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-06-01-03600.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
@@ -274,7 +275,6 @@ class CONFLUENCE:
         optimizer.run_optimization()
         pass
 
-    @get_function_logger        
     def run_sensitivity_analysis(self):
         self.logger.info("Starting sensitivity analysis")
         sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
@@ -285,7 +285,7 @@ class CONFLUENCE:
             return
         
         if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
-            self.run_sensitivity_analysis()
+            sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
 
         sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
         self.logger.info("Sensitivity analysis completed")
@@ -295,16 +295,26 @@ class CONFLUENCE:
     def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
         decision_analyzer = DecisionAnalyzer(self.config, self.logger)
-        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv"
         
-        if not results_file.exists():
-            self.logger.error(f"Model decisions comparison file not found: {results_file}")
-            return
+        results_file, best_combinations = decision_analyzer.run_full_analysis()
         
-        impact_results, statistical_results = self.decision_analyzer.run_decision_analysis(results_file)
         self.logger.info("Decision analysis completed")
-        return impact_results, statistical_results
+        self.logger.info(f"Results saved to: {results_file}")
+        self.logger.info("Best combinations for each metric:")
+        for metric, data in best_combinations.items():
+            self.logger.info(f"  {metric}: score = {data['score']:.3f}")
+        
+        return results_file, best_combinations
     
+    def run_benchmarking(self):
+        # Preprocess data for benchmarking
+        preprocessor = BenchmarkPreprocessor(self.config, self.logger)
+        benchmark_data = preprocessor.preprocess_benchmark_data(f'{self.config.get('FORCING_START_YEAR')}-01-01', f'{self.config.get('FORCING_END_YEAR')}-12-31')
+
+        # Run benchmarking
+        benchmarker = Benchmarker(self.config, self.logger)
+        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f'{self.config.get('FORCING_END_YEAR')}-12-31')
+
     @get_function_logger
     def run_workflow(self):
         self.logger.info("Starting CONFLUENCE workflow")
@@ -319,13 +329,14 @@ class CONFLUENCE:
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f'{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv').exists()),
-            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data1").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
-            (self.calibrate_model, lambda: (self.project_dir / "optimization" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
-            (self.run_sensitivity_analysis, lambda: (self.project_dir / "optimization " / f"{self.config.get('EXPERIMENT_ID')}_sensitivity_analysis.csv").exists()),
-            (self.run_decision_analysis, lambda: (self.project_dir / "optimization " / f"{self.config.get('EXPERIMENT_ID')}_decision_analysis.csv").exists())    
+            (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv123").exists()),
+            (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
+            #(self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),    
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists())
         ]
         
         for step_func, check_func in workflow_steps:

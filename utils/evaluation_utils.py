@@ -1,19 +1,33 @@
 import pandas as pd # type: ignore
 import numpy as np
+import sys
+import csv
+import subprocess
+from hydrobm.calculate import calc_bm # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from pathlib import Path 
 from pyviscous import viscous # type: ignore
-from SALib.analyze import sobol, delta, rbd_fast # type: ignore
+from SALib.analyze import sobol, rbd_fast # type: ignore
 from SALib.sample import sobol as sobol_sample # type: ignore
 from scipy.stats import spearmanr 
 from tqdm import tqdm # type: ignore
 from scipy import stats
+import itertools
+from typing import Dict, List, Tuple, Any
+import xarray as xr # type: ignore
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
+from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 
 class SensitivityAnalyzer:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self.output_folder = Path(self.config.root_path) / f"domain_{self.config.domain_name}" / "plots" / "sensitivity_analysis"
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.output_folder = self.project_dir / "plots" / "sensitivity_analysis"
         self.output_folder.mkdir(parents=True, exist_ok=True)
 
     def read_calibration_results(self, file_path):
@@ -24,14 +38,14 @@ class SensitivityAnalyzer:
         samples_unique = samples.drop_duplicates(subset=[col for col in samples.columns if col != 'Iteration'])
         return samples_unique
 
-    def perform_sensitivity_analysis(self, samples, metric='RMSE', min_samples=60):
+    def perform_sensitivity_analysis(self, samples, metric='Calib_KGEnp', min_samples=60):
         self.logger.info(f"Performing sensitivity analysis using {metric} metric")
-        parameter_columns = [col for col in samples.columns if col not in ['Iteration', 'RMSE', 'KGE', 'KGEp', 'NSE', 'MAE']]
+        parameter_columns = [col for col in samples.columns if col not in ['Iteration', 'Calib_RMSE', 'Calib_KGE', 'Calib_KGEp', 'Calib_NSE', 'Calib_MAE']]
         
         if len(samples) < min_samples:
             self.logger.warning(f"Insufficient data for reliable sensitivity analysis. Have {len(samples)} samples, recommend at least {min_samples}.")
             return pd.Series([-999] * len(parameter_columns), index=parameter_columns)
-        
+
         x = samples[parameter_columns].values
         y = samples[metric].values.reshape(-1, 1)
         
@@ -83,23 +97,6 @@ class SensitivityAnalyzer:
 
         self.logger.info("Sobol analysis completed")
         return pd.Series(Si['ST'], index=parameter_columns)
-
-    def perform_delta_analysis(self, samples, metric='RMSE'):
-        self.logger.info(f"Performing delta analysis using {metric} metric")
-        parameter_columns = [col for col in samples.columns if col not in ['Iteration', 'RMSE', 'KGE', 'KGEp', 'NSE', 'MAE']]
-        
-        problem = {
-            'num_vars': len(parameter_columns),
-            'names': parameter_columns,
-            'bounds': [[samples[col].min(), samples[col].max()] for col in parameter_columns]
-        }
-        
-        X = samples[parameter_columns].values
-        Y = samples[metric].values
-        
-        delta_results = delta.analyze(problem, X, Y)
-        self.logger.info("Delta analysis completed")
-        return pd.Series(delta_results['delta'], index=parameter_columns)
 
     def perform_rbd_fast_analysis(self, samples, metric='RMSE'):
         self.logger.info(f"Performing RBD-FAST analysis using {metric} metric")
@@ -160,20 +157,19 @@ class SensitivityAnalyzer:
             self.logger.error("Error: Not enough data points for sensitivity analysis.")
             return
         
-        results_preprocessed = self.preprocess_data(results, metric='RMSE')
+        results_preprocessed = self.preprocess_data(results, metric='Calib_RMSE')
         self.logger.info("Data preprocessing completed")
 
         methods = {
             'pyViscous': self.perform_sensitivity_analysis,
             'Sobol': self.perform_sobol_analysis,
-            'Delta': self.perform_delta_analysis,
             'RBD-FAST': self.perform_rbd_fast_analysis,
             'Correlation': self.perform_correlation_analysis
         }
 
         all_results = {}
         for name, method in methods.items():
-            sensitivity = method(results_preprocessed, metric='RMSE')
+            sensitivity = method(results_preprocessed, metric='Calib_RMSE')
             all_results[name] = sensitivity
             sensitivity.to_csv(self.output_folder / f'{name.lower()}_sensitivity.csv')
             self.plot_sensitivity(sensitivity, self.output_folder / f'{name.lower()}_sensitivity.png')
@@ -191,43 +187,120 @@ class DecisionAnalyzer:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self.output_folder = Path(self.config.root_path) / f"domain_{self.config.domain_name}" / "plots" / "decision_analysis"
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.output_folder = self.project_dir / "plots" / "decision_analysis"
         self.output_folder.mkdir(parents=True, exist_ok=True)
+        self.model_decisions_path = self.project_dir / "settings" / "SUMMA" / "modelDecisions.txt"
 
-    def read_decision_results(self, file_path):
-        return pd.read_csv(file_path)
+        # Initialize SummaRunner and MizuRouteRunner
+        self.summa_runner = SummaRunner(config, logger)
+        self.mizuroute_runner = MizuRouteRunner(config, logger)
 
-    def analyze_decisions(self, data):
+        # Get decision options from config
+        self.decision_options = self.config.get('DECISION_OPTIONS', {})
+
+    def generate_combinations(self) -> List[Tuple[str, ...]]:
+        return list(itertools.product(*self.decision_options.values()))
+
+    def update_model_decisions(self, combination: Tuple[str, ...]):
+        decision_keys = list(self.decision_options.keys())
+        with open(self.model_decisions_path, 'r') as f:
+            lines = f.readlines()
+        
+        option_map = dict(zip(decision_keys, combination))
+        
+        for i, line in enumerate(lines):
+            for option, value in option_map.items():
+                if line.strip().startswith(option):
+                    lines[i] = f"{option.ljust(30)} {value.ljust(15)} ! {line.split('!')[-1].strip()}\n"
+        
+        with open(self.model_decisions_path, 'w') as f:
+            f.writelines(lines)
+
+    def run_models(self):
+        self.summa_runner.run_summa()
+        self.mizuroute_runner.run_mizuroute()
+
+    def calculate_performance_metrics(self) -> Tuple[float, float, float, float, float]:
+        obs_file_path = Path(self.config.get('OBSERVATIONS_PATH'))
+        sim_reach_ID = self.config.get('SIM_REACH_ID')
+
+
+        if self.config.get('SIMULATIONS_PATH') == 'default':
+            sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f'{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-04-01-00000.nc'
+        else:
+            sim_file_path = Path(self.config.get('SIMULATIONS_PATH'))
+
+        dfObs = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
+        dfObs = dfObs['discharge_cms'].resample('h').mean()
+
+        dfSim = xr.open_dataset(sim_file_path, engine='netcdf4')  
+        segment_index = dfSim['reachID'].values == int(sim_reach_ID)
+        dfSim = dfSim.sel(seg=segment_index) 
+        dfSim = dfSim['IRFroutedRunoff'].to_dataframe().reset_index()
+        dfSim.set_index('time', inplace=True)
+
+        dfObs = dfObs.reindex(dfSim.index).dropna()
+        dfSim = dfSim.reindex(dfObs.index).dropna()
+
+        obs = dfObs.values
+        sim = dfSim['IRFroutedRunoff'].values
+        kge = get_KGE(obs, sim, transfo=1)
+        kgep = get_KGEp(obs, sim, transfo=1)
+        nse = get_NSE(obs, sim, transfo=1)
+        mae = get_MAE(obs, sim, transfo=1)
+        rmse = get_RMSE(obs, sim, transfo=1)
+
+        return kge, kgep, nse, mae, rmse
+
+    def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
         
-        # Identify decision columns and metric columns
-        decision_columns = [col for col in data.columns if col not in ['Iteration', 'kge', 'kgep', 'nse', 'mae', 'rmse']]
-        metric_columns = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        combinations = self.generate_combinations()
 
-        results = {}
+        master_file = self.project_dir / 'optimisation' / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv"
+        with open(master_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Iteration'] + list(self.decision_options.keys()) + ['kge', 'kgep', 'nse', 'mae', 'rmse'])
 
-        for metric in metric_columns:
-            metric_results = {}
-            for decision in decision_columns:
-                unique_options = data[decision].unique()
-                if len(unique_options) > 1:
-                    option_results = {option: data[data[decision] == option][metric].mean() for option in unique_options}
-                    metric_results[decision] = option_results
-            results[metric] = metric_results
+        for i, combination in enumerate(combinations, 1):
+            self.logger.info(f"Running combination {i} of {len(combinations)}")
+            self.update_model_decisions(combination)
+            
+            try:
+                self.run_models()
+                kge, kgep, nse, mae, rmse = self.calculate_performance_metrics()
+
+                with open(master_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([i] + list(combination) + [kge, kgep, nse, mae, rmse])
+
+                self.logger.info(f"Combination {i} completed: KGE={kge:.3f}, KGEp={kgep:.3f}, NSE={nse:.3f}, MAE={mae:.3f}, RMSE={rmse:.3f}")
+
+            except Exception as e:
+                self.logger.error(f"Error in combination {i}: {str(e)}")
+                with open(master_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([i] + list(combination) + ['erroneous combination'])
 
         self.logger.info("Decision analysis completed")
-        return results
+        return master_file
 
-    def plot_decision_impacts(self, results):
+    def plot_decision_impacts(self, results_file: Path):
         self.logger.info("Plotting decision impacts")
         
-        for metric, decisions in results.items():
+        df = pd.read_csv(results_file)
+        metrics = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        decisions = [col for col in df.columns if col not in ['Iteration'] + metrics]
+
+        for metric in metrics:
             plt.figure(figsize=(12, 6 * len(decisions)))
-            for i, (decision, options) in enumerate(decisions.items(), 1):
+            for i, decision in enumerate(decisions, 1):
                 plt.subplot(len(decisions), 1, i)
-                options_sorted = sorted(options.items(), key=lambda x: x[1], reverse=True)
-                labels, values = zip(*options_sorted)
-                plt.bar(labels, values)
+                impact = df.groupby(decision)[metric].mean().sort_values(ascending=False)
+                impact.plot(kind='bar')
                 plt.title(f'Impact of {decision} on {metric}')
                 plt.ylabel(metric)
                 plt.xticks(rotation=45, ha='right')
@@ -238,81 +311,133 @@ class DecisionAnalyzer:
 
         self.logger.info("Decision impact plots saved")
 
-    def perform_statistical_tests(self, data):
-        self.logger.info("Performing statistical tests on decisions")
+    def analyze_results(self, results_file: Path):
+        self.logger.info("Analyzing decision results")
         
-        decision_columns = [col for col in data.columns if col not in ['Iteration', 'kge', 'kgep', 'nse', 'mae', 'rmse']]
-        metric_columns = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        df = pd.read_csv(results_file)
+        metrics = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        decisions = [col for col in df.columns if col not in ['Iteration'] + metrics]
 
-        results = {}
-
-        for metric in metric_columns:
-            metric_results = {}
-            for decision in decision_columns:
-                unique_options = data[decision].unique()
-                if len(unique_options) == 2:
-                    # Perform t-test for two options
-                    option1, option2 = unique_options
-                    group1 = data[data[decision] == option1][metric]
-                    group2 = data[data[decision] == option2][metric]
-                    t_stat, p_value = stats.ttest_ind(group1, group2)
-                    metric_results[decision] = {'test': 't-test', 't_statistic': t_stat, 'p_value': p_value}
-                elif len(unique_options) > 2:
-                    # Perform one-way ANOVA for more than two options
-                    groups = [group[metric].values for name, group in data.groupby(decision)]
-                    f_stat, p_value = stats.f_oneway(*groups)
-                    metric_results[decision] = {'test': 'ANOVA', 'f_statistic': f_stat, 'p_value': p_value}
+        best_combinations = {}
+        for metric in metrics:
+            if metric in ['mae', 'rmse']:
+                best_row = df.loc[df[metric].idxmin()]
+            else:
+                best_row = df.loc[df[metric].idxmax()]
             
-            results[metric] = metric_results
+            best_combinations[metric] = {
+                'score': best_row[metric],
+                'combination': {decision: best_row[decision] for decision in decisions}
+            }
 
-        self.logger.info("Statistical tests completed")
-        return results
+        with open(self.project_dir / 'optimisation' / 'best_decision_combinations.txt', 'w') as f:
+            for metric, data in best_combinations.items():
+                f.write(f"Best combination for {metric} (score: {data['score']:.3f}):\n")
+                for decision, value in data['combination'].items():
+                    f.write(f"  {decision}: {value}\n")
+                f.write("\n")
 
-    def plot_statistical_results(self, results):
-        self.logger.info("Plotting statistical test results")
+        self.logger.info("Decision analysis results saved")
+        return best_combinations
 
-        for metric, decisions in results.items():
-            plt.figure(figsize=(10, 6))
-            decisions_sorted = sorted(decisions.items(), key=lambda x: x[1]['p_value'])
-            labels, p_values = zip(*[(decision, data['p_value']) for decision, data in decisions_sorted])
-            
-            plt.bar(labels, p_values)
-            plt.axhline(y=0.05, color='r', linestyle='--', label='p=0.05')
-            plt.title(f'Statistical Significance of Decisions on {metric}')
-            plt.ylabel('p-value')
-            plt.xticks(rotation=45, ha='right')
-            plt.legend()
-            
-            plt.tight_layout()
-            plt.savefig(self.output_folder / f'{metric}_statistical_significance.png')
-            plt.close()
+    def run_full_analysis(self):
+        results_file = self.run_decision_analysis()
+        self.plot_decision_impacts(results_file)
+        best_combinations = self.analyze_results(results_file)
+        return results_file, best_combinations
+    
+class Benchmarker:
+    def __init__(self, config: dict, logger):
+        self.config = config
+        self.logger = logger
+        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
 
-        self.logger.info("Statistical test result plots saved")
-
-    def run_decision_analysis(self, results_file):
-        self.logger.info("Starting decision analysis")
+    def run_benchmarking(self, input_data: pd.DataFrame, cal_end_date: str) -> Dict[str, Any]:
+        """
+        Run hydrobm benchmarking on the input data.
         
-        data = self.read_decision_results(results_file)
-        self.logger.info(f"Read {len(data)} decision results")
+        Args:
+            input_data (pd.DataFrame): DataFrame with date, temperature, streamflow, and precipitation.
+            cal_end_date (str): End date for the calibration period (YYYY-MM-DD).
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing benchmark flows and scores.
+        """
+        self.logger.info("Starting hydrobm benchmarking")
 
-        if len(data) < 2:
-            self.logger.error("Error: Not enough data points for decision analysis.")
-            return
+        # Prepare data for hydrobm
+        data = input_data.to_xarray()
 
-        impact_results = self.analyze_decisions(data)
-        self.plot_decision_impacts(impact_results)
+        # Create calibration and validation masks
+        cal_mask = data['index'].values < np.datetime64(cal_end_date)
+        val_mask = ~cal_mask
 
-        statistical_results = self.perform_statistical_tests(data)
-        self.plot_statistical_results(statistical_results)
+        self.logger.info(f'input data: {data}')
 
-        # Save results to CSV
-        impact_df = pd.DataFrame(impact_results)
-        impact_df.to_csv(self.output_folder / 'decision_impact_results.csv')
+        # Define benchmarks and metrics
+        benchmarks = [
+            # Streamflow benchmarks
+            "mean_flow",
+            "median_flow",
+            "annual_mean_flow",
+            "annual_median_flow",
+            "monthly_mean_flow",
+            "monthly_median_flow",
+            "daily_mean_flow",
+            "daily_median_flow",
 
-        statistical_df = pd.DataFrame({(metric, decision): data 
-                                       for metric, decisions in statistical_results.items() 
-                                       for decision, data in decisions.items()})
-        statistical_df.to_csv(self.output_folder / 'decision_statistical_results.csv')
+            # Long-term rainfall-runoff ratio benchmarks
+            "rainfall_runoff_ratio_to_all",
+            "rainfall_runoff_ratio_to_annual",
+            "rainfall_runoff_ratio_to_monthly",
+            "rainfall_runoff_ratio_to_daily",
+            "rainfall_runoff_ratio_to_timestep",
 
-        self.logger.info("Decision analysis completed successfully")
-        return impact_results, statistical_results
+            # Short-term rainfall-runoff ratio benchmarks
+            "monthly_rainfall_runoff_ratio_to_monthly",
+            "monthly_rainfall_runoff_ratio_to_daily",
+            "monthly_rainfall_runoff_ratio_to_timestep",
+
+            # Schaefli & Gupta (2007) benchmarks
+            "scaled_precipitation_benchmark",  # equivalent to "rainfall_runoff_ratio_to_daily"
+            "adjusted_precipitation_benchmark",
+            "adjusted_smoothed_precipitation_benchmark",
+            ]
+        
+        metrics = ['nse', 'kge', 'mse', 'rmse']
+        self.logger.info(f'Running benchmarks {benchmarks}')
+
+        # Run hydrobm
+        benchmark_flows, scores = calc_bm(
+            data,
+            cal_mask,
+            val_mask=val_mask,
+            precipitation="precipitation",
+            streamflow="streamflow",
+            benchmarks=benchmarks,
+            metrics=metrics,
+            calc_snowmelt=True,
+            temperature="temperature",
+            snowmelt_threshold=273.0,
+            snowmelt_rate=3.0,
+        )
+
+        self.logger.info('Finished running benchmarks')
+
+        # Save results
+        self._save_results(benchmark_flows, scores)
+
+        return {"benchmark_flows": benchmark_flows, "scores": scores}
+
+    def _save_results(self, benchmark_flows: pd.DataFrame, scores: Dict[str, Any]):
+        # Save benchmark flows
+        flows_path = self.project_dir / 'evaluation' / "benchmark_flows.csv"
+        benchmark_flows.to_csv(flows_path)
+        self.logger.info(f"Benchmark flows saved to {flows_path}")
+
+        # Save scores
+        scores_df = pd.DataFrame(scores)
+        scores_path = self.project_dir / 'evaluation' 
+        scores_name = "benchmark_scores.csv"
+        scores_df.to_csv(scores_path / scores_name)
+        self.logger.info(f"Benchmark scores saved to {scores_path}")

@@ -11,6 +11,7 @@ from rasterstats import zonal_stats # type: ignore
 from shapely.geometry import Point # type: ignore
 import csv
 from datetime import datetime
+import xarray as xr # type: ignore
 
 class ProjectInitialisation:
     def __init__(self, config, logger):
@@ -37,6 +38,8 @@ class ProjectInitialisation:
         Q_observations_dir.mkdir(parents=True, exist_ok=True)
         documentation_dir = self.project_dir / "documentation"
         documentation_dir.mkdir(parents=True, exist_ok=True)
+        attributes_dir = self.project_dir / 'attributes'
+        attributes_dir.mkdir(parents=True, exist_ok=True)
 
         return self.project_dir
 
@@ -358,6 +361,7 @@ class DataPreProcessor:
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
         soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass/', self.config.get('SOIL_CLASS_NAME'))
         intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids', self.config.get('INTERSECT_SOIL_NAME'))
+        self.logger.info(f'processing landclasses: {soil_path}')
 
         if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:
             intersect_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,6 +414,7 @@ class DataPreProcessor:
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
         land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass/', self.config.get('LAND_CLASS_NAME'))
         intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass', self.config.get('INTERSECT_LAND_NAME'))
+        self.logger.info(f'processing landclasses: {land_path}')
 
         if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:
             intersect_path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,3 +588,96 @@ class ObservedDataProcessor:
         self.logger.info(f"Total rows in processed data: {len(resampled_data)}")
         self.logger.info(f"Number of non-null values: {resampled_data.count()}")
         self.logger.info(f"Number of null values: {resampled_data.isnull().sum()}")
+
+class BenchmarkPreprocessor:
+    def __init__(self, config: dict, logger):
+        self.config = config
+        self.logger = logger
+        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+
+    def preprocess_benchmark_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        Preprocess data for hydrobm benchmarking.
+        
+        Args:
+            start_date (str): Start date for the experiment run period (YYYY-MM-DD).
+            end_date (str): End date for the experiment run period (YYYY-MM-DD).
+        
+        Returns:
+            pd.DataFrame: DataFrame with date, temperature, streamflow, and precipitation.
+        """
+        self.logger.info("Starting benchmark data preprocessing")
+
+        # Load streamflow data
+        streamflow_data = self._load_streamflow_data()
+        self.logger.info(f"Loaded streamflow data with shape: {streamflow_data.shape}")
+
+        # Load and process forcing data
+        forcing_data = self._load_forcing_data()
+        self.logger.info(f"Loaded forcing data with variables: {list(forcing_data.data_vars)}")
+
+        # Merge data
+        merged_data = self._merge_data(streamflow_data, forcing_data)
+        self.logger.info(f"Merged data shape: {merged_data.shape}")
+
+        # Filter data for the experiment run period
+        filtered_data = merged_data.loc[start_date:end_date]
+        self.logger.info(f"Filtered data shape: {filtered_data.shape}")
+
+        # Check for missing values
+        missing_values = filtered_data.isnull().sum()
+        if missing_values.sum() > 0:
+            self.logger.warning(f"Missing values detected:\n{missing_values}")
+        
+        # Basic statistics
+        self.logger.info(f"Data statistics:\n{filtered_data.describe()}")
+
+        # Save to CSV
+        output_path = self.project_dir / 'evaluation'
+        output_name = "benchmark_input_data.csv"
+        filtered_data.to_csv(output_path / output_name)
+        self.logger.info(f"Benchmark input data saved to {output_path}")
+
+        return filtered_data
+
+    def _load_streamflow_data(self) -> pd.DataFrame:
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
+        streamflow_data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
+        return streamflow_data
+
+    def _load_forcing_data(self) -> xr.Dataset:
+        forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
+        nc_files = list(forcing_path.glob("*.nc"))
+        
+        datasets = []
+        for file in nc_files:
+            ds = xr.open_dataset(file)
+            datasets.append(ds)
+        
+        combined_ds = xr.merge(datasets)
+        
+        # Average across the HRU dimension
+        averaged_ds = combined_ds.mean(dim='hru')
+        
+        # Rename variables to match hydrobm expectations
+        averaged_ds = averaged_ds.rename({
+            'airtemp': 'temperature',
+            'pptrate': 'precipitation'
+        })
+        averaged_ds['precipitation'] = averaged_ds['precipitation'] * 3600000
+        
+        return averaged_ds
+
+    def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: xr.Dataset) -> pd.DataFrame:
+        # Convert xarray dataset to pandas DataFrame
+        forcing_df = forcing_data.to_dataframe().reset_index()
+        forcing_df = forcing_df.set_index('time')
+
+        # Select required variables
+        forcing_df = forcing_df[['temperature', 'precipitation']]
+
+        # Merge streamflow and forcing data
+        merged_data = pd.merge(streamflow_data, forcing_df, left_index=True, right_index=True, how='inner')
+        merged_data = merged_data.rename(columns={'discharge_cms': 'streamflow'})
+
+        return merged_data
