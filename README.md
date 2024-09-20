@@ -21,6 +21,7 @@ git clone https://github.com/your-repo/CONFLUENCE.git
 2. Install the required dependencies:
 
 cd CONFLUENCE 
+
 pip install -r requirements.txt
 
 3. Clone and compile/install the desired/required binaries
@@ -60,5 +61,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 ## Contact
 Darri Eythorsson, University of Calgary
+
 darri.eythorsson@ucalgary.ca
 
