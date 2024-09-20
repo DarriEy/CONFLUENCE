@@ -151,7 +151,7 @@ STREAMFLOW_RAW_NAME: Discharge.Working@05BB001.20110101_corrected.csv
 STREAMFLOW_PROCESSED_PATH: default
 
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, options: SUMMA, MESH (tbi), HYPE (tbi)
+HYDROLOGICAL_MODEL: FLASH                                      # Hydrological model used, options: SUMMA, FLASH, MESH (tbi), HYPE (tbi)
 ROUTING_MODEL: mizuroute                                       # Routing model used, options: mizuroute, HEC-RAS (tbi)
 
 # SUMMA settings
@@ -217,6 +217,12 @@ SETTINGS_MIZU_PATH: default                                    # Directory conta
 INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path
 EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
 
+#FLASH settings
+FLASH_HIDDEN_SIZE: 64
+FLASH_NUM_LAYERS: 2
+FLASH_EPOCHS: 100
+FLASH_BATCH_SIZE: 32
+FLASH_LEARNING_RATE: 0.001
 
 
 

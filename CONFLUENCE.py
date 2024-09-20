@@ -6,7 +6,7 @@ import subprocess
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
-from utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
+from utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.config_utils import ConfigManager # type: ignore
@@ -202,16 +202,32 @@ class CONFLUENCE:
 
     @get_function_logger
     def run_models(self):
-        summa_runner = SummaRunner(self.config, self.logger)
-        mizuroute_runner = MizuRouteRunner(self.config, self.logger)
+        self.logger.info("Starting model runs")
+        
+        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
+            summa_runner = SummaRunner(self.config, self.logger)
+            mizuroute_runner = MizuRouteRunner(self.config, self.logger)
 
-        try:
-            summa_runner.run_summa()
-            if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
-                mizuroute_runner.run_mizuroute()
-            self.logger.info("Model runs completed successfully")
-        except Exception as e:
-            self.logger.error(f"Error during model runs: {str(e)}")
+            try:
+                summa_runner.run_summa()
+                if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+                    mizuroute_runner.run_mizuroute()
+                self.logger.info("SUMMA/MIZUROUTE model runs completed successfully")
+            except Exception as e:
+                self.logger.error(f"Error during SUMMA/MIZUROUTE model runs: {str(e)}")
+
+        elif self.config.get('HYDROLOGICAL_MODEL') == 'FLASH':
+            try:
+                flash_model = FLASH(self.config, self.logger)
+                flash_model.run_flash()
+                self.logger.info("FLASH model run completed successfully")
+            except Exception as e:
+                self.logger.error(f"Error during FLASH model run: {str(e)}")
+
+        else:
+            self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
+
+        self.logger.info("Model runs completed")
 
     @get_function_logger
     def visualise_model_output(self):
@@ -331,11 +347,11 @@ class CONFLUENCE:
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f'{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv').exists()),
             (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data1").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep1.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv123").exists()),
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
-            #(self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),    
+            (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),    
             (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists())
         ]
         
