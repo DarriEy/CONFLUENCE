@@ -16,7 +16,7 @@ CONFLUENCE is an advanced hydrological modeling platform designed to facilitate 
 ## Installation
 1. Clone the repository:
 
-git clone https://github.com/your-repo/CONFLUENCE.git
+    git clone https://github.com/your-repo/CONFLUENCE.git   
 
 2. Install the required dependencies:
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Set up your project configuration in `config.yaml`
+1. Set up your project configuration in `config_active.yaml`
 2. Run the main CONFLUENCE script:
 
 python CONFLUENCE.py
