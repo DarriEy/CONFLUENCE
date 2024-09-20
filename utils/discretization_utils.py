@@ -71,6 +71,8 @@ class DomainDiscretizer:
         
         self.logger.info(f"Catchment shape sorted and saved to {self.catchment_path / self.catchment_name}")
 
+        return shp
+
     def discretize_domain(self) -> Optional[Path]:
         """
         Discretize the domain based on the method specified in the configuration.
@@ -95,8 +97,9 @@ class DomainDiscretizer:
             raise ValueError(f"Invalid discretization method: {discretization_method}")
 
         method_map[discretization_method]()
-        self.sort_catchment_shape()
-        
+        shp = self.sort_catchment_shape()
+
+        return shp        
 
     def _use_grus_as_hrus(self):
         """

@@ -575,15 +575,15 @@ EndParaPADDS
 
         try:
             # Create an empty priori file if it doesn't exist
-            if not trial_param_file_priori.exists():
-                self.logger.info(f"Creating empty priori file: {trial_param_file_priori}")
-                with nc.Dataset(attribute_file, 'r') as src, nc.Dataset(trial_param_file_priori, 'w') as dst:
-                    for name, dimension in src.dimensions.items():
-                        dst.createDimension(name, len(dimension) if not dimension.isunlimited() else None)
-                    for name in ['gruId', 'hruId']:
-                        x = dst.createVariable(name, src[name].datatype, src[name].dimensions)
-                        dst[name].setncatts(src[name].__dict__)
-                        dst[name][:] = src[name][:]
+            #if not trial_param_file_priori.exists():
+            self.logger.info(f"Creating empty priori file: {trial_param_file_priori}")
+            with nc.Dataset(attribute_file, 'r') as src, nc.Dataset(trial_param_file_priori, 'w') as dst:
+                for name, dimension in src.dimensions.items():
+                    dst.createDimension(name, len(dimension) if not dimension.isunlimited() else None)
+                for name in ['gruId', 'hruId']:
+                    x = dst.createVariable(name, src[name].datatype, src[name].dimensions)
+                    dst[name].setncatts(src[name].__dict__)
+                    dst[name][:] = src[name][:]
 
             # Process data
             all_params = self.config.get('PARAMS_TO_CALIBRATE').split(',') + self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')

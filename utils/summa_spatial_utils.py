@@ -664,10 +664,11 @@ class SummaPreProcessor_spatial:
         esmr.format_list = ['f4']
         esmr.fill_value_list = ['-9999']
 
+        overwrite = self.config.get('FORCE_RUN_ALL_STEPS')
         esmr.save_csv = False
         esmr.remap_csv = str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_remapping.csv")
         esmr.sort_ID = False
-        esmr.overwrite_existing_remap = False
+        esmr.overwrite_existing_remap = overwrite
 
         # Process remaining forcing files
         forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
@@ -741,9 +742,9 @@ class SummaPreProcessor_spatial:
             self.logger.info(f"Processing {file}")
             try: 
                 output_file = self.forcing_summa_path / file
-                if output_file.exists():
-                    self.logger.info(f"{file} already exists ... skipping")
-                    continue
+                #if output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS') != True :
+                #    self.logger.info(f"{file} already exists ... skipping")
+                #å    continue
 
                 with xr.open_dataset(self.forcing_basin_path / file) as dat:
                     # Temperature lapse rates
