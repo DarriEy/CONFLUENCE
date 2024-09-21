@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import subprocess
+import pandas as pd # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
@@ -98,7 +99,14 @@ class CONFLUENCE:
         domain_discretizer = DomainDiscretizer(self.config, self.logger)
         hru_shapefile = domain_discretizer.discretize_domain()
 
-        if hru_shapefile:
+        if isinstance(hru_shapefile, pd.Series) or isinstance(hru_shapefile, pd.DataFrame):
+            if not hru_shapefile.empty:
+                self.logger.info(f"Domain discretized successfully. HRU shapefile(s):")
+                for index, shapefile in hru_shapefile.items():
+                    self.logger.info(f"  {index}: {shapefile}")
+            else:
+                self.logger.error("Domain discretization failed. No shapefiles were created.")
+        elif hru_shapefile:
             self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
         else:
             self.logger.error("Domain discretization failed.")

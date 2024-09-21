@@ -179,10 +179,6 @@ SETTINGS_SUMMA_GRU_COUNT: 118
 SETTINGS_SUMMA_GRU_PER_JOB: 10
 SETTINGS_SUMMA_PARALLEL_EXE: summa.exe
 
-
-
-
-
 # Summaflow settings
 SUMMAFLOW: spatial                                             # SUMMA setup paradigm, options: spatial or stochastic
 GEOFABRIC_MAPPING:
@@ -198,7 +194,6 @@ GEOFABRIC_MAPPING:
       in_varname: 'Length'
       in_units: 'm'
       out_units: 'm'
-
 
 # Mizuroute settings
 SETTINGS_MIZU_TOPOLOGY: topology.nc                            # Name of the river network topology file.
@@ -220,11 +215,9 @@ EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizurou
 #FLASH settings
 FLASH_HIDDEN_SIZE: 64
 FLASH_NUM_LAYERS: 2
-FLASH_EPOCHS: 100
+FLASH_EPOCHS: 10
 FLASH_BATCH_SIZE: 32
 FLASH_LEARNING_RATE: 0.001
-
-
 
 # MESH settings
 # HYPE settings
