@@ -10,7 +10,7 @@ DOMAIN_NAME: "Alakahi"
 
 # Computatational settings
 MPI_PROCESSES: 4                                               # Adjust this number based on your system's capabilities
-FORCE_RUN_ALL_STEPS: false                                     # Run all steps in the workflow and overwrite existing files
+FORCE_RUN_ALL_STEPS: True                                     # Run all steps in the workflow and overwrite existing files
 
 # Experiment settings
 EXPERIMENT_ID: run_1                                           # Name of experiment
@@ -33,7 +33,7 @@ SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
-STREAM_THRESHOLD: 22500                                          # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 200                                          # Threshold flow accumulation for stream vectorisation
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 
@@ -123,7 +123,7 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 
 # Geospatial data
 DEM_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/dem/Big_Island.tif # Path to elevation .tiff file, if default is .self.project_dir / attributes / elevation / dem / 
-DEM_NAME: Big_Island.tif                                      # Name of elevation .tiff file 
+DEM_NAME: Big_Island.tif                                     # Name of elevation .tiff file 
 SOIL_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/soilclass/soil_classes.tif                                      # Path to soil class .tiff file 
 SOIL_CLASS_NAME: soil_classes.tif                                     # Name of soil class .tiff file 
 LAND_CLASS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_Hawaii/parameters/landclass/7_mode_land_class/land_classes.tif                                      # Path to land class .tiff file 
@@ -138,6 +138,13 @@ NUM_LAND_COVER: 20                                             # Number of land 
 # Other settings
 LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
 LAND_CLASS_SOURCE: MERIT                                     # Source of land cover classifications, options: Landsat, MERIT
+
+
+# Observation data settings
+STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, options: USGS, WSC, NIWA (tbi), VI (tbi)
+STREAMFLOW_RAW_PATH: default
+STREAMFLOW_RAW_NAME: Alakahi Stream near Kamuela, HI_iv.txt
+STREAMFLOW_PROCESSED_PATH: default
 
 
 ## Model settings

@@ -47,6 +47,7 @@ class GeofabricDelineator:
         mpi_processes (int): Number of MPI processes to use.
         interim_dir (Path): Directory for interim files.
     """    
+
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
@@ -81,7 +82,6 @@ class GeofabricDelineator:
         """
         self.logger.info(f"Starting geofabric delineation for {self.domain_name}")
 
-        self.check_versions()
         self.create_directories()
 
         pour_point_path = self.config.get('POUR_POINT_SHP_PATH')
@@ -102,22 +102,11 @@ class GeofabricDelineator:
 
         river_network_path, river_basins_path = self.subset_upstream_geofabric()
 
-
-
         self.logger.info(f"Geofabric delineation and subsetting completed for {self.domain_name}")
 
         shutil.rmtree(self.interim_dir.parent, ignore_errors=True)
 
         return river_network_path, river_basins_path
-
-
-
-    def check_versions(self):
-        """Check and log the versions of GDAL and TauDEM."""
-        gdal_version = gdal.__version__
-        taudem_version = subprocess.getoutput("aread8 -v | head -n 1")
-        self.logger.info(f"GDAL version installed: {gdal_version}")
-        self.logger.info(f"TauDEM version installed: {taudem_version}")
 
     def create_directories(self):
         """Create necessary directories for interim files."""
@@ -171,9 +160,9 @@ class GeofabricDelineator:
             rivers['GRU_ID'] = rivers['LINKNO']
 
             # Calculate GRU area
-            basins = basins.to_crs('epsg:3763')
-            basins['GRU_area'] = basins.geometry.area 
-            basins = basins.to_crs('epsg:4326')
+            utm_crs = basins.estimate_utm_crs()
+            basins_utm = basins.to_crs(utm_crs)
+            basins['GRU_area'] = basins_utm.geometry.area 
             basins['gru_to_seg'] = basins['GRU_ID']
             basins = basins.drop(columns = ['DN'])
 

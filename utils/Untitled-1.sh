@@ -1,0 +1,1 @@
+./extract-gis.sh --dataset=merit-hydro --dataset-dir=/project/rrg-mclark/data/geospatial-data/MERIT-Hydro --output-dir= home/darri/output/merit-hydro-test  --print-geotiff=true --variable=elv --account=def-clark-ab --lib-path= /project/rrg-mclark/lib/ --prefix=merit_test_ --lat-lims="48,60" --lon-lims="-120,-64" ;
