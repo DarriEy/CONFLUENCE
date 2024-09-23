@@ -7,11 +7,13 @@ from typing import Dict, Any, Tuple
 import pandas as pd # type: ignore
 import torch # type: ignore
 import torch.nn as nn # type: ignore
-import numpy as np
+import numpy as np # type: ignore
 import torch.optim as optim # type: ignore
 from sklearn.model_selection import train_test_split # type: ignore
 from sklearn.preprocessing import StandardScaler # type: ignore
 import xarray as xr # type: ignore
+import psutil # type: ignore
+import traceback
 
 class MizuRouteRunner:
     """
@@ -175,6 +177,7 @@ import matplotlib.dates as mdates # type: ignore
 from matplotlib.gridspec import GridSpec # type: ignore
 import torch.nn as nn # type: ignore
 from torch.optim.lr_scheduler import OneCycleLR # type: ignore
+from torch.utils.data import TensorDataset, DataLoader # type: ignore
 
 class FLASH:
     """
@@ -315,7 +318,16 @@ class FLASH:
 
         criterion = nn.SmoothL1Loss()
         optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        scheduler = OneCycleLR(optimizer, max_lr=learning_rate, epochs=epochs, steps_per_epoch=len(X_train)//batch_size)
+        
+        # Calculate the exact number of steps
+        steps_per_epoch = (len(X_train) - 1) // batch_size + 1
+        total_steps = steps_per_epoch * epochs
+
+        self.logger.info(f"Train data shape: {X_train.shape}")
+        self.logger.info(f"Steps per epoch: {steps_per_epoch}")
+        self.logger.info(f"Total steps: {total_steps}")
+                
+        scheduler = OneCycleLR(optimizer, max_lr=learning_rate, total_steps=total_steps)
 
         best_val_loss = float('inf')
         patience = 10
@@ -372,26 +384,48 @@ class FLASH:
 
         self.logger.info("FLASH model training completed")
 
-    def predict(self, X: torch.Tensor) -> np.ndarray:
-        """
-        Make predictions using the trained FLASH model.
-
-        Args:
-            X (torch.Tensor): Input features.
-
-        Returns:
-            np.ndarray: Model predictions.
-        """
+    def predict(self, X: torch.Tensor, batch_size: int = 1000) -> np.ndarray:
         self.logger.info(f"Making predictions with FLASH model")
+        self.logger.info(f"Input tensor shape: {X.shape}")
+        self.log_memory_usage()
+
+        predictions = []
         self.model.eval()
         with torch.no_grad():
-            predictions = self.model(X)
-        return predictions.cpu().numpy()
+            for i in range(0, X.shape[0], batch_size):
+                batch = X[i:i+batch_size]
+                batch_predictions = self.model(batch)
+                predictions.append(batch_predictions.cpu().numpy())
+                
+                if i % 10000 == 0:
+                    self.logger.info(f"Processed {i}/{X.shape[0]} samples")
+                    self.log_memory_usage()
+
+        predictions = np.concatenate(predictions, axis=0)
+        self.logger.info(f"Predictions shape: {predictions.shape}")
+        self.log_memory_usage()
+        return predictions
+
+    def log_memory_usage(self):
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        self.logger.info(f"Memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")
 
     def simulate(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: pd.DataFrame) -> pd.DataFrame:
         self.logger.info("Running full simulation with FLASH model")
         X, _, common_dates, hru_ids = self.preprocess_data(forcing_df, streamflow_df, snow_df)
-        predictions = self.predict(X)
+        
+        dataset = TensorDataset(X)
+        dataloader = DataLoader(dataset, batch_size=1000, shuffle=False)
+        
+        predictions = []
+        self.model.eval()
+        with torch.no_grad():
+            for batch in dataloader:
+                batch_predictions = self.model(batch[0])
+                predictions.append(batch_predictions.cpu().numpy())
+        
+        predictions = np.concatenate(predictions, axis=0)
         
         # Inverse transform the predictions
         predictions = self.target_scaler.inverse_transform(predictions)
@@ -507,8 +541,6 @@ class FLASH:
         
         forcing_files.sort()
         datasets = [xr.open_dataset(file) for file in forcing_files]
-        self.logger.info(datasets[0]['time'].values)
-        self.logger.info(f'datsets 1: {datasets[0]}')
         combined_ds = xr.concat(datasets, dim='time')
         forcing_df = combined_ds.to_dataframe().reset_index()
         
@@ -525,7 +557,7 @@ class FLASH:
         streamflow_df = pd.read_csv(streamflow_path, parse_dates=['datetime'])
         streamflow_df = streamflow_df.set_index('datetime').rename(columns={'discharge_cms': 'streamflow'})
         streamflow_df.index = pd.to_datetime(streamflow_df.index)
-        self.logger.info(streamflow_df)
+
         # Load snow data
         snow_path = self.project_dir / 'observations' / 'snow' / 'preprocessed'
         snow_files = glob.glob(str(snow_path / f"{self.config.get('DOMAIN_NAME')}_filtered_snow_observations.csv"))
@@ -551,7 +583,6 @@ class FLASH:
         streamflow_df = streamflow_df.loc[start_date:end_date]
         snow_df = snow_df.loc[start_date:end_date]
         snow_df = snow_df.resample('h').interpolate(method = 'linear')
-        self.logger.info(snow_df)
 
         self.logger.info(f"Loaded forcing data with shape: {forcing_df.shape}")
         self.logger.info(f"Loaded streamflow data with shape: {streamflow_df.shape}")
