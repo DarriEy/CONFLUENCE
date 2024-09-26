@@ -249,7 +249,7 @@ class CONFLUENCE:
         else:
             visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
             model_outputs = [
-                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}"+f".h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc"))
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}"+f".h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
@@ -342,7 +342,6 @@ class CONFLUENCE:
     @get_function_logger
     def run_workflow(self):
         self.logger.info("Starting CONFLUENCE workflow")
-        
         # Check if we should force run all steps
         force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
         
