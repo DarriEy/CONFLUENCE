@@ -105,7 +105,9 @@ class VisualizationReporter:
             else:
                 # Calculate and display metrics for the entire period
                 for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
+
                     # Align data for the entire period
+                    sim.index = sim.index.round(freq='h')
                     aligned_data = pd.merge(obs_data[0][1], sim['IRFroutedRunoff'], 
                                             left_index=True, right_index=True, how='inner')
                     metrics = self.calculate_metrics(aligned_data.iloc[:, 0].values, aligned_data.iloc[:, 1].values)
