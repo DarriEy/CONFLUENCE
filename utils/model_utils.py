@@ -1,19 +1,28 @@
 import os
+import sys
 import glob
 import subprocess
 from pathlib import Path
-from datetime import datetime
 from typing import Dict, Any, Tuple
 import pandas as pd # type: ignore
 import torch # type: ignore
 import torch.nn as nn # type: ignore
 import numpy as np # type: ignore
 import torch.optim as optim # type: ignore
-from sklearn.model_selection import train_test_split # type: ignore
 from sklearn.preprocessing import StandardScaler # type: ignore
 import xarray as xr # type: ignore
 import psutil # type: ignore
-import traceback
+import torch.optim as optim # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+import matplotlib.dates as mdates # type: ignore
+from matplotlib.gridspec import GridSpec # type: ignore
+from torch.optim.lr_scheduler import OneCycleLR # type: ignore
+from torch.utils.data import TensorDataset, DataLoader # type: ignore
+
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
+
 
 class MizuRouteRunner:
     """
@@ -168,17 +177,6 @@ class SummaRunner:
         os.system(f"cp -R {source_path}/. {backup_path}")
         self.logger.info(f"Settings backed up to {backup_path}")
 
-from sklearn.preprocessing import StandardScaler # type: ignore
-import torch.optim as optim # type: ignore
-from torch.optim.lr_scheduler import ReduceLROnPlateau # type: ignore
-import torch.nn.functional as F # type: ignore
-import matplotlib.pyplot as plt # type: ignore
-import matplotlib.dates as mdates # type: ignore
-from matplotlib.gridspec import GridSpec # type: ignore
-import torch.nn as nn # type: ignore
-from torch.optim.lr_scheduler import OneCycleLR # type: ignore
-from torch.utils.data import TensorDataset, DataLoader # type: ignore
-
 class FLASH:
     """
     FLASH: Flow and Snow Hydrological LSTM
@@ -225,18 +223,16 @@ class FLASH:
 
         # Prepare features (forcing data)
         features = forcing_df.reset_index()
-        hru_ids = features['hruId'].unique()
-        features['hruId'] = features['hruId'].astype('category').cat.codes  # Convert hruId to numeric
-        features.set_index(['time', 'hruId'], inplace=True)
-        feature_columns = features.columns.drop(['time', 'hruId'] if 'time' in features.columns and 'hruId' in features.columns else [])
+        feature_columns = features.columns.drop(['time', 'hruId', 'hru', 'latitude', 'longitude'] if 'time' in features.columns and 'hruId' in features.columns else [])
         
-         # Scale features
+        # Average features across all HRUs for each timestep
+        features_avg = forcing_df.groupby('time')[feature_columns].mean()
+        self.logger.info(f'Averaged features shape: {features_avg.shape}')
+
+        # Scale features
         self.feature_scaler = StandardScaler()
-        scaled_features = self.feature_scaler.fit_transform(features[feature_columns])
+        scaled_features = self.feature_scaler.fit_transform(features_avg)
         scaled_features = np.clip(scaled_features, -10, 10)  # Clip to avoid extreme values
-
-
-        self.logger.info(f"Shape of scaled_features: {scaled_features.shape}")
 
         # Prepare targets (streamflow and snow)
         targets = pd.concat([streamflow_df['streamflow'], snow_df['snw']], axis=1)
@@ -246,27 +242,21 @@ class FLASH:
         self.target_scaler = StandardScaler()
         scaled_targets = self.target_scaler.fit_transform(targets)
         scaled_targets = np.clip(scaled_targets, -10, 10)  # Clip to avoid extreme values
-
-
-
         self.logger.info(f"Shape of targets: {targets.shape}")
 
         # Create sequences
         X, y = [], []
-        for hru in forcing_df.index.get_level_values('hruId').unique():
-            hru_data = scaled_features[forcing_df.index.get_level_values('hruId') == hru]
-            target_data = np.tile(scaled_targets, (len(hru_ids), 1))  # Repeat targets for each HRU
-            for i in range(len(hru_data) - self.lookback):
-                X.append(hru_data[i:(i + self.lookback)])
-                y.append(target_data[i + self.lookback])
+        for i in range(len(scaled_features) - self.lookback):
+            X.append(scaled_features[i:(i + self.lookback)])
+            y.append(scaled_targets[i + self.lookback])
 
         # Convert to PyTorch tensors
         X = torch.FloatTensor(np.array(X)).to(self.device)
         y = torch.FloatTensor(np.array(y)).to(self.device)
 
         self.logger.info(f"Preprocessed data shape: X: {X.shape}, y: {y.shape}")
-        return X, y, common_dates, hru_ids
-    
+        return X, y, pd.DatetimeIndex(common_dates), pd.Index(['average']), features_avg
+
     def create_model(self, input_size: int, hidden_size: int, num_layers: int, output_size: int):
         """
         Create the LSTM model for FLASH.
@@ -279,12 +269,14 @@ class FLASH:
         """
         self.logger.info(f"Creating FLASH model with input_size: {input_size}, hidden_size: {hidden_size}, num_layers: {num_layers}, output_size: {output_size}")
         
+        
         class LSTMModel(nn.Module):
-            def __init__(self, input_size, hidden_size, num_layers, output_size):
+            def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.2):
                 super(LSTMModel, self).__init__()
                 self.hidden_size = hidden_size
                 self.num_layers = num_layers
-                self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+                self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+                self.dropout = nn.Dropout(dropout_rate)
                 self.ln = nn.LayerNorm(hidden_size)
                 self.fc = nn.Linear(hidden_size, output_size)
                 
@@ -304,9 +296,12 @@ class FLASH:
                 c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
                 out, _ = self.lstm(x, (h0, c0))
                 out = self.ln(out[:, -1, :])
+                out = self.dropout(out)  # Apply dropout here
                 out = self.fc(out)
                 return out
-        self.model = LSTMModel(input_size, hidden_size, num_layers, output_size).to(self.device)
+        
+        dropout_rate = float(self.config.get('FLASH_DROPOUT', 0.2))
+        self.model = LSTMModel(input_size, hidden_size, num_layers, output_size, dropout_rate).to(self.device)
         self.logger.info(f"FLASH model created: {self.model}")
 
     def train_model(self, X: torch.Tensor, y: torch.Tensor, epochs: int = 100, batch_size: int = 32, learning_rate: float = 0.001):
@@ -317,20 +312,11 @@ class FLASH:
         y_train, y_val = y[:train_size], y[train_size:]
 
         criterion = nn.SmoothL1Loss()
-        optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        
-        # Calculate the exact number of steps
-        steps_per_epoch = (len(X_train) - 1) // batch_size + 1
-        total_steps = steps_per_epoch * epochs
-
-        self.logger.info(f"Train data shape: {X_train.shape}")
-        self.logger.info(f"Steps per epoch: {steps_per_epoch}")
-        self.logger.info(f"Total steps: {total_steps}")
-                
-        scheduler = OneCycleLR(optimizer, max_lr=learning_rate, total_steps=total_steps)
+        optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=float(self.config.get('FLASH_L2_REGULARIZATION', 1e-6)))
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
         best_val_loss = float('inf')
-        patience = 10
+        patience = self.config.get('FLASH_LEARNING_PATIENCE')
         patience_counter = 0
 
         for epoch in range(epochs):
@@ -352,14 +338,10 @@ class FLASH:
                 
                 loss.backward()
                 
-                # Gradient clipping and noise addition
-                for param in self.model.parameters():
-                    if param.grad is not None:
-                        param.grad.data.clamp_(-1, 1)
-                        param.grad.data.add_(torch.randn_like(param.grad) * 0.01)
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 
                 optimizer.step()
-                scheduler.step()
 
                 total_loss += loss.item()
 
@@ -368,6 +350,9 @@ class FLASH:
             with torch.no_grad():
                 val_outputs = self.model(X_val)
                 val_loss = criterion(val_outputs, y_val)
+
+            # Step the scheduler with the validation loss
+            scheduler.step(val_loss)
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -413,7 +398,7 @@ class FLASH:
 
     def simulate(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: pd.DataFrame) -> pd.DataFrame:
         self.logger.info("Running full simulation with FLASH model")
-        X, _, common_dates, hru_ids = self.preprocess_data(forcing_df, streamflow_df, snow_df)
+        X, _, common_dates, _, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
         
         dataset = TensorDataset(X)
         dataloader = DataLoader(dataset, batch_size=1000, shuffle=False)
@@ -429,65 +414,42 @@ class FLASH:
         
         # Inverse transform the predictions
         predictions = self.target_scaler.inverse_transform(predictions)
-    
+        
         # Handle NaN values
         predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e15, neginf=-1e15)
-
-        
-        self.logger.info(f"Shape of predictions: {predictions.shape}")
-        self.logger.info(f"Shape of forcing_df: {forcing_df.shape}")
-        
-        # Get the dates for which we have predictions
-        prediction_dates = common_dates[self.lookback:]
-        
-        self.logger.info(f"Number of prediction dates: {len(prediction_dates)}")
-        self.logger.info(f"Number of HRUs in predictions: {len(hru_ids)}")
         
         # Create a DataFrame for predictions
-        pred_df = pd.DataFrame(predictions, columns=['predicted_streamflow', 'predicted_SWE'])
-        pred_df['time'] = np.repeat(prediction_dates, len(hru_ids))
-        pred_df['hruId'] = np.tile(hru_ids, len(prediction_dates))
-        pred_df.set_index(['time', 'hruId'], inplace=True)
+        pred_df = pd.DataFrame(predictions, columns=['predicted_streamflow', 'predicted_SWE'], index=common_dates[self.lookback:])
         
-        self.logger.info(f"Shape of pred_df: {pred_df.shape}")
-        
-        # Combine predictions with original data
-        result = forcing_df.copy()
-        result = result.join(pred_df, how='left')
+        # Join predictions with the original averaged features
+        result = features_avg.join(pred_df, how='outer')
         
         self.logger.info(f"Shape of final result: {result.shape}")
         self.logger.info("Simulation completed")
         return result
     
     def save_model(self, path: Path):
-        """
-        Save the trained FLASH model to a file.
-
-        Args:
-            path (Path): Path to save the model.
-        """
         self.logger.info(f"Saving FLASH model to {path}")
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'scaler': self.scaler,
+            'feature_scaler': self.feature_scaler,
+            'target_scaler': self.target_scaler,
             'lookback': self.lookback,
         }, path)
         self.logger.info("Model saved successfully")
 
-    def load_model(self, path: Path):
-        """
-        Load a trained FLASH model from a file.
 
-        Args:
-            path (Path): Path to the saved model file.
-        """
+    def load_model(self, path: Path):
         self.logger.info(f"Loading FLASH model from {path}")
-        checkpoint = torch.load(path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.scaler = checkpoint['scaler']
-        self.lookback = checkpoint['lookback']
-        self.model.eval()
+        model_state = torch.load(path, weights_only = False)
+        self.logger.info(f"model_state: {model_state}")
+        #self.model.load_state_dict(checkpoint['model_state_dict'])
+        #self.feature_scaler = checkpoint['feature_scaler']
+        #self.target_scaler = checkpoint['target_scaler']
+        #self.lookback = checkpoint['lookback']
+        #self.model.eval()
         self.logger.info("Model loaded successfully")
+        return model_state.get('model_state_dict')
 
     def run_flash(self):
         self.logger.info("Starting FLASH model run")
@@ -496,21 +458,37 @@ class FLASH:
             # Load data
             forcing_df, streamflow_df, snow_df = self._load_data()
             
+            # Define path to save model
+            model_save_path = self.project_dir / 'models' / 'flash_model.pt'
+
             # Preprocess data
-            X, y, common_dates, hru_ids = self.preprocess_data(forcing_df, streamflow_df, snow_df)
-            
-            # Create and train model
+            X, y, common_dates, hru_ids, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
             input_size = X.shape[2]
             hidden_size = self.config.get('FLASH_HIDDEN_SIZE', 64)
             num_layers = self.config.get('FLASH_NUM_LAYERS', 2)
             output_size = 2  # streamflow and SWE
-            
-            self.create_model(input_size, hidden_size, num_layers, output_size)
-            self.train_model(X, y,
-                            epochs=self.config.get('FLASH_EPOCHS', 100),
-                            batch_size=self.config.get('FLASH_BATCH_SIZE', 32),
-                            learning_rate=self.config.get('FLASH_LEARNING_RATE', 0.001))
-            
+
+            if self.config.get('FLASH_LOAD', False):
+                # Load pre-trained model
+                self.logger.info("Loading pre-trained FLASH model")
+                model_state = self.load_model(model_save_path)  
+                self.create_model(input_size, hidden_size, num_layers, output_size)  # Use the existing create_model function
+                self.model.load_state_dict(model_state)  # Load the state into the model
+
+            else:
+                # Train the model
+                X, y, common_dates, hru_ids, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
+                
+                # Create and train model
+                self.create_model(input_size, hidden_size, num_layers, output_size)
+                self.train_model(X, y,
+                                epochs=self.config.get('FLASH_EPOCHS', 100),
+                                batch_size=self.config.get('FLASH_BATCH_SIZE', 32),
+                                learning_rate=self.config.get('FLASH_LEARNING_RATE', 0.001))
+
+                # Save model
+                self.save_model(model_save_path)
+    
             # Run simulation
             results = self.simulate(forcing_df, streamflow_df, snow_df)
             
@@ -519,10 +497,6 @@ class FLASH:
             
             # Save results
             self._save_results(results)
-            
-            # Save model
-            model_save_path = self.project_dir / 'models' / 'flash_model.pt'
-            self.save_model(model_save_path)
             
             self.logger.info("FLASH model run completed successfully")
         except Exception as e:
@@ -591,34 +565,20 @@ class FLASH:
         return forcing_df, streamflow_df, snow_df
 
     def _save_results(self, results: pd.DataFrame):
-        """
-        Save the results of the FLASH model simulation.
-
-        Args:
-            results (pd.DataFrame): Simulation results to be saved.
-        """
         self.logger.info("Saving FLASH model results")
         
         # Prepare the output directory
         output_dir = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FLASH'
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Reshape results to have time and hru dimensions
-        hru_ids = results.index.get_level_values('hruId').unique()
-        times = results.index.get_level_values('time').unique()
-        
-        streamflow = results['predicted_streamflow'].values.reshape(len(times), len(hru_ids))
-        swe = results['predicted_SWE'].values.reshape(len(times), len(hru_ids))
-        
         # Create xarray Dataset
         ds = xr.Dataset(
             {
-                "IRFroutedRunoff": (["time", "hru"], streamflow),
-                "scalarSWE": (["time", "hru"], swe)
+                "IRFroutedRunoff": (["time"], results['predicted_streamflow'].values),
+                "scalarSWE": (["time"], results['predicted_SWE'].values)
             },
             coords={
-                "time": times,
-                "hru": hru_ids
+                "time": results.index
             }
         )
         
@@ -635,41 +595,54 @@ class FLASH:
         self.logger.info(f"FLASH results saved to {output_file}")
 
     def visualize_results(self, results_df: pd.DataFrame, obs_streamflow: pd.DataFrame, obs_snow: pd.DataFrame):
-        """
-        Visualize the observed and simulated snow and streamflow.
-
-        Args:
-        results_df (pd.DataFrame): DataFrame containing the simulation results
-        obs_streamflow (pd.DataFrame): DataFrame containing observed streamflow data
-        obs_snow (pd.DataFrame): DataFrame containing observed snow data
-        """
         self.logger.info("Visualizing results")
 
         # Prepare data
-        sim_dates = results_df.index.get_level_values('time').unique()
-        sim_streamflow = results_df.groupby('time')['predicted_streamflow'].mean()
-        sim_swe = results_df.groupby('time')['predicted_SWE'].mean()
+        sim_dates = results_df.index
+        sim_streamflow = results_df['predicted_streamflow']
+        sim_swe = results_df['predicted_SWE']
 
         obs_streamflow = obs_streamflow.reindex(sim_dates)
         obs_snow = obs_snow.reindex(sim_dates)
-        self.logger.info(obs_snow)
         
+        # Calculate metrics for streamflow and SWE
+        metrics_streamflow = {
+            '': self.calculate_metrics(obs_streamflow, sim_streamflow)
+        }
+        metrics_swe = {
+            '': self.calculate_metrics(obs_snow, sim_swe)
+        }
+
         # Create figure
-        fig = plt.figure(figsize=(15, 10))
+        fig = plt.figure(figsize=(15, 16))
         gs = GridSpec(2, 1, height_ratios=[1, 1])
 
         # Streamflow subplot
         ax1 = fig.add_subplot(gs[0])
-        ax1.plot(sim_dates, sim_streamflow, label='Simulated', color='blue')
+        ax1.plot(sim_dates, sim_streamflow, label='FLASH simulated', color='blue')
         ax1.plot(sim_dates, obs_streamflow, label='Observed', color='red')
         ax1.set_ylabel('Streamflow (m³/s)')
         ax1.set_title('Observed vs Simulated Streamflow')
         ax1.legend()
         ax1.grid(True)
 
+        # Add metrics text to upper left corner of streamflow plot
+        metrics_text = "Performance Metrics:\n\n"
+        metrics_text += "Streamflow Metrics:\n"
+        for period, metrics in metrics_streamflow.items():
+            metrics_text += f"{period}:\n"
+            metrics_text += "\n".join([f"  {k}: {v:.3f}" for k, v in metrics.items()]) + "\n\n"
+        metrics_text += "Snow Water Equivalent Metrics:\n"
+        for period, metrics in metrics_swe.items():
+            metrics_text += f"{period}:\n"
+            metrics_text += "\n".join([f"  {k}: {v:.3f}" for k, v in metrics.items()]) + "\n\n"
+        
+        ax1.text(0.01, 0.99, metrics_text, transform=ax1.transAxes, verticalalignment='top', 
+                fontsize=8, bbox=dict(facecolor='white', edgecolor='black', alpha=0.8))
+
         # Snow subplot
         ax2 = fig.add_subplot(gs[1])
-        ax2.plot(sim_dates, sim_swe, label='Simulated', color='blue')
+        ax2.plot(sim_dates, sim_swe, label='FLASH simulated', color='blue')
         ax2.plot(sim_dates, obs_snow, label='Observed', color='red')
         ax2.set_ylabel('Snow Water Equivalent (mm)')
         ax2.set_title('Observed vs Simulated Snow Water Equivalent')
@@ -693,3 +666,18 @@ class FLASH:
         plt.close()
 
         self.logger.info(f"Results visualization saved to {fig_path}")
+
+    def calculate_metrics(self, obs: pd.Series, sim: pd.Series) -> Dict[str, float]:
+        # Ensure obs and sim have the same length and are aligned
+        aligned_data = pd.concat([obs, sim], axis=1, keys=['obs', 'sim']).dropna()
+        obs = aligned_data['obs']
+        sim = aligned_data['sim']
+        
+        return {
+            'RMSE': get_RMSE(obs.values, sim.values, transfo=1),
+            'KGE': get_KGE(obs.values, sim.values, transfo=1),
+            'KGEp': get_KGEp(obs.values, sim.values, transfo=1),
+            'NSE': get_NSE(obs.values, sim.values, transfo=1),
+            'MAE': get_MAE(obs.values, sim.values, transfo=1),
+            'KGEnp': get_KGEnp(obs.values, sim.values, transfo=1)
+        }

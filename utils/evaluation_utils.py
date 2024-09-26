@@ -1,5 +1,5 @@
 import pandas as pd # type: ignore
-import numpy as np
+import numpy as np # type: ignore
 import sys
 import csv
 import subprocess
@@ -9,9 +9,8 @@ from pathlib import Path
 from pyviscous import viscous # type: ignore
 from SALib.analyze import sobol, rbd_fast # type: ignore
 from SALib.sample import sobol as sobol_sample # type: ignore
-from scipy.stats import spearmanr 
+from scipy.stats import spearmanr  # type: ignore
 from tqdm import tqdm # type: ignore
-from scipy import stats
 import itertools
 from typing import Dict, List, Tuple, Any
 import xarray as xr # type: ignore
@@ -229,7 +228,7 @@ class DecisionAnalyzer:
 
 
         if self.config.get('SIMULATIONS_PATH') == 'default':
-            sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f'{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-04-01-00000.nc'
+            sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f'{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc'
         else:
             sim_file_path = Path(self.config.get('SIMULATIONS_PATH'))
 

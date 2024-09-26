@@ -61,7 +61,7 @@ class CONFLUENCE:
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
 
     def setup_logging(self):
-        log_dir = self.project_dir / f'_workLog_{self.config.get('DOMAIN_NAME')}'
+        log_dir = self.project_dir / f"_workLog_{self.config.get('DOMAIN_NAME')}"
         log_dir.mkdir(parents=True, exist_ok=True)
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = log_dir / f'confluence_general_{self.domain_name}_{current_time}.log'
@@ -249,7 +249,7 @@ class CONFLUENCE:
         else:
             visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
             model_outputs = [
-                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-06-01-03600.nc"))
+                (f'{self.config.get('HYDROLOGICAL_MODEL')}', str(self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "mizuRoute" / f"{self.config.get('EXPERIMENT_ID')}"+f".h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
