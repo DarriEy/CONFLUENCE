@@ -333,11 +333,11 @@ class CONFLUENCE:
     def run_benchmarking(self):
         # Preprocess data for benchmarking
         preprocessor = BenchmarkPreprocessor(self.config, self.logger)
-        benchmark_data = preprocessor.preprocess_benchmark_data(f'{self.config.get('FORCING_START_YEAR')}-01-01', f'{self.config.get('FORCING_END_YEAR')}-12-31')
+        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
 
         # Run benchmarking
         benchmarker = Benchmarker(self.config, self.logger)
-        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f'{self.config.get('FORCING_END_YEAR')}-12-31')
+        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
 
     @get_function_logger
     def run_workflow(self):
