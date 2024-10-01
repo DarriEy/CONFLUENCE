@@ -1671,7 +1671,7 @@ class SummaPreProcessor_spatial:
                         self.logger.warning(f'Index and mode soil class do not match at hru_id {attribute_hru}')
                         tmp_sc = -999
                     
-                    self.logger.info(f'Replacing soil class {att['soilTypeIndex'][idx]} with {tmp_sc} at HRU {attribute_hru}')
+                    self.logger.info(f"Replacing soil class {att['soilTypeIndex'][idx]} with {tmp_sc} at HRU {attribute_hru}")
                     att['soilTypeIndex'][idx] = tmp_sc
 
     def insert_land_class(self, attribute_file):
