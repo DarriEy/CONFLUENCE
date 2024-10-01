@@ -4,7 +4,6 @@ pandas>=1.2.0
 scipy>=1.6.0
 xarray>=0.16.0
 pint_xarray>=0.4
-cdo>=2.4.4
 python-cdo>=1.6.0
 
 # Machine learning and data science libraries
