@@ -860,7 +860,7 @@ class SummaPreProcessor_spatial:
 
             # Save the shapefile
             self.shapefile_path.mkdir(parents=True, exist_ok=True)
-            output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+            output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
             gdf.to_file(output_shapefile)
 
             self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
