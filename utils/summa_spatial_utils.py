@@ -13,16 +13,17 @@ from datetime import datetime, timedelta
 from typing import Dict, Any
 from shutil import copyfile
 import rasterstats # type: ignore
-from pyproj import CRS, Transformer # type: ignore
-from shapely.geometry import Polygon, box, Point # type: ignore
+from pyproj import Transformer # type: ignore
+from shapely.geometry import Polygon, box, Point, LineString, MultiLineString, GeometryCollection # type: ignore
 import time
 import tempfile
 import shutil
 import rasterio # type: ignore
-from rasterio.mask import mask # type: ignore
-from pyproj import Proj, Transformer # type: ignore
+from pyproj import Transformer # type: ignore
 import pyproj # type: ignore
 import shapefile # type: ignore
+from skimage import measure # type: ignore
+from rasterio import features # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.logging_utils import get_function_logger # type: ignore
@@ -75,6 +76,8 @@ class SummaPreProcessor_spatial:
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
+        self.river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+        self.river_network_path = self._get_default_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.data_step = int(self.config.get('FORCING_TIME_STEP_SIZE'))
@@ -1401,6 +1404,108 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Trial parameters file created at: {parameter_path}")
 
+    def calculate_slope_and_contour(self, shp, dem_path):
+        """
+        Calculate average slope and contour length for each HRU using a more sophisticated method.
+        
+        Args:
+            shp (gpd.GeoDataFrame): GeoDataFrame containing HRU polygons
+            dem_path (Path): Path to the DEM file
+        
+        Returns:
+            dict: Dictionary with HRU IDs as keys and tuples (slope, contour_length) as values
+        """
+        self.logger.info("Calculating slope and contour length for each HRU")
+        
+        with rasterio.open(dem_path) as src:
+            dem = src.read(1)
+            transform = src.transform
+
+        results = {}
+        for idx, row in shp.iterrows():
+            hru_id = row[self.config.get('CATCHMENT_SHP_HRUID')]
+            
+            # Mask the DEM for the current HRU
+            mask = rasterio.features.geometry_mask([row.geometry], out_shape=dem.shape, transform=transform, invert=True)
+            hru_dem = np.ma.masked_array(dem, ~mask)
+            
+            if hru_dem.count() == 0:
+                self.logger.warning(f"No DEM data found for HRU {hru_id}")
+                results[hru_id] = (0.1, 30)  # Default values
+                continue
+
+            # Calculate slope
+            dy, dx = np.gradient(hru_dem)
+            slope = np.arctan(np.sqrt(dx*dx + dy*dy))
+            avg_slope = np.mean(slope)
+
+            # Calculate contours
+            contour_length = np.sqrt(row.geometry.area) #self.calculate_contour_length(hru_dem, row.geometry, transform, hru_id, shp.crs) #
+            results[hru_id] = (avg_slope, contour_length)
+
+        return results
+
+    def calculate_contour_length(self, hru_dem, hru_geometry, transform, hru_id, crs):
+        """
+        Calculate the total length of contours within an HRU and save contours to files.
+        """
+        # Create a mask for the HRU
+        hru_mask = features.geometry_mask([hru_geometry], out_shape=hru_dem.shape, transform=transform, invert=True)
+        
+        # Apply the mask to the DEM
+        masked_dem = np.ma.masked_array(hru_dem, mask=~hru_mask)
+        
+        elevation_range = np.ptp(masked_dem.compressed())
+        if elevation_range == 0:
+            self.logger.warning(f"No elevation variation in HRU {hru_id}")
+            return 0  # Flat area, no contours
+
+        num_contours = min(max(int(elevation_range / 10), 5), 20)  # Between 5 and 20 contours
+        contour_intervals = np.linspace(masked_dem.min(), masked_dem.max(), num_contours)
+
+        total_length = 0
+        all_contours_list = []
+        contour_levels = []
+
+        for level in contour_intervals:
+            # Generate contours only within the masked area
+            contours = measure.find_contours(masked_dem.filled(masked_dem.min()), level)
+            
+            for contour in contours:
+                # Convert contour coordinates to geospatial coordinates
+                coords = [rasterio.transform.xy(transform, y, x) for y, x in contour]
+                
+                # Create a LineString from the coordinates
+                contour_line = LineString(coords)
+                
+                # Clip the contour to the HRU boundary (this should now be unnecessary, but kept as a safeguard)
+                clipped_contour = contour_line.intersection(hru_geometry)
+                
+                if not clipped_contour.is_empty and isinstance(clipped_contour, (LineString, MultiLineString)):
+                    if isinstance(clipped_contour, LineString):
+                        all_contours_list.append(clipped_contour)
+                        contour_levels.append(level)
+                    else:  # MultiLineString
+                        all_contours_list.extend(list(clipped_contour.geoms))
+                        contour_levels.extend([level] * len(clipped_contour.geoms))
+                    total_length += clipped_contour.length
+
+        if not all_contours_list:
+            self.logger.warning(f"No valid contours found for HRU {hru_id}")
+            return total_length
+
+        # Save all_contours to shapefile
+        all_contours_gdf = gpd.GeoDataFrame(geometry=all_contours_list, crs=crs)
+        all_contours_gdf['hru_id'] = hru_id
+        all_contours_gdf['contour_l'] = contour_levels
+        all_contours_file = self.project_dir / f'contours/all_contours_hru_{hru_id}.shp'
+        all_contours_file.parent.mkdir(parents=True, exist_ok=True)
+        all_contours_gdf.to_file(all_contours_file)
+
+        self.logger.info(f"Saved {len(all_contours_list)} contours for HRU {hru_id} to {all_contours_file}")
+
+        return total_length
+
     @get_function_logger
     def create_attributes_file(self):
         """
@@ -1425,6 +1530,9 @@ class SummaPreProcessor_spatial:
 
         # Load the catchment shapefile
         shp = gpd.read_file(self.catchment_path / self.catchment_name)
+        
+        # Calculate slope and contour length
+        slope_contour = self.calculate_slope_and_contour(shp, self.dem_path)
 
         # Get HRU order from a forcing file
         forcing_files = list(self.forcing_summa_path.glob('*.nc'))
@@ -1492,9 +1600,13 @@ class SummaPreProcessor_spatial:
                 att['longitude'][idx] = shp.iloc[idx][self.config.get('CATCHMENT_SHP_LON')]
                 att['hru2gruId'][idx] = shp.iloc[idx][self.config.get('CATCHMENT_SHP_GRUID')]
 
-                # Constants and placeholders
-                att['tan_slope'][idx] = 0.1
-                att['contourLength'][idx] = 30
+                # Set slope and contour length
+                hru_id = shp.iloc[idx][self.config.get('CATCHMENT_SHP_HRUID')]
+                slope, contour_length = slope_contour.get(hru_id, (0.1, 30))  # Use default values if not found
+                att['tan_slope'][idx] = np.tan(slope)  # Convert slope to tan(slope)
+                att['contourLength'][idx] = contour_length
+                self.logger.info(f"Setting tan slope to: {np.tan(slope)} and contourLength to: {contour_length} in hru: {hru_id} ")
+
                 att['slopeTypeIndex'][idx] = 1
                 att['mHeight'][idx] = self.forcing_measurement_height
                 att['downHRUindex'][idx] = 0
