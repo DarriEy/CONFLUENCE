@@ -23,9 +23,9 @@ import shutil
 from functools import wraps
 import sys
 import glob
-from pysheds.grid import Grid # type: ignore
+#from pysheds.grid import Grid # type: ignore
 import rasterio # type: ignore
-import numpy as np
+import numpy as np # type: ignore
 from shapely.geometry import Polygon # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
