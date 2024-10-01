@@ -44,7 +44,7 @@ class DomainDiscretizer:
         elif delineation_method == 'lumped':
             self.delineation_suffix = 'lumped'
         elif delineation_method == 'subset':
-            self.delineation_suffix = f'subset_{self.config.get('GEOFABRIC_TYPE')}'
+            self.delineation_suffix = f"subset_{self.config['GEOFABRIC_TYPE']}"
         
     def sort_catchment_shape(self):
         self.logger.info("Sorting catchment shape")
