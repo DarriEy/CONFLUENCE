@@ -2,7 +2,6 @@ import pandas as pd # type: ignore
 import numpy as np # type: ignore
 import sys
 import csv
-import subprocess
 from hydrobm.calculate import calc_bm # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from pathlib import Path 
@@ -240,11 +239,12 @@ class DecisionAnalyzer:
         dfSim = dfSim.sel(seg=segment_index) 
         dfSim = dfSim['IRFroutedRunoff'].to_dataframe().reset_index()
         dfSim.set_index('time', inplace=True)
+        dfSim.index = dfSim.index.round(freq='h')
 
         dfObs = dfObs.reindex(dfSim.index).dropna()
         dfSim = dfSim.reindex(dfObs.index).dropna()
-
         obs = dfObs.values
+
         sim = dfSim['IRFroutedRunoff'].values
         kge = get_KGE(obs, sim, transfo=1)
         kgep = get_KGEp(obs, sim, transfo=1)

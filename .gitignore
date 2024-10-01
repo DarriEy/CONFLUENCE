@@ -154,6 +154,10 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Ignore changes to config files, but keep them in the repo
+!0_config_files/
+!0_config_files/*
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
