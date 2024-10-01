@@ -228,7 +228,7 @@ class MizuRoutePreProcessor:
         experiment_output_mizuroute = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
 
         if experiment_output_summa == 'default':
-            experiment_output_summa = self.project_dir / f'simulations/{self.config.get('EXPERIMENT_ID')}' / 'SUMMA'
+            experiment_output_summa = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
         else:
             experiment_output_summa = Path(experiment_output_summa)
 
