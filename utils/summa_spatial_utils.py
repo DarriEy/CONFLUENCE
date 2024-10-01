@@ -72,7 +72,7 @@ class SummaPreProcessor_spatial:
         self.gruId = self.config.get('CATCHMENT_SHP_GRUID')
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
-        self.dem_path = self._get_default_path('DEM_PATH', f'attributes/elevation/dem/{self.config.get('DEM_NAME')}')
+        self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{self.config['DEM_NAME']}")
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
@@ -573,10 +573,10 @@ class SummaPreProcessor_spatial:
 
         esmr.author_name = 'SUMMA public workflow scripts'
         esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
-        esmr.case_name = f'{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}'
+        esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
 
         # Set up source and target shapefiles
-        esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+        esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
         esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
         esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
 
