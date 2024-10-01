@@ -954,7 +954,7 @@ class SummaPreProcessor_spatial:
 
             # Create shapefile
             self.shapefile_path.mkdir(parents=True, exist_ok=True)
-            output_shapefile = self.shapefile_path / f'forcing_{self.config.get('FORCING_DATASET')}.shp'
+            output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
 
             with shapefile.Writer(str(output_shapefile)) as w:
                 w.autoBalance = 1
