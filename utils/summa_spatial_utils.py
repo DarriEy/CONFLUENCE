@@ -1727,10 +1727,10 @@ class SummaPreProcessor_spatial:
                         else:
                             is_water += 1  # HRU is exclusively water
                     
-                    self.logger.info(f'Replacing land class {att['vegTypeIndex'][idx]} with {tmp_lc} at HRU {attribute_hru}')
+                    self.logger.info(f"Replacing land class {att['vegTypeIndex'][idx]} with {tmp_lc} at HRU {attribute_hru}")
                     att['vegTypeIndex'][idx] = tmp_lc
 
-                self.logger.info(f'{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.')
+                self.logger.info(f"{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.")
 
 
     def insert_elevation(self, attribute_file):
