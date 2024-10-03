@@ -57,7 +57,7 @@ class OstrichOptimizer:
     def create_rank_specific_directories(self):
         for rank in range(1, self.num_ranks):
             for model in ["SUMMA", "mizuRoute"]:
-                rank_specific_path = self.project_dir / f'simulations/{self.config.get('EXPERIMENT_ID')}_rank{rank}/{model}'
+                rank_specific_path = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}_rank{rank}/{model}"
                 rank_specific_path.mkdir(parents=True, exist_ok=True)
                 run_settings_path = rank_specific_path / "run_settings"
                 run_settings_path.mkdir(exist_ok=True)
