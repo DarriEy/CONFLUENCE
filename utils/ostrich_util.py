@@ -222,8 +222,8 @@ EndParallelStuff
     def generate_param_definitions(self):
         definitions = []
         all_params = self.config.get('PARAMS_TO_CALIBRATE').split(',') + self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
-        local_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f'domain_{self.config.get('DOMAIN_NAME')}' / 'settings/summa/localParamInfo.txt'
-        basin_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f'domain_{self.config.get('DOMAIN_NAME')}' / 'settings/summa/basinParamInfo.txt'
+        local_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}' / 'settings/summa/localParamInfo.txt"
+        basin_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}' / 'settings/summa/basinParamInfo.txt"
         params_to_calibrate = self.config.get('PARAMS_TO_CALIBRATE').split(',')
         basin_params_to_calibrate = self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
 
