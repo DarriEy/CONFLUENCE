@@ -227,7 +227,7 @@ class DecisionAnalyzer:
 
 
         if self.config.get('SIMULATIONS_PATH') == 'default':
-            sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f'{self.config.get('EXPERIMENT_ID')}.h.{self.config.get('FORCING_START_YEAR')}-01-01-03600.nc'
+            sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"
         else:
             sim_file_path = Path(self.config.get('SIMULATIONS_PATH'))
 
