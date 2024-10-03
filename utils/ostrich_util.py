@@ -422,8 +422,8 @@ EndParaPADDS
         with open(file_path, 'r') as f:
             content = f.read()
         
-        content = content.replace(self.config.get('EXPERIMENT_ID'), f'{self.config.get('EXPERIMENT_ID')}_rank{rank}')
-        content = content.replace('/settings/SUMMA/', f'/simulations/{self.config.get('EXPERIMENT_ID')}_rank{rank}/SUMMA/run_settings/')
+        content = content.replace(self.config.get('EXPERIMENT_ID'), f"{self.config['EXPERIMENT_ID']}_rank{rank}")
+        content = content.replace('/settings/SUMMA/', f"/simulations/{self.config['EXPERIMENT_ID']}_rank{rank}/SUMMA/run_settings/")
         
         with open(file_path, 'w') as f:
             f.write(content)
@@ -432,8 +432,8 @@ EndParaPADDS
         with open(file_path, 'r') as f:
             content = f.read()
         
-        content = content.replace(self.config.get('EXPERIMENT_ID'), f'{self.config.get('EXPERIMENT_ID')}_rank{rank}')
-        content = content.replace('/settings/mizuRoute/', f'/simulations/{self.config.get('EXPERIMENT_ID')}_rank{rank}/mizuRoute/run_settings/')
+        content = content.replace(self.config.get('EXPERIMENT_ID'), f"{self.config['EXPERIMENT_ID']}_rank{rank}")
+        content = content.replace('/settings/mizuRoute/', f"/simulations/{self.config['EXPERIMENT_ID']}_rank{rank}/mizuRoute/run_settings/")
         
         with open(file_path, 'w') as f:
             f.write(content)
