@@ -1081,7 +1081,7 @@ class SummaPreProcessor_spatial:
             'RDRS_v2.1_P_UVC_09944': 'windspd',
             'RDRS_v2.1_P_TT_1.5m': 'airtemp',
             'RDRS_v2.1_P_HU_1.5m': 'spechum',
-            'RDRS_v2.1_P_UVC_1.5m': 'windspd',
+            'RDRS_v2.1_P_UVC_10m': 'windspd',
             'RDRS_v2.1_P_UUC_10m': 'windspd_u',
             'RDRS_v2.1_P_VVC_10m': 'windspd_v',
         }
