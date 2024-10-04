@@ -66,7 +66,7 @@ class OstrichOptimizer:
                 os.chmod(run_settings_path, 0o755)
     
                 settings_summa_path = self.project_dir / 'settings/SUMMA'
-                settings_mizu_path = self.project_dir / 'settings/mizuroute'
+                settings_mizu_path = self.project_dir / 'settings/mizuRoute'
 
                 if model == "SUMMA":
                     self.copy_summa_settings(settings_summa_path, run_settings_path, rank)
