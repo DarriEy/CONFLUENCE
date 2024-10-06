@@ -1,8 +1,8 @@
 ### CONFLUENCE configuration file
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff"                                    # Name of experimental domain
+DOMAIN_NAME: "Ross"                                    # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 2016-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 2008-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
@@ -17,7 +17,7 @@ FORCE_RUN_ALL_STEPS: False                                     # Run all steps i
 ## Geospatial settings
 # Geospatial domain representation settings
 DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method. Options subset_geofabric, delineate_geofabric, lumped_watershed
-GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, options Merit, TDX, NWS
+GEOFABRIC_TYPE: Merit                                            # Source geofabric to subset from, options Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
@@ -26,12 +26,12 @@ DELINEATE_BY_POURPOINT: True                                   # Delineate water
 # Domain discretization settings
 DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
-ELEVATION_BAND_SIZE: 400                                       # Elevation band size in meters
+ELEVATION_BAND_SIZE: 300                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
 
 # Shapefile settings - SUMMA catchment shape
-CATCHMENT_SHP_NAME: Bow_at_Banff_HRUs_elevation.shp            # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: Ross_HRUs_elevation.shp            # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -39,20 +39,20 @@ CATCHMENT_SHP_HRUID: HRU_ID                                    # HRU ID column i
 CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column in riverBasin shapefile
 
 # Shapefile settings - mizuroute catchment shape 
-RIVER_BASINS_NAME: Bow_at_Banff_riverBasins_delineate.shp     # Name of river basin shapefile
+RIVER_BASINS_NAME: Ross_riverBasins_delineate.shp     # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - mizuroute riverNetwork shape 
-RIVER_NETWORK_SHP_NAME: Bow_at_Banff_riverNetwork_delineate.shp # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: Ross_riverNetwork_delineate.shp # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
 RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Pour point settings
-POUR_POINT_COORDS: 51.1722/-115.5717                           # Pour point coordinates lat/lon, if default use user provided shapefile. 
+POUR_POINT_COORDS: 61.9886/-132.4069                           # Pour point coordinates lat/lon, if default use user provided shapefile. 
 
 # Data acquisition settings
 DATA_ACQUIRE: supplied                                         # Where to acquire data from options: HPC, supplied, download (tbi), earth_engine (tbi)
@@ -222,17 +222,17 @@ EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA e
 EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA output
 
 # Data 
-OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Bow_At_Banff/observations/streamflow/preprocessed/Bow_At_Banff_streamflow_processed.csv
+OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Ross/observations/streamflow/preprocessed/Ross_streamflow_processed.csv
 SIMULATIONS_PATH: default                                              # Path to streamflow simulation results
-FORCING_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Bow_at_Banff/forcing/raw_data
+FORCING_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Ross/forcing/raw_data
 
 # Geospatial data 
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
 DEM_PATH: default                                              # If 'default', uses 'root_path/domain_[name]/attributes/elevation/dem.tiff'
 DEM_NAME: elevation.tif                                        # Name of elevation dem tiff
-SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/7020021430-basins.gpkg                                   # Path to source geofabric basins
-SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/7020021430-streamnet.gpkg                                   # Path to source geofabric rivers
+SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/cat_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
+SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/pfaf_level_02/riv_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                  # Path to source geofabric rivers
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
 CATCHMENT_PLOT_DIR: default                                    # Directory to output plots of domain catchment
@@ -244,7 +244,7 @@ RADIATION_PATH: default                                        # Path to radiati
 
 # Observation data paths
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
-STREAMFLOW_RAW_NAME: Discharge.Working@05BB001.20110101_corrected.csv # Name of streamflow raw data file
+STREAMFLOW_RAW_NAME: Discharge.Working@09BA001.20110101_corrected.csv # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset 
 
 # Shapefile paths
