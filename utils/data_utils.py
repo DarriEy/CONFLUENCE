@@ -13,6 +13,7 @@ import csv
 from datetime import datetime
 import xarray as xr # type: ignore
 
+
 class ProjectInitialisation:
     def __init__(self, config, logger):
         self.config = config
@@ -117,7 +118,7 @@ class DataAcquisitionProcessor:
                     {
                         "dataset": "landsat",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "Landsat"),
-                        "variable": "land-cover",
+                        "variable": "MCD12Q1.061",
                         "start-date": self.config.get('LANDCOVER_YEAR'),
                         "end-date": self.config.get('LANDCOVER_YEAR'),
                         "output-dir": str(self.project_dir / "attributes/land_class"),

@@ -1,6 +1,6 @@
 ### CONFLUENCE configuration file
 # Experiment settings
-DOMAIN_NAME: "Bow_Dev"                                    # Name of experimental domain
+DOMAIN_NAME: "Bow_at_Banff"                                    # Name of experimental domain
 EXPERIMENT_ID: run_2                                           # Name of experiment
 EXPERIMENT_TIME_START: 2010-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
@@ -271,7 +271,7 @@ EASYMORE_CLIENT: easymore cli                                  # Name of easymor
 
 # Tool path settings
 DATATOOL_DATASET_ROOT: /project/rrg-mclark/data/meteorological-data/            # Path to datatool datasets root directory
-TOOL_CACHE: /home/darri/cache/                             # Cache directory used in datatool
+DATATOOL_CACHE: /home/darri/cache/                             # Cache directory used in datatool
 TOOL_ACCOUNT: def-mclark-ab                                    # HPC account for running datatool
 GISTOOL_DATASET_ROOT: /project/rrg-mclark/data/geospatial-data/             # Path to gistool datasets root directory
 GISTOOL_LIB_PATH: /project/rrg-mclark/lib/                      # Path to gistool libraries

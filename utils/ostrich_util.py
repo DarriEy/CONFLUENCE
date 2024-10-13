@@ -54,6 +54,38 @@ class OstrichOptimizer:
         else:
             self.logger.error("Failed to parse Ostrich results.")
         
+    def copy_run_scripts(self):
+        """
+        Copy run.py and run.sh scripts from the utils directory to the Ostrich path.
+        """
+        self.logger.info("Copying run scripts to Ostrich directory")
+        
+        utils_dir = Path(self.config.get('CONFLUENCE_CODE_DIR')) / 'utils'
+        ostrich_dir = Path(self.config.get('OSTRICH_PATH'))
+        
+        scripts_to_copy = ['run_trial.py', 'run_trial.sh']
+        
+        for script in scripts_to_copy:
+            source_path = utils_dir / script
+            destination_path = ostrich_dir / script
+            
+            try:
+                shutil.copy2(source_path, destination_path)
+                self.logger.info(f"Copied {script} to {destination_path}")
+                
+                # Make run_trial.sh executable
+                if script == 'run_trial.sh':
+                    os.chmod(destination_path, 0o755)
+                    self.logger.info(f"Made {script} executable")
+            except FileNotFoundError:
+                self.logger.error(f"Source file not found: {source_path}")
+            except PermissionError:
+                self.logger.error(f"Permission denied when copying {script}")
+            except Exception as e:
+                self.logger.error(f"Error copying {script}: {str(e)}")
+        
+        self.logger.info("Finished copying run scripts")
+
     def create_rank_specific_directories(self):
         for rank in range(1, self.num_ranks):
             for model in ["SUMMA", "mizuRoute"]:
@@ -198,19 +230,19 @@ EndParallelStuff
         self.logger.info(f"Ostrich configuration file created: {ostrich_config}")
 
     def generate_observations(self):
-        if len(self.config.get('MOO_OPTIMIZATION_METRICS')) == 1:
+        if len(self.config.get('OPTIMIZATION_METRICS')) == 1:
             return f"Obj 1 1 ostrich_objective.txt; OST_NULL 0 1"
         else:
-            return "\n".join([f"Obj{i+1} 1 1 ostrich_objective.txt; OST_NULL 0 1" for i in range(len(self.config.get('MOO_OPTIMIZATION_METRICS')))])
+            return "\n".join([f"Obj{i+1} 1 1 ostrich_objective.txt; OST_NULL 0 1" for i in range(len(self.config.get('OPTIMIZATION_METRICS')))])
 
     def generate_response_vars(self):
-        if len(self.config.get('MOO_OPTIMIZATION_METRICS')) == 1:
+        if len(self.config.get('OPTIMIZATION_METRICS')) == 1:
             return f"Obj ostrich_objective.txt; OST_NULL 0 1"
         else:
-            return "\n".join([f"Obj{i+1} ostrich_objective.txt; OST_NULL 0 1" for i in range(len(self.config.get('MOO_OPTIMIZATION_METRICS')))])
+            return "\n".join([f"Obj{i+1} ostrich_objective.txt; OST_NULL 0 1" for i in range(len(self.config.get('OPTIMIZATION_METRICS')))])
         
     def generate_obj_function(self):
-        return "\n".join([f"ObjFunc Obj{i+1}" for i in range(len(self.config.get('MOO_OPTIMIZATION_METRICS')))])
+        return "\n".join([f"ObjFunc Obj{i+1}" for i in range(len(self.config.get('OPTIMIZATION_METRICS')))])
 
     def generate_extra_dirs(self):
         extra_dirs = ""
@@ -222,8 +254,8 @@ EndParallelStuff
     def generate_param_definitions(self):
         definitions = []
         all_params = self.config.get('PARAMS_TO_CALIBRATE').split(',') + self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
-        local_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}' / 'settings/summa/localParamInfo.txt"
-        basin_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}' / 'settings/summa/basinParamInfo.txt"
+        local_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}/settings/SUMMA/localParamInfo.txt"
+        basin_parameters_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config['DOMAIN_NAME']}/settings/SUMMA/basinParamInfo.txt"
         params_to_calibrate = self.config.get('PARAMS_TO_CALIBRATE').split(',')
         basin_params_to_calibrate = self.config.get('BASIN_PARAMS_TO_CALIBRATE').split(',')
 
@@ -256,7 +288,7 @@ EndDDSAlg
             config = f"""
 BeginParallelDDSAlg
 PerturbationValue {self.config.get('DDS_R')}
-MaxIterations {self.config.num_iter}
+MaxIterations {self.config.get('NUMBER_OF_ITERATIONS')}
 UseRandomParamValues
 
 EndParallelDDSAlg
@@ -336,12 +368,12 @@ EndParaPADDS
         return result.returncode == 0
 
     def parse_ostrich_results(self):
-        ostrich_output = Path(self.config.ostrich_path) / 'OstOutput0.txt'
+        ostrich_output = Path(self.config.get('OSTRICH_PATH')) / 'OstOutput0.txt'
         
         with open(ostrich_output, 'r') as f:
             lines = f.readlines()
         
-        if len(self.config.optimization_metrics) == 1:
+        if len(self.config.get('OPTIMIZATION_METRICS')) == 1:
             # Single-objective case
             best_line = None
             for line in reversed(lines):
@@ -371,10 +403,10 @@ EndParaPADDS
                     continue
                 if pareto_start and line.strip():
                     parts = line.split()
-                    if len(parts) == len(self.config.optimization_metrics) + len(self.config.params_to_calibrate) + len(self.config.basin_params_to_calibrate) + 1:
+                    if len(parts) == len(self.config.get('OPTIMIZATION_METRIC')) + len(self.config.get('PARAMS_TO_CALIBRATE')) + len(self.config.get('BASIN_PARAMS_TO_CALIBRATE')) + 1:
                         pareto_front.append({
-                            'objectives': [float(x) for x in parts[1:len(self.config.optimization_metrics)+1]],
-                            'parameters': [float(x) for x in parts[len(self.config.optimization_metrics)+1:]]
+                            'objectives': [float(x) for x in parts[1:len(self.config.get('OPTIMIZATION_METRIC'))+1]],
+                            'parameters': [float(x) for x in parts[len(self.config.get('OPTIMIZATION_METRIC'))+1:]]
                         })
                     else:
                         break
@@ -483,8 +515,8 @@ EndParaPADDS
         file_manager = settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')
         file_manager_temp = file_manager.with_suffix('.temp')
         start, end = [datetime.datetime.strptime(date.strip(), '%Y-%m-%d') for date in self.config.get('CALIBRATION_PERIOD').split(',')]
-        sim_start_time = start
-        sim_end_time = (sim_start_time + datetime.timedelta(days=1)).strftime('%Y-%m-%d %H:%M')
+        sim_start_time = (start + datetime.timedelta(hours=1)).strftime('%Y-%m-%d %H:%M')
+        sim_end_time = (start + datetime.timedelta(days=1)).strftime('%Y-%m-%d %H:%M')
         
         with open(file_manager, 'r') as src, open(file_manager_temp, 'w') as dst:
             for line in src:
@@ -501,7 +533,7 @@ EndParaPADDS
         file_manager_temp = file_manager.with_suffix('.temp')
 
         start, end = [datetime.datetime.strptime(date.strip(), '%Y-%m-%d') for date in self.config.get('CALIBRATION_PERIOD').split(',')]
-        sim_start_time = (start - relativedelta(years=1))
+        sim_start_time = (start - relativedelta(years=1) + datetime.timedelta(hours=1))
         sim_end_time = end + datetime.timedelta(hours=23)
         
         with open(file_manager, 'r') as src, open(file_manager_temp, 'w') as dst:

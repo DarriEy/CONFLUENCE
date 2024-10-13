@@ -282,11 +282,15 @@ class CONFLUENCE:
             self.run_parallel_optimization()
 
     def run_parallel_optimization(self):
+        
+        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
+
         cmd = [
             'mpiexec',
             '-np', str(self.config.get('MPI_PROCESSES')),
             'python',
-            str(Path(__file__).parent / 'utils' / 'parallel_parameter_estimation.py')
+            str(Path(__file__).parent / 'utils' / 'parallel_parameter_estimation.py'), 
+            str(config_path)
         ]
 
         try:

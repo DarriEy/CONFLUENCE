@@ -485,7 +485,7 @@ class ModelRunner:
             bool: True if SUMMA run was successful, False otherwise.
         """
         summa_path = Path(f'{self.config.root_path}/installs/summa/bin/')
-        summa_exe = 'summa.exe' #read_from_control(Path('../../0_control_files/control_active.txt'), 'exe_name_summa')
+        summa_exe = self.config.summa_exe #'summa.exe' 
         
         filemanager_path = summa_destination_settings_path / self.config.filemanager_name
         summa_log_path = rank_specific_path / "SUMMA_logs"
@@ -673,6 +673,9 @@ class ModelEvaluator:
         # Read observation data
         obs_df = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
         obs_df = obs_df['discharge_cms'].resample('h').mean()
+
+        obs_df = obs_df.reindex(sim_df.index).dropna()
+        sim_df = sim_df.reindex(obs_df.index).dropna()
 
         def calculate_metrics(obs: np.ndarray, sim: np.ndarray) -> Dict[str, float]:
             return {
