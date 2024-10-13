@@ -6,6 +6,7 @@ import numpy as np # type: ignore
 from datetime import datetime
 from typing import Union
 import sys
+import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.logging_utils import setup_logger # type: ignore
@@ -233,12 +234,16 @@ def main() -> None:
     Raises:
         Exception: Any unhandled exception during the optimization process
     """
-
+    parser = argparse.ArgumentParser(description="Run parallel parameter estimation for CONFLUENCE")
+    parser.add_argument("config_path", type=str, help="Path to the CONFLUENCE configuration file")
+    args = parser.parse_args()
+    
     comm = MPI.COMM_WORLD
     rank: int = comm.Get_rank()
     size: int = comm.Get_size()
 
-    confluence_config_path = Path('/Users/darrieythorsson/compHydro/code/CONFLUENCE/0_config_files/config_active.yaml')  # Update this path
+    confluence_config_path = Path(args.config_path)
+    #confluence_config_path = Path('/Users/darrieythorsson/compHydro/code/CONFLUENCE/0_config_files/config_active.yaml')  # Update this path
     config = initialize_config(rank, comm,confluence_config_path)
 
     log_dir = Path(config.root_path) /f'domain_{config.domain_name}' / f'_workLog_{config.domain_name}'

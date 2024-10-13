@@ -17,6 +17,7 @@ class Config:
     obs_file_path: Path
     sim_reach_ID: str
     filemanager_name: str
+    summa_exe: str
     optimization_metrics: List[str]
     pop_size: int
     mizu_control_file: str
@@ -79,13 +80,14 @@ def initialize_config(rank: int, comm: MPI.Comm, confluence_config_path) -> Conf
 
         sim_reach_ID = config.get('SIM_REACH_ID')
         filemanager_name = config.get('SETTINGS_SUMMA_FILEMANAGER')
+        summa_exe = config.get('SUMMA_EXE')
         optimization_metrics = config.get('MOO_OPTIMIZATION_METRICS').split(',')
         pop_size = int(config.get('POPULATION_SIZE'))
         mizu_control_file = config.get('SETTINGS_MIZU_CONTROL_FILE')
         moo_num_iter = int(config.get('NUMBER_OF_ITERATIONS'))
         nsga2_n_gen = int(config.get('NUMBER_OF_GENERATIONS'))
         nsga2_n_obj = int(config.get('NUMBER_OF_OBJECTIVES'))
-        optimization_metric = config.get('OPTIMIZATION_METRIC')
+        optimization_metric = config.get('OPTIMIZATION_METRICS')
         algorithm = config.get('OPTMIZATION_ALOGORITHM')
         num_iter = moo_num_iter
         calib_period_str = config.get('CALIBRATION_PERIOD')
@@ -126,6 +128,7 @@ def initialize_config(rank: int, comm: MPI.Comm, confluence_config_path) -> Conf
         obs_file_path = None
         sim_reach_ID = None
         filemanager_name = None
+        summa_exe = None
         optimization_metrics = None
         pop_size = None
         mizu_control_file = None
@@ -158,6 +161,7 @@ def initialize_config(rank: int, comm: MPI.Comm, confluence_config_path) -> Conf
         obs_file_path=comm.bcast(obs_file_path, root=0),
         sim_reach_ID=comm.bcast(sim_reach_ID, root=0),
         filemanager_name=comm.bcast(filemanager_name, root=0),
+        summa_exe=comm.bcast(summa_exe,root=0),
         optimization_metrics=comm.bcast(optimization_metrics, root=0),
         pop_size=comm.bcast(pop_size, root=0),
         mizu_control_file=comm.bcast(mizu_control_file, root=0),
