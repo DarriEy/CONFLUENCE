@@ -88,11 +88,8 @@ class datatoolRunner:
         ] 
         return datatool_command
     
-    def create_and_execute_datatool_command(self):
+    def execute_datatool_command(self, datatool_command):
         
-        # Create the gistool command 
-        datatool_command = self.create_datatool_command()
-
         #Run the gistool command
         try:
             subprocess.run(datatool_command, check=True)
