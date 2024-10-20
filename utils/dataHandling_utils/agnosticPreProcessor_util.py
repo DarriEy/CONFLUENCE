@@ -330,3 +330,9 @@ class forcingResampler:
                 self.logger.info(f'Issue with file: {file}, Error: {str(e)}')
 
         self.logger.info("All weighted forcing files created")
+
+class geospatialStatistics:
+    def __init__(self, config, logger):
+        self.config = config
+        self.logger = logger
+        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
