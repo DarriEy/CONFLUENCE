@@ -273,7 +273,7 @@ EASYMORE_CLIENT: easymore cli                                  # Name of easymor
 DATATOOL_DATASET_ROOT: /project/rrg-mclark/data/meteorological-data/            # Path to datatool datasets root directory
 DATATOOL_CACHE: /home/darri/cache/                             # Cache directory used in datatool
 TOOL_ACCOUNT: def-mclark-ab                                    # HPC account for running datatool
-GISTOOL_DATASET_ROOT: /project/rrg-mclark/data/geospatial-data/             # Path to gistool datasets root directory
+GISTOOL_DATASET_ROOT: /project/6079554/data/geospatial-data/             # Path to gistool datasets root directory
 GISTOOL_LIB_PATH: /project/rrg-mclark/lib/                      # Path to gistool libraries
 GISTOOL_CACHE: /home/darri/cache/                               # Path to gistool cache directory
 EASYMORE_CACHE: /home/darri/easymore/                              # Path to easymore cache directory
