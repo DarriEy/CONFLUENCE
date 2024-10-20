@@ -12,6 +12,8 @@ import rasterstats # type: ignore
 from pyproj import CRS, Transformer # type: ignore
 import pyproj # type: ignore
 import shapefile # type: ignore
+import rasterio
+from rasterstats import zonal_stats
 
 class forcingResampler:
     def __init__(self, config, logger):
@@ -335,3 +337,120 @@ class geospatialStatistics:
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment')
+        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        self.dem_path = self._get_file_path('DEM_PATH', f"attributes/elevation/dem/{self.config.get('DEM_NAME')}")
+        self.soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soil_class')
+        self.land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/land_class')
+
+    def _get_file_path(self, file_type, file_def_path):
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path
+        else:
+            return Path(self.config.get(f'{file_type}'))
+
+    def get_nodata_value(self, raster_path):
+        with rasterio.open(raster_path) as src:
+            nodata = src.nodatavals[0]
+            if nodata is None:
+                nodata = -9999
+            return nodata
+
+    def calculate_elevation_stats(self):
+        self.logger.info("Calculating elevation statistics")
+        catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
+        nodata_value = self.get_nodata_value(self.dem_path)
+
+        with rasterio.open(self.dem_path) as src:
+            affine = src.transform
+            dem_data = src.read(1)
+
+        stats = zonal_stats(catchment_gdf, dem_data, affine=affine, stats=['mean'], nodata=nodata_value)
+        result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean'})
+        
+        catchment_gdf = catchment_gdf.join(result_df)
+        
+        intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
+        intersect_name = self.config.get('INTERSECT_DEM_NAME')
+        intersect_path.mkdir(parents=True, exist_ok=True)
+        catchment_gdf.to_file(intersect_path / intersect_name)
+        
+        self.logger.info(f"Elevation statistics saved to {intersect_path / intersect_name}")
+
+    def calculate_soil_stats(self):
+        self.logger.info("Calculating soil statistics")
+        catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
+        soil_raster = self.soil_path / self.config.get('SOIL_CLASS_NAME')
+        nodata_value = self.get_nodata_value(soil_raster)
+
+        with rasterio.open(soil_raster) as src:
+            affine = src.transform
+            soil_data = src.read(1)
+
+        stats = zonal_stats(catchment_gdf, soil_data, affine=affine, stats=['count'], 
+                            categorical=True, nodata=nodata_value)
+        result_df = pd.DataFrame(stats).fillna(0)
+
+        def rename_column(x):
+            if x == 'count':
+                return x
+            try:
+                return f'USGS_{int(float(x))}'
+            except ValueError:
+                return x
+
+        result_df = result_df.rename(columns=rename_column)
+        for col in result_df.columns:
+            if col != 'count':
+                result_df[col] = result_df[col].astype(int)
+
+        catchment_gdf = catchment_gdf.join(result_df)
+        
+        intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
+        intersect_name = self.config.get('INTERSECT_SOIL_NAME')
+        intersect_path.mkdir(parents=True, exist_ok=True)
+        catchment_gdf.to_file(intersect_path / intersect_name)
+        
+        self.logger.info(f"Soil statistics saved to {intersect_path / intersect_name}")
+
+    def calculate_land_stats(self):
+        self.logger.info("Calculating land statistics")
+        catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
+        land_raster = self.land_path / self.config.get('LAND_CLASS_NAME')
+        nodata_value = self.get_nodata_value(land_raster)
+
+        with rasterio.open(land_raster) as src:
+            affine = src.transform
+            land_data = src.read(1)
+
+        stats = zonal_stats(catchment_gdf, land_data, affine=affine, stats=['count'], 
+                            categorical=True, nodata=nodata_value)
+        result_df = pd.DataFrame(stats).fillna(0)
+
+        def rename_column(x):
+            if x == 'count':
+                return x
+            try:
+                return f'IGBP_{int(float(x))}'
+            except ValueError:
+                return x
+
+        result_df = result_df.rename(columns=rename_column)
+        for col in result_df.columns:
+            if col != 'count':
+                result_df[col] = result_df[col].astype(int)
+
+        catchment_gdf = catchment_gdf.join(result_df)
+        
+        intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
+        intersect_name = self.config.get('INTERSECT_LAND_NAME')
+        intersect_path.mkdir(parents=True, exist_ok=True)
+        catchment_gdf.to_file(intersect_path / intersect_name)
+        
+        self.logger.info(f"Land statistics saved to {intersect_path / intersect_name}")
+
+    def run_statistics(self):
+        self.calculate_elevation_stats()
+        self.calculate_soil_stats()
+        self.calculate_land_stats()
+        self.logger.info("All geospatial statistics calculated successfully")
