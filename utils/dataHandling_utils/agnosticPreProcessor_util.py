@@ -451,7 +451,7 @@ class geospatialStatistics:
         self.logger.info(f"Land statistics saved to {intersect_path / intersect_name}")
 
     def run_statistics(self):
-        self.calculate_elevation_stats()
         self.calculate_soil_stats()
+        self.calculate_elevation_stats()
         self.calculate_land_stats()
         self.logger.info("All geospatial statistics calculated successfully")
