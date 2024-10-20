@@ -367,7 +367,8 @@ class geospatialStatistics:
 
         stats = zonal_stats(catchment_gdf, dem_data, affine=affine, stats=['mean'], nodata=nodata_value)
         result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean'})
-        
+        print(result_df)
+        print(catchment_gdf)
         catchment_gdf = catchment_gdf.join(result_df)
         
         intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
