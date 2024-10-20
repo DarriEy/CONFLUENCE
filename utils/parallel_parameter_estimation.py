@@ -6,6 +6,7 @@ import numpy as np # type: ignore
 from datetime import datetime
 from typing import Union
 import sys
+from collections import deque
 import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -13,7 +14,7 @@ from utils.logging_utils import setup_logger # type: ignore
 from utils.optimisation_utils import run_nsga2, run_nsga3, run_moead, run_smsemoa, run_mopso, get_algorithm_kwargs, run_de, run_dds, run_basin_hopping, run_pso, run_sce_ua, run_borg_moea # type: ignore
 from utils.results_utils import Results # type: ignore
 from utils.parallel_utils import Worker # type: ignore
-from ostrich_util import OstrichOptimizer
+from utils.ostrich_util import OstrichOptimizer # type: ignore
 from utils.optimization_config import initialize_config # type: ignore
 
 class Optimizer:
@@ -99,41 +100,51 @@ class Optimizer:
     def parallel_objective_function(self, all_params: np.ndarray) -> np.ndarray:
         self.logger.info(f"parallel_objective_function called with {len(all_params)} parameter sets")
         num_workers = self.size - 1
-        chunk_size = max(1, len(all_params) // num_workers)
-        results = []
+        all_params = np.atleast_2d(all_params)
+        task_queue = deque(enumerate(all_params))
+        results = [None] * len(all_params)
+        active_workers = set()
+        requests = []
 
-        all_params = np.atleast_2d(all_params)  # Ensure 2D array
+        # Initial distribution of tasks
+        for i in range(1, min(num_workers + 1, len(all_params) + 1)):
+            if task_queue:
+                idx, params = task_queue.popleft()
+                self.logger.info(f"Master sending initial parameters to worker {i}")
+                req = self.comm.isend((idx, params.tolist()), dest=i)
+                requests.append(req)
+                active_workers.add(i)
 
-        for i in range(0, len(all_params), chunk_size):
-            chunk = all_params[i:i+chunk_size]
-            self.logger.info(f"Processing chunk of size {len(chunk)}")
-
-            # Send tasks to workers
-            for j, params in enumerate(chunk):
-                worker_rank = (i + j) % num_workers + 1
-                self.logger.info(f"Master sending parameters to worker {worker_rank}")
-                self.comm.send(params.tolist(), dest=worker_rank)
-
-            # Collect results from workers
-            chunk_results = []
-            for j in range(len(chunk)):
-                worker_rank = (i + j) % num_workers + 1
-                self.logger.info(f"Master waiting for result from worker {worker_rank}")
-                response = self.comm.recv(source=worker_rank)
+        while active_workers or task_queue:
+            if active_workers:
+                status = MPI.Status()
+                worker_result = self.comm.recv(source=MPI.ANY_SOURCE, status=status)
+                worker_rank = status.Get_source()
                 self.logger.info(f"Master received result from worker {worker_rank}")
-                if response is not None and isinstance(response, tuple):
-                    params, result = response
+                
+                if worker_result is not None and isinstance(worker_result, tuple):
+                    idx, params, result = worker_result
                     if 'calib_metrics' in result:
                         obj_values = [-result['calib_metrics'].get(metric, float('-inf')) if metric in ['KGE', 'KGEp', 'KGEnp', 'NSE'] else result['calib_metrics'].get(metric, float('inf')) for metric in self.config.optimization_metrics]
-                        chunk_results.append(obj_values)
+                        results[idx] = obj_values
                         if self.rank == 0:
                             self.results.process_iteration_results(params, result)
                     else:
-                        chunk_results.append([float('inf')] * len(self.config.optimization_metrics))
+                        results[idx] = [float('inf')] * len(self.config.optimization_metrics)
                 else:
-                    chunk_results.append([float('inf')] * len(self.config.optimization_metrics))
-            
-            results.extend(chunk_results)
+                    results[idx] = [float('inf')] * len(self.config.optimization_metrics)
+
+                # Assign new task to the worker that just finished
+                if task_queue:
+                    idx, params = task_queue.popleft()
+                    self.logger.info(f"Master sending new parameters to worker {worker_rank}")
+                    req = self.comm.isend((idx, params.tolist()), dest=worker_rank)
+                    requests.append(req)
+                else:
+                    active_workers.remove(worker_rank)
+
+        # Wait for all requests to complete
+        MPI.Request.waitall(requests)
 
         self.logger.info(f"Master completed parallel evaluation")
         return np.array(results)
