@@ -95,13 +95,18 @@ class datatoolRunner:
         from utils.configHandling_utils.config_utils import get_default_path # type: ignore
 
         #Get the path to the directory containing the gistool script
-        self.datatool_path = get_default_path(self.config, self.code_dir, self.config['DATATOOL_PATH'], '/installs/gistool', self.logger)
+        print(self.data_dir)
+        self.datatool_path = get_default_path(self.config, self.data_dir, self.config['DATATOOL_PATH'], 'installs/datatool', self.logger)
     
     def create_datatool_command(self, dataset, output_dir, start_date, end_date, lat_lims, lon_lims, variables):
+        dataset_dir = dataset
+        if dataset == "ERA5":
+            dataset_dir = 'era5'
+
         datatool_command = [
         f"{self.datatool_path}/extract-dataset.sh",
         f"--dataset={dataset}",
-        f"--dataset-dir={self.config['DATATOOL_DATASET_ROOT']}{dataset}",
+        f"--dataset-dir={self.config['DATATOOL_DATASET_ROOT']}{dataset_dir}",
         f"--output-dir={output_dir}",
         f"--start-date={start_date}",
         f"--end-date={end_date}",
@@ -109,10 +114,11 @@ class datatoolRunner:
         f"--lon-lims={lon_lims}",
         f"--variable={variables}",
         f"--prefix=domain_{self.domain_name}",
-        "--submit-job",
+        #"--submit-job",
         f"--cache={self.config['TOOL_CACHE']}",
         f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
+
         return datatool_command
     
     def execute_datatool_command(self, datatool_command):
