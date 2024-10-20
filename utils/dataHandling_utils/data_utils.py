@@ -171,7 +171,15 @@ class DataAcquisitionProcessor:
                     "source-nc": str(self.project_dir / "forcing/raw_data/**/*.nc*"),
                     "variable-lon": "lon",
                     "variable-lat": "lat",
-                    "variable": self.config.get('FORCING_VARIABLES'),
+                    "variable": self.config.get('FORCING_VARIABLES', [
+                        "RDRS_v2.1_P_P0_SFC",
+                        "RDRS_v2.1_P_HU_09944",
+                        "RDRS_v2.1_P_TT_09944",
+                        "RDRS_v2.1_P_UVC_09944",
+                        "RDRS_v2.1_A_PR0_SFC",
+                        "RDRS_v2.1_P_FB_SFC",
+                        "RDRS_v2.1_P_FI_SFC"
+                    ]),
                     "remapped-var-id": "hruId",
                     "remapped-dim-id": "hru",
                     "output-dir": str(self.project_dir / "forcing/basin_averaged_data/") + '/',
