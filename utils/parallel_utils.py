@@ -48,30 +48,17 @@ class Worker:
         self.model_evaluator = ModelEvaluator(config, self.logger)
 
     def run(self) -> None:
-        """
-        Run the worker process.
-
-        This method enters a loop to receive tasks from the master process,
-        execute them, and send results back. It continues until a termination
-        signal is received.
-        """
         self.logger.info(f"Worker {self.rank} started and waiting for tasks")
         while True:
-            try:
-                #self.logger.info(f"Worker {self.rank} waiting for next task")
-                task = self.comm.recv(source=0, tag=MPI.ANY_TAG)
-                #self.logger.info(f"Worker {self.rank} received task: {task}")
-                if task is None:
-                    self.logger.info(f"Worker {self.rank} received termination signal")
-                    break
-                params = task
-                #self.logger.info(f"Worker {self.rank} received parameters: {params}")
-                result = self.evaluate_params(params)
-                self.logger.info(f"Worker {self.rank} completed evaluation. Sending results back to master")
-                self.comm.send((params, result), dest=0)  # Send both params and result back to master
-            except Exception as e:
-                self.logger.error(f"Worker {self.rank} encountered an error: {str(e)}", exc_info=True)
-                self.comm.send(None, dest=0)  # Send None to indicate an error
+            task = self.comm.recv(source=0, tag=MPI.ANY_TAG)
+            if task is None:
+                self.logger.info(f"Worker {self.rank} received termination signal")
+                break
+            idx, params = task
+            self.logger.info(f"Worker {self.rank} received parameters for index {idx}")
+            result = self.evaluate_params(params)
+            self.logger.info(f"Worker {self.rank} completed evaluation. Sending results back to master")
+            self.comm.send((idx, params, result), dest=0)
         self.logger.info(f"Worker {self.rank} shutting down")
 
     def evaluate_params(self, params):
