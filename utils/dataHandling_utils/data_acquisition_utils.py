@@ -18,6 +18,11 @@ import rasterio
 from rasterio.merge import merge
 from hs_restclient import HydroShare, HydroShareAuthBasic # type: ignore
 from osgeo import gdal # type: ignore
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry # type: ignore
+from requests.exceptions import RequestException
+import urllib.request
+import ssl
 
 class gistoolRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -33,21 +38,26 @@ class gistoolRunner:
         from utils.configHandling_utils.config_utils import get_default_path # type: ignore
 
         #Get the path to the directory containing the gistool script
-        self.gistool_path = get_default_path(self.config, self.code_dir, self.config['GISTOOL_PATH'], 'installs/gistool', self.logger)
+        self.gistool_path = get_default_path(self.config, self.data_dir, self.config['GISTOOL_PATH'], 'installs/gistool', self.logger)
     
     def create_gistool_command(self, dataset, output_dir, lat_lims, lon_lims, variables, start_date=None, end_date=None):
+        dataset_dir = dataset
+        if dataset == 'soil_class':
+            dataset_dir = 'soil_classes'
+ 
         gistool_command = [
             f"{self.gistool_path}/extract-gis.sh",
             f"--dataset={dataset}",
-            f"--dataset-dir={self.config['GISTOOL_DATASET_ROOT']}{dataset}",
+            f"--dataset-dir={self.config['GISTOOL_DATASET_ROOT']}{dataset_dir}",
             f"--output-dir={output_dir}",
             f"--lat-lims={lat_lims}",
             f"--lon-lims={lon_lims}",
             f"--variable={variables}",
-            f"--prefix=domain_{self.domain_name}",
+            f"--prefix=domain_{self.domain_name}_",
+            f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
             "--submit-job",
             "--print-geotiff=true",
-            f"--cache={self.config['TOOL_CACHE']}",
+            #f"--cache={self.config['TOOL_CACHE']}",
             f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
         
@@ -57,6 +67,7 @@ class gistoolRunner:
                 f"--end-date={end_date}"
             ])
 
+        print(gistool_command)
         return gistool_command  # This line ensures the function always returns the command list
     
     def execute_gistool_command(self, gistool_command):
@@ -375,15 +386,10 @@ class meritDownloader:
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
         # MERIT specific attributes
-        self.merit_url = "http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_DEM/"
-        self.merit_template = "MERIT_DEM_{}{}_dem.tar"
-        self.merit_path = self._get_merit_path()
+        self.merit_url = "http://hydro.iis.u-tokyo.ac.jp/~yamadai/MERIT_Hydro/distribute/v1.0.1/"
+        self.merit_template = "elv_{}{}.tar"
+        self.merit_path = self.project_dir / 'parameters' / 'dem' / '1_MERIT_raw_data'
 
-    def _get_merit_path(self):
-        merit_path = self.config.get('PARAMETER_DEM_RAW_PATH')
-        if merit_path == 'default':
-            return self.project_dir / 'parameters' / 'dem' / '1_MERIT_raw_data'
-        return Path(merit_path)
 
     def get_download_area(self):
         coordinates = self.config.get('BOUNDING_BOX_COORDS').split('/')
@@ -415,6 +421,22 @@ class meritDownloader:
 
         usr, pwd = merit_login['name'], merit_login['pass']
 
+        # Create a password manager
+        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(None, self.merit_url, usr, pwd)
+        auth_handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+
+        # Create an SSL context that doesn't verify certificates
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        # Create and install the opener
+        opener = urllib.request.build_opener(auth_handler, urllib.request.HTTPSHandler(context=ssl_context))
+        urllib.request.install_opener(opener)
+
+        retries_max = 10
+
         for dl_lon in dl_lons:
             for dl_lat in dl_lats:
                 if (dl_lat == 'n00' and dl_lon == 'w150') or \
@@ -422,23 +444,48 @@ class meritDownloader:
                    (dl_lat == 's60' and dl_lon == 'w120'):
                     continue
 
-                file_url = (self.merit_url + self.merit_template).format(dl_lat, dl_lon)
+                file_url = f"{self.merit_url}{self.merit_template.format(dl_lat, dl_lon)}"
                 file_name = file_url.split('/')[-1].strip()
+                file_path = self.merit_path / file_name
 
-                if (self.merit_path / file_name).exists():
-                    self.logger.info(f"File {file_name} already exists. Skipping.")
+                if file_path.is_file() and file_path.stat().st_size > 0:
+                    self.logger.info(f"File {file_name} already exists and is not empty. Skipping.")
                     continue
 
-                self.logger.info(f"Downloading {file_name}")
-                
-                try:
-                    with requests.get(file_url, auth=(usr, pwd), stream=True) as response:
-                        response.raise_for_status()
-                        with open(self.merit_path / file_name, 'wb') as f:
-                            shutil.copyfileobj(response.raw, f)
-                    self.logger.info(f"Successfully downloaded {file_name}")
-                except requests.RequestException as e:
-                    self.logger.error(f"Error downloading {file_name}: {str(e)}")
+                self.logger.info(f"Attempting to download {file_name}")
+
+                retries_cur = 1
+                while retries_cur <= retries_max:
+                    try:
+                        with urllib.request.urlopen(file_url, timeout=30) as response, open(file_path, 'wb') as out_file:
+                            shutil.copyfileobj(response, out_file)
+
+                        # Verify file size after download
+                        actual_size = file_path.stat().st_size
+                        if actual_size == 0:
+                            self.logger.error(f"Downloaded file {file_name} is empty. Deleting and retrying.")
+                            file_path.unlink()
+                            raise Exception("Empty file downloaded")
+
+                        self.logger.info(f"Successfully downloaded {file_name}")
+                        break
+
+                    except urllib.error.URLError as e:
+                        self.logger.error(f"Error downloading {file_name} on try {retries_cur}: {str(e)}")
+                        retries_cur += 1
+                        if retries_cur > retries_max:
+                            self.logger.error(f"Max retries reached for {file_name}. Skipping.")
+                        else:
+                            time.sleep(10)  # Wait before retrying
+                    except Exception as e:
+                        self.logger.error(f"Unexpected error downloading {file_name}: {str(e)}")
+                        if file_path.exists():
+                            file_path.unlink()
+                        retries_cur += 1
+                        if retries_cur > retries_max:
+                            self.logger.error(f"Max retries reached for {file_name}. Skipping.")
+                        else:
+                            time.sleep(10)  # Wait before retrying
 
         self.logger.info("MERIT data download completed")
 
@@ -452,144 +499,86 @@ class meritDownloader:
         self.logger.info("Unpacking completed")
 
     def merge_files(self):
-        self.logger.info("Merging unpacked files")
-        tif_files = list(self.merit_path.glob('*.tif'))
-        if not tif_files:
-            self.logger.error("No .tif files found to merge")
-            return
-
-        src_files_to_mosaic = []
-        for fp in tif_files:
-            src = rasterio.open(fp)
-            src_files_to_mosaic.append(src)
-
-        mosaic, out_trans = merge(src_files_to_mosaic)
-
-        out_meta = src.meta.copy()
-        out_meta.update({"driver": "GTiff",
-                         "height": mosaic.shape[1],
-                         "width": mosaic.shape[2],
-                         "transform": out_trans})
-
-        merged_file = self.merit_path / "merged_dem.tif"
-        with rasterio.open(merged_file, "w", **out_meta) as dest:
-            dest.write(mosaic)
-
-        for src in src_files_to_mosaic:
-            src.close()
-        
-        for fp in tif_files:
-            os.remove(fp)
-
-        self.logger.info(f"Merged files saved to {merged_file}")
+        # Implementation for merging files (if needed)
+        pass
 
     def subset_by_bbox(self):
-        self.logger.info("Subsetting merged file by bounding box")
-        merged_file = self.merit_path / "merged_dem.tif"
-        if not merged_file.exists():
-            self.logger.error("Merged file not found")
-            return
+        # Implementation for subsetting by bounding box (if needed)
+        pass
+
+    def run_download(self):
+        self.download_merit_data()
+        self.unpack_and_clean()
+        self.merge_files()
+        self.subset_by_bbox()
+
+class soilgridsDownloader:
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        self.config = config
+        self.logger = logger
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        
+        self.download_ID = self.config.get('PARAMETER_SOIL_HYDRO_ID')
+        self.soil_raw_path = self.project_dir / 'parameters' / 'soilclass' / '1_soil_classes_global'
+        self.soil_domain_path = self.project_dir / 'parameters' / 'soilclass' / '2_soil_classes_domain'
+        self.soil_domain_name = self.config.get('SOIL_CLASS_NAME', 'soil_classes_domain.tif')
+
+    def download_soilgrids_data(self):
+        self.soil_raw_path.mkdir(parents=True, exist_ok=True)
+        
+        hydroshare_login = {}
+        with open(os.path.expanduser("~/.hydroshare")) as file:
+            for line in file:
+                key, val = line.split(':')
+                hydroshare_login[key] = val.strip()
+
+        usr, pwd = hydroshare_login['name'], hydroshare_login['pass']
+
+        auth = HydroShareAuthBasic(username=usr, password=pwd)
+        hs = HydroShare(auth=auth)
+
+        try:
+            out = hs.getResourceFile(self.download_ID, "usda_mode_soilclass_250m_ll.tif", destination=self.soil_raw_path)
+            self.logger.info(f"Successfully downloaded SOILGRIDS data: {out}")
+        except Exception as e:
+            self.logger.error(f"Error downloading SOILGRIDS data: {str(e)}")
+
+    def extract_domain(self):
+        self.soil_domain_path.mkdir(parents=True, exist_ok=True)
 
         coordinates = self.config.get('BOUNDING_BOX_COORDS').split('/')
-        bbox = [float(coordinates[1]), float(coordinates[2]), float(coordinates[3]), float(coordinates[0])]
+        bbox = (float(coordinates[1]), float(coordinates[0]), float(coordinates[3]), float(coordinates[2]))
 
-        with rasterio.open(merged_file) as src:
-            window = rasterio.windows.from_bounds(*bbox, transform=src.transform)
-            subset, subset_transform = src.read(1, window=window), src.window_transform(window)
+        soil_raw_files = list(self.soil_raw_path.glob('*.tif'))
+        if not soil_raw_files:
+            self.logger.error("No .tif files found in the raw soil data directory")
+            return
 
-            profile = src.profile
-            profile.update({
-                'height': subset.shape[0],
-                'width': subset.shape[1],
-                'transform': subset_transform
-            })
+        old_tif = str(soil_raw_files[0])
+        new_tif = str(self.soil_domain_path / self.soil_domain_name)
 
-            subset_file = self.merit_path / "subset_dem.tif"
-            with rasterio.open(subset_file, 'w', **profile) as dst:
-                dst.write(subset, 1)
+        try:
+            translate_options = gdal.TranslateOptions(format='GTiff', projWin=bbox, creationOptions=['COMPRESS=DEFLATE'])
+            ds = gdal.Translate(new_tif, old_tif, options=translate_options)
+            ds = None  # Close the dataset
+            self.logger.info(f"Successfully extracted domain to {new_tif}")
+        except Exception as e:
+            self.logger.error(f"Error extracting domain: {str(e)}")
 
-        os.remove(merged_file)
-        self.logger.info(f"Subset file saved to {subset_file}")
+    def cleanup(self):
+        try:
+            shutil.rmtree(self.soil_raw_path)
+            self.logger.info(f"Removed raw soil data directory: {self.soil_raw_path}")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up raw soil data: {str(e)}")
 
-    class soilgridsDownloader:
-        def __init__(self, config: Dict[str, Any], logger: Any):
-            self.config = config
-            self.logger = logger
-            self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-            self.domain_name = self.config.get('DOMAIN_NAME')
-            self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-            
-            self.download_ID = self.config.get('PARAMETER_SOIL_HYDRO_ID')
-            self.soil_raw_path = self._get_soil_raw_path()
-            self.soil_domain_path = self._get_soil_domain_path()
-            self.soil_domain_name = self.config.get('PARAMETER_SOIL_TIF_NAME', 'soil_classes_domain.tif')
-
-        def _get_soil_raw_path(self):
-            soil_path = self.config.get('PARAMETER_SOIL_RAW_PATH')
-            if soil_path == 'default':
-                return self.project_dir / 'parameters' / 'soilclass' / '1_soil_classes_global'
-            return Path(soil_path)
-
-        def _get_soil_domain_path(self):
-            soil_path = self.config.get('PARAMETER_SOIL_DOMAIN_PATH')
-            if soil_path == 'default':
-                return self.project_dir / 'parameters' / 'soilclass' / '2_soil_classes_domain'
-            return Path(soil_path)
-
-        def download_soilgrids_data(self):
-            self.soil_raw_path.mkdir(parents=True, exist_ok=True)
-            
-            hydroshare_login = {}
-            with open(os.path.expanduser("~/.hydroshare")) as file:
-                for line in file:
-                    key, val = line.split(':')
-                    hydroshare_login[key] = val.strip()
-
-            usr, pwd = hydroshare_login['name'], hydroshare_login['pass']
-
-            auth = HydroShareAuthBasic(username=usr, password=pwd)
-            hs = HydroShare(auth=auth)
-
-            try:
-                out = hs.getResourceFile(self.download_ID, "usda_mode_soilclass_250m_ll.tif", destination=self.soil_raw_path)
-                self.logger.info(f"Successfully downloaded SOILGRIDS data: {out}")
-            except Exception as e:
-                self.logger.error(f"Error downloading SOILGRIDS data: {str(e)}")
-
-        def extract_domain(self):
-            self.soil_domain_path.mkdir(parents=True, exist_ok=True)
-
-            coordinates = self.config.get('BOUNDING_BOX_COORDS').split('/')
-            bbox = (float(coordinates[1]), float(coordinates[0]), float(coordinates[3]), float(coordinates[2]))
-
-            soil_raw_files = list(self.soil_raw_path.glob('*.tif'))
-            if not soil_raw_files:
-                self.logger.error("No .tif files found in the raw soil data directory")
-                return
-
-            old_tif = str(soil_raw_files[0])
-            new_tif = str(self.soil_domain_path / self.soil_domain_name)
-
-            try:
-                translate_options = gdal.TranslateOptions(format='GTiff', projWin=bbox, creationOptions=['COMPRESS=DEFLATE'])
-                ds = gdal.Translate(new_tif, old_tif, options=translate_options)
-                ds = None  # Close the dataset
-                self.logger.info(f"Successfully extracted domain to {new_tif}")
-            except Exception as e:
-                self.logger.error(f"Error extracting domain: {str(e)}")
-
-        def cleanup(self):
-            try:
-                shutil.rmtree(self.soil_raw_path)
-                self.logger.info(f"Removed raw soil data directory: {self.soil_raw_path}")
-            except Exception as e:
-                self.logger.error(f"Error cleaning up raw soil data: {str(e)}")
-
-        def process_soilgrids_data(self):
-            self.download_soilgrids_data()
-            self.extract_domain()
-            self.cleanup()
-            self.logger.info("SOILGRIDS data processing completed")
+    def process_soilgrids_data(self):
+        self.download_soilgrids_data()
+        self.extract_domain()
+        self.cleanup()
+        self.logger.info("SOILGRIDS data processing completed")
 
 class modisDownloader:
     def __init__(self, config: Dict[str, Any], logger: Any):
