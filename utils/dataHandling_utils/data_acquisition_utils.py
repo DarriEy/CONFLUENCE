@@ -520,7 +520,7 @@ class soilgridsDownloader:
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
-        self.download_ID = self.config.get('PARAMETER_SOIL_HYDRO_ID')
+        self.download_ID = "1361509511e44adfba814f6950c6e742"
         self.soil_raw_path = self.project_dir / 'parameters' / 'soilclass' / '1_soil_classes_global'
         self.soil_domain_path = self.project_dir / 'parameters' / 'soilclass' / '2_soil_classes_domain'
         self.soil_domain_name = self.config.get('SOIL_CLASS_NAME', 'soil_classes_domain.tif')
@@ -540,7 +540,7 @@ class soilgridsDownloader:
         hs = HydroShare(auth=auth)
 
         try:
-            out = hs.getResourceFile(self.download_ID, "usda_mode_soilclass_250m_ll.tif", destination=self.soil_raw_path)
+            out = hs.getResourceFile(f"www.hydroshare.org/{self.download_ID}", "usda_mode_soilclass_250m_ll.tif", destination=self.soil_raw_path)
             self.logger.info(f"Successfully downloaded SOILGRIDS data: {out}")
         except Exception as e:
             self.logger.error(f"Error downloading SOILGRIDS data: {str(e)}")
