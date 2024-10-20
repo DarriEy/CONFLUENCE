@@ -12,7 +12,7 @@ Classes:
 Each class provides methods for processing geospatial data, running external commands,
 and managing file operations related to geofabric analysis.
 """
-
+import os
 import geopandas as gpd # type: ignore
 import networkx as nx # type: ignore
 from pathlib import Path
@@ -57,6 +57,8 @@ class GeofabricDelineator:
         self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
         self.interim_dir = self.project_dir / "taudem-interim-files" / "d8"
         self.dem_path = self.config.get('DEM_PATH')
+        taudem_dir = self.config['TAUDEM_DIR']
+        os.environ['PATH'] = f"{os.environ['PATH']}:{taudem_dir}"
 
         if self.dem_path == 'default':
             self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / self.config.get('DEM_NAME')
