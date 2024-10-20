@@ -1,12 +1,11 @@
 import os
-import sys
 from pathlib import Path
 import easymore # type: ignore
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
 import xarray as xr # type: ignore
 import geopandas as gpd # type: ignore
-import rasterio # type: ignore
+import shutil
 from rasterio.mask import mask # type: ignore
 from shapely.geometry import Polygon # type: ignore
 import rasterstats # type: ignore
@@ -288,7 +287,7 @@ class forcingResampler:
             os.rename(file, self.intersect_path / file.name)
 
         # Remove temporary directory
-        os.rmdir(esmr.temp_dir)
+        shutil.rmtree(esmr.temp_dir, ignore_errors=True)
 
     def _create_all_weighted_forcing_files(self):
         self.logger.info("Creating all weighted forcing files")
