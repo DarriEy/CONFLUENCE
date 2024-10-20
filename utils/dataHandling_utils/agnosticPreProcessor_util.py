@@ -340,8 +340,8 @@ class geospatialStatistics:
         self.catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         self.dem_path = self._get_file_path('DEM_PATH', f"attributes/elevation/dem/{self.config.get('DEM_NAME')}")
-        self.soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soil_class')
-        self.land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/land_class')
+        self.soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass')
+        self.land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass')
 
     def _get_file_path(self, file_type, file_def_path):
         if self.config.get(f'{file_type}') == 'default':
@@ -366,11 +366,17 @@ class geospatialStatistics:
             dem_data = src.read(1)
 
         stats = zonal_stats(catchment_gdf, dem_data, affine=affine, stats=['mean'], nodata=nodata_value)
-        result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean'})
-        print(result_df)
-        print(catchment_gdf)
-        catchment_gdf = catchment_gdf.join(result_df)
+        result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean_new'})
         
+        if 'elev_mean' in catchment_gdf.columns:
+            self.logger.info("Updating existing 'elev_mean' column")
+            catchment_gdf['elev_mean'] = result_df['elev_mean_new']
+        else:
+            self.logger.info("Adding new 'elev_mean' column")
+            catchment_gdf['elev_mean'] = result_df['elev_mean_new']
+
+        result_df = result_df.drop(columns=['elev_mean_new'])
+
         intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_name = self.config.get('INTERSECT_DEM_NAME')
         intersect_path.mkdir(parents=True, exist_ok=True)
@@ -452,6 +458,6 @@ class geospatialStatistics:
 
     def run_statistics(self):
         self.calculate_soil_stats()
-        self.calculate_elevation_stats()
         self.calculate_land_stats()
+        self.calculate_elevation_stats()
         self.logger.info("All geospatial statistics calculated successfully")
