@@ -100,52 +100,52 @@ class DataAcquisitionProcessor:
             "args": {
                 "met": [{
                     "dataset": self.config.get('FORCING_DATASET'),
-                    "dataset-dir": str(Path(self.config.get('DATATOOL_DATASET_ROOT')) / "rdrsv2.1/"),
+                    "dataset-dir": str(Path(self.config.get('DATATOOL_DATASET_ROOT')) / "era5/"),
                     "variable": self.config.get('FORCING_VARIABLES'),
                     "output-dir": str(self.project_dir / "forcing/raw_data"),
-                    "start-date": f"{self.config.get('FORCING_START_YEAR')}-01-01T13:00:00",
-                    "end-date": f"{self.config.get('FORCING_END_YEAR')}-12-31T12:00:00",
+                    "start-date": f"{self.config.get('EXPERIMENT_TIME_START')}",
+                    "end-date": f"{self.config.get('EXPERIMENT_TIME_END')}",
                     "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                     "prefix": f"domain_{self.domain_name}_",
-                    "cache": self.config.get('DATATOOL_CACHE'),
+                    "cache": self.config.get('TOOL_CACHE'),
                     "account": self.config.get('TOOL_ACCOUNT'),
                     "_flags": [
-                        "submit-job",
-                        "parsable"
+                        #"submit-job",
+                        #"parsable"
                     ]
                 }],
                 "gis": [
                     {
-                        "dataset": "landsat",
-                        "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "Landsat"),
+                        "dataset": "MODIS",
+                        "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "MODIS"),
                         "variable": "MCD12Q1.061",
-                        "start-date": self.config.get('LANDCOVER_YEAR'),
-                        "end-date": self.config.get('LANDCOVER_YEAR'),
-                        "output-dir": str(self.project_dir / "attributes/land_class"),
+                        "start-date": "2001-01-01",
+                        "end-date": "2020-01-01",
+                        "output-dir": str(self.project_dir / "attributes/land_class/"),
                         "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                         "print-geotiff": "true",
                         "stat": ["frac", "majority", "coords"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        "cache": self.config.get('GISTOOL_CACHE'),
+                        "cache": self.config.get('TOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
-                        "_flags": ["include-na", "submit-job", "parsable"]
+                        "_flags": ["include-na", "parsable"]#, "submit-job"]
                     },
                     {
                         "dataset": "soil_class",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "soil_classes"),
                         "variable": "soil_classes",
-                        "output-dir": str(self.project_dir / "attributes/soil_class"),
+                        "output-dir": str(self.project_dir / "attributes/soil_class/"),
                         "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
                         "print-geotiff": "true",
                         "stat": ["majority"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        "cache": self.config.get('GISTOOL_CACHE'),
+                        #"cache": self.config.get('GISTOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
-                        "_flags": ["include-na", "submit-job", "parsable"]
+                        "_flags": ["include-na", "parsable"]#, "submit-job"]
                     },
                     {
                         "dataset": "merit-hydro",
@@ -156,11 +156,11 @@ class DataAcquisitionProcessor:
                         "print-geotiff": "true",
                         "stat": ["min", "max", "mean", "median"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        "cache": self.config.get('GISTOOL_CACHE'),
+                        #"cache": self.config.get('GISTOOL_CACHE'),
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
-                        "_flags": ["include-na", "submit-job", "parsable"]
+                        "_flags": ["include-na", "parsable"]#, "submit-job",]
                     }
                 ],
                 "remap": [{
@@ -184,7 +184,7 @@ class DataAcquisitionProcessor:
                     "remapped-dim-id": "hru",
                     "output-dir": str(self.project_dir / "forcing/basin_averaged_data/") + '/',
                     "job-conf": str(Path(self.config.get('CONFLUENCE_DATA_DIR')) / self.config.get('EASYMORE_JOB_CONF')),
-                    "_flags": ["submit-job"]
+                    #"_flags": ["submit-job"]
                 }]
             },
             "order": {

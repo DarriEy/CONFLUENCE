@@ -25,9 +25,6 @@ import shapefile # type: ignore
 from skimage import measure # type: ignore
 from rasterio import features # type: ignore
 
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from utils.configHandling_utils.logging_utils import get_function_logger # type: ignore
-
 class SummaPreProcessor_spatial:
     def __init__(self, config: Dict[str, Any], logger: Any):
         
@@ -87,9 +84,10 @@ class SummaPreProcessor_spatial:
         self.attribute_name = self.config.get('SETTINGS_SUMMA_ATTRIBUTES')
         self.forcing_measurement_height = float(self.config.get('FORCING_MEASUREMENT_HEIGHT'))
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_data')
+        self.intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
 
 
-    @get_function_logger
+
     def run_preprocessing(self):
         """
         Run the complete SUMMA spatial preprocessing workflow.
@@ -108,21 +106,21 @@ class SummaPreProcessor_spatial:
         self.logger.info("Starting SUMMA spatial preprocessing")
         
         try:
-            self.sort_catchment_shape(work_log_dir=self.project_dir / f"shapefiles/_workLog")
-            self.process_forcing_data(work_log_dir=self.project_dir / f"forcing/_workLog")
-            self.copy_base_settings(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
-            self.create_file_manager(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
-            self.create_forcing_file_list(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
-            self.create_initial_conditions(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
-            self.create_trial_parameters(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
-            self.create_attributes_file(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
+            #self.sort_catchment_shape(work_log_dir=self.project_dir / f"shapefiles/_workLog")
+            self.process_forcing_data()
+            self.copy_base_settings()
+            self.create_file_manager()
+            self.create_forcing_file_list()
+            self.create_initial_conditions()
+            self.create_trial_parameters()
+            self.create_attributes_file()
 
             self.logger.info("SUMMA spatial preprocessing completed successfully")
         except Exception as e:
             self.logger.error(f"Error during SUMMA spatial preprocessing: {str(e)}")
             raise
 
-    @get_function_logger
+
     def sort_catchment_shape(self):
         """
         Sort the catchment shapefile based on GRU and HRU IDs.
@@ -167,7 +165,7 @@ class SummaPreProcessor_spatial:
             self.logger.error(f"Error sorting catchment shape: {str(e)}")
             raise
 
-    @get_function_logger
+
     def process_forcing_data(self):
 
         """
@@ -198,18 +196,15 @@ class SummaPreProcessor_spatial:
 
 
             #self.convert_units_and_vars()
-            self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
-            self.logger.info("Shapefile created successfully")
+            #self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
+            #self.logger.info("Shapefile created successfully")
 
-            self.remap_forcing(work_log_dir=self.project_dir / f"forcing/_workLog")
-            self.logger.info("Forcing data remapped successfully")
+            #self.remap_forcing(work_log_dir=self.project_dir / f"forcing/_workLog")
+            #self.logger.info("Forcing data remapped successfully")
 
             #if self.config.get('APPLY_LAPSE_RATE', False):
-            self.apply_datastep_and_lapse_rate(work_log_dir=self.project_dir / f"forcing/_workLog")
+            self.apply_datastep_and_lapse_rate()
             self.logger.info("Datasetp and Lapse rate correction applied successfully")
-
-            #self.apply_timestep(work_log_dir=self.project_dir / f"forcing/_workLog")
-            #self.logger.info("Timestep applied to forcing data successfully")
 
             self.logger.info("Forcing data processing completed successfully")
         except Exception as e:
@@ -217,7 +212,7 @@ class SummaPreProcessor_spatial:
             raise
 
 
-    @get_function_logger
+
     def process_carra(self):
         """
         Process CARRA data for SUMMA, handling point-based structure.
@@ -344,7 +339,6 @@ class SummaPreProcessor_spatial:
         self.logger.info("CARRA data processing completed")
 
 
-    @get_function_logger
     def copy_base_settings(self):
         """
         Copy SUMMA base settings from the source directory to the project's settings directory.
@@ -384,7 +378,7 @@ class SummaPreProcessor_spatial:
             self.logger.error(f"Error copying base settings: {e}")
             raise
 
-    @get_function_logger
+
     def create_file_manager(self):
         """
         Create the SUMMA file manager configuration file.
@@ -533,7 +527,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Completed in-place variable renaming and unit conversion for {self.forcing_dataset} data")
 
-    @get_function_logger
+
     def remap_forcing(self):
         """
         Remap forcing data to the catchment shapefile using EASYMORE.
@@ -684,7 +678,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("All weighted forcing files created")
 
-    @get_function_logger
+
     def apply_datastep_and_lapse_rate(self):
         """
         Apply temperature lapse rate corrections to the forcing data.
@@ -774,7 +768,6 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Completed processing of {self.forcing_dataset.upper()} forcing files with temperature lapsing")
 
-    @get_function_logger
     def create_shapefile(self):
         """
         Create a shapefile for the RDRS forcing data.
@@ -1000,7 +993,7 @@ class SummaPreProcessor_spatial:
 
             self.logger.info(f"CARRA grid shapefile created and saved to {output_shapefile}")
 
-    @get_function_logger
+
     def apply_timestep(self):
         """
         Add data step (time step) information to the forcing files.
@@ -1042,7 +1035,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("Completed adding data step to forcing files")
 
-    @get_function_logger
+
     def merge_forcings(self):
         """
         Merge RDRS forcing data files into monthly files.
@@ -1188,7 +1181,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info("RDRS forcing data merging completed")
 
-    @get_function_logger
+
     def create_forcing_file_list(self):
         """
         Create a list of forcing files for SUMMA.
@@ -1230,7 +1223,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Forcing file list created at {file_list_path}")
 
-    @get_function_logger
+
     def create_initial_conditions(self):
         """
         Create the initial conditions (cold state) file for SUMMA.
@@ -1337,7 +1330,7 @@ class SummaPreProcessor_spatial:
 
         self.logger.info(f"Initial conditions file created at: {coldstate_path}")
 
-    @get_function_logger
+
     def create_trial_parameters(self):
         """
         Create the trial parameters file for SUMMA.
@@ -1509,7 +1502,7 @@ class SummaPreProcessor_spatial:
 
         return total_length
 
-    @get_function_logger
+
     def create_attributes_file(self):
         """
         Create the attributes file for SUMMA.
@@ -1629,6 +1622,7 @@ class SummaPreProcessor_spatial:
     def insert_soil_class(self, attribute_file):
         """Insert soil class data into the attributes file."""
         self.logger.info("Inserting soil class into attributes file")
+        '''
         if self.config.get('DATA_ACQUIRE') == 'HPC':
             self._insert_soil_class_from_supplied(attribute_file)
         
@@ -1645,8 +1639,8 @@ class SummaPreProcessor_spatial:
                         self.logger.info(f"Set soil class for HRU {hru_id} to {soil_class}")
                     else:
                         self.logger.warning(f"No soil data found for HRU {hru_id}")
-
-        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+        '''
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
             """Insert soil class data from supplied intersection file."""
             intersect_path = self._get_default_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
             intersect_name = self.config.get('INTERSECT_SOIL_NAME')
@@ -1680,6 +1674,8 @@ class SummaPreProcessor_spatial:
     def insert_land_class(self, attribute_file):
         """Insert land class data into the attributes file."""
         self.logger.info("Inserting land class into attributes file")
+        
+        '''
         if self.config.get('DATA_ACQUIRE') == 'HPC':
             gistool_output = self.project_dir / "attributes/land_class"
             land_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_NA_NALCMS_landcover_2020_30m.csv")
@@ -1694,8 +1690,9 @@ class SummaPreProcessor_spatial:
                         self.logger.info(f"Set land class for HRU {hru_id} to {land_class}")
                     else:
                         self.logger.warning(f"No land data found for HRU {hru_id}")
-        
-        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+        '''
+
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
             """Insert land class data from supplied intersection file."""
             intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
             intersect_name = self.config.get('INTERSECT_LAND_NAME')
@@ -1739,6 +1736,7 @@ class SummaPreProcessor_spatial:
     def insert_elevation(self, attribute_file):
         """Insert elevation data into the attributes file."""
         self.logger.info("Inserting elevation into attributes file")
+        '''
         if self.config.get('DATA_ACQUIRE') == 'HPC':
             gistool_output = self.project_dir / "attributes/elevation"
             elev_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_elv.csv")
@@ -1765,8 +1763,8 @@ class SummaPreProcessor_spatial:
 
                 if do_downHRUindex:
                     self._set_downHRUindex(att, gru_data)
-       
-        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+        '''
+        if self.config.get('DATA_ACQUIRE') == 'HPC':
             """Insert elevation data from supplied intersection file."""
             intersect_path = self._get_default_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
             intersect_name = self.config.get('INTERSECT_DEM_NAME')
