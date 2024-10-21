@@ -4,6 +4,9 @@ from pathlib import Path
 from datetime import datetime
 import subprocess
 import pandas as pd # type: ignore
+import rasterio
+import numpy as np
+from scipy import stats # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
@@ -18,6 +21,7 @@ from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.ostrich_util import OstrichOptimizer # type: ignore
+from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 
 class CONFLUENCE:
 
@@ -343,6 +347,79 @@ class CONFLUENCE:
         benchmarker = Benchmarker(self.config, self.logger)
         benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
 
+    def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
+        # List all the geotiff files for the years we're interested in
+        geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}{year}.tif" for year in range(start_year, end_year + 1)]
+        
+        # Read the first file to get metadata
+        with rasterio.open(geotiff_files[0]) as src:
+            meta = src.meta
+            shape = src.shape
+        
+        # Initialize an array to store all the data
+        all_data = np.zeros((len(geotiff_files), *shape), dtype=np.int16)
+        
+        # Read all the geotiffs into the array
+        for i, file in enumerate(geotiff_files):
+            with rasterio.open(file) as src:
+                all_data[i] = src.read(1)
+        
+        # Calculate the mode along the time axis
+        mode_data, _ = stats.mode(all_data, axis=0)
+        mode_data = mode_data.astype(np.int16).squeeze()
+        
+        # Update metadata for output
+        meta.update(count=1, dtype='int16')
+        
+        # Write the result
+        with rasterio.open(output_file, 'w', **meta) as dst:
+            dst.write(mode_data, 1)
+        
+        print(f"Mode calculation complete. Result saved to {output_file}")
+
+    def acquire_attributes(self):
+        # Create attribute directories
+        dem_dir = self.project_dir / 'attributes' / 'elevation' / 'dem'
+        soilclass_dir = self.project_dir / 'attributes' / 'soilclass'
+        landclass_dir = self.project_dir / 'attributes' / 'landclass'
+
+        for dir in [dem_dir, soilclass_dir, landclass_dir]: dir.mkdir(parents = True, exist_ok = True)
+
+        # Initialize the gistool runner
+        gr = gistoolRunner(self.config, self.logger)
+
+        # Get lat and lon lims
+        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+        latlims = f"{bbox[2]},{bbox[0]}"
+        lonlims = f"{bbox[1]},{bbox[3]}"
+
+        # Create the gistool command for elevation 
+        gistool_command_elevation = gr.create_gistool_command(dataset = 'MERIT-Hydro', output_dir = dem_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'elv')
+        gr.execute_gistool_command(gistool_command_elevation)
+
+        #Acquire landcover data, first we define which years we should acquire the data for
+        start_year = 2001
+        end_year = 2020
+
+        #Select which MODIS dataset to use
+        modis_var = "MCD12Q1.061"
+
+        # Create the gistool command for landcover
+        gistool_command_landcover = gr.create_gistool_command(dataset = 'MODIS', output_dir = landclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = modis_var, start_date=f"{start_year}-01-01", end_date=f"{end_year}-01-01")
+        gr.execute_gistool_command(gistool_command_landcover)
+
+        # if we selected a range of years, we need to calculate the mode of the landcover
+        if start_year != end_year:
+            input_dir = landclass_dir / modis_var
+            output_file = landclass_dir / f"domain_{self.config['DOMAIN_NAME']}_landcover.tif"
+    
+            self.calculate_landcover_mode(input_dir, output_file, start_year, end_year)
+
+        # Create the gistool command for soil classes
+        gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
+        gr.execute_gistool_command(gistool_command_soilclass)
+
+
     @get_function_logger
     def run_workflow(self):
         self.logger.info("Starting CONFLUENCE workflow")
@@ -354,6 +431,7 @@ class CONFLUENCE:
         workflow_steps = [
             (self.setup_project, (self.project_dir / 'catchment').exists),
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
+            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tiff").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
