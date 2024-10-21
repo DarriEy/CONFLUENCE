@@ -45,7 +45,8 @@ class DomainDiscretizer:
             self.delineation_suffix = 'lumped'
         elif delineation_method == 'subset':
             self.delineation_suffix = f"subset_{self.config['GEOFABRIC_TYPE']}"
-        
+
+    '''  
     def sort_catchment_shape(self):
         self.logger.info("Sorting catchment shape")
         
@@ -72,6 +73,62 @@ class DomainDiscretizer:
         self.logger.info(f"Catchment shape sorted and saved to {self.catchment_path / self.catchment_name}")
 
         return shp
+    '''
+
+    def sort_catchment_shape(self):
+        """
+        Sort the catchment shapefile based on GRU and HRU IDs.
+
+        This method performs the following steps:
+        1. Loads the catchment shapefile
+        2. Sorts the shapefile based on GRU and HRU IDs
+        3. Saves the sorted shapefile back to the original location
+
+        The method uses GRU and HRU ID column names specified in the configuration.
+
+        Raises:
+            FileNotFoundError: If the catchment shapefile is not found.
+            ValueError: If the required ID columns are not present in the shapefile.
+        """
+        self.logger.info("Sorting catchment shape")
+
+        self.catchment_path = self.config.get('CATCHMENT_PATH')
+        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        self.gruId = self.config.get('CATCHMENT_SHP_GRUID')
+        self.hruId = self.config.get('CATCHMENT_SHP_HRUID')
+
+        if self.catchment_path == 'default':
+            self.catchment_path = self.project_dir / 'shapefiles' / 'catchment'
+        else:
+            self.catchment_path = Path(self.catchment_path)
+
+        catchment_file = self.catchment_path / self.catchment_name
+        
+        try:
+            # Open the shape
+            shp = gpd.read_file(catchment_file)
+            
+            # Check if required columns exist
+            if self.gruId not in shp.columns or self.hruId not in shp.columns:
+                raise ValueError(f"Required columns {self.gruId} and/or {self.hruId} not found in shapefile")
+            
+            # Sort
+            shp = shp.sort_values(by=[self.gruId, self.hruId])
+            
+            # Save
+            shp.to_file(catchment_file)
+            
+            self.logger.info(f"Catchment shape sorted and saved to {catchment_file}")
+        except FileNotFoundError:
+            self.logger.error(f"Catchment shapefile not found at {catchment_file}")
+            raise
+        except ValueError as e:
+            self.logger.error(str(e))
+            raise
+        except Exception as e:
+            self.logger.error(f"Error sorting catchment shape: {str(e)}")
+            raise
+
 
     def discretize_domain(self) -> Optional[Path]:
         """

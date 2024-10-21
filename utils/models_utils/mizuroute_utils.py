@@ -11,8 +11,6 @@ import easymore.easymore as esmr # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from utils.logging_utils import get_function_logger # type: ignore
-
 class MizuRoutePreProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
@@ -20,7 +18,6 @@ class MizuRoutePreProcessor:
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.mizuroute_setup_dir = self.project_dir / "settings" / "mizuRoute"
 
-    @get_function_logger
     def run_preprocessing(self):
         self.logger.info("Starting mizuRoute spatial preprocessing")
         
