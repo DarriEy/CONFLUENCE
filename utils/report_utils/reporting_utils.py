@@ -9,10 +9,11 @@ from typing import List, Tuple, Dict, Any
 import matplotlib.dates as mdates # type: ignore
 from matplotlib.gridspec import GridSpec # type: ignore
 from matplotlib.colors import LinearSegmentedColormap # type: ignore
+import mpi4py # type: ignore
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
-from utils.logging_utils import get_function_logger # type: ignore
+
 
 class VisualizationReporter:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -434,7 +435,6 @@ class VisualizationReporter:
         else:
             return Path(self.config.get(f'{file_type}'))
     
-    @get_function_logger
     def plot_lumped_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]]):
         try:
             # Read observation data
