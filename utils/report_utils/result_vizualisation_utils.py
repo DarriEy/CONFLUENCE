@@ -8,6 +8,7 @@ import xarray as xr # type: ignore
 import seaborn as sns # type: ignore
 import plotly.graph_objects as go # type: ignore
 import math
+
 class resultMapper:
     def __init__(self, config, logger):
         self.config = config
