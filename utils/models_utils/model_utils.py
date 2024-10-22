@@ -85,6 +85,8 @@ class MizuRouteRunner:
             with open(mizu_log_path / mizu_log_name, 'w') as log_file:
                 subprocess.run(mizu_command, shell=True, check=True, stdout=log_file, stderr=subprocess.STDOUT)
             self.logger.info("mizuRoute run completed successfully")
+            return mizu_out_path
+
         except subprocess.CalledProcessError as e:
             self.logger.error(f"mizuRoute run failed with error: {e}")
             raise
@@ -162,6 +164,8 @@ class SummaRunner:
             with open(summa_log_path / summa_log_name, 'w') as log_file:
                 subprocess.run(summa_command, shell=True, check=True, stdout=log_file, stderr=subprocess.STDOUT)
             self.logger.info("SUMMA run completed successfully")
+            return summa_out_path
+        
         except subprocess.CalledProcessError as e:
             self.logger.error(f"SUMMA run failed with error: {e}")
             raise

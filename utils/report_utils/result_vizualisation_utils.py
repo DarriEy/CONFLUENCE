@@ -1,5 +1,13 @@
+# results_utils.py
+from typing import List, Dict, Any, Optional
 from pathlib import Path
-
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+import xarray as xr # type: ignore
+import seaborn as sns # type: ignore
+import plotly.graph_objects as go # type: ignore
+import math
 class resultMapper:
     def __init__(self, config, logger):
         self.config = config
