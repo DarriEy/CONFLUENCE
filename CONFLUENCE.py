@@ -22,6 +22,7 @@ from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.ostrich_util import OstrichOptimizer # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
+from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
 
 class CONFLUENCE:
 
@@ -349,7 +350,7 @@ class CONFLUENCE:
 
     def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
         # List all the geotiff files for the years we're interested in
-        geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}{year}.tif" for year in range(start_year, end_year + 1)]
+        geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}_{year}.tif" for year in range(start_year, end_year + 1)]
         
         # Read the first file to get metadata
         with rasterio.open(geotiff_files[0]) as src:
@@ -435,6 +436,7 @@ class CONFLUENCE:
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
+            #(self.acquire_forcings)
             (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
@@ -461,7 +463,7 @@ class CONFLUENCE:
 
 def main():
     config_path = Path(__file__).parent / '0_config_files'
-    config_name = 'config_active.yaml'
+    config_name = 'config_Chena.yaml'
 
     confluence = CONFLUENCE(config_path / config_name)
     confluence.run_workflow()
