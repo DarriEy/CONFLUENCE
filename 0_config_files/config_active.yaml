@@ -56,7 +56,7 @@ POUR_POINT_COORDS: 51.1722/-115.5717                           # Pour point coor
 BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5                # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. Order and use of '/' to separate values is mandatory.
 
 # Data acquisition settings
-DATA_ACQUIRE: supplied                                         # Where to acquire data from options: HPC, supplied, download (tbi), earth_engine (tbi)
+DATA_ACQUIRE: HPC                                         # Where to acquire data from options: HPC, supplied, download (tbi), earth_engine (tbi)
 
 # Forcing data settings
 FORCING_DATASET: "RDRS"                                        # Forcing dataset to use

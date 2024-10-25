@@ -673,8 +673,6 @@ class ModelEvaluator:
         # Read observation data
         obs_df = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
         obs_df = obs_df['discharge_cms'].resample('h').mean()
-        print(f"sim_df: {sim_df}")
-        print(f"obs_df: {obs_df}")
 
         obs_df = obs_df.reindex(sim_df.index).dropna()
         sim_df = sim_df.reindex(obs_df.index).dropna()
