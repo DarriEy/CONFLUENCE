@@ -9,24 +9,29 @@ import numpy as np
 from scipy import stats # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
-from utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
-from utils.reporting_utils import VisualizationReporter # type: ignore
-from utils.logging_utils import setup_logger, get_function_logger # type: ignore
-from utils.config_utils import ConfigManager # type: ignore
-from utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
-from utils.discretization_utils import DomainDiscretizer # type: ignore
-from utils.summa_utils import SummaPreProcessor # type: ignore
-from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
-from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
-from utils.ostrich_util import OstrichOptimizer # type: ignore
+from utils.dataHandling_utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
 from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
+from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
+from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
+from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
+from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
+
+
+
+#from utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
+
+from utils.logging_utils import setup_logger, get_function_logger # type: ignore
+from utils.config_utils import ConfigManager # type: ignore
+from utils.summa_utils import SummaPreProcessor # type: ignore
+#from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
+#from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
+from utils.ostrich_util import OstrichOptimizer # type: ignore
+
 
 class CONFLUENCE:
 
@@ -199,9 +204,8 @@ class CONFLUENCE:
     def run_model_specific_preprocessing(self):
         # Run model-specific preprocessing
         if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
-            self.run_summa_preprocessing(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"settings/_workLog")
+            self.run_summa_preprocessing()
 
-    @get_function_logger
     def run_summa_preprocessing(self):
         self.logger.info('Running SUMMA specific input processing')
         if self.config.get('SUMMAFLOW') == 'stochastic':
@@ -211,11 +215,11 @@ class CONFLUENCE:
             summa_preprocessor = SummaPreProcessor_spatial(self.config, self.logger)
             self.logger.info('SUMMA spatial preprocessor initiated')
 
-        summa_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+        summa_preprocessor.run_preprocessing()
 
         if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
             mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
-            mizuroute_preprocessor.run_preprocessing(work_log_dir=self.project_dir/ f"_workLog_{self.domain_name}")
+            mizuroute_preprocessor.run_preprocessing()
 
     @get_function_logger
     def run_models(self):
@@ -467,7 +471,7 @@ class CONFLUENCE:
 
     def model_specific_pre_processing(self):
         # Data directoris
-        model_input_dir = self.project_dir / f"{self.config['HYDROLOGICAL_MODEL']}_input"
+        model_input_dir = self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}_input"
 
         # Make sure the new directories exists
         model_input_dir.mkdir(parents = True, exist_ok = True)
@@ -480,7 +484,6 @@ class CONFLUENCE:
             mp.run_preprocessing()
 
 
-    @get_function_logger
     def run_workflow(self):
         self.logger.info("Starting CONFLUENCE workflow")
         
@@ -497,9 +500,9 @@ class CONFLUENCE:
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
-            #(self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}2").exists()),
+            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}2").exists()),
             #(self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
+            #(self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input2").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv1").exists()),
