@@ -23,13 +23,12 @@ from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
 from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
-from utils.models_utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
-
+from utils.models_utils.summa_utils import SummaPreProcessor # type: ignore
 
 #from utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 #from utils.logging_utils import setup_logger, get_function_logger # type: ignore
 #from utils.config_utils import ConfigManager # type: ignore
-#from utils.summa_utils import SummaPreProcessor # type: ignore
+#from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
 #from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 #from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 #from utils.ostrich_util import OstrichOptimizer # type: ignore
