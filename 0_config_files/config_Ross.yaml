@@ -2,7 +2,7 @@
 # Experiment settings
 DOMAIN_NAME: "Ross"                                    # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 2008-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 2010-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
@@ -11,7 +11,7 @@ HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological mo
 ROUTING_MODEL: mizuroute                                       # Routing model used, options: mizuroute, HEC-RAS (tbi)
 
 # Computatational settings
-MPI_PROCESSES: 8                                               # Adjust this number based on your system's capabilities
+MPI_PROCESSES: 20                                               # Adjust this number based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
 
 ## Geospatial settings
@@ -59,7 +59,7 @@ DATA_ACQUIRE: supplied                                         # Where to acquir
 
 # Forcing data settings
 FORCING_DATASET: "RDRS"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2009"                                     # Forcing start year
+FORCING_START_YEAR: "2010"                                     # Forcing start year
 FORCING_END_YEAR: "2018"                                       # Forcing end year 
 FORCING_VARIABLES:                                             # Forcing dataset variables to use or acquire
   - "RDRS_v2.1_P_P0_SFC"                                       # ERA5 variables | longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd
@@ -146,23 +146,23 @@ FLASH_USE_ATTENTION: True                                      # Use attention
 
 ## Optimization settings
 # Optimization settings general
-OPTMIZATION_ALOGORITHM: NSGA-II                                        # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
-OPTIMIZATION_METRIC: KGE                                               # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+OPTMIZATION_ALOGORITHM: OSTRICH                                        # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
+OPTIMIZATION_METRICS: KGE                                               # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
 MOO_OPTIMIZATION_METRICS: KGE,NSE                                      # Optimisation metrics to use in multi objective optimisation
 NUMBER_OF_OBJECTIVES: 2                                                # Number of objectives for multi objective algorithms
-CALIBRATION_PERIOD: 2017-01-01, 2017-12-31                             # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2018-01-01, 2018-12-31                             # start_date, end_date in format YYYY-MM-DD
+CALIBRATION_PERIOD: 2011-01-01, 2014-12-31                             # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2015-01-01, 2018-12-31                             # start_date, end_date in format YYYY-MM-DD
 POPULATION_SIZE: 100                                                   # Population size for genetic algorithms
-NUMBER_OF_ITERATIONS: 100                                              # Number of iterations for calibration 
+NUMBER_OF_ITERATIONS: 2000                                              # Number of iterations for calibration 
 NUMBER_OF_GENERATIONS: 10                                              # Number of generations for genetic algorithms
 SWRMSIZE: 10                                                           # Swarm size for swarm based algorithms
 NGSIZE: 10                                                             # Next Generation size
 DIAGNOSTIC_FREQUENCY: 10                                               # Number of iterations between diagnostic output
-PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,aquiferScaleFactor,aquiferBaseflowExp,aquiferBaseflowRate # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 #Ostrich settings
-OSTRICH_ALGORITHM: ParaPADDS                                           # Options: DDS, ParallelDDS, PSO, APPSO, SCE, ParaPADDS
+OSTRICH_ALGORITHM: ParalellDDS                                           # Options: DDS, ParallelDDS, PSO, APPSO, SCE, ParaPADDS
 OSTRICH_METRICS: GCOP                                                  # Options: GCOP (single-objective), PATO (multi-objective)
 DDS_R:  0.2                                                            # DDS perturbation parameter
 SCE_BUDGET: 10000                                                      # SCE budget
@@ -210,8 +210,8 @@ SIM_REACH_ID: 122                                                      # River r
 # If deviating from default paths, a full path must be specified. E.g. '/home/user/non-default/path'
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
-CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/home/darri/data/CONFLUENCE_data"
+CONFLUENCE_CODE_DIR: "/home/darri/code//CONFLUENCE"
 
 # Experiment  
 EXPERIMENT_OUTPUT_SUMMA: default                               # If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/SUMMA'.
@@ -222,17 +222,17 @@ EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA e
 EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA output
 
 # Data 
-OBSERVATIONS_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Ross/observations/streamflow/preprocessed/Ross_streamflow_processed.csv
+OBSERVATIONS_PATH: /home/darri/data/CONFLUENCE_data/domain_Ross/observations/streamflow/preprocessed/Ross_streamflow_processed.csv
 SIMULATIONS_PATH: default                                              # Path to streamflow simulation results
-FORCING_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Ross/forcing/raw_data
+FORCING_PATH: /project/6093124/darri/data/CONFLUENCE_data/domain_Ross/forcing/raw_data
 
 # Geospatial data 
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
 DEM_PATH: default                                              # If 'default', uses 'root_path/domain_[name]/attributes/elevation/dem.tiff'
 DEM_NAME: elevation.tif                                        # Name of elevation dem tiff
-SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/cat_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
-SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/pfaf_level_02/riv_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                  # Path to source geofabric rivers
+SOURCE_GEOFABRIC_BASINS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/cat_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
+SOURCE_GEOFABRIC_RIVERS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/riv_pfaf_81_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                  # Path to source geofabric rivers
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
 CATCHMENT_PLOT_DIR: default                                    # Directory to output plots of domain catchment
@@ -291,7 +291,7 @@ SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA o
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path
-SUMMA_EXE: summa.exe                                           # Name of SUMMA executable
+SUMMA_EXE: summa_sundials.exe                                           # Name of SUMMA executable
 
 # Mizuroute Paths
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings
@@ -303,7 +303,7 @@ SETTINGS_MIZU_CONTROL_FILE: mizuroute.control                  # Name of the con
 SETTINGS_MIZU_REMAP: routing_remap.nc                          # Name of the optional catchment remapping file, for cases when SUMMA uses different catchments than mizuRoute.
 
 # Optimisation Paths
-OSTRICH_PATH: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/installs/ostrich  # Path to ostrich executable 
+OSTRICH_PATH: /home/darri/data/CONFLUENCE_data/installs/ostrich  # Path to ostrich executable 
 OSTRICH_EXE: OstrichMPI                                                # Name of Ostrich executable
 OSTRICH_OUTPUT_FILE: ostrich_output.txt                                # Name of OSTRICH output file
 OPTIMIZATION_RESULTS_FILE: default                                     # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
