@@ -23,6 +23,10 @@ from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchm
 from utils.ostrich_util import OstrichOptimizer # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
+from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
+from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
+from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner # type: ignore
 
 class CONFLUENCE:
 
@@ -306,7 +310,6 @@ class CONFLUENCE:
     def run_ostrich_optimization(self):
         optimizer = OstrichOptimizer(self.config, self.logger)
         optimizer.run_optimization()
-        pass
 
     def run_sensitivity_analysis(self):
         self.logger.info("Starting sensitivity analysis")
@@ -412,13 +415,69 @@ class CONFLUENCE:
         # if we selected a range of years, we need to calculate the mode of the landcover
         if start_year != end_year:
             input_dir = landclass_dir / modis_var
-            output_file = landclass_dir / f"domain_{self.config['DOMAIN_NAME']}_landcover.tif"
+            output_file = landclass_dir / f"{self.config['LAND_CLASS_NAME']}"
     
             self.calculate_landcover_mode(input_dir, output_file, start_year, end_year)
 
         # Create the gistool command for soil classes
         gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
         gr.execute_gistool_command(gistool_command_soilclass)
+
+    def acquire_forcings(self):
+        # Initialize datatoolRunner class
+        dr = datatoolRunner(self.config, self.logger)
+
+        # Data directory
+        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+
+        # Make sure the directory exists
+        raw_data_dir.mkdir(parents = True, exist_ok = True)
+
+        # Get lat and lon lims
+        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+        latlims = f"{bbox[2]},{bbox[0]}"
+        lonlims = f"{bbox[1]},{bbox[3]}"
+
+        # Create the gistool command
+        datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = self.config['FORCING_VARIABLES'], start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
+        dr.execute_datatool_command(datatool_command)
+
+    def model_agnostic_pre_processing(self):
+        # Data directoris
+        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+        basin_averaged_data = self.project_dir / 'forcing' / 'basin_averaged_data'
+        catchment_intersection_dir = self.project_dir / 'shapefiles' / 'catchment_intersection'
+
+        # Make sure the new directories exists
+        basin_averaged_data.mkdir(parents = True, exist_ok = True)
+        catchment_intersection_dir.mkdir(parents = True, exist_ok = True)
+
+         # Initialize geospatialStatistics class
+        gs = geospatialStatistics(self.config, self.logger)
+
+        # Run resampling
+        gs.run_statistics()
+        
+        # Initialize forcingReampler class
+        fr = forcingResampler(self.config, self.logger)
+
+        # Run resampling
+        fr.run_resampling()
+       
+
+    def model_specific_pre_processing(self):
+        # Data directoris
+        model_input_dir = self.project_dir / f"{self.config['HYDROLOGICAL_MODEL']}_input"
+
+        # Make sure the new directories exists
+        model_input_dir.mkdir(parents = True, exist_ok = True)
+
+        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
+            ssp = SummaPreProcessor_spatial(self.config, self.logger)
+            ssp.run_preprocessing()
+
+            mp = MizuRoutePreProcessor(self.config,self.logger)
+            mp.run_preprocessing()
 
 
     @get_function_logger
@@ -432,12 +491,14 @@ class CONFLUENCE:
         workflow_steps = [
             (self.setup_project, (self.project_dir / 'catchment').exists),
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tiff").exists()),
+            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
-            #(self.acquire_forcings)
-            (self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
+            #(self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}2").exists()),
+            #(self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
@@ -463,7 +524,7 @@ class CONFLUENCE:
 
 def main():
     config_path = Path(__file__).parent / '0_config_files'
-    config_name = 'config_Chena.yaml'
+    config_name = 'config_active.yaml'
 
     confluence = CONFLUENCE(config_path / config_name)
     confluence.run_workflow()

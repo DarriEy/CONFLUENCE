@@ -26,7 +26,7 @@ class forcingResampler:
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
-        self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_data')
+        self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
 
     def _get_default_path(self, path_key, default_subpath):
         path_value = self.config.get(path_key)
@@ -45,7 +45,7 @@ class forcingResampler:
 
         if self.forcing_dataset == 'rdrs':
             self._create_rdrs_shapefile()
-        elif self.forcing_dataset == 'era5':
+        elif self.forcing_dataset.lower() == 'era5':
             self._create_era5_shapefile()
         elif self.forcing_dataset == 'carra':
             self._create_carra_shapefile()

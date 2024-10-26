@@ -113,7 +113,7 @@ class datatoolRunner:
         f"--lat-lims={lat_lims}",
         f"--lon-lims={lon_lims}",
         f"--variable={variables}",
-        f"--prefix=domain_{self.domain_name}",
+        f"--prefix=domain_{self.domain_name}_",
         #"--submit-job",
         f"--cache={self.config['TOOL_CACHE']}",
         f"--account={self.config['TOOL_ACCOUNT']}"

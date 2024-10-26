@@ -54,7 +54,7 @@ class GeofabricDelineator:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
+        #self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
         self.interim_dir = self.project_dir / "taudem-interim-files" / "d8"
         self.dem_path = self.config.get('DEM_PATH')
         taudem_dir = self.config['TAUDEM_DIR']
@@ -64,6 +64,15 @@ class GeofabricDelineator:
             self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / self.config.get('DEM_NAME')
         else:
             self.dem_path = Path(self.dem_path)
+
+        # Get SLURM allocation if available
+        slurm_ntasks = os.environ.get('SLURM_NTASKS')
+        if slurm_ntasks:
+            self.mpi_processes = int(slurm_ntasks)
+        else:
+            self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
+        
+        self.logger.info(f"Using {self.mpi_processes} MPI processes")
         
 
     def run_command(self, command: str):
@@ -124,14 +133,21 @@ class GeofabricDelineator:
             pour_point_path (Path): Path to the pour point shapefile.
         """
         threshold = self.config.get('STREAM_THRESHOLD')
+
+        # Determine whether to use srun or mpirun
+        if 'SLURM_JOB_ID' in os.environ:
+            mpi_cmd = 'srun'
+        else:
+            mpi_cmd = f'mpirun -n {self.mpi_processes}'
+        
         steps = [
-            f"mpirun -n {self.mpi_processes} pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
-            f"mpirun -n {self.mpi_processes} d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
-            f"mpirun -n {self.mpi_processes} aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
-            f"mpirun -n {self.mpi_processes} gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
-            f"mpirun -n {self.mpi_processes} threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
-            f"mpirun -n {self.mpi_processes} moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md 50",
-            f"mpirun -n {self.mpi_processes} streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+            f"{mpi_cmd} pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
+            f"{mpi_cmd} d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
+            f"{mpi_cmd} aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
+            f"{mpi_cmd} gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
+            f"{mpi_cmd} threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
+            f"{mpi_cmd} moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md 50",
+            f"{mpi_cmd} streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
         ]
 
         for step in steps:

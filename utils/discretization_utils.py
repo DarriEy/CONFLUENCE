@@ -35,7 +35,7 @@ class DomainDiscretizer:
         self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
-        self.dem_path = self._get_file_path("DEM_PATH", "attributes/elevation/dem", "elevation.tif")
+        self.dem_path = self._get_file_path("DEM_PATH", "attributes/elevation/dem", self.config['DEM_NAME'])
 
         delineation_method = self.config.get('DOMAIN_DEFINITION_METHOD')
 
@@ -164,7 +164,7 @@ class DomainDiscretizer:
         else:
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
 
-        dem_raster = self._get_file_path("DEM_PATH", "attributes/elevation/dem", "elevation.tif")
+        dem_raster = self._get_file_path("DEM_PATH", "attributes/elevation/dem", self.config['DEM_NAME'])
         output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_elevation.shp")
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_elevation.png")
 
@@ -259,7 +259,7 @@ class DomainDiscretizer:
             Optional[Path]: Path to the output HRU shapefile, or None if discretization fails.
         """
         gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
-        dem_raster = self._get_file_path("DEM_PATH", "attributes/elevation/dem", "elevation.tif")
+        dem_raster = self._get_file_path("DEM_PATH", "attributes/elevation/dem", self.config['DEM_NAME'])
         radiation_raster = self._get_file_path("RADIATION_PATH", "attributes/radiation", "annual_radiation.tif")
         output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_radiation.shp")
         output_plot = self._get_file_path("CATCHMENT_PLOT_DIR", "plots/catchment", f"{self.domain_name}_HRUs_radiation.png")
