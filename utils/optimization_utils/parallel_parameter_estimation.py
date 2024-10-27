@@ -10,12 +10,12 @@ from collections import deque
 import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from utils.logging_utils import setup_logger # type: ignore
-from utils.optimisation_utils import run_nsga2, run_nsga3, run_moead, run_smsemoa, run_mopso, get_algorithm_kwargs, run_de, run_dds, run_basin_hopping, run_pso, run_sce_ua, run_borg_moea # type: ignore
-from utils.results_utils import Results # type: ignore
-from utils.parallel_utils import Worker # type: ignore
-from utils.ostrich_util import OstrichOptimizer # type: ignore
-from utils.optimization_config import initialize_config # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger # type: ignore
+from utils.optimization_utils.optimisation_utils import run_nsga2, run_nsga3, run_moead, run_smsemoa, run_mopso, get_algorithm_kwargs, run_de, run_dds, run_basin_hopping, run_pso, run_sce_ua, run_borg_moea # type: ignore
+from utils.optimization_utils.results_utils import Results # type: ignore
+from utils.optimization_utils.parallel_utils import Worker # type: ignore
+from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
+from utils.optimization_utils.optimization_config import initialize_config # type: ignore
 
 class Optimizer:
 

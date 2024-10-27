@@ -543,7 +543,9 @@ class ObservedDataProcessor:
                                 comment='#', sep='\t', 
                                 skiprows=[6],
                                 parse_dates=['datetime'],
-                                date_format='%Y-%m-%d %H:%M')
+                                date_format='%Y-%m-%d %H:%M',
+                                low_memory=False 
+                                )
 
         usgs_data = usgs_data.loc[1:]
         usgs_data['discharge_cfs'] = pd.to_numeric(usgs_data[usgs_data.columns[4]], errors='coerce')

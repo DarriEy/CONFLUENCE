@@ -2,9 +2,9 @@ from mpi4py import MPI # type: ignore
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.opt_model_utils import ModelRunner, ModelEvaluator # type: ignore
-from utils.logging_utils import setup_logger # type: ignore
-from utils.optimisation_utils import calculate_objective_value # type: ignore 
+from utils.optimization_utils.opt_model_utils import ModelRunner, ModelEvaluator # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger # type: ignore
+from utils.optimization_utils.optimisation_utils import calculate_objective_value # type: ignore 
 from datetime import datetime
 
 class Worker:

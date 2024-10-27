@@ -31,7 +31,7 @@ import multiprocessing
 import time
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.logging_utils import setup_logger, get_function_logger # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
 
 class GeofabricDelineator:
     def __init__(self, config: Dict[str, Any], logger: Any):

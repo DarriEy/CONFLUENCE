@@ -17,9 +17,9 @@ from rasterstats import zonal_stats # type: ignore
 from datetime import datetime
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
-from utils.logging_utils import setup_logger # type: ignore
-from utils.optimization_config import Config # type: ignore
+from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger # type: ignore
+from utils.optimization_utils.optimization_config import Config # type: ignore
 
 
 def run_summa(summa_path, summa_exe, filemanager_path, log_path, log_name, local_rank):

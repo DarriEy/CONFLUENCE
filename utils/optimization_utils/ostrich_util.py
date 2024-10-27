@@ -14,7 +14,7 @@ from dateutil.relativedelta import relativedelta # type: ignore
 import traceback
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from utils.calibration_utils import read_param_bounds # type: ignore
+from utils.optimization_utils.calibration_utils import read_param_bounds # type: ignore
 
 class OstrichOptimizer:
     def __init__(self, config: Dict[str, Any], logger: Any):

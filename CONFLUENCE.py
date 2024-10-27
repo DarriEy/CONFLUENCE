@@ -310,7 +310,7 @@ class CONFLUENCE:
             run_command,
             '-n', str(self.config.get('MPI_PROCESSES')),
             'python',
-            str(Path(__file__).parent / 'utils' / 'parallel_parameter_estimation.py'), 
+            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
             str(config_path)
         ]
 

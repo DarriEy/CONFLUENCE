@@ -6,8 +6,8 @@ import xarray as xr # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from utils.logging_utils import get_function_logger # type: ignore
-from utils.summaflow import ( # type: ignore
+from utils.configHandling_utils.logging_utils import get_function_logger # type: ignore
+from utils.models_utils.summaflow import ( # type: ignore
     write_summa_forcing,
     write_summa_attribute,
     write_summa_paramtrial,
