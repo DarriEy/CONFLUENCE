@@ -38,13 +38,10 @@ pip install -r requirements.txt
 - TauDEM (https://github.com/dtarb/TauDEM.git)
 - Ostrich (http://www.civil.uwaterloo.ca/envmodelling/Ostrich.html)
 
-## Setup for Local Configuration
-
-After cloning or forking this repository, run the following script to set up your local configuration:
-
-For Unix-like systems:
-```bash
-./setup_local_config.sh
+## Configuration
+- Copy `config_template.yaml` to `config_active.yaml` or any other name
+- Modify the copy according to your needs
+- All config files except `config_template.yaml` are ignored by git
 
 ## Usage
 
