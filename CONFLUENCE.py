@@ -26,15 +26,6 @@ from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, Decision
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
 from utils.models_utils.summa_utils import SummaPreProcessor # type: ignore
 
-#from utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
-#from utils.logging_utils import setup_logger, get_function_logger # type: ignore
-#from utils.config_utils import ConfigManager # type: ignore
-#from utils.summa_spatial_utils import SummaPreProcessor_spatial # type: ignore
-#from utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-#from utils.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
-#from utils.ostrich_util import OstrichOptimizer # type: ignore
-
-
 class CONFLUENCE:
 
     """
@@ -509,13 +500,14 @@ class CONFLUENCE:
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}").exists()),
+            #(self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             #(self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input2").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists())
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
             (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv2").exists()),    
-            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists())
         ]
         
         for step_func, check_func in workflow_steps:
