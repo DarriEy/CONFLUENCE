@@ -95,7 +95,10 @@ def initialize_config(rank: int, comm: MPI.Comm, confluence_config_path) -> Conf
         calib_period = parse_time_period(calib_period_str)
         eval_period = parse_time_period(eval_period_str)
         obs_file_path = config.get('OBSERVATIONS_PATH')
-
+        if obs_file_path == 'default':
+            obs_file_path = str(root_path / 'observations'/ 'streamflow' / 'preprocessed' / f"{domain_name}_streamflow_processed.csv")
+        else:
+            obs_file_path = obs_file_path
         poplsize = pop_size
         swrmsize = config.get('SWRMSIZE')
         ngsize = config.get('NGSIZE')

@@ -260,7 +260,12 @@ def evaluate_model(config, rank):
         sim_df.set_index('time', inplace=True)
 
         # Read observation data
-        obs_df = pd.read_csv(config.get('OBSERVATIONS_PATH'), index_col='datetime', parse_dates=True)
+        obs_file = config.get('OBSERVATIONS_PATH')
+        if obs_file == 'default':
+            obs_file = str(Path(config['CONFLUENCE_DATA_DIR']) / f"domain_{config['DOMAIN_NAME']}" / 'observations'/ 'streamflow' / 'preprocessed' / f"{config['DOMAIN_NAME']}_streamflow_processed.csv")
+        else:
+            obs_file = obs_file
+        obs_df = pd.read_csv(obs_file, index_col='datetime', parse_dates=True)
         obs_df = obs_df['discharge_cms'].resample('h').mean()
 
         logger.info(obs_df, 'observations')
@@ -442,9 +447,6 @@ def main():
 
     rank = int(sys.argv[1])
     logger.info(f"Starting run_trial.py for rank {rank}")
-
-    #ontrol_file_path = Path('/Users/darrieythorsson/compHydro/code/CWARHM/0_control_files/control_active.txt')
-    #config = Config.from_control_file(control_file_path)
     logger.info("Config initialized")
 
     logger.info("Running model and calculating objectives...")

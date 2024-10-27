@@ -222,9 +222,13 @@ class DecisionAnalyzer:
         self.mizuroute_runner.run_mizuroute()
 
     def calculate_performance_metrics(self) -> Tuple[float, float, float, float, float]:
-        obs_file_path = Path(self.config.get('OBSERVATIONS_PATH'))
-        sim_reach_ID = self.config.get('SIM_REACH_ID')
+        obs_file_path = self.config.get('OBSERVATIONS_PATH')
+        if obs_file_path == 'default':
+            obs_file_path = self.project_dir / 'observations'/ 'streamflow' / 'preprocessed' / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        else:
+            obs_file_path = Path(obs_file_path)
 
+        sim_reach_ID = self.config.get('SIM_REACH_ID')
 
         if self.config.get('SIMULATIONS_PATH') == 'default':
             sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"
@@ -261,6 +265,7 @@ class DecisionAnalyzer:
 
         optimisation_dir = self.project_dir / 'optimisation'
         optimisation_dir.mkdir(parents=True, exist_ok=True)
+
         master_file = self.project_dir / 'optimisation' / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv"
 
         with open(master_file, 'w', newline='') as f:
