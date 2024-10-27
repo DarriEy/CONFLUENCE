@@ -14,13 +14,8 @@ import requests # type: ignore
 import shutil
 import tarfile
 from netrc import netrc
-import rasterio
-from rasterio.merge import merge
 from hs_restclient import HydroShare, HydroShareAuthBasic # type: ignore
 from osgeo import gdal # type: ignore
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry # type: ignore
-from requests.exceptions import RequestException
 import urllib.request
 import ssl
 
@@ -57,7 +52,7 @@ class gistoolRunner:
             f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
             "--submit-job",
             "--print-geotiff=true",
-            #f"--cache={self.config['TOOL_CACHE']}",
+            f"--cache={self.config['TOOL_CACHE']}",
             f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
         
@@ -95,7 +90,6 @@ class datatoolRunner:
         from utils.configHandling_utils.config_utils import get_default_path # type: ignore
 
         #Get the path to the directory containing the gistool script
-        print(self.data_dir)
         self.datatool_path = get_default_path(self.config, self.data_dir, self.config['DATATOOL_PATH'], 'installs/datatool', self.logger)
     
     def create_datatool_command(self, dataset, output_dir, start_date, end_date, lat_lims, lon_lims, variables):
@@ -123,7 +117,7 @@ class datatoolRunner:
     
     def execute_datatool_command(self, datatool_command):
         
-        #Run the gistool command
+        #Run the datatool command
         try:
             subprocess.run(datatool_command, check=True)
             self.logger.info("datatool completed successfully.")
