@@ -259,7 +259,10 @@ class DecisionAnalyzer:
         
         combinations = self.generate_combinations()
 
+        optimisation_dir = self.project_dir / 'optimisation'
+        optimisation_dir.mkdir(parents=True, exist_ok=True)
         master_file = self.project_dir / 'optimisation' / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv"
+
         with open(master_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['Iteration'] + list(self.decision_options.keys()) + ['kge', 'kgep', 'nse', 'mae', 'rmse'])

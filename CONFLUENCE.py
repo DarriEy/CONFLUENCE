@@ -6,6 +6,7 @@ import subprocess
 import pandas as pd # type: ignore
 import rasterio
 import numpy as np
+import shutil
 from scipy import stats # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -299,9 +300,15 @@ class CONFLUENCE:
         
         config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
 
+        if shutil.which("srun"):
+            run_command = "srun"
+        elif shutil.which("mpirun"):
+            run_command = "mpirun"
+
+
         cmd = [
-            'mpiexec',
-            '-np', str(self.config.get('MPI_PROCESSES')),
+            run_command,
+            '-n', str(self.config.get('MPI_PROCESSES')),
             'python',
             str(Path(__file__).parent / 'utils' / 'parallel_parameter_estimation.py'), 
             str(config_path)
