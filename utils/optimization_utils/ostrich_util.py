@@ -61,7 +61,11 @@ class OstrichOptimizer:
         self.logger.info("Copying run scripts to Ostrich directory")
         
         utils_dir = Path(self.config.get('CONFLUENCE_CODE_DIR')) / 'utils'
-        ostrich_dir = Path(self.config.get('OSTRICH_PATH'))
+        ostrich_dir = self.config.get('OSTRICH_PATH')
+        if ostrich_dir == 'default':
+            ostrich_dir = self.root_path / 'installs' / 'ostrich'
+        else:
+            ostrich_dir = Path(ostrich_dir)
         
         scripts_to_copy = ['run_trial.py', 'run_trial.sh']
         
