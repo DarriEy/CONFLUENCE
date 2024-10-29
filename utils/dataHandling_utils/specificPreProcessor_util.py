@@ -188,21 +188,12 @@ class SummaPreProcessor_spatial:
 
         try:
             if self.config.get('FORCING_DATASET') == 'RDRS':
-                self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
+                self.merge_forcings()
                 self.logger.info("Forcings merged successfully")
             elif self.config.get('FORCING_DATASET') == 'CARRA':
-                self.process_carra(work_log_dir=self.project_dir / f"forcing/_workLog")
+                self.process_carra()
                 self.logger.info("CARRA data processed successfully")
 
-
-            #self.convert_units_and_vars()
-            #self.create_shapefile(work_log_dir=self.project_dir / f"shapefiles/_workLog")
-            #self.logger.info("Shapefile created successfully")
-
-            #self.remap_forcing(work_log_dir=self.project_dir / f"forcing/_workLog")
-            #self.logger.info("Forcing data remapped successfully")
-
-            #if self.config.get('APPLY_LAPSE_RATE', False):
             self.apply_datastep_and_lapse_rate()
             self.logger.info("Datasetp and Lapse rate correction applied successfully")
 

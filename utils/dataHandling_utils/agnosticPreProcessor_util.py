@@ -27,7 +27,9 @@ class forcingResampler:
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
-
+        if self.forcing_dataset == 'rdrs':
+            self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_path')
+            
     def _get_default_path(self, path_key, default_subpath):
         path_value = self.config.get(path_key)
         if path_value == 'default' or path_value is None:
