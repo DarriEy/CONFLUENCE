@@ -333,7 +333,12 @@ class DataPreProcessor:
     def calculate_elevation_stats(self):
         self.logger.info("Calculating elevation statistics")
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
-        dem_path = self._get_file_path('DEM_PATH', 'attributes/elevation/dem', self.config.get('DEM_NAME'))
+
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
+        dem_path = self._get_file_path('DEM_PATH', 'attributes/elevation/dem', dem_name)
         intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem', self.config.get('INTERSECT_DEM_NAME'))
 
         # Ensure the directory exists

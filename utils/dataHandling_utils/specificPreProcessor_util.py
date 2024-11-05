@@ -69,7 +69,12 @@ class SummaPreProcessor_spatial:
         self.gruId = self.config.get('CATCHMENT_SHP_GRUID')
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
-        self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{self.config['DEM_NAME']}")
+
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
+        self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{dem_name}")
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')

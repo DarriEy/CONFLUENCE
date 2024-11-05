@@ -50,8 +50,12 @@ class GeofabricDelineator:
 
     def _get_dem_path(self) -> Path:
         dem_path = self.config.get('DEM_PATH')
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
         if dem_path == 'default':
-            return self.project_dir / 'attributes' / 'elevation' / 'dem' / self.config.get('DEM_NAME')
+            return self.project_dir / 'attributes' / 'elevation' / 'dem' / dem_name
         return Path(dem_path)
 
     def _set_taudem_path(self):
@@ -557,8 +561,12 @@ class LumpedWatershedDelineator:
         self.delineation_method = self.config.get('LUMPED_WATERSHED_METHOD', 'pysheds')
         self.dem_path = self.config.get('DEM_PATH')
 
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
         if self.dem_path == 'default':
-            self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / self.config.get('DEM_NAME')
+            self.dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / dem_name
         else:
             self.dem_path = Path(self.dem_path)
     

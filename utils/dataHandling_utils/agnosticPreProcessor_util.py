@@ -21,7 +21,11 @@ class forcingResampler:
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
-        self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{self.config['DEM_NAME']}")
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
+        self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{dem_name}")
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
@@ -341,7 +345,11 @@ class geospatialStatistics:
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
-        self.dem_path = self._get_file_path('DEM_PATH', f"attributes/elevation/dem/{self.config.get('DEM_NAME')}")
+        dem_name = self.config['DEM_NAME']
+        if dem_name == "default":
+            dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
+
+        self.dem_path = self._get_file_path('DEM_PATH', f"attributes/elevation/dem/{dem_name}")
         self.soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass')
         self.land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass')
 
