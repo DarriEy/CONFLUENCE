@@ -8,6 +8,7 @@ import rasterio # type: ignore
 import numpy as np
 import shutil
 from scipy import stats # type: ignore
+import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
@@ -530,11 +531,28 @@ class CONFLUENCE:
         self.logger.info("CONFLUENCE workflow completed")
 
 def main():
-    config_path = Path(__file__).parent / '0_config_files'
-    config_name = 'config_active.yaml'
+    parser = argparse.ArgumentParser(description='Run CONFLUENCE workflow')
+    parser.add_argument('--config', type=str, 
+                       help='Path to configuration file. If not provided, uses default config_active.yaml')
+    args = parser.parse_args()
 
-    confluence = CONFLUENCE(config_path / config_name)
-    confluence.run_workflow()
-    
+    if args.config:
+        config_path = Path(args.config)
+        if not config_path.exists():
+            print(f"Error: Configuration file not found: {config_path}")
+            sys.exit(1)
+    else:
+        config_path = Path(__file__).parent / '0_config_files' / 'config_active.yaml'
+        if not config_path.exists():
+            print(f"Error: Default configuration file not found: {config_path}")
+            sys.exit(1)
+
+    try:
+        confluence = CONFLUENCE(config_path)
+        confluence.run_workflow()
+    except Exception as e:
+        print(f"Error running CONFLUENCE: {str(e)}")
+        sys.exit(1)
+
 if __name__ == "__main__":
     main()
