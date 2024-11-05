@@ -523,7 +523,10 @@ class soilgridsDownloader:
         self.download_ID = "1361509511e44adfba814f6950c6e742"
         self.soil_raw_path = self.project_dir / 'parameters' / 'soilclass' / '1_soil_classes_global'
         self.soil_domain_path = self.project_dir / 'parameters' / 'soilclass' / '2_soil_classes_domain'
-        self.soil_domain_name = self.config.get('SOIL_CLASS_NAME', 'soil_classes_domain.tif')
+        soil_name = self.config['SOIL_CLASS_NAME']
+        if soil_name == 'default':
+            soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
+        self.soil_domain_name = self.config.get('SOIL_CLASS_NAME', soil_name)
 
     def download_soilgrids_data(self):
         self.soil_raw_path.mkdir(parents=True, exist_ok=True)

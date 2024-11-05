@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 import subprocess
 import pandas as pd # type: ignore
-import rasterio
+import rasterio # type: ignore
 import numpy as np
 import shutil
 from scipy import stats # type: ignore
@@ -416,10 +416,14 @@ class CONFLUENCE:
         gistool_command_landcover = gr.create_gistool_command(dataset = 'MODIS', output_dir = landclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = modis_var, start_date=f"{start_year}-01-01", end_date=f"{end_year}-01-01")
         gr.execute_gistool_command(gistool_command_landcover)
 
+        land_name = self.config['LAND_CLASS_NAME']
+        if land_name == 'default':
+            land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"
+
         # if we selected a range of years, we need to calculate the mode of the landcover
         if start_year != end_year:
             input_dir = landclass_dir / modis_var
-            output_file = landclass_dir / f"{self.config['LAND_CLASS_NAME']}"
+            output_file = landclass_dir / land_name
     
             self.calculate_landcover_mode(input_dir, output_file, start_year, end_year)
 

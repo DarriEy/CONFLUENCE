@@ -12,8 +12,8 @@ import rasterstats # type: ignore
 from pyproj import CRS, Transformer # type: ignore
 import pyproj # type: ignore
 import shapefile # type: ignore
-import rasterio
-from rasterstats import zonal_stats
+import rasterio # type: ignore
+from rasterstats import zonal_stats # type: ignore
 
 class forcingResampler:
     def __init__(self, config, logger):
@@ -397,7 +397,10 @@ class geospatialStatistics:
     def calculate_soil_stats(self):
         self.logger.info("Calculating soil statistics")
         catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
-        soil_raster = self.soil_path / self.config.get('SOIL_CLASS_NAME')
+        soil_name = self.config['SOIL_CLASS_NAME']
+        if soil_name == 'default':
+            soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
+        soil_raster = self.soil_path / soil_name
         nodata_value = self.get_nodata_value(soil_raster)
 
         with rasterio.open(soil_raster) as src:
@@ -433,7 +436,10 @@ class geospatialStatistics:
     def calculate_land_stats(self):
         self.logger.info("Calculating land statistics")
         catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
-        land_raster = self.land_path / self.config.get('LAND_CLASS_NAME')
+        land_name = self.config['LAND_CLASS_NAME']
+        if land_name == 'default':
+            land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"
+        land_raster = self.land_path / land_name
         nodata_value = self.get_nodata_value(land_raster)
 
         with rasterio.open(land_raster) as src:

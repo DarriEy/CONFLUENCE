@@ -365,7 +365,10 @@ class DataPreProcessor:
     def calculate_soil_stats(self):
         self.logger.info("Calculating soil statistics")
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
-        soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass/', self.config.get('SOIL_CLASS_NAME'))
+        soil_name = self.config['SOIL_CLASS_NAME']
+        if soil_name == 'default':
+            soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
+        soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass/', soil_name)
         intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids', self.config.get('INTERSECT_SOIL_NAME'))
         self.logger.info(f'processing landclasses: {soil_path}')
 
@@ -418,7 +421,10 @@ class DataPreProcessor:
     def calculate_land_stats(self):
         self.logger.info("Calculating land statistics")
         catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
-        land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass/', self.config.get('LAND_CLASS_NAME'))
+        land_name = self.config['LAND_CLASS_NAME']
+        if land_name == 'default':
+            land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"
+        land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass/', land_name)
         intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass', self.config.get('INTERSECT_LAND_NAME'))
         self.logger.info(f'processing landclasses: {land_path}')
 
