@@ -9,7 +9,7 @@ from typing import List, Tuple, Dict, Any
 import matplotlib.dates as mdates # type: ignore
 from matplotlib.gridspec import GridSpec # type: ignore
 from matplotlib.colors import LinearSegmentedColormap # type: ignore
-import mpi4py # type: ignore
+import traceback
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
@@ -392,13 +392,17 @@ class VisualizationReporter:
         ax.set_yscale('log')
 
     def update_sim_reach_id(self):
+        """
+        Update the SIM_REACH_ID in both the config object and YAML file by finding the 
+        nearest river segment to the pour point.
+        """
         try:
             # Load the pour point shapefile
             pour_point_name = self.config.get('POUR_POINT_SHP_NAME')
             if pour_point_name == 'default':
                 pour_point_name = f"{self.config.get('DOMAIN_NAME')}_pourPoint.shp"
             
-            pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name )
+            pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
             
             pour_point_gdf = gpd.read_file(pour_point_path)
 
@@ -421,16 +425,44 @@ class VisualizationReporter:
             nearest_segment = river_network_gdf.iloc[river_network_gdf.distance(pour_point).idxmin()]
 
             # Get the ID of the nearest segment
-            reach_id = nearest_segment[self.config.get('RIVER_NETWORK_SHP_SEGID')]  
+            reach_id = nearest_segment[self.config.get('RIVER_NETWORK_SHP_SEGID')]
 
-            # Update the config
+            # Update the config object
             self.config['SIM_REACH_ID'] = reach_id
-            self.logger.info(f"Updated SIM_REACH_ID to {reach_id}")
 
+            # Update the YAML config file
+            config_file_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
+            
+            if not config_file_path.exists():
+                self.logger.error(f"Config file not found at {config_file_path}")
+                return None
+
+            # Read the current config file
+            with open(config_file_path, 'r') as f:
+                config_lines = f.readlines()
+
+            # Find and update the SIM_REACH_ID line
+            for i, line in enumerate(config_lines):
+                if line.strip().startswith('SIM_REACH_ID:'):
+                    config_lines[i] = f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n"
+                    break
+            else:
+                # If SIM_REACH_ID line not found, add it in the Simulation settings section
+                for i, line in enumerate(config_lines):
+                    if line.strip().startswith('## Simulation settings'):
+                        config_lines.insert(i + 1, f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n")
+                        break
+
+            # Write the updated config back to file
+            with open(config_file_path, 'w') as f:
+                f.writelines(config_lines)
+
+            self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in both config object and file")
             return reach_id
 
         except Exception as e:
             self.logger.error(f"Error updating SIM_REACH_ID: {str(e)}")
+            self.logger.error(f"Stack trace: {traceback.format_exc()}")
             return None
 
     def _get_file_path(self, file_type, file_def_path, file_name):
