@@ -56,8 +56,17 @@ class SummaPreProcessor:
         self.logger.info("SUMMA preprocessing completed")
 
     def write_summa_attribute(self):
-        subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / self.config.get('CATCHMENT_SHP_NAME')
-        rivers_shapefile = self.project_dir / "shapefiles" / "river_network" / self.config.get('RIVER_NETWORK_SHP_NAME')
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
+        subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / subbasins_name
+
+        rivers_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+        if rivers_name == 'default':
+            rivers_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_delineate.shp"
+
+        rivers_shapefile = self.project_dir / "shapefiles" / "river_network" / rivers_name
         gistool_output = self.project_dir / "attributes"
         
         return write_summa_attribute(

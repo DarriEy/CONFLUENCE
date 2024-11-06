@@ -43,6 +43,9 @@ class MizuRoutePreProcessor:
         
         river_network_path = self.config.get('RIVER_NETWORK_SHP_PATH')
         river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+
+        if river_network_name == 'default':
+            river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_delineate.shp"
         
         if river_network_path == 'default':
             river_network_path = self.project_dir / 'shapefiles/river_network'
@@ -51,6 +54,9 @@ class MizuRoutePreProcessor:
 
         river_basin_path = self.config.get('RIVER_BASINS_PATH')
         river_basin_name = self.config.get('RIVER_BASINS_NAME')
+
+        if river_basin_name == 'default':
+            river_basin_name = f"{self.config['DOMAIN_NAME']}_riverBasins_delineate.shp"
 
         if river_basin_path == 'default':
             river_basin_path = self.project_dir / 'shapefiles/river_basins'
@@ -88,9 +94,12 @@ class MizuRoutePreProcessor:
 
     def remap_summa_catchments_to_routing(self):
         self.logger.info("Remapping SUMMA catchments to routing catchments")
-        
+
         hm_catchment_path = Path(self.config.get('CATCHMENT_PATH'))
         hm_catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if hm_catchment_name == 'default':
+            hm_catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
         rm_catchment_path = Path(self.config.get('RIVER_BASINS_PATH'))
         rm_catchment_name = self.config.get('RIVER_BASINS_NAME')
         

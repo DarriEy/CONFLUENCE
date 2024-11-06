@@ -73,6 +73,7 @@ class SummaPreProcessor_spatial:
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
         dem_name = self.config['DEM_NAME']
+
         if dem_name == "default":
             dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
 
@@ -81,8 +82,16 @@ class SummaPreProcessor_spatial:
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+
+        if self.river_network_name == 'default':
+            self.river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_delineate.shp"
+
         self.river_network_path = self._get_default_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.data_step = int(self.config.get('FORCING_TIME_STEP_SIZE'))
         self.settings_path = self.project_dir / 'settings/SUMMA'

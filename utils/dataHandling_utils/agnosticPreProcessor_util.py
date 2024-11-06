@@ -29,6 +29,8 @@ class forcingResampler:
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
         if self.forcing_dataset == 'rdrs':
@@ -345,6 +347,8 @@ class geospatialStatistics:
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
         dem_name = self.config['DEM_NAME']
         if dem_name == "default":
             dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"

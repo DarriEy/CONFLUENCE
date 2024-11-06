@@ -403,7 +403,11 @@ class VisualizationReporter:
             pour_point_gdf = gpd.read_file(pour_point_path)
 
             # Load the river network shapefile
-            river_network_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', self.config.get('RIVER_NETWORK_SHP_NAME'))
+            river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+            if river_network_name == 'default':
+                river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_delineate.shp"
+
+            river_network_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_network_name)
             river_network_gdf = gpd.read_file(river_network_path)
 
             # Ensure both GeoDataFrames have the same CRS

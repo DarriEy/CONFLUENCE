@@ -91,6 +91,10 @@ class DataAcquisitionProcessor:
         gis_path = str(self.root_path / "installs/gistool/" / "extract-gis.sh")
         easymore_client = str(self.config.get('EASYMORE_CLIENT'))
 
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
         maf_config = {
             "exec": {
                 "met": met_path,
@@ -105,7 +109,7 @@ class DataAcquisitionProcessor:
                     "output-dir": str(self.project_dir / "forcing/raw_data"),
                     "start-date": f"{self.config.get('EXPERIMENT_TIME_START')}",
                     "end-date": f"{self.config.get('EXPERIMENT_TIME_END')}",
-                    "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
+                    "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                     "prefix": f"domain_{self.domain_name}_",
                     "cache": self.config.get('TOOL_CACHE'),
                     "account": self.config.get('TOOL_ACCOUNT'),
@@ -122,7 +126,7 @@ class DataAcquisitionProcessor:
                         "start-date": "2001-01-01",
                         "end-date": "2020-01-01",
                         "output-dir": str(self.project_dir / "attributes/land_class/"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
+                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["frac", "majority", "coords"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
@@ -137,7 +141,7 @@ class DataAcquisitionProcessor:
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "soil_classes"),
                         "variable": "soil_classes",
                         "output-dir": str(self.project_dir / "attributes/soil_class/"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
+                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["majority"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
@@ -152,7 +156,7 @@ class DataAcquisitionProcessor:
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "MERIT-Hydro"),
                         "variable": "elv,hnd",
                         "output-dir": str(self.project_dir / "attributes/elevation"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
+                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["min", "max", "mean", "median"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
@@ -166,7 +170,7 @@ class DataAcquisitionProcessor:
                 "remap": [{
                     "case-name": "remapped",
                     "cache": self.config.get('EASYMORE_CACHE'),
-                    "shapefile": str(self.project_dir / "shapefiles/catchment" / self.config.get('CATCHMENT_SHP_NAME')),
+                    "shapefile": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                     "shapefile-id": self.config.get('CATCHMENT_SHP_HRUID'),
                     "source-nc": str(self.project_dir / "forcing/raw_data/**/*.nc*"),
                     "variable-lon": "lon",
@@ -332,7 +336,11 @@ class DataPreProcessor:
 
     def calculate_elevation_stats(self):
         self.logger.info("Calculating elevation statistics")
-        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
+        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', subbasins_name)
 
         dem_name = self.config['DEM_NAME']
         if dem_name == "default":
@@ -364,7 +372,11 @@ class DataPreProcessor:
 
     def calculate_soil_stats(self):
         self.logger.info("Calculating soil statistics")
-        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
+        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', subbasins_name)
         soil_name = self.config['SOIL_CLASS_NAME']
         if soil_name == 'default':
             soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
@@ -420,7 +432,11 @@ class DataPreProcessor:
 
     def calculate_land_stats(self):
         self.logger.info("Calculating land statistics")
-        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', self.config.get('CATCHMENT_SHP_NAME'))
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+
+        catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', subbasins_name)
         land_name = self.config['LAND_CLASS_NAME']
         if land_name == 'default':
             land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"

@@ -98,6 +98,8 @@ class DomainDiscretizer:
 
         self.catchment_path = self.config.get('CATCHMENT_PATH')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
         self.gruId = self.config.get('CATCHMENT_SHP_GRUID')
         self.hruId = self.config.get('CATCHMENT_SHP_HRUID')
 
@@ -218,7 +220,8 @@ class DomainDiscretizer:
         Returns:
             Optional[Path]: Path to the output HRU shapefile, or None if discretization fails.
         """
-
+        
+            
         gru_shapefile = self.config.get('RIVER_BASINS_NAME')
         if gru_shapefile == 'default':
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
