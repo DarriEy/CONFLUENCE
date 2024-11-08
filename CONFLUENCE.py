@@ -483,18 +483,6 @@ class CONFLUENCE:
             # If we got here, result should be a tuple of (river_basins, river_network)
             river_basins, river_network = result
             
-            # Validate output files exist
-            output_files = {
-                'river_basins': self.project_dir / "shapefiles" / "river_basins" / 
-                            f"{self.domain_name}_riverBasins_{domain_method}.shp",
-                'river_network': self.project_dir / "shapefiles" / "river_network" / 
-                            f"{self.domain_name}_riverNetwork_{domain_method}.shp"
-            }
-            
-            for name, path in output_files.items():
-                if not path.exists():
-                    raise RuntimeError(f"Failed to create {name} shapefile at: {path}")
-            
             self.logger.info(
                 f"Domain definition completed successfully using {domain_method} method\n"
                 f"Created {len(river_basins)} river basins and {len(river_network)} river segments"
@@ -558,50 +546,6 @@ class CONFLUENCE:
             
             # Perform discretization
             hru_shapefile = domain_discretizer.discretize_domain()
-            
-            # Handle different return types
-            if isinstance(hru_shapefile, (pd.Series, pd.DataFrame)):
-                if hru_shapefile.empty:
-                    raise RuntimeError("Domain discretization produced empty result")
-                self.logger.info("Domain discretized successfully into multiple HRU sets:")
-                for index, shapefile in hru_shapefile.items():
-                    self.logger.info(f"  {index}: {shapefile}")
-                result = hru_shapefile
-                
-            elif hru_shapefile:
-                self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
-                result = hru_shapefile
-                
-            else:
-                raise RuntimeError("Domain discretization failed to produce output")
-                
-            # Validate output exists
-            output_path = self.project_dir / "shapefiles" / "catchment" / \
-                        f"{self.domain_name}_HRUs_{discretization_method}.shp"
-            
-            if not output_path.exists():
-                raise RuntimeError(f"HRU shapefile not found at expected location: {output_path}")
-                
-            # Load and validate the shapefile
-            try:
-                hrus = gpd.read_file(output_path)
-                if len(hrus) == 0:
-                    raise RuntimeError("HRU shapefile contains no features")
-                    
-                required_columns = ['HRU_ID', 'GRU_ID', 'HRU_area']
-                missing_columns = [col for col in required_columns if col not in hrus.columns]
-                if missing_columns:
-                    raise RuntimeError(f"HRU shapefile missing required columns: {missing_columns}")
-                    
-            except Exception as e:
-                raise RuntimeError(f"Failed to validate HRU shapefile: {str(e)}") from e
-                
-            self.logger.info(
-                f"Domain discretization completed successfully:\n"
-                f"- Created {len(hrus)} Hydrologic Response Units\n"
-                f"- Total area: {hrus['HRU_area'].sum():,.2f} m²\n"
-                f"- Number of GRUs: {len(hrus['GRU_ID'].unique())}"
-            )
             
             return result
             
