@@ -672,7 +672,7 @@ class VisualizationReporter:
             ax.set_ylim([plot_bounds[1], plot_bounds[3]])
 
             # Add the global basemap
-            self.plot_with_global_basemap(ax, plot_bounds)
+            #self.plot_with_global_basemap(ax, plot_bounds)
 
             # Plot the catchment boundary with a clean style
             catchment_gdf_web.boundary.plot(
