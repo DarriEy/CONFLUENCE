@@ -139,7 +139,7 @@ INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the sha
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, current options: SUMMA, FLASH
+HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, current options: SUMMA, FUSE, GR, FLASH
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
@@ -227,6 +227,21 @@ GEOFABRIC_MAPPING:
       in_varname: 'Length'
       in_units: 'm'
       out_units: 'm'
+
+# FUSE settings
+SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
+SETTINGS_FUSE_FILEMANAGER: fileManager.txt                     # Name of FUSE file manager
+FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
+FUSE_EXE: fuse.exe                                             # Name of FUSE executable
+FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+
+# GR settings
+SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
+SETTINGS_GR_CONTROL: default                                   # Path to GR control file
+GR_INSTALL_PATH: default                                       # Path to GR installation, if default uses self.data_dir / installs / GR
+GR_EXE: GR.r                                                   # Name of GR executable script
+GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
+
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings

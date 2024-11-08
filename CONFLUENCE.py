@@ -20,6 +20,8 @@ from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner # type: ignore
+from utils.models_utils.gr_utils import GRPreProcessor, GRRunner # type: ignore
 from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
@@ -303,6 +305,15 @@ class CONFLUENCE:
             mp = MizuRoutePreProcessor(self.config,self.logger)
             mp.run_preprocessing()
 
+        if self.config['HYDROLOGICAL_MODEL'] == 'GR':
+            gpp = GRPreProcessor(self.config, self.logger)
+            gpp.run_preprocessing()
+        
+        if self.config['HYDROLOGICAL_MODEL'] == 'FUSE':
+            fpp = FUSEPreProcessor(self.config, self.logger)
+            fpp.run_preprocessing()
+
+
     @get_function_logger
     def run_models(self):
         self.logger.info("Starting model runs")
@@ -327,6 +338,15 @@ class CONFLUENCE:
             except Exception as e:
                 self.logger.error(f"Error during FLASH model run: {str(e)}")
 
+        elif self.config.get('HYDROLOGICAL_MODEL') == 'FUSE':
+            fr = FUSERunner(self.config, self.logger)
+            fr.run_fuse()
+
+        elif self.config.get('HYDROLOGICAL_MODEL') == 'GR':
+            gr = GRRunner(self.config, self.logger)
+            fr.run_gr()
+
+
         else:
             self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
 
@@ -336,6 +356,7 @@ class CONFLUENCE:
     def process_observed_data(self):
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
+
         try:
             observed_data_processor.process_streamflow_data()
             self.logger.info("Observed data processing completed successfully")
