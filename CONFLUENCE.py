@@ -378,8 +378,10 @@ class CONFLUENCE:
             gr.execute_gistool_command(gistool_command_landcover)
 
             # Calculate temporal mode for land cover if multiple years
-            land_name = self.config.get('LAND_CLASS_NAME', 
-                                        f"domain_{self.domain_name}_land_classes.tif")
+            land_name = self.config.get('LAND_CLASS_NAME')
+            if land_name == 'default': 
+                land_name = f"domain_{self.domain_name}_land_classes.tif"
+
             if start_year != end_year:
                 self.logger.info(f"Calculating land cover mode for years {start_year}-{end_year}")
                 input_dir = dirs['land'] / modis_var
