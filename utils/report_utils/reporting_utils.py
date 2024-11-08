@@ -651,25 +651,31 @@ class VisualizationReporter:
             # Create figure and axis
             fig, ax = plt.subplots(figsize=(15, 15))
 
+            # Reproject everything to Web Mercator for consistency with basemap
+            catchment_gdf_web = catchment_gdf.to_crs(epsg=3857)
+            river_gdf_web = river_gdf.to_crs(epsg=3857)
+            pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
+
             # Calculate buffer for extent (10% of the catchment bounds)
-            bounds = catchment_gdf.total_bounds
+            bounds = catchment_gdf_web.total_bounds
             buffer_x = (bounds[2] - bounds[0]) * 0.1
             buffer_y = (bounds[3] - bounds[1]) * 0.1
-            
+            plot_bounds = [
+                bounds[0] - buffer_x,
+                bounds[1] - buffer_y,
+                bounds[2] + buffer_x,
+                bounds[3] + buffer_y
+            ]
+
             # Set map extent with buffer
-            ax.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
-            ax.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
+            ax.set_xlim([plot_bounds[0], plot_bounds[2]])
+            ax.set_ylim([plot_bounds[1], plot_bounds[3]])
 
-            # Add the basemap
-            ctx.add_basemap(
-                ax,
-                source=ctx.providers.CartoDB.Positron,
-                zoom='auto',
-                attribution_size=8
-            )
+            # Add the global basemap
+            self.plot_with_global_basemap(ax, plot_bounds)
 
-            # Plot the catchment boundary
-            catchment_gdf.boundary.plot(
+            # Plot the catchment boundary with a clean style
+            catchment_gdf_web.boundary.plot(
                 ax=ax,
                 linewidth=2,
                 color='#2c3e50',
@@ -678,16 +684,14 @@ class VisualizationReporter:
             )
 
             # Plot the river network with line width based on stream order
-            if 'StreamOrde' in river_gdf.columns:
-                # Normalize stream order for line width
-                min_order = river_gdf['StreamOrde'].min()
-                max_order = river_gdf['StreamOrde'].max()
-                river_gdf['line_width'] = river_gdf['StreamOrde'].apply(
+            if 'StreamOrde' in river_gdf_web.columns:
+                min_order = river_gdf_web['StreamOrde'].min()
+                max_order = river_gdf_web['StreamOrde'].max()
+                river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
                     lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
                 )
                 
-                # Plot rivers with varying width
-                for idx, row in river_gdf.iterrows():
+                for idx, row in river_gdf_web.iterrows():
                     ax.plot(
                         row.geometry.xy[0],
                         row.geometry.xy[1],
@@ -697,7 +701,7 @@ class VisualizationReporter:
                         alpha=0.8
                     )
             else:
-                river_gdf.plot(
+                river_gdf_web.plot(
                     ax=ax,
                     color='#3498db',
                     linewidth=1,
@@ -706,8 +710,8 @@ class VisualizationReporter:
                     alpha=0.8
                 )
 
-            # Plot the pour point
-            pour_point_gdf.plot(
+            # Plot the pour point with a prominent style
+            pour_point_gdf_web.plot(
                 ax=ax,
                 color='#e74c3c',
                 marker='*',
@@ -716,18 +720,15 @@ class VisualizationReporter:
                 zorder=4
             )
 
-            # Add scale bar
+            # Add cartographic elements
             self._add_scale_bar(ax)
-
-            # Add north arrow
             self._add_north_arrow(ax)
 
-            # Add title and legend
+            # Add title
             plt.title(f'Delineated Domain: {self.config.get("DOMAIN_NAME")}', 
                     fontsize=16, pad=20, fontweight='bold')
-            
-            # Create custom legend
 
+            # Create custom legend with larger symbols
             legend_elements = [
                 Line2D([0], [0], color='#2c3e50', linewidth=2, label='Catchment Boundary'),
                 Line2D([0], [0], color='#3498db', linewidth=2, label='River Network'),
@@ -740,8 +741,8 @@ class VisualizationReporter:
             # Remove axes
             ax.set_axis_off()
 
-            # Add custom text box with catchment information
-            self._add_info_box(ax, catchment_gdf)
+            # Add domain information box
+            self._add_domain_info_box(ax, catchment_gdf_web)
 
             # Save the plot
             plt.savefig(plot_filename, dpi=300, bbox_inches='tight', pad_inches=0.1)
@@ -754,6 +755,28 @@ class VisualizationReporter:
             self.logger.error(f"Error in plot_domain: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
+
+    def _add_domain_info_box(self, ax, catchment_gdf):
+        """Add a information box with domain statistics"""
+        # Calculate total area in km²
+        area_km2 = catchment_gdf.geometry.area.sum() / 1e6
+        
+        # Create info text
+        info_text = f"Domain Statistics:\n"
+        info_text += f"Area: {area_km2:.1f} km²"
+        
+        # Add elevation info if available
+        if 'elev_mean' in catchment_gdf.columns:
+            min_elev = catchment_gdf['elev_mean'].min()
+            max_elev = catchment_gdf['elev_mean'].max()
+            info_text += f"\nElevation Range: {min_elev:.0f} - {max_elev:.0f} m"
+
+        # Position text box in lower left corner
+        ax.text(0.02, 0.02, info_text,
+                transform=ax.transAxes,
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
+                fontsize=10,
+                verticalalignment='bottom')
 
     def _add_scale_bar(self, ax):
         """Add a scale bar to the map"""
