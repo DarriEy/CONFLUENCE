@@ -355,8 +355,8 @@ class CONFLUENCE:
                 lon_lims=lonlims,
                 variables='elv'
             )
-            if not gr.execute_gistool_command(gistool_command_elevation):
-                raise RuntimeError("Failed to acquire elevation data")
+            
+            gr.execute_gistool_command(gistool_command_elevation)
                 
             output_paths['dem'] = dirs['dem'] / f"domain_{self.domain_name}_elv.tif"
 
