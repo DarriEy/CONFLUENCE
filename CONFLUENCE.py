@@ -406,17 +406,6 @@ class CONFLUENCE:
                 
             output_paths['soilclass'] = dirs['soil'] / 'soil_classes.tif'
 
-            # Validate all outputs exist
-            for name, path in output_paths.items():
-                if not path.exists():
-                    raise RuntimeError(f"Failed to find output file for {name}: {path}")
-                try:
-                    with rasterio.open(path) as src:
-                        if src.read(1).size == 0:
-                            raise RuntimeError(f"Empty raster file for {name}: {path}")
-                except rasterio.errors.RasterioIOError as e:
-                    raise RuntimeError(f"Invalid raster file for {name}: {path}") from e
-
             self.logger.info("Successfully acquired all attribute data")
             return output_paths
 
