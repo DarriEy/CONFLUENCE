@@ -622,10 +622,9 @@ class VisualizationReporter:
 
             # Load the shapefiles
             # Catchment
-            
             catchment_name = self.config.get('CATCHMENT_SHP_NAME')
             if catchment_name == 'default':
-                catchment_name = f"{self.config['DOMAIN_NAME']}__riverBasins_delineate.shp.shp"
+                catchment_name = f"{self.config['DOMAIN_NAME']}_riverBasins_delineate.shp.shp"
             catchment_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', catchment_name)
             catchment_gdf = gpd.read_file(catchment_path)
 
