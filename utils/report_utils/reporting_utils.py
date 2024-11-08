@@ -806,3 +806,201 @@ class VisualizationReporter:
                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
                 fontsize=10,
                 verticalalignment='bottom')
+        
+    def plot_discretized_domain(self, discretization_method: str) -> str:
+        """
+        Creates a map visualization of the discretized domain with a clean, professional style.
+        
+        Args:
+            hru_gdf (gpd.GeoDataFrame): GeoDataFrame containing the HRUs
+            discretization_method (str): Method used for discretization (e.g., 'elevation', 'landclass')
+        
+        Returns:
+            str: Path to the saved plot
+        """
+        try:
+            
+            # Create plot folder if it doesn't exist
+            plot_folder = self.project_dir / "plots" / "discretization"
+            plot_folder.mkdir(parents=True, exist_ok=True)
+            plot_filename = plot_folder / f'domain_discretization_{discretization_method}.png'
+
+            # Load cathcment shapefile
+            catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+            if catchment_name == 'default':
+                catchment_name = f"{self.config.get('DOMAIN_NAME')}_HRUs_{discretization_method}.shp"
+            catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', catchment_name)
+            hru_gdf = gpd.read_file(catchment_path)
+
+            # Load river network for context
+            river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+            if river_name == 'default':
+                river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
+            river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
+            river_gdf = gpd.read_file(river_path)
+
+            # Load pour point for context
+            pour_point_name = self.config.get('POUR_POINT_SHP_NAME')
+            if pour_point_name == 'default':
+                pour_point_name = f"{self.config.get('DOMAIN_NAME')}_pourPoint.shp"
+            pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
+            pour_point_gdf = gpd.read_file(pour_point_path)
+
+            # Create figure and axis
+            fig, ax = plt.subplots(figsize=(15, 15))
+
+            # Reproject everything to Web Mercator for contextily basemap
+            hru_gdf_web = hru_gdf.to_crs(epsg=3857)
+            river_gdf_web = river_gdf.to_crs(epsg=3857)
+            pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
+
+            # Calculate buffer for extent (10% of the HRU bounds)
+            bounds = hru_gdf_web.total_bounds
+            buffer_x = (bounds[2] - bounds[0]) * 0.1
+            buffer_y = (bounds[3] - bounds[1]) * 0.1
+            
+            # Set map extent with buffer
+            ax.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
+            ax.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
+
+            # Add the basemap
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.CartoDB.Positron,
+                zoom='auto',
+                attribution_size=8
+            )
+
+            # Determine the classification column and color scheme
+            if discretization_method.lower() == 'elevation':
+                class_col = 'elevClass'
+                cmap = 'terrain'
+                legend_title = 'Elevation Class'
+            elif discretization_method.lower() == 'landclass':
+                class_col = 'landClass'
+                cmap = 'Spectral'
+                legend_title = 'Land Use Class'
+            elif discretization_method.lower() == 'soilclass':
+                class_col = 'soilClass'
+                cmap = 'YlOrBr'
+                legend_title = 'Soil Class'
+            elif discretization_method.lower() == 'radiation':
+                class_col = 'radiationClass'
+                cmap = 'YlOrRd'
+                legend_title = 'Radiation Class'
+            else:
+                class_col = 'HRU_ID'
+                cmap = 'tab20'
+                legend_title = 'HRU ID'
+
+            # Plot HRUs
+            hru_gdf_web.plot(
+                column=class_col,
+                ax=ax,
+                cmap=cmap,
+                alpha=0.7,
+                legend=True,
+                legend_kwds={
+                    'label': legend_title,
+                    'orientation': 'vertical',
+                    'shrink': 0.8
+                }
+            )
+
+            # Plot HRU boundaries
+            hru_gdf_web.boundary.plot(
+                ax=ax,
+                linewidth=0.5,
+                color='#2c3e50',
+                alpha=0.5
+            )
+
+            # Plot river network
+            if 'StreamOrde' in river_gdf_web.columns:
+                min_order = river_gdf_web['StreamOrde'].min()
+                max_order = river_gdf_web['StreamOrde'].max()
+                river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
+                    lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
+                )
+                for idx, row in river_gdf_web.iterrows():
+                    ax.plot(
+                        row.geometry.xy[0],
+                        row.geometry.xy[1],
+                        color='#3498db',
+                        linewidth=row['line_width'],
+                        zorder=3,
+                        alpha=0.8
+                    )
+            else:
+                river_gdf_web.plot(
+                    ax=ax,
+                    color='#3498db',
+                    linewidth=1,
+                    label='River Network',
+                    zorder=3,
+                    alpha=0.8
+                )
+
+            # Plot pour point
+            pour_point_gdf_web.plot(
+                ax=ax,
+                color='#e74c3c',
+                marker='*',
+                markersize=200,
+                label='Pour Point',
+                zorder=4
+            )
+
+            # Add scale bar
+            self._add_scale_bar(ax)
+
+            # Add north arrow
+            self._add_north_arrow(ax)
+
+            # Add title
+            plt.title(f'Domain Discretization: {discretization_method.title()}', 
+                    fontsize=16, pad=20, fontweight='bold')
+
+            # Add info box with statistics
+            self._add_discretization_info_box(ax, hru_gdf_web)
+
+            # Remove axes
+            ax.set_axis_off()
+
+            # Save the plot
+            plt.savefig(plot_filename, dpi=300, bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+
+            self.logger.info(f"Discretization map saved to {plot_filename}")
+            return str(plot_filename)
+
+        except Exception as e:
+            self.logger.error(f"Error in plot_discretized_domain: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None
+
+    def _add_discretization_info_box(self, ax, hru_gdf):
+        """Add an information box with discretization statistics"""
+        # Calculate statistics
+        n_hrus = len(hru_gdf)
+        total_area = hru_gdf.geometry.area.sum() / 1e6  # Convert to km²
+        mean_area = total_area / n_hrus
+        
+        # Create info text
+        info_text = f"Discretization Statistics:\n"
+        info_text += f"Number of HRUs: {n_hrus}\n"
+        info_text += f"Total Area: {total_area:.1f} km²\n"
+        info_text += f"Mean HRU Area: {mean_area:.1f} km²"
+
+        # Add elevation info if available
+        if 'elev_mean' in hru_gdf.columns:
+            min_elev = hru_gdf['elev_mean'].min()
+            max_elev = hru_gdf['elev_mean'].max()
+            info_text += f"\nElevation Range: {min_elev:.0f} - {max_elev:.0f} m"
+
+        # Position text box in lower left corner
+        ax.text(0.02, 0.02, info_text,
+                transform=ax.transAxes,
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
+                fontsize=10,
+                verticalalignment='bottom')

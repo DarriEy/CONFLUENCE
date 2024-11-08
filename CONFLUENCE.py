@@ -67,6 +67,7 @@ class CONFLUENCE:
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.setup_logging()
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
+        self.reporter = VisualizationReporter(self.config, self.logger)
 
 
     def setup_logging(self):
@@ -91,6 +92,7 @@ class CONFLUENCE:
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f'domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png').exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
@@ -207,8 +209,7 @@ class CONFLUENCE:
     @get_function_logger
     def plot_domain(self):
         self.logger.info("Creating domain visualization...")
-        reporter = VisualizationReporter(self.config, self.logger)
-        domain_plot = reporter.plot_domain()
+        domain_plot = self.reporter.plot_domain()
         if domain_plot:
             self.logger.info(f"Domain visualization created: {domain_plot}")
         else:
@@ -233,6 +234,16 @@ class CONFLUENCE:
             self.logger.error("Domain discretization failed.")
 
         self.logger.info(f"Domain to be defined using method {domain_method}")
+
+    @get_function_logger
+    def plot_discretised_domain(self):
+        discretization_method = self.config.get('DOMAIN_DISCRETIZATION')
+        self.logger.info("Creating discretization visualization...")
+        discretization_plot = self.reporter.plot_discretized_domain(discretization_method)
+        if discretization_plot:
+            self.logger.info(f"Discretization visualization created: {discretization_plot}")
+        else:
+            self.logger.warning("Could not create discretization visualization")
 
     @get_function_logger
     def acquire_forcings(self):
@@ -407,8 +418,6 @@ class CONFLUENCE:
         
         return results_file, best_combinations
     
-
-
     @get_function_logger
     def subset_geofabric(self):
         self.logger.info("Starting geofabric subsetting process")
