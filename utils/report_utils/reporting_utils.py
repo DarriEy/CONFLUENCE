@@ -11,6 +11,12 @@ from matplotlib.gridspec import GridSpec # type: ignore
 from matplotlib.colors import LinearSegmentedColormap # type: ignore
 import traceback
 
+# New imports for domain plotting
+import contextily as ctx # type: ignore
+from matplotlib_scalebar.scalebar import ScaleBar # type: ignore
+from matplotlib.lines import Line2D # type: ignore
+from matplotlib.patches import Patch # type: ignore
+
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
 
@@ -601,3 +607,203 @@ class VisualizationReporter:
         except Exception as e:
             self.logger.error(f"Error in plot_lumped_streamflow_simulations_vs_observations: {str(e)}")
             return None
+        
+    def plot_domain(self):
+        """
+        Creates a map visualization of the delineated domain with a basemap.
+        Plots catchment boundary, river network, and pour point on top of a contextily basemap.
+        """
+        try:
+            
+            # Create plot folder if it doesn't exist
+            plot_folder = self.project_dir / "plots" / "domain"
+            plot_folder.mkdir(parents=True, exist_ok=True)
+            plot_filename = plot_folder / 'domain_map.png'
+
+            # Load the shapefiles
+            # Catchment
+            
+            catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+            if catchment_name == 'default':
+                catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+            catchment_path = self._get_file_path('CATCHMENT_SHP_PATH', 'shapefiles/catchment', catchment_name)
+            catchment_gdf = gpd.read_file(catchment_path)
+
+            # River network
+            river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+            if river_name == 'default':
+                river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
+            river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
+            river_gdf = gpd.read_file(river_path)
+
+            # Pour point
+            pour_point_name = self.config.get('POUR_POINT_SHP_NAME')
+            if pour_point_name == 'default':
+                pour_point_name = f"{self.config.get('DOMAIN_NAME')}_pourPoint.shp"
+            pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
+            pour_point_gdf = gpd.read_file(pour_point_path)
+
+            # Reproject to Web Mercator for contextily basemap
+            catchment_gdf = catchment_gdf.to_crs(epsg=3857)
+            river_gdf = river_gdf.to_crs(epsg=3857)
+            pour_point_gdf = pour_point_gdf.to_crs(epsg=3857)
+
+            # Create figure and axis
+            fig, ax = plt.subplots(figsize=(15, 15))
+
+            # Calculate buffer for extent (10% of the catchment bounds)
+            bounds = catchment_gdf.total_bounds
+            buffer_x = (bounds[2] - bounds[0]) * 0.1
+            buffer_y = (bounds[3] - bounds[1]) * 0.1
+            
+            # Set map extent with buffer
+            ax.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
+            ax.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
+
+            # Add the basemap
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.CartoDB.Positron,
+                zoom='auto',
+                attribution_size=8
+            )
+
+            # Plot the catchment boundary
+            catchment_gdf.boundary.plot(
+                ax=ax,
+                linewidth=2,
+                color='#2c3e50',
+                label='Catchment Boundary',
+                zorder=2
+            )
+
+            # Plot the river network with line width based on stream order
+            if 'StreamOrde' in river_gdf.columns:
+                # Normalize stream order for line width
+                min_order = river_gdf['StreamOrde'].min()
+                max_order = river_gdf['StreamOrde'].max()
+                river_gdf['line_width'] = river_gdf['StreamOrde'].apply(
+                    lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
+                )
+                
+                # Plot rivers with varying width
+                for idx, row in river_gdf.iterrows():
+                    ax.plot(
+                        row.geometry.xy[0],
+                        row.geometry.xy[1],
+                        color='#3498db',
+                        linewidth=row['line_width'],
+                        zorder=3,
+                        alpha=0.8
+                    )
+            else:
+                river_gdf.plot(
+                    ax=ax,
+                    color='#3498db',
+                    linewidth=1,
+                    label='River Network',
+                    zorder=3,
+                    alpha=0.8
+                )
+
+            # Plot the pour point
+            pour_point_gdf.plot(
+                ax=ax,
+                color='#e74c3c',
+                marker='*',
+                markersize=200,
+                label='Pour Point',
+                zorder=4
+            )
+
+            # Add scale bar
+            self._add_scale_bar(ax)
+
+            # Add north arrow
+            self._add_north_arrow(ax)
+
+            # Add title and legend
+            plt.title(f'Delineated Domain: {self.config.get("DOMAIN_NAME")}', 
+                    fontsize=16, pad=20, fontweight='bold')
+            
+            # Create custom legend
+
+            legend_elements = [
+                Line2D([0], [0], color='#2c3e50', linewidth=2, label='Catchment Boundary'),
+                Line2D([0], [0], color='#3498db', linewidth=2, label='River Network'),
+                Line2D([0], [0], color='#e74c3c', marker='*', label='Pour Point',
+                    markersize=15, linewidth=0)
+            ]
+            ax.legend(handles=legend_elements, loc='upper right', 
+                    frameon=True, facecolor='white', framealpha=0.9)
+
+            # Remove axes
+            ax.set_axis_off()
+
+            # Add custom text box with catchment information
+            self._add_info_box(ax, catchment_gdf)
+
+            # Save the plot
+            plt.savefig(plot_filename, dpi=300, bbox_inches='tight', pad_inches=0.1)
+            plt.close()
+
+            self.logger.info(f"Domain map saved to {plot_filename}")
+            return str(plot_filename)
+
+        except Exception as e:
+            self.logger.error(f"Error in plot_domain: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None
+
+    def _add_scale_bar(self, ax):
+        """Add a scale bar to the map"""
+
+        # Create scale bar (automatically determines appropriate length)
+        scalebar = ScaleBar(
+            1, 
+            "m",
+            length_fraction=0.25,
+            location='lower right',
+            pad=1,
+            border_pad=1,
+            sep=5,
+            frameon=True,
+            color='black',
+            box_color='white',
+            box_alpha=0.8
+        )
+        ax.add_artist(scalebar)
+
+    def _add_north_arrow(self, ax):
+        """Add a north arrow to the map"""
+        # Calculate arrow position (upper left corner)
+        arrow_pos = ax.get_xlim()[0] + (ax.get_xlim()[1] - ax.get_xlim()[0]) * 0.05
+        arrow_pos_y = ax.get_ylim()[1] - (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.15
+
+        # Create north arrow
+        ax.annotate('N', xy=(arrow_pos, arrow_pos_y), xytext=(arrow_pos, arrow_pos_y - 50000),
+                    arrowprops=dict(facecolor='black', width=5, headwidth=15),
+                    ha='center', va='center', fontsize=12,
+                    bbox=dict(facecolor='white', edgecolor='none', alpha=0.8, pad=5))
+
+    def _add_info_box(self, ax, catchment_gdf):
+        """Add an information box with catchment statistics"""
+        # Calculate catchment area in km²
+        area_km2 = catchment_gdf.geometry.area.sum() / 1e6  # Convert from m² to km²
+        
+        # Create info text
+        info_text = f"Catchment Statistics:\n"
+        info_text += f"Area: {area_km2:.1f} km²\n"
+        
+        # Add elevation info if available
+        if 'Elevation' in catchment_gdf.columns:
+            min_elev = catchment_gdf['Elevation'].min()
+            max_elev = catchment_gdf['Elevation'].max()
+            info_text += f"Elevation Range: {min_elev:.0f} - {max_elev:.0f} m"
+
+        # Position text box in lower left corner
+        ax.text(0.02, 0.02, info_text,
+                transform=ax.transAxes,
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
+                fontsize=10,
+                verticalalignment='bottom')

@@ -68,6 +68,7 @@ class CONFLUENCE:
         self.setup_logging()
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
 
+
     def setup_logging(self):
         log_dir = self.project_dir / f"_workLog_{self.config.get('DOMAIN_NAME')}"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +89,7 @@ class CONFLUENCE:
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
             (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
+            (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
@@ -141,6 +143,7 @@ class CONFLUENCE:
         
         return output_file
 
+    @get_function_logger
     def acquire_attributes(self):
         # Create attribute directories
         dem_dir = self.project_dir / 'attributes' / 'elevation' / 'dem'
@@ -187,6 +190,7 @@ class CONFLUENCE:
         gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
         gr.execute_gistool_command(gistool_command_soilclass)
 
+
     @get_function_logger
     def define_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
@@ -199,6 +203,16 @@ class CONFLUENCE:
             self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
         else:
             self.logger.error(f"Unknown domain definition method: {domain_method}")
+
+    @get_function_logger
+    def plot_domain(self):
+        self.logger.info("Creating domain visualization...")
+        reporter = VisualizationReporter(self.config, self.logger)
+        domain_plot = reporter.plot_domain()
+        if domain_plot:
+            self.logger.info(f"Domain visualization created: {domain_plot}")
+        else:
+            self.logger.warning("Could not create domain visualization")
 
     @get_function_logger
     def discretize_domain(self):
