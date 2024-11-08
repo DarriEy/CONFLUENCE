@@ -28,132 +28,105 @@ class VisualizationReporter:
             plot_folder.mkdir(parents=True, exist_ok=True)
             plot_filename = plot_folder / 'streamflow_comparison.png'
 
-            # Read observation data
-            obs_data = []
-            for obs_name, obs_file in obs_files:
-                df = pd.read_csv(obs_file, parse_dates=['datetime'])
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df.set_index('datetime', inplace=True)
-                df = df['discharge_cms'].resample('h').mean()
-                obs_data.append((obs_name, df))
-
-            # Read simulation data
+            # Read simulation data first
             sim_data = []
             for sim_name, sim_file in model_outputs:
-                ds = xr.open_dataset(sim_file, engine='netcdf4')
-                basinID = int(self.config.get('SIM_REACH_ID'))  
-                segment_index = ds['reachID'].values == basinID
-                ds = ds.sel(seg=ds['seg'][segment_index])
-                df = ds['IRFroutedRunoff'].to_dataframe().reset_index()
-                df.set_index('time', inplace=True)
-                sim_data.append((sim_name, df))
+                try:
+                    ds = xr.open_dataset(sim_file, engine='netcdf4')
+                    basinID = int(self.config.get('SIM_REACH_ID'))  
+                    segment_index = ds['reachID'].values == basinID
+                    ds = ds.sel(seg=ds['seg'][segment_index])
+                    df = ds['IRFroutedRunoff'].to_dataframe().reset_index()
+                    df.set_index('time', inplace=True)
+                    sim_data.append((sim_name, df))
+                except Exception as e:
+                    self.logger.warning(f"Could not read simulation file {sim_file}: {str(e)}")
+                    continue
 
-            # Determine common time range
-            start_date = max([data.index.min() for _, data in obs_data + sim_data]) + pd.Timedelta(50, unit="d")
-            end_date = min([data.index.max() for _, data in obs_data + sim_data])
+            if not sim_data:
+                self.logger.error("No simulation data could be loaded")
+                return None
 
-            # Filter data to common time range
-            obs_data = [(name, data.loc[start_date:end_date]) for name, data in obs_data]
+            # Try to read observation data
+            obs_data = []
+            for obs_name, obs_file in obs_files:
+                try:
+                    df = pd.read_csv(obs_file, parse_dates=['datetime'])
+                    df['datetime'] = pd.to_datetime(df['datetime'])
+                    df.set_index('datetime', inplace=True)
+                    df = df['discharge_cms'].resample('h').mean()
+                    obs_data.append((obs_name, df))
+                except Exception as e:
+                    self.logger.warning(f"Could not read observation file {obs_file}: {str(e)}")
+                    continue
+
+            # Determine time range based on simulations
+            start_date = max([data.index.min() for _, data in sim_data]) + pd.Timedelta(50, unit="d")
+            end_date = min([data.index.max() for _, data in sim_data])
+
+            # Filter simulation data to common time range
             sim_data = [(name, data.loc[start_date:end_date]) for name, data in sim_data]
+
+            # Filter observation data if it exists
+            if obs_data:
+                obs_data = [(name, data.loc[start_date:end_date]) for name, data in obs_data]
 
             # Create plot
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 16))
             fig.suptitle("Streamflow Comparison and Flow Duration Curve", fontsize=16, fontweight='bold')
 
             # Plot time series
-            for obs_name, obs in obs_data:
-                ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
-
             colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
             linestyles = ['--', '-.', ':']
+
+            # Plot observations if available
+            if obs_data:
+                for obs_name, obs in obs_data:
+                    ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
+
+            # Plot simulations
             for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
                 ax1.plot(sim.index, sim['IRFroutedRunoff'], label=f'Simulated ({sim_name})', 
                         color=color, linestyle=linestyle, linewidth=1.5)
-                
-            if show_calib_eval_periods:
-                # Define calibration and evaluation periods
-                calib_start = pd.Timestamp('2011-01-01')
-                calib_end = pd.Timestamp('2014-12-31')
-                eval_start = pd.Timestamp('2015-01-01')
-                eval_end = pd.Timestamp('2018-12-31')
 
-                for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-                    # Align data and calculate metrics for calibration period
-                    aligned_calib = pd.merge(obs_data[0][1].loc[calib_start:calib_end], 
-                                            sim.loc[calib_start:calib_end, 'IRFroutedRunoff'], 
-                                            left_index=True, right_index=True, how='inner')
-                    calib_metrics = self.calculate_metrics(aligned_calib.iloc[:, 0].values, aligned_calib.iloc[:, 1].values)
-                    
-                    # Align data and calculate metrics for evaluation period
-                    aligned_eval = pd.merge(obs_data[0][1].loc[eval_start:eval_end], 
-                                            sim.loc[eval_start:eval_end, 'IRFroutedRunoff'], 
-                                            left_index=True, right_index=True, how='inner')
-                    eval_metrics = self.calculate_metrics(aligned_eval.iloc[:, 0].values, aligned_eval.iloc[:, 1].values)
-                    
-                    metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
-                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
-                    metric_text += "\n\nEvaluation (2015-2018):\n"
-                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
-                    
-                    # Add semi-transparent background to text
-                    ax1.text(0.02, 0.98 - 0.35 * sim_data.index((sim_name, sim)), metric_text,
-                            transform=ax1.transAxes, verticalalignment='top', fontsize=8,
-                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
-
-                # Add shaded areas for calibration and evaluation periods
-                ax1.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
-                ax1.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
-            else:
-                # Calculate and display metrics for the entire period
-                for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-
-                    # Align data for the entire period
-                    sim.index = sim.index.round(freq='h')
-                    aligned_data = pd.merge(obs_data[0][1], sim['IRFroutedRunoff'], 
-                                            left_index=True, right_index=True, how='inner')
-                    metrics = self.calculate_metrics(aligned_data.iloc[:, 0].values, aligned_data.iloc[:, 1].values)
-                    
-                    metric_text = f"{sim_name} Metrics:\n"
-                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in metrics.items()])
-                    
-                    # Add semi-transparent background to text
-                    ax1.text(0.02, 0.98 - 0.15 * sim_data.index((sim_name, sim)), metric_text,
-                            transform=ax1.transAxes, verticalalignment='top', fontsize=8,
-                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+            # Add metrics if observations are available
+            if obs_data and show_calib_eval_periods:
+                self._add_calibration_evaluation_metrics(ax1, obs_data, sim_data)
+            elif obs_data:
+                self._add_overall_metrics(ax1, obs_data, sim_data)
 
             ax1.set_xlabel('Date', fontsize=12)
             ax1.set_ylabel('Streamflow (m³/s)', fontsize=12)
             ax1.set_title('Streamflow Comparison', fontsize=14)
             ax1.legend(loc='upper right', fontsize=10)
             ax1.grid(True, linestyle=':', alpha=0.6)
-            ax1.set_facecolor('#f0f0f0')  # Light gray background
+            ax1.set_facecolor('#f0f0f0')
 
-            # Format x-axis to show years
+            # Format x-axis
             ax1.xaxis.set_major_locator(mdates.YearLocator())
             ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
             # Plot exceedance frequency
             try:
-                for obs_name, obs in obs_data:
-                    self.plot_exceedance(ax2, obs.values, f'Observed ({obs_name})', color='black', linewidth=2.5)
+                if obs_data:
+                    for obs_name, obs in obs_data:
+                        self.plot_exceedance(ax2, obs.values, f'Observed ({obs_name})', color='black', linewidth=2.5)
 
                 for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
                     self.plot_exceedance(ax2, sim['IRFroutedRunoff'].values, f'Simulated ({sim_name})', 
                                     color=color, linestyle=linestyle, linewidth=1.5)
-            except:
-                self.logger.info('could not plot exceedance frequency plot')
-                plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
-                plt.close()
-                
+            except Exception as e:
+                self.logger.warning(f'Could not plot exceedance frequency: {str(e)}')
+
             ax2.set_xlabel('Exceedance Probability', fontsize=12)
             ax2.set_ylabel('Streamflow (m³/s)', fontsize=12)
             ax2.set_title('Flow Duration Curve', fontsize=14)
             ax2.legend(loc='best', fontsize=10)
             ax2.grid(True, which='both', linestyle=':', alpha=0.6)
-            ax2.set_facecolor('#f0f0f0')  # Light gray background
+            ax2.set_facecolor('#f0f0f0')
 
             plt.tight_layout()
-            plt.subplots_adjust(top=0.93)  # Adjust for main title
+            plt.subplots_adjust(top=0.93)
 
             # Save the plot
             plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
@@ -162,8 +135,54 @@ class VisualizationReporter:
             return str(plot_filename)
 
         except Exception as e:
-            print(f"Error in plot_streamflow_simulations_vs_observations: {str(e)}")
+            self.logger.error(f"Error in plot_streamflow_simulations_vs_observations: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
+
+    def _add_calibration_evaluation_metrics(self, ax, obs_data, sim_data):
+        """Helper method to add calibration and evaluation period metrics to the plot"""
+        calib_start = pd.Timestamp('2011-01-01')
+        calib_end = pd.Timestamp('2014-12-31')
+        eval_start = pd.Timestamp('2015-01-01')
+        eval_end = pd.Timestamp('2018-12-31')
+
+        for i, (sim_name, sim) in enumerate(sim_data):
+            aligned_calib = pd.merge(obs_data[0][1].loc[calib_start:calib_end], 
+                                    sim.loc[calib_start:calib_end, 'IRFroutedRunoff'], 
+                                    left_index=True, right_index=True, how='inner')
+            calib_metrics = self.calculate_metrics(aligned_calib.iloc[:, 0].values, aligned_calib.iloc[:, 1].values)
+            
+            aligned_eval = pd.merge(obs_data[0][1].loc[eval_start:eval_end], 
+                                    sim.loc[eval_start:eval_end, 'IRFroutedRunoff'], 
+                                    left_index=True, right_index=True, how='inner')
+            eval_metrics = self.calculate_metrics(aligned_eval.iloc[:, 0].values, aligned_eval.iloc[:, 1].values)
+            
+            metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
+            metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
+            metric_text += "\n\nEvaluation (2015-2018):\n"
+            metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
+            
+            ax.text(0.02, 0.98 - 0.35 * i, metric_text,
+                    transform=ax.transAxes, verticalalignment='top', fontsize=8,
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+
+        ax.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
+        ax.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+
+    def _add_overall_metrics(self, ax, obs_data, sim_data):
+        """Helper method to add overall metrics to the plot"""
+        for i, (sim_name, sim) in enumerate(sim_data):
+            sim.index = sim.index.round(freq='h')
+            aligned_data = pd.merge(obs_data[0][1], sim['IRFroutedRunoff'], 
+                                    left_index=True, right_index=True, how='inner')
+            metrics = self.calculate_metrics(aligned_data.iloc[:, 0].values, aligned_data.iloc[:, 1].values)
+            
+            metric_text = f"{sim_name} Metrics:\n"
+            metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in metrics.items()])
+            
+            ax.text(0.02, 0.98 - 0.15 * i, metric_text,
+                    transform=ax.transAxes, verticalalignment='top', fontsize=8,
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
         
     def plot_snow_simulations_vs_observations(self, model_outputs: List[List[str]]):
         try:

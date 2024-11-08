@@ -5,14 +5,14 @@ from datetime import datetime
 import subprocess
 import pandas as pd # type: ignore
 import rasterio # type: ignore
-import numpy as np
+import numpy as np # type: ignore
 import shutil
 from scipy import stats # type: ignore
 import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
-from utils.dataHandling_utils.data_utils import DataAcquisitionProcessor, DataPreProcessor, ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
+from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
@@ -26,7 +26,6 @@ from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
 from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
 from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
-from utils.models_utils.summa_utils import SummaPreProcessor # type: ignore
 
 class CONFLUENCE:
 
@@ -77,6 +76,46 @@ class CONFLUENCE:
         self.logger = setup_logger('confluence_general', log_file)
 
     @get_function_logger
+    def run_workflow(self):
+        self.logger.info("Starting CONFLUENCE workflow")
+        
+        # Check if we should force run all steps
+        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
+        
+        # Define the workflow steps and their output checks
+        workflow_steps = [
+            (self.setup_project, (self.project_dir / 'catchment').exists),
+            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
+            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
+            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
+            (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
+            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists()),
+            (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
+            (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
+            (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv2").exists()),    
+        ]
+        
+        for step_func, check_func in workflow_steps:
+            step_name = step_func.__name__
+            if force_run or not check_func():
+                self.logger.info(f"Running step: {step_name}")
+                try:
+                    step_func()
+                except Exception as e:
+                    self.logger.error(f"Error during {step_name}: {str(e)}")
+                    raise
+            else:
+                self.logger.info(f"Skipping step {step_name} as output already exists")
+
+        self.logger.info("CONFLUENCE workflow completed")
+
+    @get_function_logger
     def setup_project(self):
         self.logger.info(f"Setting up project for domain: {self.domain_name}")
         
@@ -101,290 +140,6 @@ class CONFLUENCE:
             self.logger.error("Failed to create pour point shapefile")
         
         return output_file
-
-    @get_function_logger
-    def discretize_domain(self):
-        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-        domain_discretizer = DomainDiscretizer(self.config, self.logger)
-        hru_shapefile = domain_discretizer.discretize_domain()
-
-        if isinstance(hru_shapefile, pd.Series) or isinstance(hru_shapefile, pd.DataFrame):
-            if not hru_shapefile.empty:
-                self.logger.info(f"Domain discretized successfully. HRU shapefile(s):")
-                for index, shapefile in hru_shapefile.items():
-                    self.logger.info(f"  {index}: {shapefile}")
-            else:
-                self.logger.error("Domain discretization failed. No shapefiles were created.")
-        elif hru_shapefile:
-            self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
-        else:
-            self.logger.error("Domain discretization failed.")
-
-        self.logger.info(f"Domain to be defined using method {domain_method}")
-
-    @get_function_logger
-    def define_domain(self):
-        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-        
-        if domain_method == 'subset':
-            self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'lumped':
-            self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'delineate':
-            self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        else:
-            self.logger.error(f"Unknown domain definition method: {domain_method}")
-
-    @get_function_logger
-    def subset_geofabric(self):
-        self.logger.info("Starting geofabric subsetting process")
-
-        # Create GeofabricSubsetter instance
-        subsetter = GeofabricSubsetter(self.config, self.logger)
-        
-        try:
-            subset_basins, subset_rivers = subsetter.subset_geofabric()
-            self.logger.info("Geofabric subsetting completed successfully")
-            return subset_basins, subset_rivers
-        except Exception as e:
-            self.logger.error(f"Error during geofabric subsetting: {str(e)}")
-            return None
-
-    @get_function_logger
-    def delineate_lumped_watershed(self):
-        self.logger.info("Starting geofabric lumped delineation")
-        try:
-            delineator = LumpedWatershedDelineator(self.config, self.logger)
-            self.logger.info('Geofabric delineation completed successfully')
-            return delineator.delineate_lumped_watershed()
-        except Exception as e:
-            self.logger.error(f"Error during geofabric delineation: {str(e)}")
-            return None
-
-    @get_function_logger
-    def delineate_geofabric(self):
-        self.logger.info("Starting geofabric delineation")
-        try:
-            delineator = GeofabricDelineator(self.config, self.logger)
-            self.logger.info('Geofabric delineation completed successfully')
-            return delineator.delineate_geofabric()
-        except Exception as e:
-            self.logger.error(f"Error during geofabric delineation: {str(e)}")
-            return None
-
-    @get_function_logger
-    def process_input_data(self):
-        self.logger.info("Starting input data processing")
-        
-        # Create DataAcquisitionProcessor instance
-        if self.config.get('DATA_ACQUIRE') == 'HPC':
-            self.logger.info('Data acquisition set to HPC')
-            data_acquisition = DataAcquisitionProcessor(self.config, self.logger)
-            
-            # Run data acquisition
-            try:
-                data_acquisition.run_data_acquisition()
-            except Exception as e:
-                self.logger.error(f"Error during data acquisition: {str(e)}")
-                raise
-        
-        elif self.config.get('DATA_ACQUIRE') == 'supplied':
-            self.logger.info('Model input data set to supplied by user')
-            data_preprocessor = DataPreProcessor(self.config, self.logger)
-            data_preprocessor.process_zonal_statistics()
-            
-        self.logger.info("Input data processing completed")
-
-    @get_function_logger
-    def run_model_specific_preprocessing(self):
-        # Run model-specific preprocessing
-        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
-            self.run_summa_preprocessing()
-
-    def run_summa_preprocessing(self):
-        self.logger.info('Running SUMMA specific input processing')
-        if self.config.get('SUMMAFLOW') == 'stochastic':
-            summa_preprocessor = SummaPreProcessor(self.config, self.logger)
-            self.logger.info('SUMMA stochastic preprocessor initiated')
-        if self.config.get('SUMMAFLOW') == 'spatial':
-            summa_preprocessor = SummaPreProcessor_spatial(self.config, self.logger)
-            self.logger.info('SUMMA spatial preprocessor initiated')
-
-        summa_preprocessor.run_preprocessing()
-
-        if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
-            mizuroute_preprocessor = MizuRoutePreProcessor(self.config, self.logger)
-            mizuroute_preprocessor.run_preprocessing()
-
-    @get_function_logger
-    def run_models(self):
-        self.logger.info("Starting model runs")
-        
-        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
-            summa_runner = SummaRunner(self.config, self.logger)
-            mizuroute_runner = MizuRouteRunner(self.config, self.logger)
-
-            try:
-                summa_runner.run_summa()
-                if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
-                    mizuroute_runner.run_mizuroute()
-                self.logger.info("SUMMA/MIZUROUTE model runs completed successfully")
-            except Exception as e:
-                self.logger.error(f"Error during SUMMA/MIZUROUTE model runs: {str(e)}")
-
-        elif self.config.get('HYDROLOGICAL_MODEL') == 'FLASH':
-            try:
-                flash_model = FLASH(self.config, self.logger)
-                flash_model.run_flash()
-                self.logger.info("FLASH model run completed successfully")
-            except Exception as e:
-                self.logger.error(f"Error during FLASH model run: {str(e)}")
-
-        else:
-            self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
-
-        self.logger.info("Model runs completed")
-
-    @get_function_logger
-    def visualise_model_output(self):
-    
-        # Plot streamflow comparison
-        self.logger.info('Starting model output visualisation')
-        visualizer = VisualizationReporter(self.config, self.logger)
-
-        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
-            plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
-        else:
-            visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
-            model_outputs = [
-                (f"{self.config['HYDROLOGICAL_MODEL']}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"))
-            ]
-            obs_files = [
-                ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
-            ]
-            plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
-
-        #Check if the plot was output
-        if plot_file:
-            self.logger.info(f"Streamflow comparison plot created: {plot_file}")
-        else:
-            self.logger.error("Failed to create streamflow comparison plot")
-
-    @get_function_logger
-    def process_observed_data(self):
-        self.logger.info("Processing observed data")
-        observed_data_processor = ObservedDataProcessor(self.config, self.logger)
-        try:
-            observed_data_processor.process_streamflow_data()
-            self.logger.info("Observed data processing completed successfully")
-        except Exception as e:
-            self.logger.error(f"Error during observed data processing: {str(e)}")
-            raise
-
-    @get_function_logger
-    def calibrate_model(self):
-        # Calibrate the model using specified method and objectives
-        if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
-            self.run_ostrich_optimization()
-        else:
-            self.run_parallel_optimization()
-
-    def run_parallel_optimization(self):
-        
-        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
-
-        if shutil.which("srun"):
-            run_command = "srun"
-        elif shutil.which("mpirun"):
-            run_command = "mpirun"
-
-
-        cmd = [
-            run_command,
-            '-n', str(self.config.get('MPI_PROCESSES')),
-            'python',
-            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
-            str(config_path)
-        ]
-
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error running parallel optimization: {e}")
-
-    def run_ostrich_optimization(self):
-        optimizer = OstrichOptimizer(self.config, self.logger)
-        optimizer.run_optimization()
-
-    def run_sensitivity_analysis(self):
-        self.logger.info("Starting sensitivity analysis")
-        sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
-        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
-        
-        if not results_file.exists():
-            self.logger.error(f"Calibration results file not found: {results_file}")
-            return
-        
-        if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
-            sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
-
-        sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
-        self.logger.info("Sensitivity analysis completed")
-        return sensitivity_results
-
-    @get_function_logger  
-    def run_decision_analysis(self):
-        self.logger.info("Starting decision analysis")
-        decision_analyzer = DecisionAnalyzer(self.config, self.logger)
-        
-        results_file, best_combinations = decision_analyzer.run_full_analysis()
-        
-        self.logger.info("Decision analysis completed")
-        self.logger.info(f"Results saved to: {results_file}")
-        self.logger.info("Best combinations for each metric:")
-        for metric, data in best_combinations.items():
-            self.logger.info(f"  {metric}: score = {data['score']:.3f}")
-        
-        return results_file, best_combinations
-    
-    def run_benchmarking(self):
-        # Preprocess data for benchmarking
-        preprocessor = BenchmarkPreprocessor(self.config, self.logger)
-        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
-
-        # Run benchmarking
-        benchmarker = Benchmarker(self.config, self.logger)
-        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
-
-    def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
-        # List all the geotiff files for the years we're interested in
-        geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}_{year}.tif" for year in range(start_year, end_year + 1)]
-        
-        # Read the first file to get metadata
-        with rasterio.open(geotiff_files[0]) as src:
-            meta = src.meta
-            shape = src.shape
-        
-        # Initialize an array to store all the data
-        all_data = np.zeros((len(geotiff_files), *shape), dtype=np.int16)
-        
-        # Read all the geotiffs into the array
-        for i, file in enumerate(geotiff_files):
-            with rasterio.open(file) as src:
-                all_data[i] = src.read(1)
-        
-        # Calculate the mode along the time axis
-        mode_data, _ = stats.mode(all_data, axis=0)
-        mode_data = mode_data.astype(np.int16).squeeze()
-        
-        # Update metadata for output
-        meta.update(count=1, dtype='int16')
-        
-        # Write the result
-        with rasterio.open(output_file, 'w', **meta) as dst:
-            dst.write(mode_data, 1)
-        
-        print(f"Mode calculation complete. Result saved to {output_file}")
 
     def acquire_attributes(self):
         # Create attribute directories
@@ -432,6 +187,40 @@ class CONFLUENCE:
         gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
         gr.execute_gistool_command(gistool_command_soilclass)
 
+    @get_function_logger
+    def define_domain(self):
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+        
+        if domain_method == 'subset':
+            self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        elif domain_method == 'lumped':
+            self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        elif domain_method == 'delineate':
+            self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        else:
+            self.logger.error(f"Unknown domain definition method: {domain_method}")
+
+    @get_function_logger
+    def discretize_domain(self):
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+        domain_discretizer = DomainDiscretizer(self.config, self.logger)
+        hru_shapefile = domain_discretizer.discretize_domain()
+
+        if isinstance(hru_shapefile, pd.Series) or isinstance(hru_shapefile, pd.DataFrame):
+            if not hru_shapefile.empty:
+                self.logger.info(f"Domain discretized successfully. HRU shapefile(s):")
+                for index, shapefile in hru_shapefile.items():
+                    self.logger.info(f"  {index}: {shapefile}")
+            else:
+                self.logger.error("Domain discretization failed. No shapefiles were created.")
+        elif hru_shapefile:
+            self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
+        else:
+            self.logger.error("Domain discretization failed.")
+
+        self.logger.info(f"Domain to be defined using method {domain_method}")
+
+    @get_function_logger
     def acquire_forcings(self):
         # Initialize datatoolRunner class
         dr = datatoolRunner(self.config, self.logger)
@@ -451,6 +240,7 @@ class CONFLUENCE:
         datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = self.config['FORCING_VARIABLES'], start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
         dr.execute_datatool_command(datatool_command)
 
+    @get_function_logger
     def model_agnostic_pre_processing(self):
         # Data directoris
         raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
@@ -473,7 +263,7 @@ class CONFLUENCE:
         # Run resampling
         fr.run_resampling()
        
-
+    @get_function_logger
     def model_specific_pre_processing(self):
         # Data directoris
         model_input_dir = self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}_input"
@@ -488,47 +278,215 @@ class CONFLUENCE:
             mp = MizuRoutePreProcessor(self.config,self.logger)
             mp.run_preprocessing()
 
+    @get_function_logger
+    def run_models(self):
+        self.logger.info("Starting model runs")
+        
+        if self.config.get('HYDROLOGICAL_MODEL') == 'SUMMA':
+            summa_runner = SummaRunner(self.config, self.logger)
+            mizuroute_runner = MizuRouteRunner(self.config, self.logger)
 
-    def run_workflow(self):
-        self.logger.info("Starting CONFLUENCE workflow")
+            try:
+                summa_runner.run_summa()
+                if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+                    mizuroute_runner.run_mizuroute()
+                self.logger.info("SUMMA/MIZUROUTE model runs completed successfully")
+            except Exception as e:
+                self.logger.error(f"Error during SUMMA/MIZUROUTE model runs: {str(e)}")
+
+        elif self.config.get('HYDROLOGICAL_MODEL') == 'FLASH':
+            try:
+                flash_model = FLASH(self.config, self.logger)
+                flash_model.run_flash()
+                self.logger.info("FLASH model run completed successfully")
+            except Exception as e:
+                self.logger.error(f"Error during FLASH model run: {str(e)}")
+
+        else:
+            self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
+
+        self.logger.info("Model runs completed")
+
+    @get_function_logger
+    def process_observed_data(self):
+        self.logger.info("Processing observed data")
+        observed_data_processor = ObservedDataProcessor(self.config, self.logger)
+        try:
+            observed_data_processor.process_streamflow_data()
+            self.logger.info("Observed data processing completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during observed data processing: {str(e)}")
+            raise
+
+    @get_function_logger
+    def visualise_model_output(self):
+    
+        # Plot streamflow comparison
+        self.logger.info('Starting model output visualisation')
+        visualizer = VisualizationReporter(self.config, self.logger)
+
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
+            plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
+        else:
+            visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+            model_outputs = [
+                (f"{self.config['HYDROLOGICAL_MODEL']}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"))
+            ]
+            obs_files = [
+                ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+            ]
+            plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+        #Check if the plot was output
+        if plot_file:
+            self.logger.info(f"Streamflow comparison plot created: {plot_file}")
+        else:
+            self.logger.error("Failed to create streamflow comparison plot")
+
+    @get_function_logger  
+    def run_benchmarking(self):
+        # Preprocess data for benchmarking
+        preprocessor = BenchmarkPreprocessor(self.config, self.logger)
+        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
+
+        # Run benchmarking
+        benchmarker = Benchmarker(self.config, self.logger)
+        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
+    
+    @get_function_logger
+    def calibrate_model(self):
+        # Calibrate the model using specified method and objectives
+        if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
+            self.run_ostrich_optimization()
+        else:
+            self.run_parallel_optimization()
+
+    @get_function_logger  
+    def run_sensitivity_analysis(self):
+        self.logger.info("Starting sensitivity analysis")
+        sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
+        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
         
-        # Check if we should force run all steps
-        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
+        if not results_file.exists():
+            self.logger.error(f"Calibration results file not found: {results_file}")
+            return
         
-        # Define the workflow steps and their output checks
-        workflow_steps = [
-            (self.setup_project, (self.project_dir / 'catchment').exists),
-            (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
-            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
-            (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
-            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}").exists()),
-            #(self.process_input_data, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            #(self.run_model_specific_preprocessing, lambda: (self.project_dir / "forcing" / f"{self.config.get('HYDROLOGICAL_MODEL')}_input2").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
-            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists()),
-            (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
-            (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
-            (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv2").exists()),    
+        if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
+            sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
+
+        sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
+        self.logger.info("Sensitivity analysis completed")
+        return sensitivity_results
+
+    @get_function_logger  
+    def run_decision_analysis(self):
+        self.logger.info("Starting decision analysis")
+        decision_analyzer = DecisionAnalyzer(self.config, self.logger)
+        
+        results_file, best_combinations = decision_analyzer.run_full_analysis()
+        
+        self.logger.info("Decision analysis completed")
+        self.logger.info(f"Results saved to: {results_file}")
+        self.logger.info("Best combinations for each metric:")
+        for metric, data in best_combinations.items():
+            self.logger.info(f"  {metric}: score = {data['score']:.3f}")
+        
+        return results_file, best_combinations
+    
+
+
+    @get_function_logger
+    def subset_geofabric(self):
+        self.logger.info("Starting geofabric subsetting process")
+
+        # Create GeofabricSubsetter instance
+        subsetter = GeofabricSubsetter(self.config, self.logger)
+        
+        try:
+            subset_basins, subset_rivers = subsetter.subset_geofabric()
+            self.logger.info("Geofabric subsetting completed successfully")
+            return subset_basins, subset_rivers
+        except Exception as e:
+            self.logger.error(f"Error during geofabric subsetting: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_lumped_watershed(self):
+        self.logger.info("Starting geofabric lumped delineation")
+        try:
+            delineator = LumpedWatershedDelineator(self.config, self.logger)
+            self.logger.info('Geofabric delineation completed successfully')
+            return delineator.delineate_lumped_watershed()
+        except Exception as e:
+            self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_geofabric(self):
+        self.logger.info("Starting geofabric delineation")
+        try:
+            delineator = GeofabricDelineator(self.config, self.logger)
+            self.logger.info('Geofabric delineation completed successfully')
+            return delineator.delineate_geofabric()
+        except Exception as e:
+            self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    def run_parallel_optimization(self):        
+        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
+
+        if shutil.which("srun"):
+            run_command = "srun"
+        elif shutil.which("mpirun"):
+            run_command = "mpirun"
+
+        cmd = [
+            run_command,
+            '-n', str(self.config.get('MPI_PROCESSES')),
+            'python',
+            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
+            str(config_path)
         ]
-        
-        for step_func, check_func in workflow_steps:
-            step_name = step_func.__name__
-            if force_run or not check_func():
-                self.logger.info(f"Running step: {step_name}")
-                try:
-                    step_func()
-                except Exception as e:
-                    self.logger.error(f"Error during {step_name}: {str(e)}")
-                    raise
-            else:
-                self.logger.info(f"Skipping step {step_name} as output already exists")
 
-        self.logger.info("CONFLUENCE workflow completed")
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running parallel optimization: {e}")
+
+    def run_ostrich_optimization(self):
+        optimizer = OstrichOptimizer(self.config, self.logger)
+        optimizer.run_optimization()
+
+    def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
+        # List all the geotiff files for the years we're interested in
+        geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}_{year}.tif" for year in range(start_year, end_year + 1)]
+        
+        # Read the first file to get metadata
+        with rasterio.open(geotiff_files[0]) as src:
+            meta = src.meta
+            shape = src.shape
+        
+        # Initialize an array to store all the data
+        all_data = np.zeros((len(geotiff_files), *shape), dtype=np.int16)
+        
+        # Read all the geotiffs into the array
+        for i, file in enumerate(geotiff_files):
+            with rasterio.open(file) as src:
+                all_data[i] = src.read(1)
+        
+        # Calculate the mode along the time axis
+        mode_data, _ = stats.mode(all_data, axis=0)
+        mode_data = mode_data.astype(np.int16).squeeze()
+        
+        # Update metadata for output
+        meta.update(count=1, dtype='int16')
+        
+        # Write the result
+        with rasterio.open(output_file, 'w', **meta) as dst:
+            dst.write(mode_data, 1)
+        
+        print(f"Mode calculation complete. Result saved to {output_file}")
+
 
 def main():
     parser = argparse.ArgumentParser(description='Run CONFLUENCE workflow')
