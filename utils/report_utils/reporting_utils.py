@@ -642,26 +642,24 @@ class VisualizationReporter:
             pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
             pour_point_gdf = gpd.read_file(pour_point_path)
 
-            # Create figure and axes for main map and inset
-            fig = plt.figure(figsize=(15, 15))
-            ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])  # Main map
-            ax_inset = fig.add_axes([0.65, 0.15, 0.25, 0.25])  # Inset map
-
             # Reproject to Web Mercator for contextily basemap
-            catchment_gdf_web = catchment_gdf.to_crs(epsg=3857)
-            river_gdf_web = river_gdf.to_crs(epsg=3857)
-            pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
+            catchment_gdf = catchment_gdf.to_crs(epsg=3857)
+            river_gdf = river_gdf.to_crs(epsg=3857)
+            pour_point_gdf = pour_point_gdf.to_crs(epsg=3857)
+
+            # Create figure and axis
+            fig, ax = plt.subplots(figsize=(15, 15))
 
             # Calculate buffer for extent (10% of the catchment bounds)
-            bounds = catchment_gdf_web.total_bounds
+            bounds = catchment_gdf.total_bounds
             buffer_x = (bounds[2] - bounds[0]) * 0.1
             buffer_y = (bounds[3] - bounds[1]) * 0.1
             
-            # Set main map extent with buffer
+            # Set map extent with buffer
             ax.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
             ax.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
 
-            # Add basemap to main map
+            # Add the basemap
             ctx.add_basemap(
                 ax,
                 source=ctx.providers.CartoDB.Positron,
@@ -669,8 +667,8 @@ class VisualizationReporter:
                 attribution_size=8
             )
 
-            # Plot main map elements
-            catchment_gdf_web.boundary.plot(
+            # Plot the catchment boundary
+            catchment_gdf.boundary.plot(
                 ax=ax,
                 linewidth=2,
                 color='#2c3e50',
@@ -678,13 +676,17 @@ class VisualizationReporter:
                 zorder=2
             )
 
-            if 'StreamOrde' in river_gdf_web.columns:
-                min_order = river_gdf_web['StreamOrde'].min()
-                max_order = river_gdf_web['StreamOrde'].max()
-                river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
+            # Plot the river network with line width based on stream order
+            if 'StreamOrde' in river_gdf.columns:
+                # Normalize stream order for line width
+                min_order = river_gdf['StreamOrde'].min()
+                max_order = river_gdf['StreamOrde'].max()
+                river_gdf['line_width'] = river_gdf['StreamOrde'].apply(
                     lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
                 )
-                for idx, row in river_gdf_web.iterrows():
+                
+                # Plot rivers with varying width
+                for idx, row in river_gdf.iterrows():
                     ax.plot(
                         row.geometry.xy[0],
                         row.geometry.xy[1],
@@ -694,7 +696,7 @@ class VisualizationReporter:
                         alpha=0.8
                     )
             else:
-                river_gdf_web.plot(
+                river_gdf.plot(
                     ax=ax,
                     color='#3498db',
                     linewidth=1,
@@ -703,7 +705,8 @@ class VisualizationReporter:
                     alpha=0.8
                 )
 
-            pour_point_gdf_web.plot(
+            # Plot the pour point
+            pour_point_gdf.plot(
                 ax=ax,
                 color='#e74c3c',
                 marker='*',
@@ -712,59 +715,18 @@ class VisualizationReporter:
                 zorder=4
             )
 
-            # Create inset map
-            # Convert to geographic coordinates for inset map context
-            catchment_gdf_geo = catchment_gdf_web.to_crs(epsg=4326)
-            
-            # Calculate inset map bounds (wider area)
-            geo_bounds = catchment_gdf_geo.total_bounds
-            inset_buffer = max(
-                geo_bounds[2] - geo_bounds[0],
-                geo_bounds[3] - geo_bounds[1]
-            ) * 2  # Adjust multiplier for desired zoom level
-
-            # Set inset map extent
-            ax_inset.set_xlim([
-                geo_bounds[0] - inset_buffer,
-                geo_bounds[2] + inset_buffer
-            ])
-            ax_inset.set_ylim([
-                geo_bounds[1] - inset_buffer,
-                geo_bounds[3] + inset_buffer
-            ])
-
-            # Add contextily basemap to inset (using a different style for context)
-            ctx.add_basemap(
-                ax_inset,
-                source=ctx.providers.CartoDB.VoyagerNoLabels,
-                crs=4326
-            )
-
-            # Plot catchment on inset map
-            catchment_gdf_geo.boundary.plot(
-                ax=ax_inset,
-                color='red',
-                linewidth=2,
-                zorder=2
-            )
-
-            # Style inset map
-            ax_inset.set_xticks([])
-            ax_inset.set_yticks([])
-            for spine in ax_inset.spines.values():
-                spine.set_edgecolor('gray')
-                spine.set_linewidth(2)
-
-            # Add cartographic elements
+            # Add scale bar
             self._add_scale_bar(ax)
+
+            # Add north arrow
             self._add_north_arrow(ax)
-            self._add_info_box(ax, catchment_gdf_web)
 
             # Add title and legend
-            plt.suptitle(f'Delineated Domain: {self.config.get("DOMAIN_NAME")}', 
-                        fontsize=16, pad=20, fontweight='bold')
+            plt.title(f'Delineated Domain: {self.config.get("DOMAIN_NAME")}', 
+                    fontsize=16, pad=20, fontweight='bold')
             
             # Create custom legend
+
             legend_elements = [
                 Line2D([0], [0], color='#2c3e50', linewidth=2, label='Catchment Boundary'),
                 Line2D([0], [0], color='#3498db', linewidth=2, label='River Network'),
@@ -774,8 +736,11 @@ class VisualizationReporter:
             ax.legend(handles=legend_elements, loc='upper right', 
                     frameon=True, facecolor='white', framealpha=0.9)
 
-            # Remove axes from main map
+            # Remove axes
             ax.set_axis_off()
+
+            # Add custom text box with catchment information
+            self._add_info_box(ax, catchment_gdf)
 
             # Save the plot
             plt.savefig(plot_filename, dpi=300, bbox_inches='tight', pad_inches=0.1)
