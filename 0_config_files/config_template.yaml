@@ -53,7 +53,7 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
-CATCHMENT_SHP_NAME: Chena_HRUs_elevation.shp                   # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: default                                    # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -62,14 +62,14 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
-RIVER_BASINS_NAME: Chena_riverBasins_delineate.shp             # Name of river basin shapefile
+RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
-RIVER_NETWORK_SHP_NAME: Chena_riverNetwork_delineate.shp       # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: default                                # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.

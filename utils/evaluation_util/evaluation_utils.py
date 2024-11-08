@@ -5,7 +5,7 @@ import csv
 from hydrobm.calculate import calc_bm # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from pathlib import Path 
-#from pyviscous import viscous # type: ignore
+from pyviscous import viscous # type: ignore
 from SALib.analyze import sobol, rbd_fast # type: ignore
 from SALib.sample import sobol as sobol_sample # type: ignore
 from scipy.stats import spearmanr  # type: ignore
@@ -438,7 +438,9 @@ class Benchmarker:
 
     def _save_results(self, benchmark_flows: pd.DataFrame, scores: Dict[str, Any]):
         # Save benchmark flows
-        flows_path = self.project_dir / 'evaluation' / "benchmark_flows.csv"
+        flows_dir = self.project_dir / 'evaluation'
+        flows_dir.mkdir(parents=True, exist_ok=True)
+        flows_path = flows_dir / "benchmark_flows.csv"
         benchmark_flows.to_csv(flows_path)
         self.logger.info(f"Benchmark flows saved to {flows_path}")
 

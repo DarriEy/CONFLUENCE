@@ -118,11 +118,11 @@ class CONFLUENCE:
             (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
             (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
@@ -629,44 +629,63 @@ class CONFLUENCE:
             self.logger.error(f"Unexpected error in discretize_domain: {str(e)}")
             raise
 
+    @get_function_logger
+    def acquire_forcings(self):
+        # Initialize datatoolRunner class
+        dr = datatoolRunner(self.config, self.logger)
 
+        # Data directory
+        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+
+        # Make sure the directory exists
+        raw_data_dir.mkdir(parents = True, exist_ok = True)
+
+        # Get lat and lon lims
+        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+        latlims = f"{bbox[2]},{bbox[0]}"
+        lonlims = f"{bbox[1]},{bbox[3]}"
+
+        # Create the gistool command
+        datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = self.config['FORCING_VARIABLES'], start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
+        dr.execute_datatool_command(datatool_command)
 
     @get_function_logger
-    def subset_geofabric(self):
-        self.logger.info("Starting geofabric subsetting process")
+    def model_agnostic_pre_processing(self):
+        # Data directoris
+        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+        basin_averaged_data = self.project_dir / 'forcing' / 'basin_averaged_data'
+        catchment_intersection_dir = self.project_dir / 'shapefiles' / 'catchment_intersection'
 
-        # Create GeofabricSubsetter instance
-        subsetter = GeofabricSubsetter(self.config, self.logger)
+        # Make sure the new directories exists
+        basin_averaged_data.mkdir(parents = True, exist_ok = True)
+        catchment_intersection_dir.mkdir(parents = True, exist_ok = True)
+
+         # Initialize geospatialStatistics class
+        gs = geospatialStatistics(self.config, self.logger)
+
+        # Run resampling
+        gs.run_statistics()
         
-        try:
-            subset_basins, subset_rivers = subsetter.subset_geofabric()
-            self.logger.info("Geofabric subsetting completed successfully")
-            return subset_basins, subset_rivers
-        except Exception as e:
-            self.logger.error(f"Error during geofabric subsetting: {str(e)}")
-            return None
+        # Initialize forcingReampler class
+        fr = forcingResampler(self.config, self.logger)
 
+        # Run resampling
+        fr.run_resampling()
+       
     @get_function_logger
-    def delineate_lumped_watershed(self):
-        self.logger.info("Starting geofabric lumped delineation")
-        try:
-            delineator = LumpedWatershedDelineator(self.config, self.logger)
-            self.logger.info('Geofabric delineation completed successfully')
-            return delineator.delineate_lumped_watershed()
-        except Exception as e:
-            self.logger.error(f"Error during geofabric delineation: {str(e)}")
-            return None
+    def model_specific_pre_processing(self):
+        # Data directoris
+        model_input_dir = self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}_input"
 
-    @get_function_logger
-    def delineate_geofabric(self):
-        self.logger.info("Starting geofabric delineation")
-        try:
-            delineator = GeofabricDelineator(self.config, self.logger)
-            self.logger.info('Geofabric delineation completed successfully')
-            return delineator.delineate_geofabric()
-        except Exception as e:
-            self.logger.error(f"Error during geofabric delineation: {str(e)}")
-            return None
+        # Make sure the new directories exists
+        model_input_dir.mkdir(parents = True, exist_ok = True)
+
+        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
+            ssp = SummaPreProcessor_spatial(self.config, self.logger)
+            ssp.run_preprocessing()
+
+            mp = MizuRoutePreProcessor(self.config,self.logger)
+            mp.run_preprocessing()
 
     @get_function_logger
     def run_models(self):
@@ -733,6 +752,16 @@ class CONFLUENCE:
             self.logger.error(f"Error during observed data processing: {str(e)}")
             raise
 
+    @get_function_logger     
+    def run_benchmarking(self):
+        # Preprocess data for benchmarking
+        preprocessor = BenchmarkPreprocessor(self.config, self.logger)
+        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
+
+        # Run benchmarking
+        benchmarker = Benchmarker(self.config, self.logger)
+        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
+
     @get_function_logger
     def calibrate_model(self):
         # Calibrate the model using specified method and objectives
@@ -741,33 +770,7 @@ class CONFLUENCE:
         else:
             self.run_parallel_optimization()
 
-    def run_parallel_optimization(self):
-        
-        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
-
-        if shutil.which("srun"):
-            run_command = "srun"
-        elif shutil.which("mpirun"):
-            run_command = "mpirun"
-
-
-        cmd = [
-            run_command,
-            '-n', str(self.config.get('MPI_PROCESSES')),
-            'python',
-            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
-            str(config_path)
-        ]
-
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error running parallel optimization: {e}")
-
-    def run_ostrich_optimization(self):
-        optimizer = OstrichOptimizer(self.config, self.logger)
-        optimizer.run_optimization()
-
+    @get_function_logger
     def run_sensitivity_analysis(self):
         self.logger.info("Starting sensitivity analysis")
         sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
@@ -798,15 +801,70 @@ class CONFLUENCE:
             self.logger.info(f"  {metric}: score = {data['score']:.3f}")
         
         return results_file, best_combinations
-    
-    def run_benchmarking(self):
-        # Preprocess data for benchmarking
-        preprocessor = BenchmarkPreprocessor(self.config, self.logger)
-        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
 
-        # Run benchmarking
-        benchmarker = Benchmarker(self.config, self.logger)
-        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
+    @get_function_logger
+    def subset_geofabric(self):
+        self.logger.info("Starting geofabric subsetting process")
+
+        # Create GeofabricSubsetter instance
+        subsetter = GeofabricSubsetter(self.config, self.logger)
+        
+        try:
+            subset_basins, subset_rivers = subsetter.subset_geofabric()
+            self.logger.info("Geofabric subsetting completed successfully")
+            return subset_basins, subset_rivers
+        except Exception as e:
+            self.logger.error(f"Error during geofabric subsetting: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_lumped_watershed(self):
+        self.logger.info("Starting geofabric lumped delineation")
+        try:
+            delineator = LumpedWatershedDelineator(self.config, self.logger)
+            self.logger.info('Geofabric delineation completed successfully')
+            return delineator.delineate_lumped_watershed()
+        except Exception as e:
+            self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_geofabric(self):
+        self.logger.info("Starting geofabric delineation")
+        try:
+            delineator = GeofabricDelineator(self.config, self.logger)
+            self.logger.info('Geofabric delineation completed successfully')
+            return delineator.delineate_geofabric()
+        except Exception as e:
+            self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    def run_parallel_optimization(self):
+        
+        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
+
+        if shutil.which("srun"):
+            run_command = "srun"
+        elif shutil.which("mpirun"):
+            run_command = "mpirun"
+
+
+        cmd = [
+            run_command,
+            '-n', str(self.config.get('MPI_PROCESSES')),
+            'python',
+            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
+            str(config_path)
+        ]
+
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running parallel optimization: {e}")
+
+    def run_ostrich_optimization(self):
+        optimizer = OstrichOptimizer(self.config, self.logger)
+        optimizer.run_optimization()
 
     def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
         # List all the geotiff files for the years we're interested in
@@ -837,65 +895,6 @@ class CONFLUENCE:
             dst.write(mode_data, 1)
         
         print(f"Mode calculation complete. Result saved to {output_file}")
-
-    
-
-    def acquire_forcings(self):
-        # Initialize datatoolRunner class
-        dr = datatoolRunner(self.config, self.logger)
-
-        # Data directory
-        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
-
-        # Make sure the directory exists
-        raw_data_dir.mkdir(parents = True, exist_ok = True)
-
-        # Get lat and lon lims
-        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
-        latlims = f"{bbox[2]},{bbox[0]}"
-        lonlims = f"{bbox[1]},{bbox[3]}"
-
-        # Create the gistool command
-        datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = self.config['FORCING_VARIABLES'], start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
-        dr.execute_datatool_command(datatool_command)
-
-    def model_agnostic_pre_processing(self):
-        # Data directoris
-        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
-        basin_averaged_data = self.project_dir / 'forcing' / 'basin_averaged_data'
-        catchment_intersection_dir = self.project_dir / 'shapefiles' / 'catchment_intersection'
-
-        # Make sure the new directories exists
-        basin_averaged_data.mkdir(parents = True, exist_ok = True)
-        catchment_intersection_dir.mkdir(parents = True, exist_ok = True)
-
-         # Initialize geospatialStatistics class
-        gs = geospatialStatistics(self.config, self.logger)
-
-        # Run resampling
-        gs.run_statistics()
-        
-        # Initialize forcingReampler class
-        fr = forcingResampler(self.config, self.logger)
-
-        # Run resampling
-        fr.run_resampling()
-       
-
-    def model_specific_pre_processing(self):
-        # Data directoris
-        model_input_dir = self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}_input"
-
-        # Make sure the new directories exists
-        model_input_dir.mkdir(parents = True, exist_ok = True)
-
-        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
-            ssp = SummaPreProcessor_spatial(self.config, self.logger)
-            ssp.run_preprocessing()
-
-            mp = MizuRoutePreProcessor(self.config,self.logger)
-            mp.run_preprocessing()
-
 
 def main():
     parser = argparse.ArgumentParser(description='Run CONFLUENCE workflow')
