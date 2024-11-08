@@ -475,19 +475,10 @@ class CONFLUENCE:
             elif domain_method == 'delineate':
                 self.logger.info("Delineating watershed from elevation data")
                 result = self.delineate_geofabric(work_log_dir=work_log_dir)
-            
-            # Validate results
-            if result is None or (isinstance(result, tuple) and any(r is None for r in result)):
-                raise RuntimeError(f"Domain definition failed using method: {domain_method}")
                 
             # If we got here, result should be a tuple of (river_basins, river_network)
             river_basins, river_network = result
-            
-            self.logger.info(
-                f"Domain definition completed successfully using {domain_method} method\n"
-                f"Created {len(river_basins)} river basins and {len(river_network)} river segments"
-            )
-            
+                        
             return river_basins, river_network
             
         except ValueError as e:
