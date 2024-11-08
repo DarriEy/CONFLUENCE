@@ -547,7 +547,7 @@ class CONFLUENCE:
             # Perform discretization
             hru_shapefile = domain_discretizer.discretize_domain()
             
-            return result
+            return hru_shapefile
             
         except ValueError as e:
             self.logger.error(f"Configuration error in discretize_domain: {str(e)}")
