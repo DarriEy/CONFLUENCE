@@ -946,7 +946,7 @@ class VisualizationReporter:
             ax.set_ylim([plot_bounds[1], plot_bounds[3]])
 
             # Add the global basemap
-            self.plot_with_global_basemap(ax, plot_bounds)
+            #self.plot_with_global_basemap(ax, plot_bounds)
 
             # Determine the classification column and color scheme
             if discretization_method.lower() == 'elevation':
