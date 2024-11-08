@@ -90,6 +90,7 @@ LAND_CLASS_NAME: default                                       # Name of land cl
 RADIATION_PATH: default                                        # Path to radiation classification raster. If 'default', uses root_path/domain_[name]/attributes/radiation 
 SOURCE_GEOFABRIC_BASINS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/cat_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
 SOURCE_GEOFABRIC_RIVERS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/riv_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                  # Path to source geofabric rivers
+BASEMAP_PATH: /home/darri/projects/def-mclark-ab/darri/data/basemap/global_basemap.tif
 
 # Tool paths
 DATATOOL_PATH: default                                         # Path to datatool executable 

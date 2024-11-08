@@ -10,6 +10,7 @@ import matplotlib.dates as mdates # type: ignore
 from matplotlib.gridspec import GridSpec # type: ignore
 from matplotlib.colors import LinearSegmentedColormap # type: ignore
 import traceback
+import rasterio # type: ignore
 
 # New imports for domain plotting
 import contextily as ctx # type: ignore
@@ -806,7 +807,59 @@ class VisualizationReporter:
                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
                 fontsize=10,
                 verticalalignment='bottom')
+   
+    def plot_with_global_basemap(self, ax, bounds):
+        """
+        Adds the global basemap to a matplotlib axis.
         
+        Args:
+            ax: Matplotlib axis
+            bounds: [xmin, ymin, xmax, ymax] in EPSG:3857
+        """
+        try:
+            
+            basemap_path = Path(self.config['BASEMAP_PATH'])
+            
+            if basemap_path is None:
+                self.logger.warning("Global basemap not found in any standard location. Plotting without basemap.")
+                return
+                
+            self.logger.info(f"Using global basemap from {basemap_path}")
+            
+            with rasterio.open(basemap_path) as src:
+                # Calculate window to read based on bounds
+                window = rasterio.windows.from_bounds(
+                    bounds[0], bounds[1],
+                    bounds[2], bounds[3],
+                    src.transform
+                )
+                
+                # Calculate output shape maintaining aspect ratio
+                aspect_ratio = (bounds[2] - bounds[0]) / (bounds[3] - bounds[1])
+                target_width = 2048  # Adjust this for performance/quality balance
+                target_height = int(target_width / aspect_ratio)
+                
+                # Read data
+                data = src.read(
+                    window=window,
+                    out_shape=(3, target_height, target_width)
+                )
+                
+                # Plot the basemap
+                ax.imshow(
+                    np.transpose(data, (1, 2, 0)),
+                    extent=[bounds[0], bounds[2], bounds[1], bounds[3]],
+                    interpolation='bilinear',
+                    zorder=-1
+                )
+                
+                self.logger.info("Global basemap added successfully")
+                
+        except Exception as e:
+            self.logger.warning(f"Error adding global basemap: {str(e)}")
+            self.logger.warning("Continuing without basemap")
+
+    
     def plot_discretized_domain(self, discretization_method: str) -> str:
         """
         Creates a map visualization of the discretized domain with a clean, professional style.
@@ -846,30 +899,31 @@ class VisualizationReporter:
             pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
             pour_point_gdf = gpd.read_file(pour_point_path)
 
-            # Create figure and axis
-            fig, ax = plt.subplots(figsize=(15, 15))
+            # Create figure and axis with high DPI for better quality
+            fig, ax = plt.subplots(figsize=(15, 15), dpi=300)
 
-            # Reproject everything to Web Mercator for contextily basemap
+            # Reproject everything to Web Mercator
             hru_gdf_web = hru_gdf.to_crs(epsg=3857)
             river_gdf_web = river_gdf.to_crs(epsg=3857)
             pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
 
-            # Calculate buffer for extent (10% of the HRU bounds)
+            # Calculate bounds with buffer
             bounds = hru_gdf_web.total_bounds
             buffer_x = (bounds[2] - bounds[0]) * 0.1
             buffer_y = (bounds[3] - bounds[1]) * 0.1
-            
-            # Set map extent with buffer
-            ax.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
-            ax.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
+            plot_bounds = [
+                bounds[0] - buffer_x,
+                bounds[1] - buffer_y,
+                bounds[2] + buffer_x,
+                bounds[3] + buffer_y
+            ]
 
-            # Add the basemap
-            ctx.add_basemap(
-                ax,
-                source=ctx.providers.CartoDB.Positron,
-                zoom='auto',
-                attribution_size=8
-            )
+            # Set map extent
+            ax.set_xlim([plot_bounds[0], plot_bounds[2]])
+            ax.set_ylim([plot_bounds[1], plot_bounds[3]])
+
+            # Add the global basemap
+            self.plot_with_global_basemap(ax, plot_bounds)
 
             # Determine the classification column and color scheme
             if discretization_method.lower() == 'elevation':
