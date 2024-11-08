@@ -375,8 +375,7 @@ class CONFLUENCE:
                 start_date=f"{start_year}-01-01",
                 end_date=f"{end_year}-01-01"
             )
-            if not gr.execute_gistool_command(gistool_command_landcover):
-                raise RuntimeError("Failed to acquire land cover data")
+            gr.execute_gistool_command(gistool_command_landcover)
 
             # Calculate temporal mode for land cover if multiple years
             land_name = self.config.get('LAND_CLASS_NAME', 
@@ -401,8 +400,7 @@ class CONFLUENCE:
                 lon_lims=lonlims,
                 variables='soil_classes'
             )
-            if not gr.execute_gistool_command(gistool_command_soilclass):
-                raise RuntimeError("Failed to acquire soil classification data")
+            gr.execute_gistool_command(gistool_command_soilclass)
                 
             output_paths['soilclass'] = dirs['soil'] / 'soil_classes.tif'
 
