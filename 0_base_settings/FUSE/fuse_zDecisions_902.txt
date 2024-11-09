@@ -1,0 +1,56 @@
+(a10,1x,a5)          ! format code (model component, model decision)
+multiplc_e RFERR     ! (1) rainfall error
+onestate_1 ARCH1     ! (2) upper-layer architecture
+fixedsiz_2 ARCH2     ! (3) lower-layer architecture and baseflow
+arno_x_vic QSURF     ! (4) surface runoff
+perc_w2sat QPERC     ! (5) percolation
+rootweight ESOIL     ! (6) evaporation
+intflwnone QINTF     ! (7) interflow
+rout_gamma Q_TDH     ! (8) time delay in runoff
+temp_index SNOWM     ! (9) snow model
+0                    ! naming convention for model (0=full, 1=index + numrx)
+---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+(nothing is read below this point) fuseConfigID=160
+---------------------------------------------------------------------------
+(1) rainfall error
+additive_e      ! additive rainfall error
+multiplc_e      ! multiplicative rainfall error
+---------------------------------------------------------------------------
+(2) upper-layer architecture
+tension1_1      ! upper layer broken up into tension and free storage
+tension2_1      ! tension storage sub-divided into recharge and excess
+onestate_1      ! upper layer defined by a single state variable
+---------------------------------------------------------------------------
+(3) lower-layer architecture and baseflow
+tens2pll_2      ! tension reservoir plus two parallel tanks
+unlimfrc_2      ! baseflow resvr of unlimited size (0-HUGE), frac rate
+unlimpow_2      ! baseflow resvr of unlimited size (0-HUGE), power recession
+fixedsiz_2      ! baseflow reservoir of fixed size
+---------------------------------------------------------------------------
+(4) surface runoff
+arno_x_vic      ! ARNO/Xzang/VIC parameterization (upper zone control)
+prms_varnt      ! PRMS variant (fraction of upper tension storage)
+tmdl_param      ! TOPMODEL parameterization (only valid for TOPMODEL qb)
+---------------------------------------------------------------------------
+(5) percolation
+perc_f2sat      ! water from (field cap to sat) avail for percolation
+perc_w2sat      ! water from (wilt pt to sat) avail for percolation
+perc_lower      ! perc defined by moisture content in lower layer (SAC)
+---------------------------------------------------------------------------
+(6) evaporation
+sequential      ! sequential evaporation model
+rootweight      ! root weighting
+---------------------------------------------------------------------------
+(7) interflow
+intflwnone      ! no interflow
+intflwsome      ! interflow
+---------------------------------------------------------------------------
+(8) time delay in runoff
+rout_gamma      ! use a Gamma distribution with shape parameter = 2.5
+no_routing      ! no routing
+---------------------------------------------------------------------------
+(9) snow model
+temp_index      ! temperature index snow model
+no_snowmod      ! no snow model
+---------------------------------------------------------------------------

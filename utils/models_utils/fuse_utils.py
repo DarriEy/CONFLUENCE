@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import subprocess
+from shutil import rmtree, copyfile
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import numpy as np # type: ignore
@@ -10,6 +11,7 @@ import geopandas as gpd # type: ignore
 import xarray as xr # type: ignore
 import shutil
 from datetime import datetime
+import rasterio # type: ignore
 
 class FUSEPreProcessor:
     """
@@ -44,8 +46,8 @@ class FUSEPreProcessor:
             self.create_directories()
             self.copy_base_settings()
             self.prepare_forcing_data()
-            self.create_structure_file()
-            self.create_parameter_file()
+            self.create_elevation_bands()  
+            self.create_filemanager()
             self.logger.info("FUSE preprocessing completed successfully")
         except Exception as e:
             self.logger.error(f"Error during FUSE preprocessing: {str(e)}")
@@ -61,6 +63,57 @@ class FUSEPreProcessor:
         for dir_path in dirs_to_create:
             dir_path.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Created directory: {dir_path}")
+
+    def copy_base_settings(self):
+        """
+        Copy FUSE base settings from the source directory to the project's settings directory.
+        Updates the model ID in the decisions file name to match the experiment ID.
+
+        This method performs the following steps:
+        1. Determines the source directory for base settings
+        2. Determines the destination directory for settings
+        3. Creates the destination directory if it doesn't exist
+        4. Copies all files from the source directory to the destination directory
+        5. Renames the decisions file with the appropriate experiment ID
+
+        Raises:
+            FileNotFoundError: If the source directory or any source file is not found.
+            PermissionError: If there are permission issues when creating directories or copying files.
+        """
+        self.logger.info("Copying FUSE base settings")
+        
+        base_settings_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'FUSE'
+        settings_path = self._get_default_path('SETTINGS_FUSE_PATH', 'settings/FUSE')
+        
+        try:
+            settings_path.mkdir(parents=True, exist_ok=True)
+            
+            for file in os.listdir(base_settings_path):
+                source_file = base_settings_path / file
+                
+                # Handle the decisions file specially
+                if 'fuse_zDecisions_' in file:
+                    # Create new filename with experiment ID
+                    new_filename = file.replace('902', self.config.get('EXPERIMENT_ID'))
+                    dest_file = settings_path / new_filename
+                    self.logger.debug(f"Renaming decisions file from {file} to {new_filename}")
+                else:
+                    dest_file = settings_path / file
+                
+                copyfile(source_file, dest_file)
+                self.logger.debug(f"Copied {source_file} to {dest_file}")
+            
+            self.logger.info(f"FUSE base settings copied to {settings_path}")
+            
+        except FileNotFoundError as e:
+            self.logger.error(f"Source file or directory not found: {e}")
+            raise
+        except PermissionError as e:
+            self.logger.error(f"Permission error when copying files: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error copying base settings: {e}")
+            raise
 
     def calculate_pet_oudin(self, temp_data: xr.DataArray, lat: float) -> xr.DataArray:
         """
@@ -116,117 +169,425 @@ class FUSEPreProcessor:
         return pet
 
     def prepare_forcing_data(self):
-        """Prepare forcing data for FUSE model."""
-        self.logger.info("Preparing forcing data for FUSE")
-        
-        # Read basin-averaged forcing data
-        forcing_files = sorted(self.forcing_basin_path.glob('*.nc'))
-        if not forcing_files:
-            raise FileNotFoundError("No forcing files found in basin-averaged data directory")
-        
-        # Open and concatenate all forcing files
-        ds = xr.open_mfdataset(forcing_files)
-        
-        # Get catchment centroid latitude for PET calculation
-        catchment = gpd.read_file(self.catchment_path / self.catchment_name)
-        mean_lat = catchment[self.config.get('CATCHMENT_SHP_LAT')].mean()
-        
-        # Calculate PET
-        pet = self.calculate_pet_oudin(ds['airtemp'], mean_lat)
-        
-        # Prepare FUSE forcing data
-        fuse_forcing = xr.Dataset({
-            'P': ds['pptrate'] * 86400,  # Convert from mm/s to mm/day
-            'T': ds['airtemp'] - 273.15,  # Convert from K to °C
-            'PET': pet
-        })
-        
-        # Add metadata
-        fuse_forcing.P.attrs = {'units': 'mm/day', 'long_name': 'Precipitation'}
-        fuse_forcing.T.attrs = {'units': 'degC', 'long_name': 'Air temperature'}
-        
-        # Save forcing data
-        output_file = self.forcing_fuse_path / f"{self.domain_name}_FUSE_forcing.nc"
-        fuse_forcing.to_netcdf(output_file)
-        self.logger.info(f"Forcing data prepared and saved to: {output_file}")
-
-    def create_structure_file(self):
-        """Create FUSE structure file based on configuration."""
-        self.logger.info("Creating FUSE structure file")
-        structure_config = {
-            'SACRAMENTO': {
-                'upper_tension': 1,
-                'upper_free': 1,
-                'lower_tension': 2,
-                'lower_free': 2,
-                'routing': 'gamma'
-            },
-            'TOPMODEL': {
-                'upper_tension': 1,
-                'upper_free': 0,
-                'lower_tension': 0,
-                'lower_free': 1,
-                'routing': 'topmodel'
-            },
-            'PRMS': {
-                'upper_tension': 1,
-                'upper_free': 1,
-                'lower_tension': 1,
-                'lower_free': 1,
-                'routing': 'prms'
-            }
-        }
-        
-        model_structure = self.config.get('FUSE_MODEL_STRUCTURE', 'SACRAMENTO')
-        if model_structure not in structure_config:
-            raise ValueError(f"Unsupported FUSE model structure: {model_structure}")
-        
-        structure = structure_config[model_structure]
-        structure_file = self.fuse_setup_dir / 'structure.txt'
-        
-        with open(structure_file, 'w') as f:
-            f.write(f"! FUSE model structure configuration for {model_structure}\n")
-            for key, value in structure.items():
-                f.write(f"{key:<20} {value}\n")
-        
-        self.logger.info(f"Structure file created: {structure_file}")
-
-    def create_parameter_file(self):
-        """Create FUSE parameter file."""
-        self.logger.info("Creating FUSE parameter file")
-        
-        # Define default parameter ranges
-        param_ranges = {
-            'MAXWATER_1': (1.0, 1000.0),   # Maximum storage in upper soil layer [mm]
-            'MAXWATER_2': (1.0, 1000.0),   # Maximum storage in lower soil layer [mm]
-            'FRACTEN_1': (0.05, 0.95),     # Fraction of tension storage in upper layer [-]
-            'FRACTEN_2': (0.05, 0.95),     # Fraction of tension storage in lower layer [-]
-            'PERCFRAC': (0.05, 0.95),      # Percolation fraction [-]
-            'FPRIMQB': (0.001, 0.1),       # Baseflow scaling parameter [-]
-            'QB_POWR': (1.0, 10.0),        # Baseflow exponent [-]
-            'K_QUICK': (0.001, 0.5),       # Quick flow routing parameter [1/day]
-            'K_SLOW': (0.0001, 0.1),       # Slow flow routing parameter [1/day]
-            'MAXBASE': (0.5, 10.0),        # Maximum baseflow rate [mm/day]
-        }
-        
-        param_file = self.fuse_setup_dir / 'params.txt'
-        with open(param_file, 'w') as f:
-            f.write("! FUSE model parameters\n")
-            f.write("! param_name    default   minimum   maximum\n")
-            f.write("! ==================================\n")
+        try:
+            # Read and process forcing data
+            forcing_files = sorted(self.forcing_basin_path.glob('*.nc'))
+            if not forcing_files:
+                raise FileNotFoundError("No forcing files found in basin-averaged data directory")
             
-            for param, (min_val, max_val) in param_ranges.items():
-                default = (min_val + max_val) / 2  # Use middle of range as default
-                f.write(f"{param:<12} {default:8.3f} {min_val:8.3f} {max_val:8.3f}\n")
+            # Debug print the forcing files found
+            self.logger.info(f"Found forcing files: {[f.name for f in forcing_files]}")
+            
+            # Open and concatenate all forcing files
+            ds = xr.open_mfdataset(forcing_files)
+            
+            # Average across HRUs if needed
+            ds = ds.mean(dim='hru')
+            
+            # Convert forcing data to daily resolution
+            ds = ds.resample(time='D').mean()
+            
+            # Load streamflow observations
+            obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
+            
+            # Read observations - explicitly rename 'datetime' column to 'time'
+            obs_df = pd.read_csv(obs_path)
+            obs_df['time'] = pd.to_datetime(obs_df['datetime'])
+            obs_df = obs_df.drop('datetime', axis=1)
+            obs_df.set_index('time', inplace=True)
+            obs_df.index = obs_df.index.tz_localize(None)
+            
+            # Convert to daily resolution
+            obs_daily = obs_df.resample('D').mean()
+            
+            # Create observation dataset with explicit time dimension
+            obs_ds = xr.Dataset(
+                {'q_obs': ('time', obs_daily['discharge_cms'].values)},
+                coords={'time': obs_daily.index.values}
+            )
+
+            # Read catchment and get centroid
+            catchment = gpd.read_file(self.catchment_path / self.catchment_name)
+            mean_lon, mean_lat = self._get_catchment_centroid(catchment)
+            
+            # Calculate PET using Oudin formula
+            pet = self.calculate_pet_oudin(ds['airtemp'], mean_lat)
+
+            # Find overlapping time period
+            start_time = max(ds.time.min().values, obs_ds.time.min().values)
+            end_time = min(ds.time.max().values, obs_ds.time.max().values)
+            
+            # Create explicit time index
+            time_index = pd.date_range(start=start_time, end=end_time, freq='D')
+            
+            # Select the common time period and align to the new time index
+            ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+
+            # Convert time to days since 1970-01-01
+            time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
+
+            # Create FUSE forcing data with correct dimensions
+            ds_coords = {
+                'longitude': [mean_lon],
+                'latitude': [mean_lat],
+                'time': time_days
+            }
+            
+            # Create the dataset with dimensions first
+            fuse_forcing = xr.Dataset(
+                coords={
+                    'longitude': ('longitude', ds_coords['longitude']),
+                    'latitude': ('latitude', ds_coords['latitude']),
+                    'time': ('time', ds_coords['time'])
+                }
+            )
+
+            # Add coordinate attributes (without _FillValue)
+            fuse_forcing.longitude.attrs = {
+                'units': 'degreesE',
+                'long_name': 'longitude'
+            }
+            fuse_forcing.latitude.attrs = {
+                'units': 'degreesN',
+                'long_name': 'latitude'
+            }
+            fuse_forcing.time.attrs = {
+                'units': 'days since 1970-01-01',
+                'long_name': 'time'
+            }
+
+            # Prepare data variables
+            var_mapping = [
+                ('pr', ds['pptrate'].values * 86400, 'precipitation', 'mm/day', 'Mean daily precipitation'),
+                ('temp', ds['airtemp'].values - 273.15, 'temperature', 'degC', 'Mean daily temperature'),
+                ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet'),
+                ('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge')
+            ]
+
+            encoding = {}
+            
+            for var_name, data, _, units, long_name in var_mapping:
+                if np.any(np.isnan(data)):
+                    data = np.nan_to_num(data, nan=-9999.0)
+                
+                fuse_forcing[var_name] = xr.DataArray(
+                    data.reshape(-1, 1, 1),
+                    dims=['time', 'latitude', 'longitude'],
+                    coords=fuse_forcing.coords,
+                    attrs={
+                        'units': units,
+                        'long_name': long_name
+                    }
+                )
+                
+                encoding[var_name] = {
+                    '_FillValue': -9999.0,
+                    'dtype': 'float32'
+                }
+
+            # Add dimension encoding
+            encoding.update({
+                'longitude': {'dtype': 'float64'},
+                'latitude': {'dtype': 'float64'},
+                'time': {'dtype': 'float64'}
+            })
+
+            # Save forcing data
+            output_file = self.forcing_fuse_path / f"{self.domain_name}_input.nc"
+            fuse_forcing.to_netcdf(
+                output_file, 
+                unlimited_dims=['time'],
+                encoding=encoding,
+                format='NETCDF4'
+            )
+
+            return output_file
+
+        except Exception as e:
+            self.logger.error(f"Error preparing forcing data: {str(e)}")
+            raise
         
-        self.logger.info(f"Parameter file created: {param_file}")
+    def create_filemanager(self):
+        """
+        Create FUSE file manager file by modifying template with project-specific settings.
+        """
+        self.logger.info("Creating FUSE file manager file")
+
+        # Define source and destination paths
+        template_path = self.fuse_setup_dir / 'fm_catch.txt'
+        
+        # Define the paths to replace
+        settings = {
+            'SETNGS_PATH': str(self.project_dir / 'settings' / 'FUSE') + '/',
+            'INPUT_PATH': str(self.project_dir / 'forcing' / 'FUSE_input') + '/',
+            'OUTPUT_PATH': str(self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FUSE') + '/',
+            'METRIC': self.config['OPTIMIZATION_METRIC'],
+            'MAXN': str(self.config['NUMBER_OF_ITERATIONS']),
+            'FMODEL_ID': self.config['EXPERIMENT_ID'],
+            'M_DECISIONS': f"fuse_zDecisions_{self.config['EXPERIMENT_ID']}.txt"
+        }
+
+        # Get and format dates from config
+        start_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_START'), '%Y-%m-%d %H:%M')
+        end_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_END'), '%Y-%m-%d %H:%M')
+        
+        date_settings = {
+            'date_start_sim': start_time.strftime('%Y-%m-%d'),
+            'date_end_sim': end_time.strftime('%Y-%m-%d'),
+            'date_start_eval': start_time.strftime('%Y-%m-%d'),  # Using same dates for evaluation period
+            'date_end_eval': end_time.strftime('%Y-%m-%d')       # Can be modified if needed
+        }
+
+        try:
+            # Read the template file
+            with open(template_path, 'r') as f:
+                lines = f.readlines()
+
+            # Process each line
+            modified_lines = []
+            for line in lines:
+                line_modified = line
+                
+                # Replace paths
+                for path_key, new_path in settings.items():
+                    if path_key in line:
+                        # Find the content between quotes and replace it
+                        start = line.find("'") + 1
+                        end = line.find("'", start)
+                        if start > 0 and end > 0:
+                            line_modified = line[:start] + new_path + line[end:]
+                            self.logger.debug(f"Updated {path_key} path to: {new_path}")
+
+                # Replace dates
+                for date_key, new_date in date_settings.items():
+                    if date_key in line:
+                        # Find the content between quotes and replace it
+                        start = line.find("'") + 1
+                        end = line.find("'", start)
+                        if start > 0 and end > 0:
+                            line_modified = line[:start] + new_date + line[end:]
+                            self.logger.debug(f"Updated {date_key} to: {new_date}")
+
+                modified_lines.append(line_modified)
+
+            # Write the modified file
+            with open(template_path, 'w') as f:
+                f.writelines(modified_lines)
+
+            self.logger.info(f"FUSE file manager created at: {template_path}")
+
+        except Exception as e:
+            self.logger.error(f"Error creating FUSE file manager: {str(e)}")
+            raise
+
+    def _get_catchment_centroid(self, catchment_gdf):
+        """
+        Helper function to correctly calculate catchment centroid with proper CRS handling.
+        
+        Args:
+            catchment_gdf (gpd.GeoDataFrame): The catchment GeoDataFrame
+        
+        Returns:
+            tuple: (longitude, latitude) of the catchment centroid
+        """
+        # Ensure we have the CRS information
+        if catchment_gdf.crs is None:
+            self.logger.warning("Catchment CRS is not defined, assuming EPSG:4326")
+            catchment_gdf.set_crs(epsg=4326, inplace=True)
+            
+        # Convert to geographic coordinates if not already
+        catchment_geo = catchment_gdf.to_crs(epsg=4326)
+        
+        # Get a rough center point (using bounds instead of centroid)
+        bounds = catchment_geo.total_bounds  # (minx, miny, maxx, maxy)
+        center_lon = (bounds[0] + bounds[2]) / 2
+        center_lat = (bounds[1] + bounds[3]) / 2
+        
+        # Calculate UTM zone from the center point
+        utm_zone = int((center_lon + 180) / 6) + 1
+        epsg_code = f"326{utm_zone:02d}" if center_lat >= 0 else f"327{utm_zone:02d}"
+        
+        # Project to appropriate UTM zone
+        catchment_utm = catchment_geo.to_crs(f"EPSG:{epsg_code}")
+        
+        # Calculate centroid in UTM coordinates
+        centroid_utm = catchment_utm.geometry.centroid.iloc[0]
+        
+        # Create a GeoDataFrame with the centroid point
+        centroid_gdf = gpd.GeoDataFrame(
+            geometry=[centroid_utm], 
+            crs=f"EPSG:{epsg_code}"
+        )
+        
+        # Convert back to geographic coordinates
+        centroid_geo = centroid_gdf.to_crs(epsg=4326)
+        
+        # Extract coordinates
+        lon, lat = centroid_geo.geometry.x[0], centroid_geo.geometry.y[0]
+        
+        self.logger.info(f"Calculated catchment centroid: {lon:.6f}°E, {lat:.6f}°N (UTM Zone {utm_zone})")
+        
+        return lon, lat
+
+    def create_elevation_bands(self):
+        """
+        Create elevation bands netCDF file for FUSE input.
+        Uses DEM to calculate elevation distribution and area fractions.
+        """
+        self.logger.info("Creating elevation bands file for FUSE")
+
+        try:
+            # Read DEM
+            dem_path = self.project_dir / 'attributes' / 'elevation' / 'dem' / f"domain_{self.domain_name}_elv.tif"
+            with rasterio.open(dem_path) as src:
+                dem = src.read(1)
+                transform = src.transform
+
+            # Read catchment and get centroid
+            catchment = gpd.read_file(self.catchment_path / self.catchment_name)
+            lon, lat = self._get_catchment_centroid(catchment)
+
+            # Mask DEM with catchment boundary
+            with rasterio.open(dem_path) as src:
+                out_image, out_transform = rasterio.mask.mask(src, catchment.geometry, crop=True)
+                masked_dem = out_image[0]
+                masked_dem = masked_dem[masked_dem != src.nodata]
+
+            # Calculate elevation bands
+            min_elev = np.floor(np.min(masked_dem))
+            max_elev = np.ceil(np.max(masked_dem))
+            band_size = 100  # 100m elevation bands
+            num_bands = int((max_elev - min_elev) / band_size) + 1
+
+            # Calculate area fractions and mean elevations
+            area_fracs = []
+            mean_elevs = []
+            total_pixels = len(masked_dem)
+
+            for i in range(num_bands):
+                lower = min_elev + i * band_size
+                upper = lower + band_size
+                band_pixels = np.sum((masked_dem >= lower) & (masked_dem < upper))
+                area_frac = band_pixels / total_pixels
+                mean_elev = lower + band_size/2
+
+                if area_frac > 0:  # Only include bands that have area
+                    area_fracs.append(area_frac)
+                    mean_elevs.append(mean_elev)
+
+            # Normalize area fractions to sum to 1
+            area_fracs = np.array(area_fracs) / np.sum(area_fracs)
+            mean_elevs = np.array(mean_elevs)
+
+            # Create netCDF file
+            output_file = self.forcing_fuse_path / f"{self.domain_name}_elev_bands.nc"
+            
+            # Create dataset with dimensions first
+            ds = xr.Dataset(
+                coords={
+                    'longitude': ('longitude', [lon]),
+                    'latitude': ('latitude', [lat]),
+                    'elevation_band': ('elevation_band', range(1, len(area_fracs) + 1))
+                }
+            )
+            
+            # Add coordinate attributes (without _FillValue)
+            ds.longitude.attrs = {
+                'units': 'degreesE',
+                'long_name': 'longitude'
+            }
+            ds.latitude.attrs = {
+                'units': 'degreesN',
+                'long_name': 'latitude'
+            }
+            ds.elevation_band.attrs = {
+                'units': '-',
+                'long_name': 'elevation_band'
+            }
+
+            # Define variables and their attributes
+            variables = {
+                'area_frac': {
+                    'data': area_fracs,
+                    'attrs': {
+                        'units': '-',
+                        'long_name': 'Fraction of the catchment covered by each elevation band'
+                    }
+                },
+                'mean_elev': {
+                    'data': mean_elevs,
+                    'attrs': {
+                        'units': 'm asl',
+                        'long_name': 'Mid-point elevation of each elevation band'
+                    }
+                },
+                'prec_frac': {
+                    'data': area_fracs,  # Same as area_frac for now
+                    'attrs': {
+                        'units': '-',
+                        'long_name': 'Fraction of catchment precipitation that falls on each elevation band - same as area_frac'
+                    }
+                }
+            }
+
+            # Create encoding dictionary
+            encoding = {
+                'longitude': {'dtype': 'float64'},
+                'latitude': {'dtype': 'float64'},
+                'elevation_band': {'dtype': 'int32'}
+            }
+
+            # Add variables to dataset
+            for var_name, var_info in variables.items():
+                ds[var_name] = xr.DataArray(
+                    var_info['data'].reshape(-1, 1, 1),
+                    dims=['elevation_band', 'latitude', 'longitude'],
+                    coords=ds.coords,
+                    attrs=var_info['attrs']
+                )
+                encoding[var_name] = {
+                    '_FillValue': -9999.0,
+                    'dtype': 'float32'
+                }
+
+            # Save to netCDF file
+            output_file = self.forcing_fuse_path / f"{self.domain_name}_elev_bands.nc"
+            ds.to_netcdf(
+                output_file,
+                encoding=encoding,
+                format='NETCDF4'
+            )
+
+            return output_file
+
+        except Exception as e:
+            self.logger.error(f"Error creating elevation bands file: {str(e)}")
+            raise
 
     def _get_default_path(self, path_key: str, default_subpath: str) -> Path:
-        """Get path from config or use default based on project directory."""
-        path_value = self.config.get(path_key)
-        if path_value == 'default' or path_value is None:
-            return self.project_dir / default_subpath
-        return Path(path_value)
+        """
+        Get a path from config or use a default based on the project directory.
+
+        Args:
+            path_key (str): The key to look up in the config dictionary.
+            default_subpath (str): The default subpath to use if the config value is 'default'.
+
+        Returns:
+            Path: The resolved path.
+
+        Raises:
+            KeyError: If the path_key is not found in the config.
+        """
+        try:
+            path_value = self.config.get(path_key)
+            if path_value == 'default' or path_value is None:
+                return self.project_dir / default_subpath
+            return Path(path_value)
+        except KeyError:
+            self.logger.error(f"Config key '{path_key}' not found")
+            raise
 
 class FUSERunner:
     """
@@ -266,12 +627,15 @@ class FUSERunner:
             # Create output directory
             self.output_path.mkdir(parents=True, exist_ok=True)
             
-            # Prepare run environment
-            self._prepare_run_environment()
+            # Execute FUSE for default
+            success = self._execute_fuse('run_def')
             
-            # Execute FUSE
-            success = self._execute_fuse()
-            
+            # Calibrate FUSE 
+            success = self._execute_fuse('calib_sce')
+
+            # Excute FUSE for best parameters
+            success = self._execute_fuse('run_best')
+
             if success:
                 # Process outputs
                 self._process_outputs()
@@ -298,70 +662,7 @@ class FUSERunner:
             return self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "FUSE"
         return Path(self.config.get('EXPERIMENT_OUTPUT_FUSE'))
 
-    def _prepare_run_environment(self):
-        """Prepare the environment for FUSE execution."""
-        self.logger.info("Preparing FUSE run environment")
-        
-        # Create run directory structure
-        run_dirs = {
-            'input': self.output_path / 'input',
-            'output': self.output_path / 'output',
-            'settings': self.output_path / 'settings'
-        }
-        
-        for dir_path in run_dirs.values():
-            dir_path.mkdir(parents=True, exist_ok=True)
-        
-        # Copy necessary files to run directory
-        file_mappings = {
-            self.forcing_fuse_path / f"{self.domain_name}_FUSE_forcing.nc": 
-                run_dirs['input'] / 'forcing.nc',
-            self.fuse_setup_dir / 'structure.txt': 
-                run_dirs['settings'] / 'structure.txt',
-            self.fuse_setup_dir / 'params.txt': 
-                run_dirs['settings'] / 'params.txt'
-        }
-        
-        for src, dst in file_mappings.items():
-            shutil.copy2(src, dst)
-            self.logger.info(f"Copied {src} to {run_dirs['settings']}")
-        
-        # Create FUSE control file
-        self._create_control_file(run_dirs['settings'] / 'control.txt')
-
-    def _create_control_file(self, control_file_path: Path):
-        """
-        Create FUSE control file with run settings.
-        
-        Args:
-            control_file_path (Path): Path to write the control file
-        """
-        self.logger.info("Creating FUSE control file")
-        
-        # Get time period from config
-        start_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_START'), '%Y-%m-%d %H:%M')
-        end_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_END'), '%Y-%m-%d %H:%M')
-        
-        control_settings = {
-            'START_TIME': start_time.strftime('%Y-%m-%d'),
-            'END_TIME': end_time.strftime('%Y-%m-%d'),
-            'TIME_STEP': '1',  # Daily timestep
-            'OUTPUT_TIMESTEP': self.config.get('FUSE_OUTPUT_TIMESTEP', '1'),
-            'SPATIAL_MODE': 'lumped' if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' else 'distributed',
-            'SNOW_MODULE': self.config.get('FUSE_SNOW_MODULE', 'temperature_index'),
-            'OPTIMIZATION_METHOD': self.config.get('FUSE_OPTIMIZATION_METHOD', 'none'),
-            'WARMUP_PERIOD': self.config.get('FUSE_WARMUP_DAYS', '365')
-        }
-        
-        with open(control_file_path, 'w') as f:
-            f.write("! FUSE Control File\n")
-            f.write("! Generated by CONFLUENCE\n")
-            f.write("! ======================\n\n")
-            
-            for key, value in control_settings.items():
-                f.write(f"{key:<20} {value}\n")
-
-    def _execute_fuse(self) -> bool:
+    def _execute_fuse(self, mode) -> bool:
         """
         Execute the FUSE model.
         
@@ -372,12 +673,13 @@ class FUSERunner:
         
         # Construct command
         fuse_exe = self.fuse_path / self.config.get('FUSE_EXE', 'fuse.exe')
-        control_file = self.output_path / 'settings' / 'control.txt'
+        control_file = self.project_dir / 'settings' / 'FUSE' / self.config['SETTINGS_FUSE_FILEMANAGER']
         
         command = [
             str(fuse_exe),
-            '-c', str(control_file),
-            '-o', str(self.output_path / 'output')
+            str(control_file),
+            self.config['DOMAIN_NAME'],
+            mode
         ]
         
         # Create log directory

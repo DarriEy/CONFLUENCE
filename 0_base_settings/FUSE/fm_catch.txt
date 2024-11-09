@@ -1,0 +1,29 @@
+FUSE_FILEMANAGER_V1.5
+! *** paths
+'/Users/darrieythorsson/Downloads/fuse_catch/settings/'     ! SETNGS_PATH
+'/Users/darrieythorsson/Downloads/fuse_catch/input/'        ! INPUT_PATH
+'/Users/darrieythorsson/Downloads/fuse_catch/output/'       ! OUTPUT_PATH
+! *** suffic for input files - the files must be in INPUT_PATH
+'_input.nc'                      ! suffix_forcing     = suffix for forcing file to be append to basin_id
+'_elev_bands.nc'                 ! suffix_elev_bands  = suffix for elevation bands file to be append to basin_id
+! *** settings files - must be in SETNGS_PATH
+'input_info.txt '                ! FORCING INFO       = definition of the forcing file
+'fuse_zConstraints_snow.txt'     ! CONSTRAINTS        = definition of parameter constraints
+'fuse_zNumerix.txt'              ! MOD_NUMERIX        = definition of numerical solution technique
+'fuse_zDecisions_902.txt'        ! M_DECISIONS        = definition of model decisions
+! *** output files
+'902'                            ! FMODEL_ID          = string defining FUSE model, only used to name output files
+'FALSE'                           ! Q_ONLY            = only write Q to output files (TRUE) or all variables (FALSE)
+! *** dates
+'2000-10-01'                     ! date_start_sim     = date start simulation
+'2005-09-30'                     ! date_end_sim       = date end simulation
+'2001-10-01'                     ! date_start_eval    = date start evaluation period
+'2005-09-30'                     ! date_end_eval      = date end evaluation period
+'-9999'                          ! numtim_sub         = number of time steps per sub-period [-9999 to run without sub-periods]
+! *** evaluation metrics and transformation
+'KGE'                           ! METRIC             = metric chosen as objective function (KGE, KGEP, NSE, MAE, KGE)
+'1'                              ! TRANSFO            = streamflow transformation (log, boxcox or a float that correspond to a power)
+! *** SCE parameters - only considered in calib_sce mode
+'20'                             ! MAXN    			      = maximum number of trials before optimization is terminated
+'3'                              ! KSTOP              = number of shuffling loops the value must change by PCENTO (MAX=9)
+'0.001'                          ! PCENTO             = the percentage

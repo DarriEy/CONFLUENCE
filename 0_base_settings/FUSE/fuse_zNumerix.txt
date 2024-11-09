@@ -1,0 +1,18 @@
+2      ! Solution technique (0=explicit Euler; 1=explicit Heun; 2=implicit Euler; 3=implicit Heun, 4=semi-implicit)
+0      ! Temporal error control (0=fixed time steps; 1=adaptive time steps)
+0      ! Initial conditions used in Newton (0=old state; 1=explicit half-step; 2=explicit full-step)
+0      ! Jacobian re-evaluation strategy (0=fully variable; 1=constant sub-step; 2=constant full step, 3=periodic freeze)
+1      ! Method used to trap/fix errors in Newton (0=none; 1=line search)
+1      ! Method used to process step end (0=step truncation; 1=look-ahead; 2=step absorption)
+1.e-2  ! Absolute temporal truncation error tolerance (mm)
+1.e-2  ! Relative temporal truncation error tolerance (fraction of state)
+1.e-12 ! Iteration convergence tolerance for function values
+1.e-12 ! Iteration convergence tolerance for dx
+1.e-9  ! Threshold for freezing the Jacobian
+1.e-8  ! Minimum value of states (used so derivatives are non-zero)
+0.9    ! Safety factor in step-size equation
+0.1    ! Minimum step size multiplier
+4.0    ! Maximum step size multiplier
+1000   ! Maximum number of iterations used in the implicit scheme
+0.01   ! Minimum time step length (minutes)
+1440   ! Maximum time step length (minutes)

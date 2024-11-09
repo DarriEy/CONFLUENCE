@@ -358,6 +358,9 @@ class Benchmarker:
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        # Create evaluation directory during initialization
+        self.evaluation_dir = self.project_dir / 'evaluation'
+        self.evaluation_dir.mkdir(parents=True, exist_ok=True)
 
     def run_benchmarking(self, input_data: pd.DataFrame, cal_end_date: str) -> Dict[str, Any]:
         """
@@ -414,39 +417,53 @@ class Benchmarker:
         metrics = ['nse', 'kge', 'mse', 'rmse']
         self.logger.info(f'Running benchmarks {benchmarks}')
 
-        # Run hydrobm
-        benchmark_flows, scores = calc_bm(
-            data,
-            cal_mask,
-            val_mask=val_mask,
-            precipitation="precipitation",
-            streamflow="streamflow",
-            benchmarks=benchmarks,
-            metrics=metrics,
-            calc_snowmelt=True,
-            temperature="temperature",
-            snowmelt_threshold=273.0,
-            snowmelt_rate=3.0,
-        )
+        try:
+            # Run hydrobm
+            benchmark_flows, scores = calc_bm(
+                data,
+                cal_mask,
+                val_mask=val_mask,
+                precipitation="precipitation",
+                streamflow="streamflow",
+                benchmarks=benchmarks,
+                metrics=metrics,
+                calc_snowmelt=True,
+                temperature="temperature",
+                snowmelt_threshold=273.0,
+                snowmelt_rate=3.0,
+            )
 
-        self.logger.info('Finished running benchmarks')
+            self.logger.info('Finished running benchmarks')
 
-        # Save results
-        self._save_results(benchmark_flows, scores)
+            # Save results
+            self._save_results(benchmark_flows, scores)
 
-        return {"benchmark_flows": benchmark_flows, "scores": scores}
+            return {"benchmark_flows": benchmark_flows, "scores": scores}
+        
+        except Exception as e:
+            self.logger.error(f"Error during benchmark calculation: {str(e)}")
+            raise
 
     def _save_results(self, benchmark_flows: pd.DataFrame, scores: Dict[str, Any]):
-        # Save benchmark flows
-        flows_dir = self.project_dir / 'evaluation'
-        flows_dir.mkdir(parents=True, exist_ok=True)
-        flows_path = flows_dir / "benchmark_flows.csv"
-        benchmark_flows.to_csv(flows_path)
-        self.logger.info(f"Benchmark flows saved to {flows_path}")
+        """
+        Save benchmark results to files.
+        
+        Args:
+            benchmark_flows (pd.DataFrame): Benchmark flow results
+            scores (Dict[str, Any]): Benchmark scores
+        """
+        try:
+            # Save benchmark flows
+            flows_path = self.evaluation_dir / "benchmark_flows.csv"
+            benchmark_flows.to_csv(flows_path)
+            self.logger.info(f"Benchmark flows saved to {flows_path}")
 
-        # Save scores
-        scores_df = pd.DataFrame(scores)
-        scores_path = self.project_dir / 'evaluation' 
-        scores_name = "benchmark_scores.csv"
-        scores_df.to_csv(scores_path / scores_name)
-        self.logger.info(f"Benchmark scores saved to {scores_path}")
+            # Save scores
+            scores_df = pd.DataFrame(scores)
+            scores_path = self.evaluation_dir / "benchmark_scores.csv"
+            scores_df.to_csv(scores_path)
+            self.logger.info(f"Benchmark scores saved to {scores_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving benchmark results: {str(e)}")
+            raise

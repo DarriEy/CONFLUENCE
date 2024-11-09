@@ -1,0 +1,28 @@
+! used to define information for the forcing file
+! -----------------------------------------------------------------------------------------------------------
+! lines starting with exclamation marks are not read
+! (variables can be in any order)
+! -----------------------------------------------------------------------------------------------------------
+<version>         FORCINGINFO.VERSION.2.2              ! string to ensure version of file matches the code
+<vname_iy>        undefined                            ! name of variable for year
+<vname_im>        undefined                            ! name of variable for month
+<vname_id>        undefined                            ! name of variable for day
+<vname_ih>        undefined                            ! name of variable for hour
+<vname_imin>      undefined                            ! name of variable for minute
+<vname_dsec>      undefined                            ! name of variable for second
+<vname_dtime>     time                                 ! time since reference time
+<vname_aprecip>   pr                                   ! variable name: precipitation
+<vname_airtemp>   temp                                 ! variable name: temperature
+<vname_spechum>   undefined                            ! variable name: specific humidity
+<vname_airpres>   undefined                            ! variable name: surface pressure
+<vname_swdown>    undefined                            ! variable name: downward shortwave radiation
+<vname_potevap>   pet                                  ! variable name: potential ET
+<vname_q>         q_obs                                ! variable name: runoff
+<units_aprecip>   mm/d                                 ! units: precipitation
+<units_airtemp>   degC                                 ! units: temperature
+<units_spechum>   undefined                            ! units: specific humidity
+<units_airpres>   undefined                            ! units: surface pressure
+<units_swdown>    undefined                            ! units: downward shortwave radiation
+<units_potevap>   mm/d                                 ! units: potential ET
+<units_q>         mm/d                                 ! units: runoff
+<deltim>          1.0                                  ! time step (days)

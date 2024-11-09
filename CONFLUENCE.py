@@ -67,6 +67,8 @@ class CONFLUENCE:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.evaluation_dir = self.project_dir / 'evaluation'
+        self.evaluation_dir.mkdir(parents=True, exist_ok=True)
         self.setup_logging()
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
         self.reporter = VisualizationReporter(self.config, self.logger)
