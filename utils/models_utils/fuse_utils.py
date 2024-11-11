@@ -211,10 +211,26 @@ class FUSEPreProcessor:
             
             # Convert to daily resolution
             obs_daily = obs_df.resample('D').mean()
+
+            # Convert to mm/day
+            # Get area from river basins shapefile using GRU_area
+            basin_name = self.config.get('RIVER_BASINS_NAME')
+            if basin_name == 'default':
+                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
+            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+            basin_gdf = gpd.read_file(basin_path)
+            
+            # Sum the GRU_area column and convert from m2 to km2
+            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+            self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
+            
+            # Convert units from cms to mm/day 
+            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
+            obs_daily['discharge_mmday'] = obs_daily['discharge_cms'] / area_km2 * 86.4
             
             # Create observation dataset with explicit time dimension
             obs_ds = xr.Dataset(
-                {'q_obs': ('time', obs_daily['discharge_cms'].values)},
+                {'q_obs': ('time', obs_daily['discharge_mmday'].values)},
                 coords={'time': obs_daily.index.values}
             )
 
@@ -780,9 +796,9 @@ class FuseDecisionAnalyzer:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        self.output_folder = self.project_dir / "plots" / "fuse_decision_analysis"
+        self.output_folder = self.project_dir / "plots" / "FUSE_decision_analysis"
         self.output_folder.mkdir(parents=True, exist_ok=True)
-        self.model_decisions_path = self.project_dir / "settings" / "FUSE" / "model_decisions.txt"
+        self.model_decisions_path = self.project_dir / "settings" / "FUSE" / f"fuse_zDecisions_{self.config['EXPERIMENT_ID']}.txt"
 
         # Initialize FuseRunner (you'll need to implement this)
         self.fuse_runner = FUSERunner(config, logger)
@@ -805,27 +821,51 @@ class FuseDecisionAnalyzer:
         return list(itertools.product(*self.decision_options.values()))
 
     def update_model_decisions(self, combination: Tuple[str, ...]):
-        """Update the FUSE model decisions file with a new combination."""
-        decision_keys = list(self.decision_options.keys())
+        """
+        Update the FUSE model decisions file with a new combination.
+        Only updates the decision values (first string) in lines 2-10.
         
-        with open(self.model_decisions_path, 'r') as f:
-            lines = f.readlines()
+        Args:
+            combination (Tuple[str, ...]): Tuple of decision values to use
+        """
+        self.logger.info("Updating FUSE model decisions")
         
-        option_map = dict(zip(decision_keys, combination))
-        
-        updated_lines = []
-        for line in lines:
-            # Check if line contains a model decision
-            for option, value in option_map.items():
-                if line.strip().endswith(option):
-                    # Format: "{value} {option}" with proper spacing
-                    updated_lines.append(f"{value.ljust(10)} {option}\n")
-                    break
-            else:
-                updated_lines.append(line)
-        
-        with open(self.model_decisions_path, 'w') as f:
-            f.writelines(updated_lines)
+        try:
+            with open(self.model_decisions_path, 'r') as f:
+                lines = f.readlines()
+            
+            # The decisions are in lines 2-10 (1-based indexing)
+            decision_lines = range(1, 10)  # Python uses 0-based indexing
+            
+            # Create a mapping of decision keys to new values
+            decision_keys = list(self.decision_options.keys())
+            option_map = dict(zip(decision_keys, combination))
+            
+            # For debugging
+            self.logger.debug(f"Updating with new values: {option_map}")
+            
+            # Update only the first part of each decision line
+            for line_idx in decision_lines:
+                # Split the line into components
+                line_parts = lines[line_idx].split()
+                if len(line_parts) >= 2:
+                    # Get the decision key (RFERR, ARCH1, etc.)
+                    decision_key = line_parts[1]  # Key is the second part
+                    if decision_key in option_map:
+                        # Replace the first part with the new value
+                        new_value = option_map[decision_key]
+                        # Keep the rest of the line (key and any comments) unchanged
+                        rest_of_line = ' '.join(line_parts[1:])
+                        lines[line_idx] = f"{new_value:<10} {rest_of_line}\n"
+                        self.logger.debug(f"Updated line {line_idx + 1}: {lines[line_idx].strip()}")
+            
+            # Write the updated content back to the file
+            with open(self.model_decisions_path, 'w') as f:
+                f.writelines(lines)
+                
+        except Exception as e:
+            self.logger.error(f"Error updating model decisions: {str(e)}")
+            raise
 
     def calculate_performance_metrics(self) -> Tuple[float, float, float, float, float]:
         """Calculate performance metrics comparing simulated and observed streamflow."""
@@ -835,15 +875,35 @@ class FuseDecisionAnalyzer:
         else:
             obs_file_path = Path(obs_file_path)
 
-        sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FUSE' / f"{self.config['EXPERIMENT_ID']}_streamflow.nc"
+        sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FUSE' / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"
 
         # Read observations
         dfObs = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
-        dfObs = dfObs['discharge_cms'].resample('h').mean()
+        dfObs = dfObs['discharge_cms'].resample('d').mean()
 
         # Read simulations
         dfSim = xr.open_dataset(sim_file_path)
-        dfSim = dfSim['streamflow'].to_dataframe()
+        dfSim = dfSim['q_routed'].isel(
+                                param_set=0,
+                                latitude=0,
+                                longitude=0
+                            )
+        dfSim = dfSim.to_pandas()
+
+        # Get area from river basins shapefile using GRU_area
+        basin_name = self.config.get('RIVER_BASINS_NAME')
+        if basin_name == 'default':
+            basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
+        basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+        basin_gdf = gpd.read_file(basin_path)
+        
+        # Sum the GRU_area column and convert from m2 to km2
+        area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+        self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
+        
+        # Convert units from mm/day to cms
+        # Q(cms) = Q(mm/day) * Area(km2) / 86.4
+        dfSim = dfSim * area_km2 / 86.4
 
         # Align timestamps and handle missing values
         dfObs = dfObs.reindex(dfSim.index).dropna()
@@ -851,7 +911,7 @@ class FuseDecisionAnalyzer:
 
         # Calculate metrics
         obs = dfObs.values
-        sim = dfSim['streamflow'].values
+        sim = dfSim.values
         
         kge = get_KGE(obs, sim, transfo=1)
         kgep = get_KGEp(obs, sim, transfo=1)
@@ -889,7 +949,7 @@ class FuseDecisionAnalyzer:
                 
                 # Calculate performance metrics
                 kge, kgep, nse, mae, rmse = self.calculate_performance_metrics()
-
+                print(combination, kge)
                 # Write results to master file
                 with open(master_file, 'a', newline='') as f:
                     writer = csv.writer(f)
@@ -969,3 +1029,9 @@ class FuseDecisionAnalyzer:
         self.plot_decision_impacts(results_file)
         best_combinations = self.analyze_results(results_file)
         return results_file, best_combinations
+
+    def _get_file_path(self, file_type, file_def_path, file_name):
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(f'{file_type}'))

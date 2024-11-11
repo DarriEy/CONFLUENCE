@@ -87,6 +87,9 @@ class datatoolRunner:
         self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.tool_cache = self.config.get('TOOL_CACHE')
+        if self.tool_cache == 'default':
+            self.tool_cache = '$HOME/cache_dir/'
 
         #Import required CONFLUENCE utils
         sys.path.append(str(self.code_dir))
