@@ -95,6 +95,11 @@ class DataAcquisitionProcessor:
         if subbasins_name == 'default':
             subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
 
+        tool_cache = self.config.get('TOOL_CACHE')
+        if tool_cache == 'default':
+            tool_cache = '$HOME/cache_dir/'
+
+
         maf_config = {
             "exec": {
                 "met": met_path,
@@ -111,7 +116,7 @@ class DataAcquisitionProcessor:
                     "end-date": f"{self.config.get('EXPERIMENT_TIME_END')}",
                     "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                     "prefix": f"domain_{self.domain_name}_",
-                    "cache": self.config.get('TOOL_CACHE'),
+                    "cache": tool_cache,
                     "account": self.config.get('TOOL_ACCOUNT'),
                     "_flags": [
                         #"submit-job",
@@ -130,7 +135,7 @@ class DataAcquisitionProcessor:
                         "print-geotiff": "true",
                         "stat": ["frac", "majority", "coords"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        "cache": self.config.get('TOOL_CACHE'),
+                        "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
@@ -145,7 +150,7 @@ class DataAcquisitionProcessor:
                         "print-geotiff": "true",
                         "stat": ["majority"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        #"cache": self.config.get('GISTOOL_CACHE'),
+                        "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
@@ -160,7 +165,7 @@ class DataAcquisitionProcessor:
                         "print-geotiff": "true",
                         "stat": ["min", "max", "mean", "median"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
-                        #"cache": self.config.get('GISTOOL_CACHE'),
+                        "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
                         "fid": self.config.get('CATCHMENT_SHP_HRUID'),
@@ -169,7 +174,7 @@ class DataAcquisitionProcessor:
                 ],
                 "remap": [{
                     "case-name": "remapped",
-                    "cache": self.config.get('EASYMORE_CACHE'),
+                    "cache": tool_cache,
                     "shapefile": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
                     "shapefile-id": self.config.get('CATCHMENT_SHP_HRUID'),
                     "source-nc": str(self.project_dir / "forcing/raw_data/**/*.nc*"),

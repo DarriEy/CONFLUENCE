@@ -358,6 +358,7 @@ class Benchmarker:
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+
         # Create evaluation directory during initialization
         self.evaluation_dir = self.project_dir / 'evaluation'
         self.evaluation_dir.mkdir(parents=True, exist_ok=True)
@@ -379,10 +380,11 @@ class Benchmarker:
         data = input_data.to_xarray()
 
         # Create calibration and validation masks
-        cal_mask = data['index'].values < np.datetime64(cal_end_date)
+        cal_mask = data.index.values < np.datetime64(cal_end_date)
         val_mask = ~cal_mask
 
         self.logger.info(f'input data: {data}')
+        
 
         # Define benchmarks and metrics
         benchmarks = [

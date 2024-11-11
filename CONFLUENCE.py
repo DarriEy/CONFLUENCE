@@ -20,7 +20,7 @@ from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner # type: ignore
+from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner # type: ignore
 from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
@@ -100,8 +100,8 @@ class CONFLUENCE:
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
-            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}" / f"{self.config.get('EXPERIMENT_ID')}_timestep.nc").exists()),
+            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL']}_input").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL')}").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
             (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmarking" / "benchmark_scores.csv").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
@@ -373,17 +373,27 @@ class CONFLUENCE:
         self.logger.info('Starting model output visualisation')
         visualizer = VisualizationReporter(self.config, self.logger)
 
-        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
-            plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
-        else:
-            visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
+            if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
+                plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
+            else:
+                visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+                model_outputs = [
+                    (f"{self.config['HYDROLOGICAL_MODEL']}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}*.nc"))
+                ]
+                obs_files = [
+                    ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                ]
+                plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+        if self.config['HYDROLOGICAL_MODEL'] == 'FUSE':
             model_outputs = [
-                (f"{self.config['HYDROLOGICAL_MODEL']}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"))
+                ("FUSE", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "FUSE" / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"))
             ]
             obs_files = [
                 ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
             ]
-            plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+            plot_file = visualizer.plot_fuse_streamflow_simulations_vs_observations(model_outputs, obs_files)
 
         #Check if the plot was output
         if plot_file:
@@ -395,19 +405,22 @@ class CONFLUENCE:
     def run_benchmarking(self):
         # Preprocess data for benchmarking
         preprocessor = BenchmarkPreprocessor(self.config, self.logger)
-        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['FORCING_START_YEAR']}-01-01", f"{self.config['FORCING_END_YEAR']}-12-31")
+        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['CALIBRATION_PERIOD'].split(',')[0]}", f"{self.config['EVALUATION_PERIOD'].split(',')[1]}")
 
         # Run benchmarking
         benchmarker = Benchmarker(self.config, self.logger)
-        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['FORCING_END_YEAR']}-12-31")
+        benchmark_results = benchmarker.run_benchmarking(benchmark_data, f"{self.config['EVALUATION_PERIOD'].split(',')[1]}")
     
     @get_function_logger
     def calibrate_model(self):
         # Calibrate the model using specified method and objectives
-        if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
-            self.run_ostrich_optimization()
+        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
+            if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
+                self.run_ostrich_optimization()
+            else:
+                self.run_parallel_optimization()
         else:
-            self.run_parallel_optimization()
+            pass
 
     @get_function_logger  
     def run_sensitivity_analysis(self):
@@ -429,16 +442,23 @@ class CONFLUENCE:
     @get_function_logger  
     def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
-        decision_analyzer = DecisionAnalyzer(self.config, self.logger)
         
-        results_file, best_combinations = decision_analyzer.run_full_analysis()
-        
-        self.logger.info("Decision analysis completed")
-        self.logger.info(f"Results saved to: {results_file}")
-        self.logger.info("Best combinations for each metric:")
-        for metric, data in best_combinations.items():
-            self.logger.info(f"  {metric}: score = {data['score']:.3f}")
-        
+        if self.config['HYDROLOGICAL_MODEL'] == 'SUMMA':
+            decision_analyzer = DecisionAnalyzer(self.config, self.logger)
+            
+            results_file, best_combinations = decision_analyzer.run_full_analysis()
+            
+            self.logger.info("Decision analysis completed")
+            self.logger.info(f"Results saved to: {results_file}")
+            self.logger.info("Best combinations for each metric:")
+            for metric, data in best_combinations.items():
+                self.logger.info(f"  {metric}: score = {data['score']:.3f}")
+
+        elif self.config['HYDROLOGICAL_MODEL'] == 'FUSE':
+            FUSE_decision_analyser = FuseDecisionAnalyzer(self.config, self.logger)
+            FUSE_decision_analyser.run_decision_analysis()
+
+
         return results_file, best_combinations
     
     @get_function_logger

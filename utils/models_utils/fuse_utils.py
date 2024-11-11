@@ -13,6 +13,17 @@ import shutil
 from datetime import datetime
 import rasterio # type: ignore
 
+import csv
+import itertools
+import matplotlib.pyplot as plt # type: ignore
+import xarray as xr # type: ignore
+from typing import Dict, List, Tuple, Any
+
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
+#from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner # type: ignore
+
 class FUSEPreProcessor:
     """
     Preprocessor for the FUSE (Framework for Understanding Structural Errors) model.
@@ -38,6 +49,8 @@ class FUSEPreProcessor:
         self.forcing_fuse_path = self.project_dir / 'forcing' / 'FUSE_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{self.domain_name}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
         
     def run_preprocessing(self):
         """Run the complete FUSE preprocessing workflow."""
@@ -58,7 +71,6 @@ class FUSEPreProcessor:
         dirs_to_create = [
             self.fuse_setup_dir,
             self.forcing_fuse_path,
-            self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "FUSE"
         ]
         for dir_path in dirs_to_create:
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -332,12 +344,14 @@ class FUSEPreProcessor:
         # Get and format dates from config
         start_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_START'), '%Y-%m-%d %H:%M')
         end_time = datetime.strptime(self.config.get('EXPERIMENT_TIME_END'), '%Y-%m-%d %H:%M')
-        
+        cal_start_time = datetime.strptime(self.config.get('CALIBRATION_PERIOD').split(',')[0], '%Y-%m-%d')
+        cal_end_time = datetime.strptime(self.config.get('CALIBRATION_PERIOD').split(',')[1].strip(), '%Y-%m-%d')
+
         date_settings = {
             'date_start_sim': start_time.strftime('%Y-%m-%d'),
             'date_end_sim': end_time.strftime('%Y-%m-%d'),
-            'date_start_eval': start_time.strftime('%Y-%m-%d'),  # Using same dates for evaluation period
-            'date_end_eval': end_time.strftime('%Y-%m-%d')       # Can be modified if needed
+            'date_start_eval': cal_start_time.strftime('%Y-%m-%d'),  # Using same dates for evaluation period
+            'date_end_eval': cal_end_time.strftime('%Y-%m-%d')       # Can be modified if needed
         }
 
         try:
@@ -607,7 +621,9 @@ class FUSERunner:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        
+        self.result_dir = self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "FUSE"
+        self.result_dir.mkdir(parents=True, exist_ok=True)
+
         # FUSE-specific paths
         self.fuse_path = self._get_install_path()
         self.fuse_setup_dir = self.project_dir / "settings" / "FUSE"
@@ -756,3 +772,200 @@ class FUSERunner:
             if file.exists():
                 shutil.copy2(file, backup_dir / file.name)
                 self.logger.info(f"Backed up {file.name}")
+
+class FuseDecisionAnalyzer:
+    def __init__(self, config, logger):
+        self.config = config
+        self.logger = logger
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.output_folder = self.project_dir / "plots" / "fuse_decision_analysis"
+        self.output_folder.mkdir(parents=True, exist_ok=True)
+        self.model_decisions_path = self.project_dir / "settings" / "FUSE" / "model_decisions.txt"
+
+        # Initialize FuseRunner (you'll need to implement this)
+        self.fuse_runner = FUSERunner(config, logger)
+
+        # Define FUSE decision options
+        self.decision_options = {
+            'RFERR': ['additive_e', 'multiplc_e'],
+            'ARCH1': ['tension1_1', 'tension2_1', 'onestate_1'],
+            'ARCH2': ['tens2pll_2', 'unlimfrc_2', 'unlimpow_2', 'fixedsiz_2'],
+            'QSURF': ['arno_x_vic', 'prms_varnt', 'tmdl_param'],
+            'QPERC': ['perc_f2sat', 'perc_w2sat', 'perc_lower'],
+            'ESOIL': ['sequential', 'rootweight'],
+            'QINTF': ['intflwnone', 'intflwsome'],
+            'Q_TDH': ['rout_gamma', 'no_routing'],
+            'SNOWM': ['temp_index', 'no_snowmod']
+        }
+
+    def generate_combinations(self) -> List[Tuple[str, ...]]:
+        """Generate all possible combinations of model decisions."""
+        return list(itertools.product(*self.decision_options.values()))
+
+    def update_model_decisions(self, combination: Tuple[str, ...]):
+        """Update the FUSE model decisions file with a new combination."""
+        decision_keys = list(self.decision_options.keys())
+        
+        with open(self.model_decisions_path, 'r') as f:
+            lines = f.readlines()
+        
+        option_map = dict(zip(decision_keys, combination))
+        
+        updated_lines = []
+        for line in lines:
+            # Check if line contains a model decision
+            for option, value in option_map.items():
+                if line.strip().endswith(option):
+                    # Format: "{value} {option}" with proper spacing
+                    updated_lines.append(f"{value.ljust(10)} {option}\n")
+                    break
+            else:
+                updated_lines.append(line)
+        
+        with open(self.model_decisions_path, 'w') as f:
+            f.writelines(updated_lines)
+
+    def calculate_performance_metrics(self) -> Tuple[float, float, float, float, float]:
+        """Calculate performance metrics comparing simulated and observed streamflow."""
+        obs_file_path = self.config.get('OBSERVATIONS_PATH')
+        if obs_file_path == 'default':
+            obs_file_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        else:
+            obs_file_path = Path(obs_file_path)
+
+        sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FUSE' / f"{self.config['EXPERIMENT_ID']}_streamflow.nc"
+
+        # Read observations
+        dfObs = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
+        dfObs = dfObs['discharge_cms'].resample('h').mean()
+
+        # Read simulations
+        dfSim = xr.open_dataset(sim_file_path)
+        dfSim = dfSim['streamflow'].to_dataframe()
+
+        # Align timestamps and handle missing values
+        dfObs = dfObs.reindex(dfSim.index).dropna()
+        dfSim = dfSim.reindex(dfObs.index).dropna()
+
+        # Calculate metrics
+        obs = dfObs.values
+        sim = dfSim['streamflow'].values
+        
+        kge = get_KGE(obs, sim, transfo=1)
+        kgep = get_KGEp(obs, sim, transfo=1)
+        nse = get_NSE(obs, sim, transfo=1)
+        mae = get_MAE(obs, sim, transfo=1)
+        rmse = get_RMSE(obs, sim, transfo=1)
+
+        return kge, kgep, nse, mae, rmse
+
+    def run_decision_analysis(self):
+        """Run the full decision analysis process."""
+        self.logger.info("Starting FUSE decision analysis")
+        
+        combinations = self.generate_combinations()
+        self.logger.info(f"Generated {len(combinations)} decision combinations")
+
+        optimisation_dir = self.project_dir / 'optimisation'
+        optimisation_dir.mkdir(parents=True, exist_ok=True)
+
+        master_file = optimisation_dir / f"{self.config.get('EXPERIMENT_ID')}_fuse_decisions_comparison.csv"
+
+        # Write header to master file
+        with open(master_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Iteration'] + list(self.decision_options.keys()) + 
+                          ['kge', 'kgep', 'nse', 'mae', 'rmse'])
+
+        for i, combination in enumerate(combinations, 1):
+            self.logger.info(f"Running combination {i} of {len(combinations)}")
+            self.update_model_decisions(combination)
+            
+            try:
+                # Run FUSE model
+                self.fuse_runner.run_fuse()
+                
+                # Calculate performance metrics
+                kge, kgep, nse, mae, rmse = self.calculate_performance_metrics()
+
+                # Write results to master file
+                with open(master_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([i] + list(combination) + [kge, kgep, nse, mae, rmse])
+
+                self.logger.info(f"Combination {i} completed: KGE={kge:.3f}, KGEp={kgep:.3f}, "
+                               f"NSE={nse:.3f}, MAE={mae:.3f}, RMSE={rmse:.3f}")
+
+            except Exception as e:
+                self.logger.error(f"Error in combination {i}: {str(e)}")
+                with open(master_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([i] + list(combination) + ['erroneous combination'])
+
+        self.logger.info("FUSE decision analysis completed")
+        return master_file
+
+    def plot_decision_impacts(self, results_file: Path):
+        """Create plots showing the impact of each decision on model performance."""
+        self.logger.info("Plotting FUSE decision impacts")
+        
+        df = pd.read_csv(results_file)
+        metrics = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        decisions = list(self.decision_options.keys())
+
+        for metric in metrics:
+            plt.figure(figsize=(12, 6 * len(decisions)))
+            for i, decision in enumerate(decisions, 1):
+                plt.subplot(len(decisions), 1, i)
+                impact = df.groupby(decision)[metric].mean().sort_values(ascending=False)
+                impact.plot(kind='bar')
+                plt.title(f'Impact of {decision} on {metric}')
+                plt.ylabel(metric)
+                plt.xticks(rotation=45, ha='right')
+            
+            plt.tight_layout()
+            plt.savefig(self.output_folder / f'{metric}_decision_impacts.png')
+            plt.close()
+
+        self.logger.info("Decision impact plots saved")
+
+    def analyze_results(self, results_file: Path) -> Dict[str, Dict]:
+        """Analyze the results and identify the best performing combinations."""
+        self.logger.info("Analyzing FUSE decision results")
+        
+        df = pd.read_csv(results_file)
+        metrics = ['kge', 'kgep', 'nse', 'mae', 'rmse']
+        decisions = list(self.decision_options.keys())
+
+        best_combinations = {}
+        for metric in metrics:
+            if metric in ['mae', 'rmse']:  # Lower is better
+                best_row = df.loc[df[metric].idxmin()]
+            else:  # Higher is better
+                best_row = df.loc[df[metric].idxmax()]
+            
+            best_combinations[metric] = {
+                'score': best_row[metric],
+                'combination': {decision: best_row[decision] for decision in decisions}
+            }
+
+        # Save results to file
+        output_file = self.project_dir / 'optimisation' / 'best_fuse_decision_combinations.txt'
+        with open(output_file, 'w') as f:
+            for metric, data in best_combinations.items():
+                f.write(f"Best combination for {metric} (score: {data['score']:.3f}):\n")
+                for decision, value in data['combination'].items():
+                    f.write(f"  {decision}: {value}\n")
+                f.write("\n")
+
+        self.logger.info("FUSE decision analysis results saved")
+        return best_combinations
+
+    def run_full_analysis(self):
+        """Run the complete FUSE decision analysis workflow."""
+        results_file = self.run_decision_analysis()
+        self.plot_decision_impacts(results_file)
+        best_combinations = self.analyze_results(results_file)
+        return results_file, best_combinations

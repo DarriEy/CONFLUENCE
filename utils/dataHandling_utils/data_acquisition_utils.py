@@ -8,7 +8,7 @@ import subprocess
 import cdsapi # type: ignore
 import calendar
 import netCDF4 as nc4 # type: ignore
-import numpy as np
+import numpy as np # type: ignore
 from datetime import datetime
 import requests # type: ignore
 import shutil
@@ -27,6 +27,9 @@ class gistoolRunner:
         self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.tool_cache = self.config.get('TOOL_CACHE')
+        if self.tool_cache == 'default':
+            self.tool_cache = '$HOME/cache_dir/'
 
         #Import required CONFLUENCE utils
         sys.path.append(str(self.code_dir))
@@ -52,7 +55,7 @@ class gistoolRunner:
             f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
             "--submit-job",
             "--print-geotiff=true",
-            f"--cache={self.config['TOOL_CACHE']}",
+            f"--cache={self.tool_cache}",
             f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
         
@@ -109,7 +112,7 @@ class datatoolRunner:
         f"--variable={variables}",
         f"--prefix=domain_{self.domain_name}_",
         #"--submit-job",
-        f"--cache={self.config['TOOL_CACHE']}",
+        f"--cache={self.tool_cache}",
         f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
 
