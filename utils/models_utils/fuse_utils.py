@@ -288,7 +288,7 @@ class FUSEPreProcessor:
 
             # Prepare data variables
             var_mapping = [
-                ('pr', ds['pptrate'].values * 86400, 'precipitation', 'mm/day', 'Mean daily precipitation'),
+                ('pr', ds['pptrate'].values * 3600, 'precipitation', 'mm/day', 'Mean daily precipitation'),
                 ('temp', ds['airtemp'].values - 273.15, 'temperature', 'degC', 'Mean daily temperature'),
                 ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet'),
                 ('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge')
@@ -618,6 +618,12 @@ class FUSEPreProcessor:
         except KeyError:
             self.logger.error(f"Config key '{path_key}' not found")
             raise
+         
+    def _get_file_path(self, file_type, file_def_path, file_name):
+        if self.config.get(f'{file_type}') == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(f'{file_type}'))
 
 class FUSERunner:
     """

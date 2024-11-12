@@ -669,10 +669,11 @@ class ModelEvaluator:
         sim_df = sim_data.sel(seg=segment_index)['IRFroutedRunoff'].to_dataframe().reset_index()
         sim_df.set_index('time', inplace=True)
         sim_df.index = sim_df.index.round(freq='h')
+        sim_df = sim_df.resample('d').mean()
 
         # Read observation data
         obs_df = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
-        obs_df = obs_df['discharge_cms'].resample('h').mean()
+        obs_df = obs_df['discharge_cms'].resample('d').mean()
         print(f"sim_df: {sim_df}")
         print(f"obs_df: {obs_df}")
 
