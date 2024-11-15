@@ -217,7 +217,7 @@ class HYPERunner:
         
 class HYPEPostProcessor:
     """
-    Post processor for the HYPE model
+    Post processor for the HYPE hydrological model
     """
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
