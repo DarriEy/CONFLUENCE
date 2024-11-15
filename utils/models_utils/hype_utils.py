@@ -28,12 +28,12 @@ class HYPEPreProcessor:
         self.hype_setup_dir = self.project_dir / "settings" / "HYPE"
         
         # HYPE-specific paths
-        self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
+        self.forcing_basin_path = self.project_dir / 'forcing' / 'easymore-outputs'
         self.forcing_hype_path = self.project_dir / 'forcing' / 'HYPE_input'
         self.catchment_path = self._get_default_path('RIVER_BASINS_PATH', 'shapefiles/river_basins')
         self.catchment_name = self.config.get('RIVER_BASINS_NAME')
         if self.catchment_name == 'default':
-            self.catchment_name = f"{self.domain_name}_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
+            self.catchment_name = f"{self.domain_name}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
 
     def run_preprocessing(self):
         """Run the complete HYPE preprocessing workflow."""
@@ -61,8 +61,8 @@ class HYPEPreProcessor:
         try:
             # Prepare forcing data
             self.logger.info("Preparing HYPE forcing data")
-            temp_var = 'airtemp'
-            prec_var = 'pptrate'
+            temp_var = 'RDRS_v2.1_P_TT_09944'
+            prec_var = 'RDRS_v2.1_A_PR0_SFC'
             forcing_units = {
                 'temperature': {
                     'in_varname': temp_var,
@@ -77,10 +77,10 @@ class HYPEPreProcessor:
             }
             
             geofabric_mapping = {
-                'basinID': {'in_varname': 'hruId'},
+                'basinID': {'in_varname': self.config['CATCHMENT_SHP_GRUID']},
                 'nextDownID': {'in_varname': self.config['RIVER_NETWORK_SHP_DOWNSEGID']},
                 'area': {
-                    'in_varname': self.config.get('CATCHMENT_SHP_AREA'),
+                    'in_varname': self.config.get('RIVER_BASIN_SHP_AREA'),
                     'in_units': 'm^2',
                     'out_units': 'm^2'
                                                     },
@@ -101,17 +101,23 @@ class HYPEPreProcessor:
             )
 
             # Write GeoData and GeoClass files
-            gistool_output = self.project_dir / 'gistool-outputs'
-            subbasins_shapefile = self.project_dir / 'shapefiles' / 'extracted_subbasins.shp'
-            rivers_shapefile = self.project_dir / 'shapefiles' / 'extracted_rivers.shp'
+            gistool_output = self.project_dir / 'attributes' / 'gistool-outputs'
+            subbasins_shapefile = self.catchment_path / self.catchment_name
+            rivers_path = self._get_default_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network')
+
+            rivers_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+            if rivers_name == 'default':
+                rivers_name = f"{self.domain_name}_riverNetwork_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
+            rivers_shapefile = rivers_path / rivers_name 
 
             write_hype_geo_files(
-                str(gistool_output),
+                f"{str(gistool_output)}/",
                 str(subbasins_shapefile),
                 str(rivers_shapefile),
                 self.config.get('FRACTION_THRESHOLD', 0.01),
                 geofabric_mapping,
-                str(self.hype_setup_dir)
+                str(self.hype_setup_dir),
+                self.logger  
             )
 
             # Write parameter file

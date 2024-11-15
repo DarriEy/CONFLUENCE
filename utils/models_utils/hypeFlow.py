@@ -7,7 +7,7 @@ import netCDF4 as nc4
 import os
 import cdo
 import pandas as pd
-from   easymore import easymore
+from   easymore import Easymore
 import numpy       as      np
 import geopandas   as      gpd
 import sys
@@ -43,6 +43,7 @@ def sort_geodata(geodata):
 def write_hype_forcing(easymore_output, timeshift, forcing_units, geofabric_mapping, path_to_save):
     if not os.path.isdir(path_to_save):
         os.makedirs(path_to_save)
+
     # function to get daily values from hourly timeseries
     def convert_hourly_to_daily (input_file_name,
                                  variable_in,
@@ -233,48 +234,114 @@ def write_hype_forcing(easymore_output, timeshift, forcing_units, geofabric_mapp
 #---------------------------------------------------------------
 
 # write GeoData and GeoClass files
-def write_hype_geo_files(gistool_output, subbasins_shapefile, rivers_shapefile, frac_threshold, geofabric_mapping, path_to_save):
+def write_hype_geo_files(gistool_output, subbasins_shapefile, rivers_shapefile, frac_threshold, geofabric_mapping, path_to_save, logger):
+    """
+    Write GeoData and GeoClass files with enhanced error handling and logging
     
+    Args:
+        logger: Logger instance from the main CONFLUENCE application
+    """    
+
     if not os.path.isdir(path_to_save):
-        os.makedirs(path_to_save)
+            os.makedirs(path_to_save)
+        
+    # Extract geofabric mapping values with validation
+    basinID = geofabric_mapping.get('basinID', {}).get('in_varname')
+    NextDownID = geofabric_mapping.get('nextDownID', {}).get('in_varname')
     
-    # extract geofabric mapping values
-    basinID = geofabric_mapping['basinID']['in_varname']
-    NextDownID = geofabric_mapping['nextDownID']['in_varname']
+    if not basinID or not NextDownID:
+        raise ValueError(f"Missing required mapping values. basinID: {basinID}, NextDownID: {NextDownID}")
+        
+    logger.info(f"Loading data from gistool output: {gistool_output}")
+    
+    # Load and validate input files
+    try:
+        soil_type = pd.read_csv(os.path.join(gistool_output, 'domain_stats_soil_classes.csv'))
+        landcover_type = pd.read_csv(os.path.join(gistool_output, 'domain_stats_NA_NALCMS_landcover_2020_30m.csv'))
+        elevation_mean = pd.read_csv(os.path.join(gistool_output, 'domain_stats_elv.csv'))
+        
+        # Add diagnostic prints
+        logger.debug(f"Soil type shape: {soil_type.shape}")
+        logger.debug(f"Landcover type shape: {landcover_type.shape}")
+        logger.debug(f"Soil type index range: 0 to {len(soil_type)-1}")
+        logger.debug(f"Landcover type index range: 0 to {len(landcover_type)-1}")
+        
+    except Exception as e:
+        logger.error(f"Error loading CSV files from gistool output: {str(e)}")
+        raise
 
-    # load the information from the gistool for soil and land cover and find the number of geoclass
-    soil_type = pd.read_csv(gistool_output+'modified_domain_stats_soil_classes.csv')
-    landcover_type = pd.read_csv(gistool_output+'modified_domain_stats_NA_NALCMS_landcover_2020_30m.csv')
-    elevation_mean = pd.read_csv(gistool_output+'modified_domain_stats_elv.csv')
+    logger.info("Sorting dataframes by basinID")
+    logger.debug(f"Columns in soil_type: {soil_type.columns}")
+    logger.debug(f"Columns in landcover_type: {landcover_type.columns}")
+    
+    # Verify basinID exists in all dataframes
+    if basinID not in soil_type.columns:
+        raise KeyError(f"basinID column '{basinID}' not found in soil_type. Available columns: {soil_type.columns}")
+    
+    # Sort and reset index for all dataframes
+    try:
+        soil_type = soil_type.sort_values(by=basinID).reset_index(drop=True)
+        landcover_type = landcover_type.sort_values(by=basinID).reset_index(drop=True)
+        elevation_mean = elevation_mean.sort_values(by=basinID).reset_index(drop=True)
+        
+        # Verify lengths match after sorting
+        if len(soil_type) != len(landcover_type):
+            raise ValueError(f"Length mismatch after sorting: soil_type({len(soil_type)}) != landcover_type({len(landcover_type)})")
+        
+    except Exception as e:
+        logger.error(f"Error sorting dataframes: {str(e)}")
+        raise
 
-    soil_type = soil_type.sort_values(by=basinID).reset_index(drop=True)
-    landcover_type = landcover_type.sort_values(by=basinID).reset_index(drop=True)
-    elevation_mean = elevation_mean.sort_values(by=basinID).reset_index(drop=True)
-
-    # find the combination of the majority soil and land cover
+    logger.info("Finding combinations of soil and land cover")
     combinations_set_all = set()
+    
+    # Process each row with detailed logging
     for index, row in landcover_type.iterrows():
-        # get the fraction for land cover for each row
-        fractions = [col for col in landcover_type.columns if col.startswith('frac') and row[col] > frac_threshold]
-        # remove frac_ from the list
-        fractions = [col.split('_')[1] for col in fractions]
-        fractions = [int(name) for name in fractions]
+        try:
+            # Get fractions for land cover
+            fractions = [col for col in landcover_type.columns if col.startswith('frac') and row[col] > frac_threshold]
+            if not fractions:
+                logger.warning(f"No fractions above threshold {frac_threshold} found for row {index}")
+                continue
+            
+            # Remove frac_ prefix and convert to int
+            fractions = [int(col.split('_')[1]) for col in fractions]
+            
+            # Get majority soil type - prevent index out of bounds
+            if index >= len(soil_type):
+                logger.error(f"Row index {index} exceeds soil_type length {len(soil_type)}")
+                break
+                
+            if 'majority' not in soil_type.columns:
+                raise KeyError("'majority' column not found in soil_type DataFrame")
+            
+            majority_soil = soil_type.loc[index, 'majority']
+            if pd.isna(majority_soil):
+                logger.warning(f"Missing majority soil type for index {index}")
+                continue
+            
+            majority_soil = [int(majority_soil)]  # Convert to int and wrap in list
+            
+            # Combine as combination of soil and land cover
+            combinations = list(product(fractions, majority_soil))
+            combinations_set = set(combinations)
+            combinations_set_all.update(combinations_set)
+            
+        except Exception as e:
+            logger.error(f"Error processing row {index}: {str(e)}")
+            logger.error(f"Row data: {row}")
+            logger.error(f"Soil type row: {soil_type.loc[index] if index < len(soil_type) else 'Index out of bounds'}")
+            raise
 
-        # get the majority soil type for each row
-        majority_soil = [soil_type['majority'].iloc[index].item()]
+    if not combinations_set_all:
+        raise ValueError("No valid soil and land cover combinations found")
 
-        # Combine as combination of soil and land cover and keep as a set
-        combinations = list(product(fractions, majority_soil))
-        combinations_set = set(combinations)
-        combinations_set_all.update(combinations_set)
-
+    logger.info(f"Found {len(combinations_set_all)} valid combinations")
+    
+    # Create the combination DataFrame
     data_list = [{'landcover': item[0], 'soil': item[1]} for item in combinations_set_all]
-
-    # Create a pandas DataFrame from the list of dictionaries
     combination = pd.DataFrame(data_list)
-
-    combination ['SLC'] = 0
-    combination ['SLC'] = np.arange(len(combination))+1
+    combination['SLC'] = np.arange(len(combination)) + 1
     
     #######################
     landcover_type_prepared = landcover_type.copy()
@@ -308,7 +375,7 @@ def write_hype_geo_files(gistool_output, subbasins_shapefile, rivers_shapefile, 
 #######################
     riv = gpd.read_file(rivers_shapefile)
     riv.sort_values(by=basinID).reset_index(drop=True)
-    riv['lengthm'] = 0.00
+    riv['Length'] = 0.00
     
     rivlen_name = geofabric_mapping['rivlen']['in_varname']
     length_in_units = geofabric_mapping['rivlen']['in_units']
@@ -346,8 +413,8 @@ def write_hype_geo_files(gistool_output, subbasins_shapefile, rivers_shapefile, 
     landcover_type_prepared['latitude'] = cat['latitude']
     landcover_type_prepared['longitude'] = cat['longitude']
     landcover_type_prepared['elev_mean'] = elevation_mean['mean']
-    landcover_type_prepared['slope_mean'] = riv['slope']
-    landcover_type_prepared['rivlen'] = riv['lengthm']
+    landcover_type_prepared['slope_mean'] = riv['Slope']
+    landcover_type_prepared['rivlen'] = riv['Length']
     # landcover_type_prepared['uparea'] = riv['uparea']
     
     column_name_mapping = {
