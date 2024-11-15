@@ -639,80 +639,110 @@ class BenchmarkPreprocessor:
             end_date (str): End date for the experiment run period (YYYY-MM-DD).
         
         Returns:
-            pd.DataFrame: DataFrame with date, temperature, streamflow, and precipitation.
+            pd.DataFrame: Daily DataFrame with columns:
+                - temperature (K)
+                - streamflow (m³/s)
+                - precipitation (mm/day)
         """
         self.logger.info("Starting benchmark data preprocessing")
 
-        # Load streamflow data
+        # Load and process data
         streamflow_data = self._load_streamflow_data()
-        self.logger.info(f"Loaded streamflow data with shape: {streamflow_data.shape}")
-
-        # Load and process forcing data
         forcing_data = self._load_forcing_data()
-        self.logger.info(f"Loaded forcing data with variables: {list(forcing_data.data_vars)}")
-
-        # Merge data
         merged_data = self._merge_data(streamflow_data, forcing_data)
-        self.logger.info(f"Merged data shape: {merged_data.shape}")
-
-        # Filter data for the experiment run period
-        filtered_data = merged_data.loc[start_date:end_date]
-        self.logger.info(f"Filtered data shape: {filtered_data.shape}")
-
-        # Check for missing values
-        missing_values = filtered_data.isnull().sum()
-        if missing_values.sum() > 0:
-            self.logger.warning(f"Missing values detected:\n{missing_values}")
         
-        # Basic statistics
-        self.logger.info(f"Data statistics:\n{filtered_data.describe()}")
-
-        # Save to CSV
+        # Ensure daily timestep and correct units
+        daily_data = self._process_to_daily(merged_data)
+        
+        # Filter data for the experiment run period
+        filtered_data = daily_data.loc[start_date:end_date]
+        
+        # Validate data
+        self._validate_data(filtered_data)
+        
+        # Save preprocessed data
         output_path = self.project_dir / 'evaluation'
-        output_name = "benchmark_input_data.csv"
-        filtered_data.to_csv(output_path / output_name)
-        self.logger.info(f"Benchmark input data saved to {output_path}")
-
+        output_path.mkdir(exist_ok=True)
+        filtered_data.to_csv(output_path / "benchmark_input_data.csv")
+        
         return filtered_data
 
-    def _load_streamflow_data(self) -> pd.DataFrame:
-        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
-        streamflow_data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
-        return streamflow_data
+    def _process_to_daily(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate data to daily values with correct units."""
+        daily_data = pd.DataFrame()
+        
+        # Temperature (K): daily mean
+        daily_data['temperature'] = data['temperature'].resample('D').mean()
+        
+        # Streamflow (m³/s): daily mean
+        daily_data['streamflow'] = data['streamflow'].resample('D').mean()
+        
+        # Precipitation: sum to daily totals in mm/day
+        # Input is already in mm/hr from _load_forcing_data
+        daily_data['precipitation'] = data['precipitation'].resample('D').sum()
+        
+        return daily_data
 
-    def _load_forcing_data(self) -> xr.Dataset:
+    def _validate_data(self, data: pd.DataFrame):
+        """Validate data ranges and consistency."""
+        # Check for missing values
+        missing = data.isnull().sum()
+        if missing.any():
+            self.logger.warning(f"Missing values detected:\n{missing}")
+        
+        # Physical range checks
+        if (data['temperature'] < 200).any() or (data['temperature'] > 330).any():
+            self.logger.warning("Temperature values outside physical range (200-330 K)")
+        
+        if (data['streamflow'] < 0).any():
+            self.logger.warning("Negative streamflow values detected")
+        
+        if (data['precipitation'] < 0).any():
+            self.logger.warning("Negative precipitation values detected")
+            
+        if (data['precipitation'] > 1000).any():
+            self.logger.warning("Extremely high precipitation values (>1000 mm/day) detected")
+
+        # Log data statistics
+        self.logger.info(f"Data statistics:\n{data.describe()}")
+
+    def _load_streamflow_data(self) -> pd.DataFrame:
+        """Load and basic process streamflow data."""
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
+        data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
+        return data.rename(columns={'discharge_cms': 'streamflow'})
+
+    def _load_forcing_data(self) -> pd.DataFrame:
+        """Load and process forcing data, returning hourly dataframe."""
         forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
-        nc_files = list(forcing_path.glob("*.nc"))
-        
-        datasets = []
-        for file in nc_files:
-            ds = xr.open_dataset(file)
-            datasets.append(ds)
-        
+        datasets = [xr.open_dataset(f) for f in forcing_path.glob("*.nc")]
         combined_ds = xr.merge(datasets)
         
-        # Average across the HRU dimension
+        # Average across HRUs
         averaged_ds = combined_ds.mean(dim='hru')
         
-        # Rename variables to match hydrobm expectations
-        averaged_ds = averaged_ds.rename({
-            'airtemp': 'temperature',
-            'pptrate': 'precipitation'
-        })
-        averaged_ds['precipitation'] = averaged_ds['precipitation'] * 3600000
+        # Convert precipitation to mm/hr (assuming input is m/s)
+        precip_data = averaged_ds['pptrate'] * 3600  # mm/s to mm/day
         
-        return averaged_ds
+        # Create DataFrame with temperature and converted precipitation
+        forcing_df = pd.DataFrame({
+            'temperature': averaged_ds['airtemp'].to_pandas(),
+            'precipitation': precip_data.to_pandas()
+        })
+        
+        return forcing_df
 
-    def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: xr.Dataset) -> pd.DataFrame:
-        # Convert xarray dataset to pandas DataFrame
-        forcing_df = forcing_data.to_dataframe().reset_index()
-        forcing_df = forcing_df.set_index('time')
-
-        # Select required variables
-        forcing_df = forcing_df[['temperature', 'precipitation']]
-
-        # Merge streamflow and forcing data
-        merged_data = pd.merge(streamflow_data, forcing_df, left_index=True, right_index=True, how='inner')
-        merged_data = merged_data.rename(columns={'discharge_cms': 'streamflow'})
-
+    def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: pd.DataFrame) -> pd.DataFrame:
+        """Merge streamflow and forcing data on timestamps."""
+        merged_data = pd.merge(streamflow_data, forcing_data, 
+                             left_index=True, right_index=True, 
+                             how='inner')
+        
+        # Check data completeness
+        expected_records = len(pd.date_range(merged_data.index.min(), 
+                                           merged_data.index.max(), 
+                                           freq='h'))
+        if len(merged_data) != expected_records:
+            self.logger.warning(f"Data gaps detected. Expected {expected_records} records, got {len(merged_data)}")
+        
         return merged_data

@@ -7,6 +7,8 @@ import geopandas as gpd # type: ignore
 import rpy2.robjects as robjects # type: ignore
 from rpy2.robjects.packages import importr # type: ignore
 import rasterio # type: ignore
+from rpy2.robjects import pandas2ri # type: ignore
+from rpy2.robjects.conversion import localconverter # type: ignore
 
 class GRPreProcessor:
     """
@@ -561,17 +563,12 @@ class GRRunner:
             return self.project_dir / default_subpath
         return Path(path_value)
         
-class GRPostProcessor:
+
+
+class GRPostprocessor:
     """
-    Preprocessor for the GR family of models (initially GR4J).
-    Handles data preparation, PET calculation, snow module setup, and file organization.
-    
-    Attributes:
-        config (Dict[str, Any]): Configuration settings for GR models
-        logger (Any): Logger object for recording processing information
-        project_dir (Path): Directory for the current project
-        gr_setup_dir (Path): Directory for GR setup files
-        domain_name (str): Name of the domain being processed
+    Postprocessor for GR (GR4J/CemaNeige) model outputs.
+    Handles extraction and processing of simulation results.
     """
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
@@ -579,12 +576,84 @@ class GRPostProcessor:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        self.gr_setup_dir = self.project_dir / "settings" / "GR"
-        
-        # GR-specific paths
-        self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
-        self.forcing_gr_path = self.project_dir / 'forcing' / 'GR_input'
-        self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
-        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
-        if self.catchment_name == 'default':
-            self.catchment_name = f"{self.domain_name}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+        self.results_dir = self.project_dir / "results"
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+
+    def extract_streamflow(self) -> Optional[Path]:
+        """
+        Extract simulated streamflow from GR output and append to results CSV.
+        Converts units from mm/day to m3/s (cms).
+        """
+        try:
+            self.logger.info("Extracting GR streamflow results")
+            
+            # Check for R data file
+            r_results_path = self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'GR' / 'GR_results.Rdata'
+            if not r_results_path.exists():
+                self.logger.error(f"GR results file not found at: {r_results_path}")
+                return None
+
+            # Load R data
+            robjects.r(f'load("{str(r_results_path)}")')
+            
+            # Extract simulated streamflow from OutputsModel
+            # Use both DatesR and Qsim directly from the loaded data
+            r_script = """
+            data.frame(
+                date = format(OutputsModel$DatesR, "%Y-%m-%d"),
+                flow = OutputsModel$Qsim
+            )
+            """
+            
+            # Run R script
+            sim_df = robjects.r(r_script)
+            
+            # Convert to pandas dataframe
+            with localconverter(robjects.default_converter + pandas2ri.converter):
+                sim_df = robjects.conversion.rpy2py(sim_df)
+                
+            # Set index to datetime
+            sim_df['date'] = pd.to_datetime(sim_df['date'])
+            sim_df.set_index('date', inplace=True)
+            
+            # Get catchment area
+            basin_name = self.config.get('RIVER_BASINS_NAME')
+            if basin_name == 'default':
+                basin_name = f"{self.domain_name}_riverBasins_delineate.shp"
+            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+            basin_gdf = gpd.read_file(basin_path)
+            
+            # Calculate total area in km2
+            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+            self.logger.info(f"Total catchment area: {area_km2:.2f} km2")
+            
+            # Convert units from mm/day to m3/s (cms)
+            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
+            q_sim_cms = sim_df['flow'] * area_km2 / 86.4
+            
+            # Read existing results file if it exists
+            output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_results.csv"
+            if output_file.exists():
+                results_df = pd.read_csv(output_file, index_col=0, parse_dates=True)
+            else:
+                results_df = pd.DataFrame(index=q_sim_cms.index)
+            
+            # Add GR results
+            results_df['GR_discharge_cms'] = q_sim_cms
+            
+            # Save updated results
+            results_df.to_csv(output_file)
+            
+            self.logger.info(f"GR results appended to: {output_file}")
+            return output_file
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting GR streamflow: {str(e)}")
+            raise
+            
+    def _get_file_path(self, file_type: str, file_def_path: str, file_name: str) -> Path:
+        """Helper method to get file paths from config or defaults."""
+        if self.config.get(file_type) == 'default':
+            return self.project_dir / file_def_path / file_name
+        else:
+            return Path(self.config.get(file_type))

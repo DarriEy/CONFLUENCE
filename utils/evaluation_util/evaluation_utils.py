@@ -13,6 +13,8 @@ from tqdm import tqdm # type: ignore
 import itertools
 from typing import Dict, List, Tuple, Any
 import xarray as xr # type: ignore
+from datetime import datetime
+import json
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
@@ -358,69 +360,100 @@ class Benchmarker:
         self.config = config
         self.logger = logger
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
-
-        # Create evaluation directory during initialization
         self.evaluation_dir = self.project_dir / 'evaluation'
         self.evaluation_dir.mkdir(parents=True, exist_ok=True)
 
-    def run_benchmarking(self, input_data: pd.DataFrame, cal_end_date: str) -> Dict[str, Any]:
-        """
-        Run hydrobm benchmarking on the input data.
+    def load_preprocessed_data(self) -> pd.DataFrame:
+        """Load preprocessed benchmark input data."""
+        data_path = self.evaluation_dir / "benchmark_input_data.csv"
+        if not data_path.exists():
+            raise FileNotFoundError(f"Preprocessed data not found at {data_path}")
         
-        Args:
-            input_data (pd.DataFrame): DataFrame with date, temperature, streamflow, and precipitation.
-            cal_end_date (str): End date for the calibration period (YYYY-MM-DD).
-        
-        Returns:
-            Dict[str, Any]: Dictionary containing benchmark flows and scores.
-        """
+        data = pd.read_csv(data_path, index_col=0)
+        data.index = pd.to_datetime(data.index)
+        return data
+
+    def run_benchmarking(self) -> Dict[str, Any]:
+        """Run hydrobm benchmarking using preprocessed data with year-based split."""
         self.logger.info("Starting hydrobm benchmarking")
-
-        # Prepare data for hydrobm
-        data = input_data.to_xarray()
-
-        # Create calibration and validation masks
-        cal_mask = data.index.values < np.datetime64(cal_end_date)
-        val_mask = ~cal_mask
-
-        self.logger.info(f'input data: {data}')
         
-
-        # Define benchmarks and metrics
-        benchmarks = [
-            # Streamflow benchmarks
-            "mean_flow",
-            "median_flow",
-            "annual_mean_flow",
-            "annual_median_flow",
-            "monthly_mean_flow",
-            "monthly_median_flow",
-            "daily_mean_flow",
-            "daily_median_flow",
-
-            # Long-term rainfall-runoff ratio benchmarks
-            "rainfall_runoff_ratio_to_all",
-            "rainfall_runoff_ratio_to_annual",
-            "rainfall_runoff_ratio_to_monthly",
-            "rainfall_runoff_ratio_to_daily",
-            "rainfall_runoff_ratio_to_timestep",
-
-            # Short-term rainfall-runoff ratio benchmarks
-            "monthly_rainfall_runoff_ratio_to_monthly",
-            "monthly_rainfall_runoff_ratio_to_daily",
-            "monthly_rainfall_runoff_ratio_to_timestep",
-
-            # Schaefli & Gupta (2007) benchmarks
-            "scaled_precipitation_benchmark",  # equivalent to "rainfall_runoff_ratio_to_daily"
-            "adjusted_precipitation_benchmark",
-            "adjusted_smoothed_precipitation_benchmark",
-            ]
-        
-        metrics = ['nse', 'kge', 'mse', 'rmse']
-        self.logger.info(f'Running benchmarks {benchmarks}')
-
         try:
-            # Run hydrobm
+            # Load and prepare data
+            input_data = self.load_preprocessed_data()
+            input_data = input_data.dropna()
+            
+            # Get unique years and find split point
+            years = sorted(input_data.index.year.unique())
+            mid_year = years[len(years) // 2]
+            
+            self.logger.info(f"Available years: {years}")
+            self.logger.info(f"Split year: {mid_year}")
+            
+            # Split the data
+            cal_data = input_data[input_data.index.year < mid_year]
+            val_data = input_data[input_data.index.year >= mid_year]
+            
+            # Debug information
+            self.logger.info("\nPeriod Information:")
+            self.logger.info(f"Calibration: {cal_data.index[0]} to {cal_data.index[-1]} ({len(cal_data)} points)")
+            self.logger.info(f"Validation: {val_data.index[0]} to {val_data.index[-1]} ({len(val_data)} points)")
+            self.logger.info(f"Calibration years: {sorted(cal_data.index.year.unique())}")
+            self.logger.info(f"Validation years: {sorted(val_data.index.year.unique())}")
+
+            # Sample data
+            self.logger.info("\nCalibration data sample:")
+            self.logger.info(cal_data.head())
+            self.logger.info("\nValidation data sample:")
+            self.logger.info(val_data.head())
+
+            # Convert to xarray and create masks
+            data = input_data.to_xarray()
+            
+            # Create masks based on years
+            cal_mask = data.indexes[list(data.coords.keys())[0]].year < mid_year
+            val_mask = data.indexes[list(data.coords.keys())[0]].year >= mid_year
+            
+            # Verify the split
+            n_cal = cal_mask.sum()
+            n_val = val_mask.sum()
+            
+            if n_cal < 30 or n_val < 30:
+                raise ValueError(f"Insufficient data in periods: cal={n_cal}, val={n_val}")
+
+            # Define benchmarks
+            benchmarks = [
+                            # Streamflow benchmarks
+                            "mean_flow",
+                            "median_flow",
+                            "annual_mean_flow",
+                            "annual_median_flow",
+                            "monthly_mean_flow",
+                            "monthly_median_flow",
+                            "daily_mean_flow",
+                            "daily_median_flow",
+
+                            # Long-term rainfall-runoff ratio benchmarks
+                            "rainfall_runoff_ratio_to_all",
+                            "rainfall_runoff_ratio_to_annual",
+                            "rainfall_runoff_ratio_to_monthly",
+                            "rainfall_runoff_ratio_to_daily",
+                            "rainfall_runoff_ratio_to_timestep",
+
+                            # Short-term rainfall-runoff ratio benchmarks
+                            "monthly_rainfall_runoff_ratio_to_monthly",
+                            "monthly_rainfall_runoff_ratio_to_daily",
+                            "monthly_rainfall_runoff_ratio_to_timestep",
+
+                            # Schaefli & Gupta (2007) benchmarks
+                            "scaled_precipitation_benchmark",  # equivalent to "rainfall_runoff_ratio_to_daily"
+                            "adjusted_precipitation_benchmark",
+                            "adjusted_smoothed_precipitation_benchmark",
+                        ]
+            
+            metrics = ['nse', 'kge', 'mse', 'rmse']
+            
+            # Run benchmarking
+            self.logger.info("Running HydroBM calculations...")
             benchmark_flows, scores = calc_bm(
                 data,
                 cal_mask,
@@ -431,41 +464,62 @@ class Benchmarker:
                 metrics=metrics,
                 calc_snowmelt=True,
                 temperature="temperature",
-                snowmelt_threshold=273.0,
-                snowmelt_rate=3.0,
+                snowmelt_threshold=273.15,
+                snowmelt_rate=3.0
             )
-
-            self.logger.info('Finished running benchmarks')
-
-            # Save results
-            self._save_results(benchmark_flows, scores)
-
-            return {"benchmark_flows": benchmark_flows, "scores": scores}
-        
+            
+            scores_df = pd.DataFrame(scores)
+            self._save_results(benchmark_flows, scores_df)
+            
+            # Create return dictionary with basic types
+            return {
+                "benchmark_flows": benchmark_flows,
+                "scores": scores_df,
+                "cal_period": {
+                    "start": str(cal_data.index[0]),
+                    "end": str(cal_data.index[-1]),
+                    "points": int(n_cal),
+                    "years": [int(year) for year in sorted(cal_data.index.year.unique())]
+                },
+                "val_period": {
+                    "start": str(val_data.index[0]),
+                    "end": str(val_data.index[-1]),
+                    "points": int(n_val),
+                    "years": [int(year) for year in sorted(val_data.index.year.unique())]
+                }
+            }
+            
         except Exception as e:
-            self.logger.error(f"Error during benchmark calculation: {str(e)}")
+            self.logger.error(f"Error during benchmark calculation: {e}")
             raise
 
-    def _save_results(self, benchmark_flows: pd.DataFrame, scores: Dict[str, Any]):
-        """
-        Save benchmark results to files.
-        
-        Args:
-            benchmark_flows (pd.DataFrame): Benchmark flow results
-            scores (Dict[str, Any]): Benchmark scores
-        """
+    def _save_results(self, benchmark_flows: pd.DataFrame, scores: pd.DataFrame):
+        """Save benchmark results to files with clear documentation."""
         try:
-            # Save benchmark flows
             flows_path = self.evaluation_dir / "benchmark_flows.csv"
             benchmark_flows.to_csv(flows_path)
-            self.logger.info(f"Benchmark flows saved to {flows_path}")
-
-            # Save scores
-            scores_df = pd.DataFrame(scores)
-            scores_path = self.evaluation_dir / "benchmark_scores.csv"
-            scores_df.to_csv(scores_path)
-            self.logger.info(f"Benchmark scores saved to {scores_path}")
             
+            scores_path = self.evaluation_dir / "benchmark_scores.csv"
+            scores.to_csv(scores_path)
+            
+            metadata = {
+                "date_processed": datetime.now().isoformat(),
+                "input_units": {
+                    "temperature": "K",
+                    "streamflow": "m³/s",
+                    "precipitation": "mm/day"
+                },
+                "data_period": {
+                    "start": str(benchmark_flows.index[0]),
+                    "end": str(benchmark_flows.index[-1])
+                },
+                "benchmarks_used": [str(b) for b in scores.index],
+                "metrics_used": [str(m) for m in scores.columns]
+            }
+            
+            with open(self.evaluation_dir / "benchmark_metadata.json", 'w') as f:
+                json.dump(metadata, f, indent=2)
+                
         except Exception as e:
             self.logger.error(f"Error saving benchmark results: {str(e)}")
             raise
