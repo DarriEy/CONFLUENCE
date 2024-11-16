@@ -15,14 +15,15 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
-#from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
-#from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
+from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
+from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
-#from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 from utils.models_utils.summa_utils import SUMMAPostprocessor # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
+from utils.models_utils.flux_utils import FLUXPreProcessor, FLUXRunner, FLUXPostProcessor # type: ignore
 from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
 from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
@@ -338,6 +339,10 @@ class CONFLUENCE:
                 hpp = HYPEPreProcessor(self.config, self.logger)
                 hpp.run_preprocessing()
 
+            elif model == 'FLUX':
+                fpp = FLUXPreProcessor(self.config, self.logger)
+                fpp.run_preprocessing()
+
 
     @get_function_logger
     def run_models(self):
@@ -384,6 +389,10 @@ class CONFLUENCE:
                     hr.run_hype()
                 except Exception as e:
                     self.logger.error(f"Error during HYPE model run: {str(e)}")
+
+            elif model == 'FLUX':
+                fr = FLUXRunner(self.config, self.logger)
+                fr.run_flux()       
         else:
             self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
 
@@ -450,6 +459,9 @@ class CONFLUENCE:
             elif model == 'SUMMA':
                 spp = SUMMAPostprocessor(self.config, self.logger)
                 results_file = spp.extract_streamflow()
+            elif model == 'FLUX':
+                fpp = FLUXPostProcessor(self.config, self.logger)
+                results_file = fpp.extract_streamflow()
             else:
                 pass
 
@@ -460,37 +472,45 @@ class CONFLUENCE:
     @get_function_logger
     def calibrate_model(self):
         # Calibrate the model using specified method and objectives
-        for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
-            if model == 'SUMMA':
-                if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
-                    self.run_ostrich_optimization()
+        try:
+            for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
+                if model == 'SUMMA':
+                    if self.config.get('OPTMIZATION_ALOGORITHM') == 'OSTRICH':
+                        self.run_ostrich_optimization()
+                    else:
+                        self.run_parallel_optimization()
                 else:
-                    self.run_parallel_optimization()
-            else:
-                pass
+                    pass
+        except Exception as e:
+            self.logger.error(f"Error during model calibration: {str(e)}")
+            return None
 
     @get_function_logger  
     def run_sensitivity_analysis(self):
         self.logger.info("Starting sensitivity analysis")
+        try:
 
-        for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
-            if model == 'SUMMA':
-                sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
-                results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
-                
-                if not results_file.exists():
-                    self.logger.error(f"Calibration results file not found: {results_file}")
-                    return
-                
-                if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
+            for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
+                if model == 'SUMMA':
+                    sensitivity_analyzer = SensitivityAnalyzer(self.config, self.logger)
+                    results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
+                    
+                    if not results_file.exists():
+                        self.logger.error(f"Calibration results file not found: {results_file}")
+                        return
+                    
+                    if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
+                        sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
+
                     sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
-
-                sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
-                self.logger.info("Sensitivity analysis completed")
-                return sensitivity_results
-            else:
-                pass
-
+                    self.logger.info("Sensitivity analysis completed")
+                    return sensitivity_results
+                else:
+                    pass
+        except Exception as e:
+            self.logger.error(f"Error during sensitivity analysis: {str(e)}")
+            return None
+                    
     @get_function_logger  
     def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
