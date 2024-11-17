@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 import matplotlib.dates as mdates # type: ignore
 from matplotlib.gridspec import GridSpec # type: ignore
-from matplotlib.colors import LinearSegmentedColormap # type: ignore
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap # type: ignore
 import traceback
 import rasterio # type: ignore
 
@@ -955,44 +955,117 @@ class VisualizationReporter:
             ax.set_xlim([plot_bounds[0], plot_bounds[2]])
             ax.set_ylim([plot_bounds[1], plot_bounds[3]])
 
-            # Add the global basemap
-            #self.plot_with_global_basemap(ax, plot_bounds)
-
-            # Determine the classification column and color scheme
-            if discretization_method.lower() == 'elevation':
-                class_col = 'elevClass'
-                cmap = 'terrain'
-                legend_title = 'Elevation Class'
-            elif discretization_method.lower() == 'landclass':
-                class_col = 'landClass'
-                cmap = 'Spectral'
-                legend_title = 'Land Use Class'
-            elif discretization_method.lower() == 'soilclass':
-                class_col = 'soilClass'
-                cmap = 'YlOrBr'
-                legend_title = 'Soil Class'
-            elif discretization_method.lower() == 'radiation':
-                class_col = 'radiationClass'
-                cmap = 'YlOrRd'
-                legend_title = 'Radiation Class'
-            else:
-                class_col = 'HRU_ID'
-                cmap = 'tab20'
-                legend_title = 'HRU ID'
-
-            # Plot HRUs
-            hru_gdf_web.plot(
-                column=class_col,
-                ax=ax,
-                cmap=cmap,
-                alpha=0.7,
-                legend=True,
-                legend_kwds={
-                    'label': legend_title,
-                    'orientation': 'vertical',
-                    'shrink': 0.8
+            # Get the column name and setup legend title
+            class_mappings = {
+                    'elevation': {'col': 'elevClass', 'title': 'Elevation Classes', 'cm': 'terrain'},  # Changed from 'Spectral' to 'terrain'
+                    'soilclass': {'col': 'soilClass', 'title': 'Soil Classes', 'cm': 'Set3'},
+                    'landclass': {'col': 'landClass', 'title': 'Land Use Classes', 'cm': 'Set2'},
+                    'radiation': {'col': 'radiationClass', 'title': 'Radiation Classes', 'cm': 'YlOrRd'},
+                    'default': {'col': 'HRU_ID', 'title': 'HRU Classes', 'cm': 'tab20'}
                 }
+
+            # Get mapping for the discretization method, defaulting to HRU if not found
+            mapping = class_mappings.get(discretization_method.lower(), class_mappings['default'])
+            class_col = mapping['col']
+            legend_title = mapping['title']
+
+            # Get unique classes and determine number of colors needed
+            unique_classes = sorted(hru_gdf[class_col].unique())
+            n_classes = len(unique_classes)
+
+            # Create color map based on number of classes
+            if discretization_method.lower() == 'elevation':
+                # Calculate elevation ranges for labels
+                elev_range = hru_gdf['elev_mean'].agg(['min', 'max'])
+                min_elev = int(elev_range['min'])
+                max_elev = int(elev_range['max'])
+                band_size = int(self.config.get('ELEVATION_BAND_SIZE', 400))
+                
+                # Create labels for each class
+                legend_labels = []
+                for cls in unique_classes:
+                    lower = min_elev + ((cls-1) * band_size)
+                    upper = min_elev + (cls * band_size)
+                    if upper > max_elev:
+                        upper = max_elev
+                    legend_labels.append(f'{lower}-{upper}m')
+            else:
+                legend_labels = [f'Class {i}' for i in unique_classes]
+
+            # Get colors from the specified colormap
+            base_cmap = plt.get_cmap(mapping['cm'])
+            
+            # Handle cases where we need more colors than the base colormap provides
+            if n_classes > base_cmap.N:
+                # Use multiple colormaps and combine them
+                additional_cmaps = ['Set3', 'Set2', 'Set1', 'Paired', 'tab20']
+                all_colors = []
+                for cmap_name in [mapping['cm']] + additional_cmaps:
+                    cmap = plt.get_cmap(cmap_name)
+                    all_colors.extend([cmap(i) for i in np.linspace(0, 1, cmap.N)])
+                    if len(all_colors) >= n_classes:
+                        break
+                colors = all_colors[:n_classes]
+            else:
+                colors = [base_cmap(i) for i in np.linspace(0, 1, n_classes)]
+
+            # Create custom colormap and normalization
+            cmap = ListedColormap(colors)
+            norm = plt.Normalize(vmin=min(unique_classes)-0.5, vmax=max(unique_classes)+0.5)
+
+            hru_plot = hru_gdf_web.plot(
+            column=class_col,
+            ax=ax,
+            cmap=cmap,
+            norm=norm,
+            alpha=0.7,
+            legend=False  # Make sure this is False
             )
+
+            # Create custom legend
+            legend_elements = [Patch(facecolor=colors[i],
+                                alpha=0.7,
+                                label=legend_labels[i]) 
+                            for i in range(n_classes)]
+
+            # Add legend with scrollbar if too many classes
+            if n_classes > 20:
+                # Create a second figure for the legend
+                legend_fig = plt.figure(figsize=(2, 6))
+                legend_ax = legend_fig.add_axes([0, 0, 1, 1])
+                legend_ax.set_axis_off()
+                
+                # Create scrollable legend
+                legend = legend_ax.legend(handles=legend_elements,
+                                        title=legend_title,
+                                        loc='center',
+                                        bbox_to_anchor=(0.5, 0.5),
+                                        frameon=True,
+                                        fancybox=True,
+                                        shadow=True,
+                                        ncol=1,
+                                        mode="expand")
+                
+                # Save separate legend file
+                legend_filename = plot_filename.parent / f'{plot_filename.stem}_legend.png'
+                legend_fig.savefig(legend_filename, bbox_inches='tight', dpi=300)
+                plt.close(legend_fig)
+                
+                # Add note about separate legend file
+                ax.text(0.98, 0.02, 'See separate legend file',
+                    transform=ax.transAxes,
+                    horizontalalignment='right',
+                    bbox=dict(facecolor='white', alpha=0.8))
+            else:
+                # Add legend to main plot if not too many classes
+                ax.legend(handles=legend_elements,
+                        title=legend_title,
+                        loc='center left',
+                        bbox_to_anchor=(1, 0.5),
+                        frameon=True,
+                        fancybox=True,
+                        shadow=True)
+
 
             # Plot HRU boundaries
             hru_gdf_web.boundary.plot(

@@ -99,14 +99,15 @@ class FLUXPreProcessor:
         # Load streamflow data
         streamflow_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
         streamflow_df = pd.read_csv(streamflow_path, parse_dates=['datetime'])
-        streamflow_df = streamflow_df.set_index('datetime').rename(columns={'discharge_cms': 'streamflow'})
-        streamflow_df.index = pd.to_datetime(streamflow_df.index)
-
+        
+        # Keep the original column name 'discharge_cms'
+        streamflow_df = streamflow_df.set_index('datetime')
+        
         # Align timestamps
         start_date = max(forcing_df.index.get_level_values('time').min(),
                         streamflow_df.index.min())
         end_date = min(forcing_df.index.get_level_values('time').max(),
-                      streamflow_df.index.max())
+                    streamflow_df.index.max())
 
         forcing_df = forcing_df.loc[pd.IndexSlice[start_date:end_date, :], :]
         streamflow_df = streamflow_df.loc[start_date:end_date]
@@ -431,7 +432,6 @@ class FLUXRunner:
         return forcing_df, streamflow_df
 
     def _preprocess_data(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, pd.DatetimeIndex, pd.Index, pd.DataFrame]:
-        """Preprocess data for model training."""
         self.logger.info("Preprocessing data for FLUX model")
         
         # Align the data
@@ -442,7 +442,7 @@ class FLUXRunner:
         # Prepare features
         features = forcing_df.reset_index()
         feature_columns = features.columns.drop(['time', 'hruId', 'hru', 'latitude', 'longitude'] 
-                                             if 'time' in features.columns and 'hruId' in features.columns else [])
+                                            if 'time' in features.columns and 'hruId' in features.columns else [])
         
         # Average features across all HRUs
         features_avg = forcing_df.groupby('time')[feature_columns].mean()
@@ -452,10 +452,11 @@ class FLUXRunner:
         scaled_features = self.feature_scaler.fit_transform(features_avg)
         scaled_features = np.clip(scaled_features, -10, 10)
 
-        # Prepare targets
-        targets = streamflow_df['streamflow'].values.reshape(-1, 1)
+        # Prepare targets - using log transform for streamflow
+        targets = streamflow_df['discharge_cms'].values.reshape(-1, 1)
+        targets = np.log1p(targets)  # Apply log1p transform to handle zeros and small values
         
-        # Scale targets
+        # Scale log-transformed targets
         self.target_scaler = StandardScaler()
         scaled_targets = self.target_scaler.fit_transform(targets)
         scaled_targets = np.clip(scaled_targets, -10, 10)
@@ -490,7 +491,8 @@ class FLUXRunner:
         
         predictions = np.concatenate(predictions, axis=0)
         predictions = self.target_scaler.inverse_transform(predictions)
-        predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e15, neginf=-1e15)
+        predictions = np.expm1(predictions)  # Inverse of log1p transform
+        predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e15, neginf=0.0)
         
         pred_df = pd.DataFrame(predictions, columns=['predicted_streamflow'], 
                              index=common_dates[self.lookback:])

@@ -1,1027 +1,1462 @@
 from pathlib import Path
 import sys
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 import pandas as pd # type: ignore
-import numpy as np # type: ignore
+import numpy as np
 import geopandas as gpd # type: ignore
 import xarray as xr # type: ignore
 import shutil
 from datetime import datetime
-import rasterio # type: ignore
-import yaml # type: ignore
 import subprocess
-import shutil
+import logging
+import yaml# type: ignore
+import rasterio # type: ignore
+import os
+import math
+import cdo # type: ignore
+
+# For unit handling
+import pint # type: ignore
+import pint_xarray # type: ignore
+
+# For data processing
+from scipy import stats
+from scipy.stats import pearsonr
+from scipy.spatial.distance import pdist, squareform
+import dask # type: ignore
+
+import matplotlib.pyplot as plt # type: ignore
+import seaborn as sns # type: ignore
+# Type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from logging import Logger
+    from pandas import DataFrame, Series # type: ignore
+    from geopandas import GeoDataFrame # type: ignore
+    from xarray import Dataset, DataArray # type: ignore
+    from numpy import ndarray # type: ignore
+
+# Optional imports for parallel processing
+try:
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    PARALLEL_AVAILABLE = True
+except ImportError:
+    PARALLEL_AVAILABLE = False
+
+# Set pandas options for better display
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_rows', 100)
+
+# Register pint with xarray for unit handling
+xr.set_options(keep_attrs=True)
 
 class HYPEPreProcessor:
     """
-    Preprocessor for the HYPE (HYdrological Predictions for the Environment) model.
-    Handles data preparation and file setup for HYPE model runs.
-    
-    This implementation focuses on:
-    - Hourly timestep simulation
-    - Streamflow modeling (without water quality)
-    - Text file inputs/outputs
-    - Basic configuration subset
+    HYPE (HYdrological Predictions for the Environment) preprocessor for CONFLUENCE.
+    Handles preparation of HYPE model inputs using CONFLUENCE's data structure.
     
     Attributes:
-        config (Dict[str, Any]): Configuration settings for HYPE
-        logger (Any): Logger object for recording processing information
-        project_dir (Path): Directory for the current project
-        domain_name (str): Name of the domain being processed
+        config (Dict[str, Any]): CONFLUENCE configuration settings
+        logger (logging.Logger): Logger for the preprocessing workflow
+        project_dir (Path): Project directory path
+        domain_name (str): Name of the modeling domain
     """
+    
     def __init__(self, config: Dict[str, Any], logger: Any):
-        """Initialize the HYPE preprocessor."""
+        """Initialize HYPE preprocessor with CONFLUENCE config."""
         self.config = config
         self.logger = logger
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
-        # HYPE-specific paths
+        # Define HYPE-specific paths
         self.hype_setup_dir = self.project_dir / "settings" / "HYPE"
-        self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
-        self.forcing_hype_path = self.project_dir / 'forcing' / 'HYPE_input'
+        self.gistool_output = self.project_dir / "attributes" / "gistool-outputs"
+        self.easymore_output = self.project_dir / "forcing" / "easymore-outputs"
         
-        # Define paths for HYPE input files
-        self.geo_data_path = self.hype_setup_dir / 'GeoData.txt'
-        self.geo_class_path = self.hype_setup_dir / 'GeoClass.txt'
-        self.par_path = self.hype_setup_dir / 'par.txt'
-        self.info_path = self.hype_setup_dir / 'info.txt'
+        # Initialize time parameters
+        self.timeshift = -6  # Default timeshift
+        self.spinup_days = 274  # Default spinup period
         
+        # Create necessary directories
+        self.hype_setup_dir.mkdir(parents=True, exist_ok=True)
+
     def run_preprocessing(self):
-        """Run the complete HYPE preprocessing workflow."""
+        """Execute complete HYPE preprocessing workflow."""
         self.logger.info("Starting HYPE preprocessing")
+        
         try:
-            self.create_directories()
-            self.prepare_forcing_data()
-            self.create_geo_data()
-            self.create_geo_class()
-            self.create_par_file()
-            self.create_info_file()
+            # Write forcing files
+            self.write_hype_forcing()
+            
+            # Write geographic data files
+            self.write_hype_geo_files()
+            
+            # Write parameter file
+            self.write_hype_par_file()
+            
+            # Write info and file directory files
+            self.write_hype_info_filedir_files(spinup_days=self.spinup_days)
+            
             self.logger.info("HYPE preprocessing completed successfully")
+            
         except Exception as e:
             self.logger.error(f"Error during HYPE preprocessing: {str(e)}")
             raise
-
-    def create_directories(self):
-        """Create necessary directories for HYPE setup."""
-        dirs_to_create = [
-            self.hype_setup_dir,
-            self.forcing_hype_path,
-        ]
-        for dir_path in dirs_to_create:
-            dir_path.mkdir(parents=True, exist_ok=True)
-            self.logger.info(f"Created directory: {dir_path}")
-
-    def prepare_forcing_data(self):
-        """
-        Prepare forcing data files (Pobs.txt and Tobs.txt) from basin-averaged NetCDF data.
-        Handles conversion to HYPE's required format for hourly timesteps.
-        """
-        self.logger.info("Preparing HYPE forcing data")
+    '''
+    def write_hype_forcing(self):
+        """Convert CONFLUENCE forcing data to HYPE format."""
+        self.logger.info("Writing HYPE forcing files")
         
         try:
-            # Read basin-averaged forcing data
-            forcing_files = sorted(self.forcing_basin_path.glob('*.nc'))
-            if not forcing_files:
-                raise FileNotFoundError("No forcing files found")
+            # Define forcing units mapping
+            forcing_units = {
+                'temperature': {
+                    'in_varname': 'RDRS_v2.1_P_TT_09944',
+                    'in_units': 'kelvin',
+                    'out_units': 'celsius'
+                },
+                'precipitation': {
+                    'in_varname': 'RDRS_v2.1_A_PR0_SFC',
+                    'in_units': 'm/hr',
+                    'out_units': 'mm/day'
+                }
+            }
             
-            ds = xr.open_mfdataset(forcing_files)
+            # Find easymore output files
+            easymore_files = sorted(self.easymore_output.glob('*.nc'))
+            if not easymore_files:
+                raise FileNotFoundError("No easymore output files found")
             
-            # Extract precipitation and temperature
-            precip = ds['pptrate'] * 3600  # Convert to mm/hr
-            temp = ds['airtemp'] - 273.15  # Convert to Celsius
+            # Merge files and process
+            ds = xr.open_mfdataset(easymore_files)
+            ds = ds.convert_calendar('standard')
             
-            # Create Pobs.txt
-            self._create_forcing_file(precip, 'Pobs.txt', 'prec')
+            # Apply timeshift
+            ds['time'] = ds['time'] + pd.Timedelta(hours=self.timeshift)
             
-            # Create Tobs.txt
-            self._create_forcing_file(temp, 'Tobs.txt', 'temp')
+            # Process temperature data
+            self._process_temperature(ds, forcing_units['temperature'])
             
-            self.logger.info("Forcing data preparation completed")
+            # Process precipitation data
+            self._process_precipitation(ds, forcing_units['precipitation'])
+            
+            self.logger.info("HYPE forcing files written successfully")
             
         except Exception as e:
-            self.logger.error(f"Error preparing forcing data: {str(e)}")
+            self.logger.error(f"Error writing HYPE forcing: {str(e)}")
+            raise
+    '''
+    def write_hype_forcing(self):
+        """Convert CONFLUENCE forcing data to HYPE format efficiently."""
+        self.logger.info("Writing HYPE forcing files")
+        
+        try:
+            # Define forcing units mapping (using same structure as your colleague)
+            forcing_units = {
+                'temperature': {
+                    'in_varname': 'RDRS_v2.1_P_TT_09944',
+                    'in_units': 'kelvin',
+                    'out_units': 'celsius'
+                },
+                'precipitation': {
+                    'in_varname': 'RDRS_v2.1_A_PR0_SFC',
+                    'in_units': 'm/hr',
+                    'out_units': 'mm/day'
+                }
+            }
+            
+            # Find easymore files and convert to string paths
+            easymore_files = sorted(str(p) for p in self.easymore_output.glob('*.nc'))
+            if not easymore_files:
+                raise FileNotFoundError("No easymore output files found")
+            
+            # Split files into manageable batches
+            batch_size = min(20, len(easymore_files))
+            files_split = np.array_split(easymore_files, batch_size)
+            cdo_obj = cdo.Cdo()
+            intermediate_files = []
+            
+            # Process in batches
+            self.logger.info("Merging easymore outputs")
+            for i, batch_files in enumerate(files_split):
+                batch_output = f'forcing_batch_{i}.nc'
+                cdo_obj.mergetime(input=batch_files.tolist(), output=batch_output)
+                intermediate_files.append(batch_output)
+            
+            # Merge all batches
+            cdo_obj.mergetime(input=intermediate_files, output='merged_forcing.nc')
+            
+            # Clean up intermediates
+            for f in intermediate_files:
+                os.remove(f)
+            
+            # Open merged dataset
+            ds = xr.open_dataset('merged_forcing.nc')
+            ds = ds.convert_calendar('standard')
+            ds['time'] = ds['time'] + pd.Timedelta(hours=self.timeshift)
+            
+            # Process temperature
+            self._process_forcing_file(
+                ds=ds,
+                var_name=forcing_units['temperature']['in_varname'],
+                out_name='TMAXobs',
+                unit_conversion={
+                    'in_units': forcing_units['temperature']['in_units'],
+                    'out_units': forcing_units['temperature']['out_units']
+                },
+                stat='max'
+            )
+            
+            self._process_forcing_file(
+                ds=ds,
+                var_name=forcing_units['temperature']['in_varname'],
+                out_name='TMINobs',
+                unit_conversion={
+                    'in_units': forcing_units['temperature']['in_units'],
+                    'out_units': forcing_units['temperature']['out_units']
+                },
+                stat='min'
+            )
+            
+            self._process_forcing_file(
+                ds=ds,
+                var_name=forcing_units['temperature']['in_varname'],
+                out_name='Tobs',
+                unit_conversion={
+                    'in_units': forcing_units['temperature']['in_units'],
+                    'out_units': forcing_units['temperature']['out_units']
+                },
+                stat='mean'
+            )
+            
+            # Process precipitation
+            self._process_forcing_file(
+                ds=ds,
+                var_name=forcing_units['precipitation']['in_varname'],
+                out_name='Pobs',
+                unit_conversion={
+                    'in_units': forcing_units['precipitation']['in_units'],
+                    'out_units': forcing_units['precipitation']['out_units']
+                },
+                stat='mean'
+            )
+            
+            # Clean up
+            ds.close()
+            os.remove('merged_forcing.nc')
+            
+            self.logger.info("HYPE forcing files written successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error writing HYPE forcing: {str(e)}")
+            raise
+ 
+    def _write_forcing_files(self, results: Dict[str, Dict[str, np.ndarray]]):
+        """Write forcing files efficiently using numpy."""
+        # Prepare output formats
+        output_files = {
+            'temperature': [
+                ('Tobs.txt', 'mean'),
+                ('TMAXobs.txt', 'max'),
+                ('TMINobs.txt', 'min')
+            ],
+            'precipitation': [
+                ('Pobs.txt', 'mean')
+            ]
+        }
+        
+        # Write files using numpy's efficient I/O
+        for var_name, file_specs in output_files.items():
+            var_data = results[var_name]
+            times = pd.DatetimeIndex(var_data['time'])
+            
+            for filename, stat_type in file_specs:
+                filepath = self.hype_setup_dir / filename
+                
+                # Create structured data
+                data = np.column_stack((
+                    times.strftime('%Y-%m-%d'),
+                    var_data[stat_type]
+                ))
+                
+                # Write efficiently with numpy
+                header = 'time\tvalue'
+                np.savetxt(
+                    filepath,
+                    data,
+                    fmt=['%s', '%.3f'],
+                    delimiter='\t',
+                    header=header,
+                    comments=''
+                )
+                
+    def write_hype_geo_files(self):
+        """Create HYPE geographic data files using CONFLUENCE shapefiles."""
+        self.logger.info("Writing HYPE geographic files")
+        
+        try:
+            # Read CONFLUENCE shapefiles
+            basins = gpd.read_file(self.project_dir / "shapefiles" / "river_basins" / 
+                                 f"{self.domain_name}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp")
+            rivers = gpd.read_file(self.project_dir / "shapefiles" / "river_network" / 
+                                 f"{self.domain_name}_riverNetwork_delineate.shp")
+            
+            # Create and write GeoData.txt
+            self._create_geodata(basins, rivers)
+            
+            # Create and write GeoClass.txt
+            self._create_geoclass()
+            
+            self.logger.info("HYPE geographic files written successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error writing HYPE geographic files: {str(e)}")
             raise
 
-    def _create_forcing_file(self, data: xr.DataArray, filename: str, var_name: str):
-        """Helper method to create HYPE forcing files."""
-        output_path = self.forcing_hype_path / filename
+    @staticmethod
+    def _count_downstream(subid: int, downstream_dict: Dict[int, int]) -> int:
+        """Count number of downstream subbasins for a given subid."""
+        count = 0
+        current = downstream_dict.get(subid, 0)
+        visited = set()
         
-        # Format timestamps for HYPE (YYYY-MM-DD HH:MM)
-        times = pd.to_datetime(data.time.values).strftime('%Y-%m-%d %H:%M')
+        while current > 0 and current in downstream_dict and current not in visited:
+            visited.add(current)
+            count += 1
+            current = downstream_dict.get(current, 0)
         
-        # Create header
-        header = f"date {' '.join(map(str, range(1, len(data.hru) + 1)))}"
-        
-        # Create DataFrame
-        df = pd.DataFrame(data.values, index=times, columns=range(1, len(data.hru) + 1))
-        
-        # Save to file
-        with open(output_path, 'w') as f:
-            f.write(header + '\n')
-            df.to_csv(f, sep=' ', float_format='%.3f')
-        
-        self.logger.info(f"Created forcing file: {filename}")
+        return count
 
-    def create_geo_class(self):
+    @staticmethod
+    def _count_downstream_wrapper(args):
+        """Wrapper function for multiprocessing that unpacks arguments."""
+        subid, downstream_dict = args
+        return HYPEPreProcessor._count_downstream(subid, downstream_dict)
+
+    def _sort_geodata(self, geodata: pd.DataFrame) -> pd.DataFrame:
+        """Sort geodata from upstream to downstream more efficiently."""
+        # Create a network dictionary for faster lookups
+        downstream_dict = geodata.set_index('subid')['maindown'].to_dict()
+        
+        # Create argument tuples for parallel processing
+        args = [(subid, downstream_dict) for subid in geodata['subid']]
+        
+        # Use vectorized operations with pandas
+        if PARALLEL_AVAILABLE:
+            with ProcessPoolExecutor() as executor:
+                n_downstream = list(executor.map(self._count_downstream_wrapper, args))
+        else:
+            n_downstream = [self._count_downstream(subid, downstream_dict) 
+                        for subid in geodata['subid']]
+        
+        geodata['n_ds_subbasins'] = n_downstream
+        
+        # Sort and clean up
+        geodata = geodata.sort_values('n_ds_subbasins', ascending=False)
+        return geodata.drop(columns=['n_ds_subbasins'])
+
+    def _create_geodata(self, basins: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame):
+        """Create HYPE GeoData.txt file more efficiently."""
+        # Create geodata DataFrame in one go
+        geodata = pd.DataFrame({
+            'subid': basins[self.config['RIVER_BASIN_SHP_RM_GRUID']],
+            'maindown': rivers[self.config['RIVER_NETWORK_SHP_DOWNSEGID']],
+            'area': basins[self.config['RIVER_BASIN_SHP_AREA']],
+            'rivlen': rivers[self.config['RIVER_NETWORK_SHP_LENGTH']]
+        })
+        
+        # Calculate centroids once
+        centroids = basins.to_crs(epsg=4326).geometry.centroid
+        geodata['latitude'] = centroids.y
+        geodata['longitude'] = centroids.x
+        
+        # Process elevation data efficiently
+        elev_stats = pd.read_csv(self.gistool_output / 'domain_stats_elv.csv')
+        geodata['elev_mean'] = elev_stats['mean']
+        
+        # Sort from upstream to downstream
+        geodata = self._sort_geodata(geodata)
+        
+        # Save GeoData.txt efficiently using numpy's savetxt
+        header = '\t'.join(geodata.columns)
+        np.savetxt(
+            self.hype_setup_dir / 'GeoData.txt',
+            geodata.values,
+            fmt='%g',
+            delimiter='\t',
+            header=header,
+            comments=''
+        )
+    '''
+    def _create_geodata(self, basins: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame):
+        """Create HYPE GeoData.txt file."""
+        geodata = pd.DataFrame()
+        
+        # Map required fields
+        geodata['subid'] = basins[self.config['RIVER_BASIN_SHP_RM_GRUID']]
+        geodata['maindown'] = rivers[self.config['RIVER_NETWORK_SHP_DOWNSEGID']]
+        geodata['area'] = basins[self.config['RIVER_BASIN_SHP_AREA']]
+        geodata['rivlen'] = rivers[self.config['RIVER_NETWORK_SHP_LENGTH']]
+        
+        # Calculate centroids for lat/lon
+        geodata['latitude'] = basins.to_crs(epsg=4326).centroid.y
+        geodata['longitude'] = basins.to_crs(epsg=4326).centroid.x
+        
+        # Process elevation data from gistool output
+        elev_stats = pd.read_csv(self.gistool_output / 'domain_stats_elv.csv')
+        geodata['elev_mean'] = elev_stats['mean']
+        
+        # Sort from upstream to downstream
+        geodata = self._sort_geodata(geodata)
+        
+        # Save GeoData.txt
+        geodata.to_csv(self.hype_setup_dir / 'GeoData.txt', sep='\t', index=False)
+
+    def _sort_geodata(self, geodata: pd.DataFrame) -> pd.DataFrame:
+        """Sort geodata from upstream to downstream."""
+        geodata['n_ds_subbasins'] = 0
+        
+        for index, row in geodata.iterrows():
+            n_ds_subbasins = 0
+            nextID = row['maindown']
+            
+            while nextID > 0 and nextID in geodata['subid'].values:
+                n_ds_subbasins += 1
+                nextID = geodata.loc[geodata['subid'] == nextID, 'maindown'].iloc[0]
+            
+            geodata.loc[index, 'n_ds_subbasins'] = n_ds_subbasins
+        
+        # Sort and clean up
+        geodata = geodata.sort_values('n_ds_subbasins', ascending=False)
+        geodata = geodata.drop(columns=['n_ds_subbasins'])
+        
+        return geodata
+    '''
+    def _process_forcing_file(self, ds: xr.Dataset, 
+                            var_name: str, 
+                            out_name: str,
+                            unit_conversion: Dict[str, str],
+                            stat: str = 'mean',
+                            time_diff: int = -7) -> None:
+        """Process and write a single forcing file using proven approach."""
+        # Rename GRU_ID to id and ensure it's integer type
+        if 'GRU_ID' in ds.coords:
+            ds = ds.rename({'GRU_ID': 'id'})
+        elif 'GRU_ID' in ds:
+            ds = ds.rename({'GRU_ID': 'id'})
+        
+        ds.coords['id'] = ds.coords['id'].astype(int)
+        
+        # Keep only necessary variables
+        variables_to_keep = [var_name, 'time', 'id']
+        ds = ds.drop([v for v in ds.variables if v not in variables_to_keep])
+        
+        # Apply time shift if needed
+        if time_diff != 0:
+            ds['time'] = ds['time'].roll(time=time_diff)
+            if time_diff < 0:
+                ds = ds.isel(time=slice(None, time_diff))
+            elif time_diff > 0:
+                ds = ds.isel(time=slice(time_diff, None))
+        
+        # Calculate daily statistics
+        if stat == 'max':
+            ds_daily = ds.resample(time='D').max()
+        elif stat == 'min':
+            ds_daily = ds.resample(time='D').min()
+        else:  # mean is default
+            ds_daily = ds.resample(time='D').mean()
+        
+        # Convert units
+        ds_daily[var_name] = ds_daily[var_name].pint.quantify(unit_conversion['in_units'])
+        ds_daily[var_name] = ds_daily[var_name].pint.to(unit_conversion['out_units'])
+        ds_daily = ds_daily.pint.dequantify()
+        
+        # Convert to DataFrame and format for HYPE
+        df = ds_daily[var_name].to_dataframe()
+        df = df.unstack()
+        df = df.T
+        df = df.droplevel(level=0, axis=0)
+        df.columns.name = None
+        df.index.name = 'time'
+        
+        # Write to file with precise formatting
+        output_path = self.hype_setup_dir / f'{out_name}.txt'
+        df.to_csv(str(output_path), sep='\t', na_rep='', 
+                index_label='time', float_format='%.3f')
+    
+    def _process_forcing_variable(self, ds: xr.Dataset, varname: str, conversion: callable) -> Dict[str, np.ndarray]:
+        """Process a single forcing variable efficiently."""
+        # Extract and convert data
+        data = ds[varname].copy()
+        data.values = conversion(data.values)
+        
+        # Calculate daily statistics efficiently using xarray operations
+        daily_data = data.resample(time='D')
+        
+        return {
+            'mean': daily_data.mean().values,
+            'max': daily_data.max().values,
+            'min': daily_data.min().values,
+            'time': daily_data.time.values
+        }
+    
+    def _process_temperature(self, ds: xr.Dataset, units: Dict[str, str]):
+        """Process temperature data efficiently."""
+        temp = ds[units['in_varname']].copy()
+        
+        # Vectorized unit conversion
+        if units['in_units'] == 'kelvin':
+            temp = temp - 273.15
+        
+        # Calculate daily statistics using xarray's efficient operations
+        with dask.config.set(**{'array.slicing.split_large_chunks': True}):
+            tmax = temp.resample(time='D').max()
+            tmin = temp.resample(time='D').min()
+            tmean = temp.resample(time='D').mean()
+        
+        return tmax, tmin, tmean
+
+    def _process_precipitation(self, ds: xr.Dataset, units: Dict[str, str]):
+        """Process precipitation data efficiently."""
+        precip = ds[units['in_varname']].copy()
+        
+        # Vectorized unit conversion (m/hr to mm/day)
+        precip = precip * 24000
+        
+        # Calculate daily mean efficiently
+        with dask.config.set(**{'array.slicing.split_large_chunks': True}):
+            precip_daily = precip.resample(time='D').mean()
+        
+        return precip_daily
+
+    '''
+    def _process_temperature(self, ds: xr.Dataset, units: Dict[str, str]):
+        """Process temperature data for HYPE."""
+        temp = ds[units['in_varname']].copy()
+        
+        # Convert units
+        if units['in_units'] == 'kelvin':
+            temp = temp - 273.15
+        
+        # Calculate daily statistics
+        tmax = temp.resample(time='D').max()
+        tmin = temp.resample(time='D').min()
+        tmean = temp.resample(time='D').mean()
+        
+        # Write files
+        for name, data in [('TMAXobs.txt', tmax), ('TMINobs.txt', tmin), ('Tobs.txt', tmean)]:
+            df = data.to_dataframe()
+            df.to_csv(self.hype_setup_dir / name, sep='\t', float_format='%.3f')
+
+    def _process_precipitation(self, ds: xr.Dataset, units: Dict[str, str]):
+        """Process precipitation data for HYPE."""
+        precip = ds[units['in_varname']].copy()
+        
+        # Convert units (m/hr to mm/day)
+        precip = precip * 24000  # m/hr * 24hr/day * 1000mm/m
+        
+        # Calculate daily mean
+        precip_daily = precip.resample(time='D').mean()
+        
+        # Write file
+        df = precip_daily.to_dataframe()
+        df.to_csv(self.hype_setup_dir / 'Pobs.txt', sep='\t', float_format='%.3f')
+    '''
+
+    def write_hype_par_file(self):
+        """Write HYPE parameter file."""
+        par_template = self._get_par_template()
+        with open(self.hype_setup_dir / 'par.txt', 'w') as f:
+            f.write(par_template)
+
+    def write_hype_info_filedir_files(self, spinup_days: int):
+        """Write HYPE info and filedir files."""
+        self.logger.info("Writing HYPE info and filedir files")
+        
+        try:
+            # Write filedir file
+            with open(self.hype_setup_dir / 'filedir.txt', 'w') as f:
+                f.write('./')
+            
+            # Create results directory
+            results_dir = self.hype_setup_dir / 'results'
+            results_dir.mkdir(exist_ok=True)
+            
+            # Read and process Pobs dates - following colleague's approach
+            Pobs = pd.read_csv(self.hype_setup_dir / 'Pobs.txt', 
+                            sep='\t', 
+                            parse_dates=['time'])
+            
+            # Convert time column to datetime
+            Pobs['time'] = pd.to_datetime(Pobs['time'])
+            
+            # Get start and end dates
+            start_date = Pobs['time'].iloc[0]
+            end_date = Pobs['time'].iloc[-1]
+            spinup_date = start_date + pd.Timedelta(days=spinup_days)
+            
+            # Write info.txt
+            info_content = [
+                "!! ----------------------------------------------------------------------------",
+                "!!",
+                "!! HYPE - Model Agnostic Framework",
+                "!!",
+                "!! -----------------------------------------------------------------------------",
+                "!! Check Indata during first runs (deactivate after first runs)",
+                "indatacheckonoff\t2",
+                "indatachecklevel\t2",
+                "!! -----------------------------------------------------------------------------",
+                "!!",
+                "!! Simulation settings:",
+                "!!",
+                "!! -----------------",
+                f"bdate\t{start_date.strftime('%Y-%m-%d')}",
+                f"cdate\t{spinup_date.strftime('%Y-%m-%d')}",
+                f"edate\t{end_date.strftime('%Y-%m-%d')}",
+                "resultdir\t./results/",
+                "instate\tn",
+                "warning\ty",
+                "readdaily\ty",
+                "submodel\tn",
+                "calibration\tn",
+                "readobsid\tn",
+                "soilstretch\tn",
+                "steplength\t1d",
+                "!! -----------------------------------------------------------------------------",
+                "!!",
+                "!! Enable/disable optional input files",
+                "!!",
+                "!! -----------------",
+                "readsfobs\tn\t!! For observed snowfall fractions",
+                "readswobs\tn\t!! For observed shortwave radiation",
+                "readuobs\tn\t!! For observed wind speeds",
+                "readrhobs\tn\t!! For observed relative humidity",
+                "readtminobs\ty\t!! For observed min air temperature",
+                "readtmaxobs\ty\t!! For observed max air temperature",
+                "soiliniwet\tn\t!! Use porosity instead of field capacity",
+                "usestop84\tn\t!! Use old return code",
+                "!! -----------------------------------------------------------------------------",
+                "!!",
+                "!! Define model options",
+                "!!",
+                "!! -----------------",
+                "modeloption snowfallmodel\t0",
+                "modeloption snowdensity\t0",
+                "modeloption snowfalldist\t2",
+                "modeloption snowheat\t0",
+                "modeloption snowmeltmodel\t0",
+                "modeloption snowevapmodel\t1",
+                "modeloption snowevaporation\t1",
+                "modeloption lakeriverice\t0",
+                "modeloption deepground\t0",
+                "modeloption glacierini\t1",
+                "modeloption floodmodel\t0",
+                "modeloption frozensoil\t2",
+                "modeloption infiltration\t3",
+                "modeloption surfacerunoff\t0",
+                "modeloption petmodel\t1",
+                "modeloption wetlandmodel\t2",
+                "modeloption connectivity\t0",
+                "!! -----------------------------------------------------------------------------",
+                "!!",
+                "!! Define outputs",
+                "!!",
+                "!! -----------------",
+                "timeoutput variable cout",
+                "timeoutput variable evap",
+                "timeoutput variable snow",
+                "timeoutput meanperiod\t1",
+                "timeoutput decimals\t3"
+            ]
+            
+            with open(self.hype_setup_dir / 'info.txt', 'w') as f:
+                f.write('\n'.join(info_content))
+            
+            self.logger.info("HYPE info and filedir files written successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error writing HYPE info files: {str(e)}")
+            # Add more debug information
+            self.logger.error(f"spinup_days type: {type(spinup_days)}")
+            if 'start_date' in locals():
+                self.logger.error(f"start_date type: {type(start_date)}")
+                self.logger.error(f"start_date value: {start_date}")
+            raise
+        
+    def _get_par_template(self) -> str:
         """
-        Create GeoClass.txt file defining characteristics of SLC classes.
-        Uses soil and land class data from intersection files.
+        Get HYPE parameter file template.
+        Contains essential model parameters with documentation.
+        """
+        return """!!	=======================================================================================================									
+!! Parameter file for:										
+!! HYPE -- Generated by CONFLUENCE							
+!!	=======================================================================================================									
+!!										
+!!	------------------------									
+!!										
+!!	=======================================================================================================									
+!!	"SNOW - MELT, ACCUMULATION, AND DISTRIBUTION; sublimation under Evapotranspiration"									
+!!	-----									
+!!	"General snow accumulation and melt related parameters"									
+ttpi	1.7083	!! width of the temperature interval with mixed precipitation								
+sdnsnew	0.13	!! density of fresh snow (kg/dm3)								
+snowdensdt	0.0016	!! snow densification parameter								
+fsceff	1	!! efficiency of fractional snow cover to reduce melt and evap								
+cmrefr	0.2	!! snow refreeze capacity (fraction of degreeday melt factor)							
+!!	-----									
+!!	Landuse dependent snow melt parameters									
+!!LUSE:	LU1	LU2	LU3	LU4	LU5					
+ttmp	-0.9253	-1.5960	-0.9620	-2.7121	2.6945	!! Snowmelt threshold temperature (deg)				
+cmlt	9.6497	9.2928	9.8897	5.5393	2.5333	!! Snowmelt degree day coef (mm/deg/timestep)							
+!!	-----									
+!!	=======================================================================================================									
+!!	EVAPOTRANSPIRATION PARAMETERS									
+!!	-----									
+!!	General evapotranspiration parameters									
+lp	0.6613	!! Threshold for water content reduction of transpiration							
+epotdist	4.7088	!! Coefficient in exponential function for potential evapotranspiration depth dependency							
+!!	-----									
+!!										
+!!LUSE:	LU1	LU2	LU3	LU4	LU5					
+cevp	0.4689	0.7925	0.6317	0.1699	0.4506	!! PET correction factor
+ttrig	0	0	0	0	0	!! Soil temperature threshold for transpiration			
+treda	0.84	0.84	0.84	0.84	0.95	!! Coefficient in soil temperature response 				
+tredb	0.4	0.4	0.4	0.4	0.4	!! Coefficient in soil temperature response				
+fepotsnow	0.8	0.8	0.8	0.8	0.8	!! Fraction of PET for snow sublimation				
+!!										
+!! Frozen soil infiltration parameters										
+!! SOIL:	S1	S2								
+bfroznsoil	3.7518	3.2838	!! Frozen soil parameter							
+logsatmp	1.15	1.15	!! Saturated matrix potential							
+bcosby	11.2208	19.6669	!! Brooks-Cosby parameter							
+!!	=======================================================================================================									
+!!	SOIL HYDRAULIC PARAMETERS									
+!!	-----									
+!!	Soil-class parameters									
+!!	S1	S2								
+rrcs1	0.4345	0.5985	!! recession coefficient upper soil layer							
+rrcs2	0.1201	0.1853	!! recession coefficient lower soil layer							
+rrcs3	0.0939	!! Recession coefficient slope dependance								
+sfrost	1	1	!! frost depth parameter							
+wcwp	0.1171	0.0280	!! Wilting point water content							
+wcfc	0.3771	0.2009	!! Field capacity							
+wcep	0.4047	0.4165	!! Effective porosity							
+!!	-----									
+!!	Landuse-class parameters									
+!!LUSE:	LU1	LU2	LU3	LU4	LU5					
+srrcs	0.0673	0.1012	0.1984	0.0202	0.0202	!! Surface runoff coefficient				
+!!	-----									
+!!	Regional groundwater parameters									
+rcgrw	0	!! recession coefficient for regional groundwater outflow								
+!!	=======================================================================================================									
+!!	SOIL TEMPERATURE AND FROST DEPTH									
+!!	-----									
+!!	General parameters									
+deepmem	1000	!! temperature memory of deep soil (days)															
+!!-----										
+!!LUSE:	LU1	LU2	LU3	LU4	LU5					
+surfmem	17.8	17.8	17.8	17.8	5.15	!! upper soil temperature memory				
+depthrel	1.1152	1.1152	1.1152	1.1152	2.47	!! depth relation for soil temperature				
+frost	2	2	2	2	2	!! frost depth parameter				
+!!	-----									
+!!	=======================================================================================================									
+!!	LAKE PARAMETERS									
+!!	-----									
+!!	ILAKE parameters									
+!! ilRegion	1									
+ilratk	149.9593	!! Rating curve constant						
+ilratp	4.9537	!! Rating curve exponent						
+illdepth	0.33	!! Lake depth					
+ilicatch	1.0	!! Ice catchment coefficient								
+!!										
+!!	=======================================================================================================									
+!!	RIVER PARAMETERS									
+!!	-----									
+damp	0.2719	!! damping parameter								
+rivvel	9.7605	!! river velocity								
+qmean	200	!! initial mean flow (mm/yr)"""
+
+    def _get_info_template(self, start_date: datetime, spinup_date: datetime, end_date: datetime) -> str:
+        """
+        Get HYPE info file template with proper formatting.
+        Contains simulation setup and output specifications.
+        """
+        return f"""!! ----------------------------------------------------------------------------							
+!! HYPE Model Configuration - Generated by CONFLUENCE
+!! -----------------------------------------------------------------------------							
+!! Input data checking settings
+indatacheckonoff 	2						
+indatachecklevel	2		
+
+!! -----------------------------------------------------------------------------							
+!! Simulation settings:							
+!! -----------------	
+bdate	{start_date.strftime('%Y-%m-%d')}
+cdate	{spinup_date.strftime('%Y-%m-%d')}
+edate	{end_date.strftime('%Y-%m-%d')}
+resultdir	./results/
+instate	n
+warning	y
+
+!! Data read settings
+readdaily 	y						
+submodel 	n						
+calibration	n						
+readobsid   n							
+soilstretch	n						
+steplength	1d							
+
+!! -----------------------------------------------------------------------------							
+!! Input file settings
+!! -----------------							
+readsfobs	n	!! Observed snowfall fractions							
+readswobs	n	!! Observed shortwave radiation
+readuobs	n	!! Observed wind speeds
+readrhobs	n	!! Observed relative humidity					
+readtminobs	y	!! Observed min air temperature				
+readtmaxobs	y	!! Observed max air temperature
+soiliniwet	n	!! Soil water initialization
+usestop84	n	!! Return code setting					
+
+!! -----------------------------------------------------------------------------							
+!! Model options							
+!! -----------------							
+modeloption snowfallmodel	0						
+modeloption snowdensity	0
+modeloption snowfalldist	2
+modeloption snowheat	0
+modeloption snowmeltmodel	0	
+modeloption	snowevapmodel	1				
+modeloption snowevaporation	1					
+modeloption lakeriverice	0									
+modeloption deepground	0 	
+modeloption glacierini	1
+modeloption floodmodel 0
+modeloption frozensoil 2
+modeloption infiltration 3
+modeloption surfacerunoff 0
+modeloption petmodel	1
+modeloption wetlandmodel 2		
+modeloption connectivity 0					
+
+!! -----------------------------------------------------------------------------							
+!! Output specifications
+!! -----------------							
+!! meanperiod options: 1=daily, 2=weekly, 3=monthly, 4=yearly, 5=total period
+
+timeoutput	variable	cout
+timeoutput	variable	evap
+timeoutput	variable	snow
+timeoutput	meanperiod	1
+timeoutput	decimals	3
+
+!! -----------------------------------------------------------------------------							
+!! Model evaluation criteria
+!! -----------------							
+!! crit meanperiod	1
+!! crit datalimit	30
+!! crit 1 criterion	NSE     !! Nash-Sutcliffe Efficiency
+!! crit 1 cvariable	cout    !! Compare computed outflow
+!! crit 1 rvariable	rout    !! with recorded outflow
+!! crit 1 weight	1"""
+
+    def _create_geoclass(self):
+        """
+        Create the GeoClass.txt file with proper NALCMS mapping and all required HYPE columns
         """
         self.logger.info("Creating GeoClass.txt")
         
         try:
-            # Read soil class intersection data
-            soil_intersect_path = self._get_default_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
-            soil_intersect = gpd.read_file(soil_intersect_path / self.config.get('INTERSECT_SOIL_NAME'))
+            # Read soil and land use statistics
+            soil_stats = pd.read_csv(self.gistool_output / 'domain_stats_soil_classes.csv')
+            land_stats = pd.read_csv(self.gistool_output / 'domain_stats_NA_NALCMS_landcover_2020_30m.csv')
             
-            # Read land class intersection data
-            land_intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
-            land_intersect = gpd.read_file(land_intersect_path / self.config.get('INTERSECT_LAND_NAME'))
+            # NALCMS to HYPE mapping with proper vegetation types
+            # Format: (HYPE land use code, vegetation type)
+            nalcms_to_hype = {
+                1: (1, 2),    # Temperate/subpolar needleleaf forest → Forest, veg=forest
+                2: (1, 2),    # Subpolar taiga needleleaf forest → Forest, veg=forest
+                6: (1, 2),    # Temperate/subpolar broadleaf deciduous forest → Forest, veg=forest
+                8: (1, 2),    # Mixed Forest → Forest, veg=forest
+                10: (2, 1),   # Temperate/subpolar grassland → Open ground, veg=open
+                14: (2, 1),   # Wetland → Open ground, veg=open
+                15: (4, 3),   # Water bodies → Water, veg=water
+                16: (3, 1),   # Barren land → Mountain, veg=open
+                17: (5, 1),   # Urban → Urban, veg=open
+                18: (2, 1),   # Agriculture → Open ground, veg=open
+                19: (3, 1),   # Snow/Ice → Mountain, veg=open
+            }
             
-            # Get unique soil and land classes
-            soil_classes = set()
-            for j in range(13):  # USGS soil classes 0-12
-                col_name = f'USGS_{j}'
-                if col_name in soil_intersect.columns:
-                    mask = soil_intersect[col_name] > 0
-                    if any(mask):
-                        soil_classes.add(j)
-            
-            land_classes = set()
-            for j in range(1, 18):  # IGBP land classes 1-17
-                col_name = f'IGBP_{j}'
-                if col_name in land_intersect.columns:
-                    mask = land_intersect[col_name] > 0
-                    if any(mask):
-                        if j != 17:  # Skip pure water class (17)
-                            land_classes.add(j)
-            
-            # Create SLC combinations
-            slc_data = []
-            slc_counter = 1
-            
-            for soil_type in sorted(soil_classes):
-                for land_use in sorted(land_classes):
-                    # Map IGBP classes to simplified HYPE classes
-                    # Here's a simple mapping - adjust based on your needs:
-                    # 1-5: Forest, 6-7: Short vegetation, 8-11: Cropland, 
-                    # 12: Urban, 13: Snow/Ice, 14-16: Sparse/Barren
-                    if land_use <= 5:
-                        hype_land = 2  # Forest
-                    elif land_use <= 11:
-                        hype_land = 1  # Open land
-                    else:
-                        hype_land = 3  # Other
-                    
-                    slc_data.append({
-                        'slc_no': slc_counter,
-                        'landuse': hype_land,
-                        'soiltype': soil_type,
-                        'crop': 0,  # Not used for streamflow only
-                        'tiledepth': 0,  # No tile drainage
-                        'streamdepth': 1.0,  # Default stream depth
-                        'soillayers': 3,  # Using 3 soil layers
-                        'soildepth1': 0.2,  # Top layer depth
-                        'soildepth2': 0.5,  # Middle layer depth
-                        'soildepth3': 1.0   # Bottom layer depth
-                    })
-                    slc_counter += 1
-            
-            # Create DataFrame
-            geo_class = pd.DataFrame(slc_data)
-            
-            # Write file with header comments
-            with open(self.geo_class_path, 'w') as f:
-                f.write("!! HYPE GeoClass file - Generated from soil and land class data\n")
-                f.write("!! Soil types: USGS classification\n")
-                f.write("!! Land use: 1=Open, 2=Forest, 3=Other\n")
-                geo_class.to_csv(f, sep='\t', index=False)
-            
-            self.logger.info(f"Created GeoClass.txt with {len(slc_data)} SLC classes")
+            # Write file
+            with open(self.hype_setup_dir / 'GeoClass.txt', 'w') as f:
+                # Write header comments
+                f.write("! HYPE GeoClass file - Generated by CONFLUENCE\n")
+                f.write("! NALCMS land use classes mapped to HYPE classes\n")
+                f.write("! Following columns:\n")
+                f.write("! 1:SLC 2:LandUse 3:SoilType 4:Crop1 5:Crop2 6:CropRotation 7:VegType 8:Special\n")
+                f.write("! 9:TileDepth 10:StreamDepth 11:SoilLayers 12:SoilDepth1 13:SoilDepth2 14:SoilDepth3\n")
+                
+                # Process unique combinations
+                soil_classes = soil_stats['majority'].unique()
+                land_classes = []
+                for col in land_stats.columns:
+                    if col.startswith('frac_') and any(land_stats[col] > 0.01):
+                        land_class = int(col.split('_')[1])
+                        if land_class in nalcms_to_hype:
+                            land_classes.append(land_class)
+                
+                # Write data rows
+                slc_id = 1
+                for soil in soil_classes:
+                    for nalcms_class in sorted(land_classes):  # Sort for consistency
+                        if nalcms_class in nalcms_to_hype:
+                            hype_class, veg_type = nalcms_to_hype[nalcms_class]
+                            
+                            # Set parameters based on class type
+                            if hype_class == 4:  # Water class
+                                special_code = 2  # Internal lake
+                                n_soil_layers = 1
+                                soil_depths = (1.0, 1.0, 1.0)  # As per documentation for water
+                                stream_depth = 0.0
+                            else:  # Land classes
+                                special_code = 0
+                                n_soil_layers = 2
+                                soil_depths = (0.5, 1.0, 1.0)
+                                stream_depth = 2.0
+                            
+                            # Format: SLC LandUse Soil Crop1 Crop2 CropRot VegType Special TileDepth StreamDepth NSoil Depth1 Depth2 Depth3
+                            line = f"{slc_id}  {hype_class}  {int(soil)}  0  0  0  {veg_type}  {special_code}  0.0  {stream_depth}  {n_soil_layers}  {soil_depths[0]}  {soil_depths[1]}  {soil_depths[2]}\n"
+                            f.write(line)
+                            slc_id += 1
+                
+            self.logger.info(f"Created GeoClass.txt with {slc_id-1} SLC classes")
             
         except Exception as e:
             self.logger.error(f"Error creating GeoClass.txt: {str(e)}")
             raise
 
-    def create_geo_data(self):
-        """
-        Create GeoData.txt file containing subbasin characteristics.
-        Uses elevation data and calculates SLC fractions from intersection files.
-        """
-        self.logger.info("Creating GeoData.txt")
-        
-        try:
-            # Read catchment data
-            catchment = gpd.read_file(self.project_dir / 'shapefiles' / 'catchment' / 
-                                    f"{self.domain_name}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp")
-            
-            # Read elevation intersection data
-            elev_intersect_path = self._get_default_path('INTERSECT_DEM_PATH', 
-                                                        'shapefiles/catchment_intersection/with_dem')
-            elev_data = gpd.read_file(elev_intersect_path / self.config.get('INTERSECT_DEM_NAME'))
-            
-            # Read soil and land class data
-            soil_intersect = gpd.read_file(self.soil_intersect_path / self.config.get('INTERSECT_SOIL_NAME'))
-            land_intersect = gpd.read_file(self.land_intersect_path / self.config.get('INTERSECT_LAND_NAME'))
-            
-            # Initialize DataFrame with basic attributes
-            geo_data = pd.DataFrame()
-            geo_data['subid'] = catchment[self.config['CATCHMENT_SHP_HRUID']]
-            geo_data['area'] = catchment[self.config['CATCHMENT_SHP_AREA']]
-            geo_data['maindown'] = catchment[self.config['RIVER_NETWORK_SHP_DOWNSEGID']]
-            geo_data['rivlen'] = catchment['rivlen'] if 'rivlen' in catchment.columns \
-                                else np.sqrt(catchment[self.config['CATCHMENT_SHP_AREA']])
-            
-            # Add mean elevation from intersection data
-            for idx, row in geo_data.iterrows():
-                hru_id = row['subid']
-                
-                # Get elevation
-                elev_mask = elev_data[self.config['CATCHMENT_SHP_HRUID']].astype(int) == hru_id
-                if any(elev_mask):
-                    geo_data.loc[idx, 'elevation'] = elev_data['elev_mean'][elev_mask].values[0]
-                else:
-                    self.logger.warning(f"No elevation data found for subbasin {hru_id}")
-                    geo_data.loc[idx, 'elevation'] = 0
-                
-                # Calculate SLC fractions for each soil-landuse combination
-                slc_fractions = self._calculate_slc_fractions(hru_id, soil_intersect, land_intersect)
-                for slc_num, fraction in slc_fractions.items():
-                    col_name = f'slc_{slc_num}'
-                    geo_data.loc[idx, col_name] = fraction
-            
-            # Add slope information if available
-            if 'slope_mean' in catchment.columns:
-                geo_data['slope'] = catchment['slope_mean']
-            else:
-                self.logger.warning("No slope data available, using default value of 0.01")
-                geo_data['slope'] = 0.01
-            
-            # Save to file
-            geo_data.to_csv(self.geo_data_path, sep='\t', index=False, float_format='%.6f')
-            
-            self.logger.info("Created GeoData.txt")
-            
-        except Exception as e:
-            self.logger.error(f"Error creating GeoData.txt: {str(e)}")
-            raise
-    
-    def _calculate_slc_fractions(self, hru_id: int, soil_intersect: gpd.GeoDataFrame, 
-                               land_intersect: gpd.GeoDataFrame) -> Dict[int, float]:
-        """
-        Calculate SLC fractions for a given HRU based on soil and land class intersections.
-        
-        Args:
-            hru_id: HRU identifier
-            soil_intersect: GeoDataFrame with soil class intersections
-            land_intersect: GeoDataFrame with land class intersections
-        
-        Returns:
-            Dictionary mapping SLC numbers to their fractional areas
-        """
-        try:
-            # Get masks for this HRU
-            soil_mask = soil_intersect[self.config['CATCHMENT_SHP_HRUID']].astype(int) == hru_id
-            land_mask = land_intersect[self.config['CATCHMENT_SHP_HRUID']].astype(int) == hru_id
-            
-            # Get soil fractions
-            soil_fractions = {}
-            for j in range(13):  # USGS soil classes
-                col_name = f'USGS_{j}'
-                if col_name in soil_intersect.columns:
-                    if any(soil_mask):
-                        soil_fractions[j] = soil_intersect[col_name][soil_mask].values[0]
-            
-            # Get land use fractions
-            land_fractions = {}
-            for j in range(1, 18):  # IGBP land classes
-                col_name = f'IGBP_{j}'
-                if col_name in land_intersect.columns:
-                    if any(land_mask):
-                        if j != 17:  # Skip water class
-                            land_fractions[j] = land_intersect[col_name][land_mask].values[0]
-            
-            # Calculate combined SLC fractions
-            slc_fractions = {}
-            slc_counter = 1
-            
-            total_fraction = 0
-            for soil_type, soil_frac in soil_fractions.items():
-                for land_use, land_frac in land_fractions.items():
-                    combined_fraction = soil_frac * land_frac
-                    if combined_fraction > 0:
-                        slc_fractions[slc_counter] = combined_fraction
-                        total_fraction += combined_fraction
-                    slc_counter += 1
-            
-            # Normalize fractions if they don't sum to 1
-            if total_fraction > 0:
-                for slc in slc_fractions:
-                    slc_fractions[slc] /= total_fraction
-            
-            return slc_fractions
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating SLC fractions for HRU {hru_id}: {str(e)}")
-            raise
-
-    def create_par_file(self):
-        """
-        Create par.txt file containing model parameters.
-        Focuses on essential parameters for streamflow simulation.
-        """
-        self.logger.info("Creating par.txt")
-        
-        try:
-            # Create dictionary of parameters with comments
-            parameters = {
-                "!! Soil parameters": None,
-                "wcfc": [0.3, 0.3, 0.4],  # Field capacity
-                "wcwp": [0.1, 0.1, 0.15], # Wilting point
-                "wcep": [0.4, 0.4, 0.45], # Effective porosity
-                "!! Runoff parameters": None,
-                "rrcs1": [0.3, 0.3, 0.2], # Recession coefficients
-                "rrcs2": [0.1, 0.1, 0.05],
-                "!! Snow parameters": None,
-                "ttmp": [0.0, 0.0],       # Threshold temperature
-                "cmlt": [2.0, 3.0],       # Melting parameter
-                "!! River parameters": None,
-                "rivvel": [1.0],          # River velocity
-                "damp": [0.5]             # Damping parameter
-            }
-            
-            # Write to file
-            with open(self.par_path, 'w') as f:
-                for key, values in parameters.items():
-                    if values is None:  # Comment line
-                        f.write(f"{key}\n")
-                    else:
-                        values_str = ' '.join(map(str, values))
-                        f.write(f"{key} {values_str}\n")
-            
-            self.logger.info("Created par.txt")
-            
-        except Exception as e:
-            self.logger.error(f"Error creating par.txt: {str(e)}")
-            raise
-
-    def create_info_file(self):
-        """
-        Create info.txt file containing simulation settings.
-        Configures HYPE for hourly streamflow simulation.
-        """
-        self.logger.info("Creating info.txt")
-        
-        try:
-            # Get simulation period from config
-            start_time = datetime.strptime(self.config['EXPERIMENT_TIME_START'], '%Y-%m-%d %H:%M')
-            end_time = datetime.strptime(self.config['EXPERIMENT_TIME_END'], '%Y-%m-%d %H:%M')
-            
-            # Create info file content
-            info_content = [
-                "!! HYPE info file - Basic setup for hourly streamflow simulation",
-                f"modeldir {self.hype_setup_dir}",
-                f"forcingdir {self.forcing_hype_path}",
-                f"resultdir {self.project_dir}/simulations/{self.config['EXPERIMENT_ID']}/HYPE",
-                f"bdate {start_time.strftime('%Y-%m-%d %H:%M')}",
-                f"edate {end_time.strftime('%Y-%m-%d %H:%M')}",
-                "steplength 1h",
-                "basinoutput variable cout rout",
-                "mapoutput variable cout",
-                "timeoutput variable cout",
-                "criterion NSE",
-                "submodel N"  # Not using submodel functionality
-            ]
-            
-            # Write to file
-            with open(self.info_path, 'w') as f:
-                f.write('\n'.join(info_content))
-            
-            self.logger.info("Created info.txt")
-            
-        except Exception as e:
-            self.logger.error(f"Error creating info.txt: {str(e)}")
-            raise
-
 
 class HYPERunner:
     """
-    Runner class for the HYPE (HYdrological Predictions for the Environment) model.
-    Handles model execution, output processing, and file management.
+    Runner class for the HYPE model within CONFLUENCE.
+    Handles model execution and run-time management.
     
     Attributes:
-        config (Dict[str, Any]): Configuration settings for HYPE
-        logger (Any): Logger object for recording run information
-        project_dir (Path): Directory for the current project
-        domain_name (str): Name of the domain being processed
+        config (Dict[str, Any]): Configuration settings
+        logger (logging.Logger): Logger instance
+        project_dir (Path): Project directory path
+        domain_name (str): Name of the modeling domain
     """
     
     def __init__(self, config: Dict[str, Any], logger: Any):
-        """Initialize the HYPE runner."""
+        """Initialize HYPE runner."""
         self.config = config
         self.logger = logger
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
-        # HYPE-specific paths
-        self.result_dir = self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "HYPE"
-        self.result_dir.mkdir(parents=True, exist_ok=True)
+        # Set up HYPE paths
+        self.hype_dir = self._get_hype_path()
+        self.setup_dir = self.project_dir / "settings" / "HYPE"
+        self.output_dir = self._get_output_path()
         
-        # Get executable path
-        self.hype_path = self._get_install_path()
+        # Create output directory
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run_hype(self) -> Optional[Path]:
         """
-        Run the HYPE model.
+        Run the HYPE model simulation.
         
         Returns:
-            Optional[Path]: Path to the output directory if successful, None otherwise
+            Optional[Path]: Path to output directory if successful, None otherwise
         """
         self.logger.info("Starting HYPE model run")
         
         try:
-            # Create output directory
-            self.output_path = self._get_output_path()
-            self.output_path.mkdir(parents=True, exist_ok=True)
             
-            # Backup settings
-            self._backup_settings()
+            # Create run command
+            cmd = self._create_run_command()
+            
+            # Set up logging
+            log_file = self._setup_logging()
             
             # Execute HYPE
-            success = self._execute_hype()
-            
-            if success:
-                # Process outputs
-                self._process_outputs()
-                self.logger.info("HYPE run completed successfully")
-                return self.output_path
-            else:
-                self.logger.error("HYPE run failed")
-                return None
-                
-        except Exception as e:
-            self.logger.error(f"Error during HYPE run: {str(e)}")
-            raise
-
-    def _get_install_path(self) -> Path:
-        """Get the HYPE installation path."""
-        hype_path = self.config.get('HYPE_INSTALL_PATH')
-        if hype_path == 'default':
-            return Path(self.config.get('CONFLUENCE_CODE_DIR')) / 'installs' / 'hype' / 'bin'
-        return Path(hype_path)
-
-    def _get_output_path(self) -> Path:
-        """Get the path for HYPE outputs."""
-        return (self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "HYPE" 
-                if self.config.get('EXPERIMENT_OUTPUT_HYPE') == 'default' 
-                else Path(self.config.get('EXPERIMENT_OUTPUT_HYPE')))
-
-    def _backup_settings(self):
-        """Backup important HYPE settings files for reproducibility."""
-        self.logger.info("Backing up HYPE settings files")
-        
-        # Create backup directory
-        backup_dir = self.output_path / '_settings_backup'
-        backup_dir.mkdir(exist_ok=True)
-        
-        # List of files to backup
-        settings_dir = self.project_dir / "settings" / "HYPE"
-        files_to_backup = [
-            'GeoData.txt',
-            'GeoClass.txt',
-            'par.txt',
-            'info.txt'
-        ]
-        
-        # Copy files
-        for filename in files_to_backup:
-            source = settings_dir / filename
-            if source.exists():
-                shutil.copy2(source, backup_dir / filename)
-                self.logger.debug(f"Backed up {filename}")
-            else:
-                self.logger.warning(f"Could not find {filename} for backup")
-
-    def _execute_hype(self) -> bool:
-        """
-        Execute the HYPE model.
-        
-        Returns:
-            bool: True if execution was successful, False otherwise
-        """
-        self.logger.info("Executing HYPE model")
-        
-        try:
-            # Construct command
-            hype_exe = self.hype_path / self.config.get('HYPE_EXE', 'hype.exe')
-            model_path = self.project_dir / 'settings' / 'HYPE'
-            
-            # HYPE expects the path to end with a slash
-            model_path_str = str(model_path) + '/'
-            
-            command = [
-                str(hype_exe),
-                model_path_str
-            ]
-            
-            # Create log directory
-            log_dir = self.output_path / 'logs'
-            log_dir.mkdir(exist_ok=True)
-            
-            # Run HYPE with log file
-            current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_file = log_dir / f'hype_run_{current_time}.log'
-            
-            self.logger.info(f"Running command: {' '.join(map(str, command))}")
+            self.logger.info(f"Executing command: {' '.join(map(str, cmd))}")
             
             with open(log_file, 'w') as f:
                 result = subprocess.run(
-                    command,
+                    cmd,
                     check=True,
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    text=True
+                    text=True,
+                    cwd=self.setup_dir
                 )
-                
-            # Check HYPE return code (0 means success)
-            success = result.returncode == 0
             
-            # Also check if output files were created
-            main_output = self.output_path / f"timeCOUT.txt"
-            if not main_output.exists():
-                self.logger.error("HYPE output file timeCOUT.txt not found")
-                success = False
-            
-            self.logger.info(f"HYPE execution {'completed successfully' if success else 'failed'}")
-            
-            # Process any error messages from the log
-            if not success:
+            # Check execution success
+            if result.returncode == 0 and self._verify_outputs():
+                self.logger.info("HYPE simulation completed successfully")
+                return self.output_dir
+            else:
+                self.logger.error("HYPE simulation failed")
                 self._analyze_log_file(log_file)
-            
-            return success
-            
+                return None
+                
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"HYPE execution failed with error: {str(e)}")
-            return False
+            self.logger.error(f"HYPE execution failed: {str(e)}")
+            return None
         except Exception as e:
-            self.logger.error(f"Error executing HYPE: {str(e)}")
+            self.logger.error(f"Error running HYPE: {str(e)}")
+            raise
+
+    def _get_hype_path(self) -> Path:
+        """Get HYPE installation path."""
+        hype_path = self.config.get('HYPE_INSTALL_PATH')
+        if hype_path == 'default' or hype_path is None:
+            return Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'hype'
+        return Path(hype_path)
+
+    def _get_output_path(self) -> Path:
+        """Get path for HYPE outputs."""
+        if self.config.get('EXPERIMENT_OUTPUT_HYPE') == 'default':
+            return (self.project_dir / "simulations" / 
+                   self.config.get('EXPERIMENT_ID') / "HYPE")
+        return Path(self.config.get('EXPERIMENT_OUTPUT_HYPE'))
+
+
+    def _create_run_command(self) -> List[str]:
+        """Create HYPE execution command."""
+        hype_exe = self.hype_dir / self.config.get('HYPE_EXE', 'hype')
+        
+        cmd = [
+            str(hype_exe),
+            str(self.setup_dir) + '/'  # HYPE requires trailing slash
+        ]
+        print(cmd)
+        return cmd
+
+    def _setup_logging(self) -> Path:
+        """Set up HYPE run logging."""
+        log_dir = self.output_dir / 'logs'
+        log_dir.mkdir(exist_ok=True)
+        
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return log_dir / f'hype_run_{current_time}.log'
+
+    def _verify_outputs(self) -> bool:
+        """Verify HYPE output files exist."""
+        required_outputs = [
+            'timeCOUT.txt',  # Computed discharge
+            'timeROUT.txt',  # Routed discharge
+            'timeEVAP.txt',  # Evaporation
+            'timeSNOW.txt'   # Snow water equivalent
+        ]
+        
+        missing_files = []
+        for output in required_outputs:
+            if not (self.output_dir / output).exists():
+                missing_files.append(output)
+        
+        if missing_files:
+            self.logger.error(f"Missing HYPE output files: {', '.join(missing_files)}")
             return False
+        return True
 
     def _analyze_log_file(self, log_file: Path):
-        """Analyze HYPE log file for error messages."""
-        self.logger.info("Analyzing HYPE log file for errors")
+        """Analyze HYPE log file for errors."""
+        error_patterns = [
+            "ERROR",
+            "Error",
+            "Failed",
+            "FAILED",
+            "Invalid",
+            "Cannot open"
+        ]
         
         try:
             with open(log_file, 'r') as f:
-                log_content = f.read()
+                log_content = f.readlines()
             
-            # Look for common error patterns
-            error_patterns = [
-                "ERROR",
-                "Error",
-                "error",
-                "failed",
-                "Failed",
-                "FAILED"
-            ]
-            
-            for pattern in error_patterns:
-                if pattern in log_content:
-                    # Get the line containing the error
-                    error_line = next(line for line in log_content.split('\n') if pattern in line)
-                    self.logger.error(f"Found error in log: {error_line}")
-                    
+            for line in log_content:
+                if any(pattern in line for pattern in error_patterns):
+                    self.logger.error(f"HYPE error found: {line.strip()}")
         except Exception as e:
             self.logger.error(f"Error analyzing log file: {str(e)}")
-
-    def _process_outputs(self):
-        """Process and organize HYPE output files."""
-        self.logger.info("Processing HYPE outputs")
-        
-        try:
-            # Process time series outputs
-            self._process_time_output()
-            
-            # Process basin outputs
-            self._process_basin_output()
-            
-            # Process map outputs
-            self._process_map_output()
-            
-            # Process performance criteria
-            self._process_criteria()
-            
-            self.logger.info("HYPE output processing completed")
-            
-        except Exception as e:
-            self.logger.error(f"Error processing HYPE outputs: {str(e)}")
-            raise
-
-    def _process_time_output(self):
-        """Process HYPE time series output files."""
-        self.logger.info("Processing time series outputs")
-        
-        # Find all timeCOUT.txt files
-        time_files = list(self.output_path.glob("time*.txt"))
-        
-        for file in time_files:
-            try:
-                # Read the file
-                df = pd.read_csv(file, sep='\s+', index_col='DATE', parse_dates=True)
-                
-                # Add metadata
-                df.attrs = {
-                    'model': 'HYPE',
-                    'domain': self.domain_name,
-                    'experiment_id': self.config.get('EXPERIMENT_ID'),
-                    'variable': file.stem[4:],  # Remove 'time' prefix
-                    'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                
-                # Save as CSV with metadata
-                output_file = self.output_path / f"{self.config.get('EXPERIMENT_ID')}_{file.stem}.csv"
-                
-                # Save data
-                df.to_csv(output_file)
-                
-                # Save metadata separately
-                meta_file = output_file.with_suffix('.meta')
-                with open(meta_file, 'w') as f:
-                    for key, value in df.attrs.items():
-                        f.write(f"{key}: {value}\n")
-                
-                self.logger.debug(f"Processed {file.name}")
-                
-            except Exception as e:
-                self.logger.error(f"Error processing {file.name}: {str(e)}")
-
-    def _process_basin_output(self):
-        """Process HYPE basin output files."""
-        self.logger.info("Processing basin outputs")
-        
-        # Find all basin output files (numeric filenames)
-        basin_files = [f for f in self.output_path.glob("*.txt") 
-                      if f.stem.isdigit()]
-        
-        for file in basin_files:
-            try:
-                # Read the file
-                df = pd.read_csv(file, sep='\s+', index_col='DATE', parse_dates=True)
-                
-                # Add metadata
-                df.attrs = {
-                    'model': 'HYPE',
-                    'domain': self.domain_name,
-                    'experiment_id': self.config.get('EXPERIMENT_ID'),
-                    'subbasin': file.stem,
-                    'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                
-                # Save as CSV with metadata
-                output_file = self.output_path / f"{self.config.get('EXPERIMENT_ID')}_{file.stem}_basin.csv"
-                
-                # Save data
-                df.to_csv(output_file)
-                
-                # Save metadata separately
-                meta_file = output_file.with_suffix('.meta')
-                with open(meta_file, 'w') as f:
-                    for key, value in df.attrs.items():
-                        f.write(f"{key}: {value}\n")
-                
-                self.logger.debug(f"Processed {file.name}")
-                
-            except Exception as e:
-                self.logger.error(f"Error processing {file.name}: {str(e)}")
-
-    def _process_map_output(self):
-        """Process HYPE map output files."""
-        self.logger.info("Processing map outputs")
-        
-        # Find all map output files
-        map_files = list(self.output_path.glob("map*.txt"))
-        
-        for file in map_files:
-            try:
-                # Read the file
-                df = pd.read_csv(file, sep=',')
-                
-                # Add metadata
-                df.attrs = {
-                    'model': 'HYPE',
-                    'domain': self.domain_name,
-                    'experiment_id': self.config.get('EXPERIMENT_ID'),
-                    'variable': file.stem[3:],  # Remove 'map' prefix
-                    'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                
-                # Save as CSV with metadata
-                output_file = self.output_path / f"{self.config.get('EXPERIMENT_ID')}_{file.stem}.csv"
-                
-                # Save data
-                df.to_csv(output_file, index=False)
-                
-                # Save metadata separately
-                meta_file = output_file.with_suffix('.meta')
-                with open(meta_file, 'w') as f:
-                    for key, value in df.attrs.items():
-                        f.write(f"{key}: {value}\n")
-                
-                self.logger.debug(f"Processed {file.name}")
-                
-            except Exception as e:
-                self.logger.error(f"Error processing {file.name}: {str(e)}")
-
-    def _process_criteria(self):
-        """Process HYPE performance criteria output files."""
-        self.logger.info("Processing performance criteria")
-        
-        try:
-            # Process subass files (subbasin assessment)
-            subass_files = list(self.output_path.glob("subass*.txt"))
-            for file in subass_files:
-                df = pd.read_csv(file, sep='\s+')
-                output_file = self.output_path / f"{self.config.get('EXPERIMENT_ID')}_{file.stem}_criteria.csv"
-                df.to_csv(output_file, index=False)
-            
-            # Process simass file (simulation assessment)
-            simass_file = self.output_path / "simass.txt"
-            if simass_file.exists():
-                df = pd.read_csv(simass_file, sep='\s+')
-                output_file = self.output_path / f"{self.config.get('EXPERIMENT_ID')}_simulation_criteria.csv"
-                df.to_csv(output_file, index=False)
-            
-            self.logger.info("Performance criteria processing completed")
-            
-        except Exception as e:
-            self.logger.error(f"Error processing criteria files: {str(e)}")
-
-
 
 
 class HYPEPostProcessor:
     """
-    Postprocessor for HYPE (HYdrological Predictions for the Environment) model outputs.
-    Handles output extraction, processing, analysis and unit conversion.
+    Postprocessor for HYPE model outputs within CONFLUENCE.
+    Handles output extraction, processing, and analysis.
     
     Attributes:
-        config (Dict[str, Any]): Configuration settings for HYPE
-        logger (Any): Logger object for recording processing information
-        project_dir (Path): Directory for the current project
-        domain_name (str): Name of the domain being processed
+        config (Dict[str, Any]): Configuration settings
+        logger (logging.Logger): Logger instance
+        project_dir (Path): Project directory path
+        domain_name (str): Name of the modeling domain
     """
+    
     def __init__(self, config: Dict[str, Any], logger: Any):
+        """Initialize HYPE postprocessor."""
         self.config = config
         self.logger = logger
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        
+        # Setup paths
+        self.sim_dir = (self.project_dir / "simulations" / 
+                       self.config.get('EXPERIMENT_ID') / "HYPE")
         self.results_dir = self.project_dir / "results"
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-    def extract_streamflow(self) -> Optional[Path]:
+    def extract_results(self) -> Dict[str, Path]:
         """
-        Extract simulated streamflow from HYPE output and process it.
-        Handles unit conversions and data organization.
+        Extract and process all HYPE results.
         
         Returns:
-            Optional[Path]: Path to the saved CSV file if successful, None otherwise
+            Dict[str, Path]: Paths to processed result files
+        """
+        self.logger.info("Extracting HYPE results")
+        
+        try:
+            results = {}
+            
+            # Process streamflow
+            streamflow_path = self.extract_streamflow()
+            if streamflow_path:
+                results['streamflow'] = streamflow_path
+            
+            # Process water balance
+            wb_path = self.extract_water_balance()
+            if wb_path:
+                results['water_balance'] = wb_path
+            
+            # Process performance metrics
+            perf_path = self.analyze_performance()
+            if perf_path:
+                results['performance'] = perf_path
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting HYPE results: {str(e)}")
+            raise
+
+    def extract_streamflow(self) -> Optional[Path]:
+        """
+        Extract and process streamflow results.
+        Handles unit conversions and data organization.
         """
         try:
-            self.logger.info("Extracting HYPE streamflow results")
+            self.logger.info("Processing HYPE streamflow results")
             
-            # Define paths
-            sim_dir = self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'HYPE'
-            
-            # Process simulated streamflow
-            cout_file = sim_dir / "timeCOUT.txt"  # Simulated discharge
-            rout_file = sim_dir / "timeROUT.txt"  # Observed discharge
-            
-            # Read simulated discharge
-            cout = pd.read_csv(cout_file, sep='\s+', parse_dates=['DATE'], index_col='DATE')
-            
-            # Read observed discharge if available
-            rout = None
-            if rout_file.exists():
-                rout = pd.read_csv(rout_file, sep='\s+', parse_dates=['DATE'], index_col='DATE')
-            
-            # Get catchment area from river basins shapefile
-            basin_name = self.config.get('RIVER_BASINS_NAME')
-            if basin_name == 'default':
-                basin_name = f"{self.domain_name}_riverBasins_delineate.shp"
-            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
-            basin_gdf = gpd.read_file(basin_path)
-            
-            # Calculate total area in km2
-            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
-            self.logger.info(f"Total catchment area: {area_km2:.2f} km2")
+            # Read computed and routed discharge
+            cout = pd.read_csv(self.sim_dir / "timeCOUT.txt", 
+                             sep='\t', parse_dates=['time'])
+            rout = pd.read_csv(self.sim_dir / "timeROUT.txt", 
+                             sep='\t', parse_dates=['time'])
             
             # Create results DataFrame
-            results = pd.DataFrame(index=cout.index)
+            results = pd.DataFrame(index=cout['time'])
+            
+            # Get catchment areas from GeoData
+            geodata = pd.read_csv(self.sim_dir / "_settings_backup" / "GeoData.txt", 
+                                sep='\t')
             
             # Process each subbasin
-            for subid in cout.columns:
-                # Convert units from m3/s to mm/day if needed
-                # Q(mm/day) = Q(m3/s) * 86.4 / area(km2)
-                q_sim = cout[subid]
-                q_sim_mm = q_sim * 86.4 / area_km2
-                
-                # Add to results with prefixes for identification
-                results[f'HYPE_discharge_cms_{subid}'] = q_sim
-                results[f'HYPE_discharge_mmday_{subid}'] = q_sim_mm
-                
-                # Add observed data if available
-                if rout is not None and subid in rout.columns:
-                    q_obs = rout[subid]
-                    q_obs_mm = q_obs * 86.4 / area_km2
-                    results[f'Obs_discharge_cms_{subid}'] = q_obs
-                    results[f'Obs_discharge_mmday_{subid}'] = q_obs_mm
+            for col in cout.columns:
+                if col != 'time':
+                    area_km2 = geodata.loc[geodata['subid'] == int(col), 'area'].iloc[0] / 1e6
+                    
+                    # Add simulated discharge (m3/s and mm/day)
+                    results[f'HYPE_discharge_cms_{col}'] = cout[col]
+                    results[f'HYPE_discharge_mmday_{col}'] = cout[col] * 86.4 / area_km2
+                    
+                    # Add observed discharge if available
+                    if col in rout.columns:
+                        results[f'Obs_discharge_cms_{col}'] = rout[col]
+                        results[f'Obs_discharge_mmday_{col}'] = rout[col] * 86.4 / area_km2
             
-            # Add metadata as attributes
-            results.attrs = {
-                'model': 'HYPE',
-                'domain': self.domain_name,
-                'experiment_id': self.config['EXPERIMENT_ID'],
-                'catchment_area_km2': area_km2,
-                'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'simulation_start': results.index.min().strftime('%Y-%m-%d %H:%M'),
-                'simulation_end': results.index.max().strftime('%Y-%m-%d %H:%M'),
-                'timestep': 'hourly' if 'H' in str(results.index.freq) else 'daily'
-            }
-            
-            # Save to CSV
-            output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow_results.csv"
+            # Save results
+            output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow.csv"
             results.to_csv(output_file)
             
-            # Save metadata separately
-            meta_file = output_file.with_suffix('.meta')
-            with open(meta_file, 'w') as f:
-                for key, value in results.attrs.items():
-                    f.write(f"{key}: {value}\n")
-            
-            self.logger.info(f"Results saved to: {output_file}")
             return output_file
             
         except Exception as e:
             self.logger.error(f"Error extracting streamflow: {str(e)}")
-            raise
-
-    def analyze_performance(self) -> Optional[Path]:
-        """
-        Analyze model performance using HYPE's criteria output files.
-        Combines and processes various performance metrics.
-        
-        Returns:
-            Optional[Path]: Path to the performance analysis file
-        """
-        try:
-            self.logger.info("Analyzing HYPE model performance")
-            
-            sim_dir = self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'HYPE'
-            
-            # Process subbasin criteria
-            subass_files = list(sim_dir.glob("subass*.txt"))
-            subbasin_criteria = []
-            
-            for file in subass_files:
-                df = pd.read_csv(file, sep='\s+')
-                if not df.empty:
-                    subbasin_criteria.append(df)
-            
-            # Process simulation criteria
-            simass_file = sim_dir / "simass.txt"
-            if simass_file.exists():
-                sim_criteria = pd.read_csv(simass_file, sep='\s+')
-            else:
-                sim_criteria = pd.DataFrame()
-            
-            # Combine results
-            analysis = {
-                'simulation_criteria': sim_criteria,
-                'subbasin_criteria': pd.concat(subbasin_criteria) if subbasin_criteria else pd.DataFrame()
-            }
-            
-            # Format and save results
-            output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_performance_analysis.txt"
-            with open(output_file, 'w') as f:
-                # Write header
-                f.write(f"HYPE Model Performance Analysis\n")
-                f.write(f"Domain: {self.domain_name}\n")
-                f.write(f"Experiment: {self.config['EXPERIMENT_ID']}\n")
-                f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                
-                # Write simulation criteria
-                f.write("Overall Simulation Criteria:\n")
-                f.write("-" * 30 + "\n")
-                if not sim_criteria.empty:
-                    for col in sim_criteria.columns:
-                        f.write(f"{col}: {sim_criteria[col].iloc[0]:.4f}\n")
-                else:
-                    f.write("No simulation criteria available\n")
-                f.write("\n")
-                
-                # Write subbasin criteria summary
-                f.write("Subbasin Criteria Summary:\n")
-                f.write("-" * 30 + "\n")
-                if not analysis['subbasin_criteria'].empty:
-                    summary = analysis['subbasin_criteria'].describe()
-                    f.write(summary.to_string())
-                else:
-                    f.write("No subbasin criteria available\n")
-                
-                self.logger.info(f"Performance analysis saved to: {output_file}")
-                
-            return output_file
-            
-        except Exception as e:
-            self.logger.error(f"Error analyzing performance: {str(e)}")
-            raise
+            return None
 
     def extract_water_balance(self) -> Optional[Path]:
         """
-        Extract and process water balance components from HYPE output.
-        Handles precipitation, evaporation, runoff, and storage terms.
-        
-        Returns:
-            Optional[Path]: Path to the water balance file
+        Extract and process water balance components.
         """
         try:
-            self.logger.info("Extracting water balance components")
+            self.logger.info("Processing HYPE water balance")
             
-            sim_dir = self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'HYPE'
-            
-            # List of water balance components to process
+            # Define components to process
             components = {
                 'PREC': 'timePREC.txt',  # Precipitation
                 'EVAP': 'timeEVAP.txt',  # Evaporation
-                'CRUN': 'timeCRUN.txt',  # Local runoff
-                'COUT': 'timeCOUT.txt',  # Outlet discharge
+                'SNOW': 'timeSNOW.txt',  # Snow water equivalent
+                'COUT': 'timeCOUT.txt'   # Discharge
             }
             
-            # Read each component
+            # Read all components
             wb_data = {}
             for comp, filename in components.items():
-                file_path = sim_dir / filename
+                file_path = self.sim_dir / filename
                 if file_path.exists():
-                    df = pd.read_csv(file_path, sep='\s+', parse_dates=['DATE'], index_col='DATE')
-                    wb_data[comp] = df
-                else:
-                    self.logger.warning(f"Water balance component file not found: {filename}")
+                    wb_data[comp] = pd.read_csv(file_path, sep='\t', parse_dates=['time'])
             
-            if not wb_data:
-                self.logger.error("No water balance components found")
-                return None
+            # Create water balance DataFrame
+            results = pd.DataFrame(index=wb_data['COUT']['time'])
             
-            # Process water balance
-            results = pd.DataFrame(index=next(iter(wb_data.values())).index)
-            
-            # Add components to results
+            # Process each component
             for comp, df in wb_data.items():
                 for col in df.columns:
-                    results[f'{comp}_{col}'] = df[col]
+                    if col != 'time':
+                        results[f'{comp}_{col}'] = df[col]
             
-            # Calculate residual if possible
-            if all(k in wb_data for k in ['PREC', 'EVAP', 'COUT']):
-                for col in wb_data['COUT'].columns:
-                    # Extract matching columns
-                    P = wb_data['PREC'][col] if col in wb_data['PREC'].columns else 0
-                    E = wb_data['EVAP'][col] if col in wb_data['EVAP'].columns else 0
+            # Calculate storage change (P - E - Q)
+            for col in wb_data['COUT'].columns:
+                if col != 'time':
+                    P = wb_data['PREC'][col] if 'PREC' in wb_data else 0
+                    E = wb_data['EVAP'][col] if 'EVAP' in wb_data else 0
                     Q = wb_data['COUT'][col]
-                    
-                    # Calculate residual (P - E - Q)
-                    results[f'RESD_{col}'] = P - E - Q
-            
-            # Add metadata
-            results.attrs = {
-                'model': 'HYPE',
-                'domain': self.domain_name,
-                'experiment_id': self.config['EXPERIMENT_ID'],
-                'components': list(wb_data.keys()),
-                'creation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
+                    results[f'dS_{col}'] = P - E - Q
             
             # Save results
             output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_water_balance.csv"
             results.to_csv(output_file)
             
-            # Save metadata
-            meta_file = output_file.with_suffix('.meta')
-            with open(meta_file, 'w') as f:
-                for key, value in results.attrs.items():
-                    f.write(f"{key}: {value}\n")
-            
-            self.logger.info(f"Water balance saved to: {output_file}")
             return output_file
             
         except Exception as e:
             self.logger.error(f"Error extracting water balance: {str(e)}")
-            raise
+            return None
 
-    def _get_file_path(self, file_type: str, file_def_path: str, file_name: str) -> Path:
-        """Helper method to resolve file paths."""
-        if self.config.get(file_type) == 'default':
-            return self.project_dir / file_def_path / file_name
-        return Path(self.config.get(file_type))
+    def analyze_performance(self) -> Optional[Path]:
+        """
+        Analyze model performance using various metrics.
+        """
+        try:
+            self.logger.info("Analyzing HYPE performance")
+            
+            metrics = {}
+            
+            # Get simulated and observed discharge
+            cout = pd.read_csv(self.sim_dir / "timeCOUT.txt", 
+                             sep='\t', parse_dates=['time'])
+            rout = pd.read_csv(self.sim_dir / "timeROUT.txt", 
+                             sep='\t', parse_dates=['time'])
+            
+            # Calculate metrics for each subbasin
+            for col in cout.columns:
+                if col != 'time' and col in rout.columns:
+                    sim = cout[col]
+                    obs = rout[col]
+                    
+                    # Calculate various performance metrics
+                    metrics[col] = {
+                        'NSE': self._calc_nse(sim, obs),
+                        'RMSE': self._calc_rmse(sim, obs),
+                        'KGE': self._calc_kge(sim, obs),
+                        'Bias': self._calc_bias(sim, obs)
+                    }
+            
+            # Create performance summary DataFrame
+            summary = pd.DataFrame(metrics).T
+            
+            # Save results
+            output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_performance.csv"
+            summary.to_csv(output_file)
+            
+            return output_file
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing performance: {str(e)}")
+            return None
+
+    @staticmethod
+    def _calc_nse(sim: np.ndarray, obs: np.ndarray) -> float:
+        """Calculate Nash-Sutcliffe Efficiency."""
+        return 1 - np.sum((sim - obs) ** 2) / np.sum((obs - obs.mean()) ** 2)
+
+    @staticmethod
+    def _calc_rmse(sim: np.ndarray, obs: np.ndarray) -> float:
+        """Calculate Root Mean Square Error."""
+        return np.sqrt(np.mean((sim - obs) ** 2))
+
+    @staticmethod
+    def _calc_kge(sim: np.ndarray, obs: np.ndarray) -> float:
+        """Calculate Kling-Gupta Efficiency."""
+        r = np.corrcoef(sim, obs)[0, 1]
+        alpha = sim.std() / obs.std()
+        beta = sim.mean() / obs.mean()
+        return 1 - np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2)
+
+    @staticmethod
+    def _calc_bias(sim: np.ndarray, obs: np.ndarray) -> float:
+        """
+        Calculate mean bias between simulated and observed values.
+        
+        Args:
+            sim (np.ndarray): Simulated values
+            obs (np.ndarray): Observed values
+            
+        Returns:
+            float: Mean bias as percentage
+        """
+        return 100 * (sim.mean() - obs.mean()) / obs.mean()
+
+    def _save_with_metadata(self, df: pd.DataFrame, filepath: Path, metadata: Dict[str, Any]):
+        """
+        Save DataFrame with metadata.
+        
+        Args:
+            df (pd.DataFrame): Data to save
+            filepath (Path): Output file path
+            metadata (Dict[str, Any]): Metadata dictionary
+        """
+        # Save data
+        df.to_csv(filepath)
+        
+        # Save metadata to companion file
+        meta_file = filepath.with_suffix('.meta')
+        with open(meta_file, 'w') as f:
+            f.write("HYPE Output Metadata\n")
+            f.write("==================\n\n")
+            for key, value in metadata.items():
+                f.write(f"{key}: {value}\n")
+        
+        self.logger.debug(f"Saved {filepath.name} with metadata")
+
+    def compile_summary_report(self) -> Optional[Path]:
+        """
+        Create a comprehensive summary report of HYPE results.
+        
+        Returns:
+            Optional[Path]: Path to summary report file
+        """
+        try:
+            self.logger.info("Compiling HYPE summary report")
+            
+            report_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_hype_summary.txt"
+            
+            with open(report_file, 'w') as f:
+                # Write header
+                f.write(f"HYPE Model Results Summary\n")
+                f.write(f"========================\n\n")
+                f.write(f"Domain: {self.domain_name}\n")
+                f.write(f"Experiment ID: {self.config['EXPERIMENT_ID']}\n")
+                f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                # Add performance metrics summary
+                perf_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_performance.csv"
+                if perf_file.exists():
+                    perf_df = pd.read_csv(perf_file)
+                    f.write("Performance Metrics Summary\n")
+                    f.write("-----------------------\n")
+                    f.write(f"Mean NSE: {perf_df['NSE'].mean():.3f}\n")
+                    f.write(f"Mean KGE: {perf_df['KGE'].mean():.3f}\n")
+                    f.write(f"Mean Bias: {perf_df['Bias'].mean():.3f}%\n\n")
+                
+                # Add water balance summary
+                wb_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_water_balance.csv"
+                if wb_file.exists():
+                    wb_df = pd.read_csv(wb_file)
+                    f.write("Water Balance Summary\n")
+                    f.write("--------------------\n")
+                    # Calculate annual averages
+                    wb_df['year'] = pd.to_datetime(wb_df['time']).dt.year
+                    annual_means = wb_df.groupby('year').mean()
+                    f.write(f"Annual Average Precipitation: {annual_means.filter(like='PREC').mean().mean():.1f} mm\n")
+                    f.write(f"Annual Average Evaporation: {annual_means.filter(like='EVAP').mean().mean():.1f} mm\n")
+                    f.write(f"Annual Average Discharge: {annual_means.filter(like='COUT').mean().mean():.1f} mm\n\n")
+                
+                # Add simulation notes
+                f.write("Simulation Notes\n")
+                f.write("----------------\n")
+                sim_success = all(file.exists() for file in [perf_file, wb_file])
+                f.write(f"Simulation Status: {'Successful' if sim_success else 'Incomplete'}\n")
+                if not sim_success:
+                    f.write("Missing output files detected - check simulation logs\n")
+            
+            self.logger.info(f"Summary report saved to {report_file}")
+            return report_file
+            
+        except Exception as e:
+            self.logger.error(f"Error creating summary report: {str(e)}")
+            return None
+
+    def plot_results(self) -> Dict[str, Path]:
+        """
+        Create standard visualization plots for HYPE results.
+        
+        Returns:
+            Dict[str, Path]: Dictionary mapping plot types to file paths
+        """
+        try:
+
+            
+            self.logger.info("Creating HYPE results plots")
+            plots = {}
+            
+            # Set up plotting style
+            plt.style.use('seaborn')
+            
+            # Streamflow plot
+            streamflow_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow.csv"
+            if streamflow_file.exists():
+                df = pd.read_csv(streamflow_file, parse_dates=['time'])
+                
+                fig, ax = plt.subplots(figsize=(12, 6))
+                sim_cols = [col for col in df.columns if 'HYPE_discharge_cms' in col]
+                obs_cols = [col for col in df.columns if 'Obs_discharge_cms' in col]
+                
+                for sim, obs in zip(sim_cols, obs_cols):
+                    ax.plot(df['time'], df[sim], label='Simulated', alpha=0.8)
+                    ax.plot(df['time'], df[obs], label='Observed', alpha=0.8)
+                
+                ax.set_xlabel('Date')
+                ax.set_ylabel('Discharge (m³/s)')
+                ax.set_title('HYPE Streamflow Comparison')
+                ax.legend()
+                
+                plot_path = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow_plot.png"
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                plots['streamflow'] = plot_path
+            
+            # Performance metrics plot
+            perf_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_performance.csv"
+            if perf_file.exists():
+                df = pd.read_csv(perf_file)
+                
+                fig, ax = plt.subplots(figsize=(8, 8))
+                sns.boxplot(data=df[['NSE', 'KGE', 'Bias']], ax=ax)
+                ax.set_title('HYPE Performance Metrics Distribution')
+                ax.set_ylabel('Value')
+                
+                plot_path = self.results_dir / f"{self.config['EXPERIMENT_ID']}_performance_plot.png"
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                plots['performance'] = plot_path
+            
+            return plots
+            
+        except ImportError:
+            self.logger.warning("Plotting libraries not available - skipping plot generation")
+            return {}
+        except Exception as e:
+            self.logger.error(f"Error creating plots: {str(e)}")
+            return {}
