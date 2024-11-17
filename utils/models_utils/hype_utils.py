@@ -1,6 +1,5 @@
 from pathlib import Path
-import sys
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Dict, Any, Optional, List
 import pandas as pd # type: ignore
 import numpy as np
 import geopandas as gpd # type: ignore
@@ -8,37 +7,19 @@ import xarray as xr # type: ignore
 import shutil
 from datetime import datetime
 import subprocess
-import logging
-import yaml# type: ignore
-import rasterio # type: ignore
 import os
-import math
 import cdo # type: ignore
 
-# For unit handling
-import pint # type: ignore
-import pint_xarray # type: ignore
-
 # For data processing
-from scipy import stats
-from scipy.stats import pearsonr
-from scipy.spatial.distance import pdist, squareform
 import dask # type: ignore
 
 import matplotlib.pyplot as plt # type: ignore
 import seaborn as sns # type: ignore
 # Type hints
 from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from logging import Logger
-    from pandas import DataFrame, Series # type: ignore
-    from geopandas import GeoDataFrame # type: ignore
-    from xarray import Dataset, DataArray # type: ignore
-    from numpy import ndarray # type: ignore
 
 # Optional imports for parallel processing
 try:
-    import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     PARALLEL_AVAILABLE = True
 except ImportError:
@@ -89,12 +70,16 @@ class HYPEPreProcessor:
         self.logger.info("Starting HYPE preprocessing")
         
         try:
+
             # Write forcing files
             self.write_hype_forcing()
             
             # Write geographic data files
             self.write_hype_geo_files()
             
+            # Sort geofabric from upstream to downstream
+            self.sort_geofabric()
+
             # Write parameter file
             self.write_hype_par_file()
             
@@ -106,50 +91,120 @@ class HYPEPreProcessor:
         except Exception as e:
             self.logger.error(f"Error during HYPE preprocessing: {str(e)}")
             raise
-    '''
-    def write_hype_forcing(self):
-        """Convert CONFLUENCE forcing data to HYPE format."""
-        self.logger.info("Writing HYPE forcing files")
+
+    def sort_geofabric(self):
+        """
+        Sort GeoData.txt starting from known outlet (SIM_REACH_ID) and working upstream.
+        Ignores any connections downstream of the outlet point.
+        """
+        self.logger.info("Sorting geofabric from outlet to headwaters")
         
         try:
-            # Define forcing units mapping
-            forcing_units = {
-                'temperature': {
-                    'in_varname': 'RDRS_v2.1_P_TT_09944',
-                    'in_units': 'kelvin',
-                    'out_units': 'celsius'
-                },
-                'precipitation': {
-                    'in_varname': 'RDRS_v2.1_A_PR0_SFC',
-                    'in_units': 'm/hr',
-                    'out_units': 'mm/day'
-                }
-            }
+            geodata_path = self.hype_setup_dir / 'GeoData.txt'
+            if not geodata_path.exists():
+                raise FileNotFoundError(f"GeoData.txt not found at {geodata_path}")
+                
+            geodata = pd.read_csv(geodata_path, sep='\t')
+            geodata['subid'] = geodata['subid'].astype(int)
+            geodata['maindown'] = geodata['maindown'].astype(int)
             
-            # Find easymore output files
-            easymore_files = sorted(self.easymore_output.glob('*.nc'))
-            if not easymore_files:
-                raise FileNotFoundError("No easymore output files found")
+            # Get outlet ID from config
+            outlet_id = int(self.config['SIM_REACH_ID'])
+            self.logger.info(f"Using basin {outlet_id} as outlet point")
             
-            # Merge files and process
-            ds = xr.open_mfdataset(easymore_files)
-            ds = ds.convert_calendar('standard')
+            if outlet_id not in geodata['subid'].values:
+                raise ValueError(f"Outlet ID {outlet_id} not found in GeoData.txt")
             
-            # Apply timeshift
-            ds['time'] = ds['time'] + pd.Timedelta(hours=self.timeshift)
+            # Build upstream basin dictionary
+            upstream_basins = {}  # For each basin, which basins flow into it
+            for _, row in geodata.iterrows():
+                subid = row['subid']
+                maindown = row['maindown']
+                
+                if maindown not in upstream_basins:
+                    upstream_basins[maindown] = set()
+                upstream_basins[maindown].add(subid)
             
-            # Process temperature data
-            self._process_temperature(ds, forcing_units['temperature'])
+            # Get all basins that are upstream of our outlet
+            def get_all_upstream(basin_id, visited=None):
+                if visited is None:
+                    visited = set()
+                
+                # Add current basin
+                visited.add(basin_id)
+                
+                # Add all basins that flow into this one
+                for upstream_id in upstream_basins.get(basin_id, set()):
+                    if upstream_id not in visited:
+                        get_all_upstream(upstream_id, visited)
+                
+                return visited
             
-            # Process precipitation data
-            self._process_precipitation(ds, forcing_units['precipitation'])
+            # Get all basins in our network (outlet and everything upstream)
+            network_basins = get_all_upstream(outlet_id)
+            self.logger.info(f"Found {len(network_basins)} basins in network")
             
-            self.logger.info("HYPE forcing files written successfully")
+            # Create list of basins in downstream to upstream order
+            ordered_basins = []
+            processed = set()
+            
+            # Start with the outlet
+            queue = [outlet_id]
+            
+            while queue:
+                current = queue.pop(0)
+                if current not in processed:
+                    ordered_basins.append(current)
+                    processed.add(current)
+                    
+                    # Add any unprocessed upstream basins to the queue
+                    if current in upstream_basins:
+                        queue.extend(sorted(
+                            [b for b in upstream_basins[current] if b not in processed],
+                            key=lambda x: -float(geodata.loc[geodata['subid'] == x, 'elev_mean'].iloc[0])
+                        ))
+            
+            # Reverse the list to get upstream to downstream order
+            ordered_basins.reverse()
+            
+            # Verify we processed all basins in our network
+            if set(ordered_basins) != network_basins:
+                missing = network_basins - set(ordered_basins)
+                self.logger.error(f"Failed to process all connected basins. Missing: {missing}")
+                raise ValueError("Failed to create complete basin ordering")
+            
+            # Sort geodata according to our ordering
+            sort_idx = pd.Series(range(len(ordered_basins)), index=ordered_basins)
+            geodata = geodata[geodata['subid'].isin(network_basins)]  # Keep only basins in our network
+            geodata['sort_index'] = geodata['subid'].map(sort_idx)
+            sorted_geodata = geodata.sort_values('sort_index').drop('sort_index', axis=1)
+            
+            # Modify any connections downstream of our outlet to point to 0 (external)
+            sorted_geodata.loc[sorted_geodata['subid'] == outlet_id, 'maindown'] = 0
+            
+            # Create backup
+            backup_path = geodata_path.with_suffix('.txt.bak')
+            if geodata_path.exists():
+                shutil.copy2(geodata_path, backup_path)
+                self.logger.info(f"Created backup of original GeoData.txt at {backup_path}")
+            
+            # Format floating point columns
+            float_cols = ['area', 'rivlen', 'latitude', 'longitude', 'elev_mean']
+            for col in float_cols:
+                if col in sorted_geodata.columns:
+                    sorted_geodata[col] = sorted_geodata[col].map('{:.6g}'.format)
+            
+            # Write sorted data
+            sorted_geodata.to_csv(geodata_path, sep='\t', index=False)
+            
+            self.logger.info("Geofabric sorting completed successfully")
+            self.logger.debug(f"Final basin ordering: {' -> '.join(map(str, ordered_basins))}")
             
         except Exception as e:
-            self.logger.error(f"Error writing HYPE forcing: {str(e)}")
+            self.logger.error(f"Error during geofabric sorting: {str(e)}")
+            self.logger.error(f"Error details: {str(e.__class__.__name__)}: {str(e)}")
             raise
-    '''
+
     def write_hype_forcing(self):
         """Convert CONFLUENCE forcing data to HYPE format efficiently."""
         self.logger.info("Writing HYPE forcing files")
@@ -163,7 +218,7 @@ class HYPEPreProcessor:
                     'out_units': 'celsius'
                 },
                 'precipitation': {
-                    'in_varname': 'RDRS_v2.1_A_PR0_SFC',
+                    'in_varname': 'RDRS_v2.1_A_PR0_SFC',  # Make sure this matches exactly
                     'in_units': 'm/hr',
                     'out_units': 'mm/day'
                 }
@@ -196,6 +251,11 @@ class HYPEPreProcessor:
             
             # Open merged dataset
             ds = xr.open_dataset('merged_forcing.nc')
+            
+            # Debug info
+            self.logger.debug(f"Variables in dataset: {list(ds.variables)}")
+            self.logger.debug(f"Coordinates in dataset: {list(ds.coords)}")
+            
             ds = ds.convert_calendar('standard')
             ds['time'] = ds['time'] + pd.Timedelta(hours=self.timeshift)
             
@@ -233,16 +293,16 @@ class HYPEPreProcessor:
                 stat='mean'
             )
             
-            # Process precipitation
+            # Process precipitation with special handling for daily accumulation
             self._process_forcing_file(
                 ds=ds,
                 var_name=forcing_units['precipitation']['in_varname'],
                 out_name='Pobs',
                 unit_conversion={
                     'in_units': forcing_units['precipitation']['in_units'],
-                    'out_units': forcing_units['precipitation']['out_units']
+                    'out_units': 'mm/hr'  # Convert to mm/hr first
                 },
-                stat='mean'
+                stat='sum'  # Change to sum for precipitation
             )
             
             # Clean up
@@ -391,119 +451,92 @@ class HYPEPreProcessor:
             header=header,
             comments=''
         )
-    '''
-    def _create_geodata(self, basins: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame):
-        """Create HYPE GeoData.txt file."""
-        geodata = pd.DataFrame()
-        
-        # Map required fields
-        geodata['subid'] = basins[self.config['RIVER_BASIN_SHP_RM_GRUID']]
-        geodata['maindown'] = rivers[self.config['RIVER_NETWORK_SHP_DOWNSEGID']]
-        geodata['area'] = basins[self.config['RIVER_BASIN_SHP_AREA']]
-        geodata['rivlen'] = rivers[self.config['RIVER_NETWORK_SHP_LENGTH']]
-        
-        # Calculate centroids for lat/lon
-        geodata['latitude'] = basins.to_crs(epsg=4326).centroid.y
-        geodata['longitude'] = basins.to_crs(epsg=4326).centroid.x
-        
-        # Process elevation data from gistool output
-        elev_stats = pd.read_csv(self.gistool_output / 'domain_stats_elv.csv')
-        geodata['elev_mean'] = elev_stats['mean']
-        
-        # Sort from upstream to downstream
-        geodata = self._sort_geodata(geodata)
-        
-        # Save GeoData.txt
-        geodata.to_csv(self.hype_setup_dir / 'GeoData.txt', sep='\t', index=False)
 
-    def _sort_geodata(self, geodata: pd.DataFrame) -> pd.DataFrame:
-        """Sort geodata from upstream to downstream."""
-        geodata['n_ds_subbasins'] = 0
-        
-        for index, row in geodata.iterrows():
-            n_ds_subbasins = 0
-            nextID = row['maindown']
-            
-            while nextID > 0 and nextID in geodata['subid'].values:
-                n_ds_subbasins += 1
-                nextID = geodata.loc[geodata['subid'] == nextID, 'maindown'].iloc[0]
-            
-            geodata.loc[index, 'n_ds_subbasins'] = n_ds_subbasins
-        
-        # Sort and clean up
-        geodata = geodata.sort_values('n_ds_subbasins', ascending=False)
-        geodata = geodata.drop(columns=['n_ds_subbasins'])
-        
-        return geodata
-    '''
     def _process_forcing_file(self, ds: xr.Dataset, 
                             var_name: str, 
                             out_name: str,
                             unit_conversion: Dict[str, str],
                             stat: str = 'mean',
                             time_diff: int = -7) -> None:
-        """Process and write a single forcing file using proven approach."""
-        # Rename GRU_ID to id and ensure it's integer type
-        if 'GRU_ID' in ds.coords:
-            ds = ds.rename({'GRU_ID': 'id'})
-        elif 'GRU_ID' in ds:
-            ds = ds.rename({'GRU_ID': 'id'})
-        
-        ds.coords['id'] = ds.coords['id'].astype(int)
-        
-        # Keep only necessary variables
-        variables_to_keep = [var_name, 'time', 'id']
-        ds = ds.drop([v for v in ds.variables if v not in variables_to_keep])
-        
-        # Apply time shift if needed
-        if time_diff != 0:
-            ds['time'] = ds['time'].roll(time=time_diff)
-            if time_diff < 0:
-                ds = ds.isel(time=slice(None, time_diff))
-            elif time_diff > 0:
-                ds = ds.isel(time=slice(time_diff, None))
-        
-        # Calculate daily statistics
-        if stat == 'max':
-            ds_daily = ds.resample(time='D').max()
-        elif stat == 'min':
-            ds_daily = ds.resample(time='D').min()
-        else:  # mean is default
-            ds_daily = ds.resample(time='D').mean()
-        
-        # Convert units
-        ds_daily[var_name] = ds_daily[var_name].pint.quantify(unit_conversion['in_units'])
-        ds_daily[var_name] = ds_daily[var_name].pint.to(unit_conversion['out_units'])
-        ds_daily = ds_daily.pint.dequantify()
-        
-        # Convert to DataFrame and format for HYPE
-        df = ds_daily[var_name].to_dataframe()
-        df = df.unstack()
-        df = df.T
-        df = df.droplevel(level=0, axis=0)
-        df.columns.name = None
-        df.index.name = 'time'
-        
-        # Write to file with precise formatting
-        output_path = self.hype_setup_dir / f'{out_name}.txt'
-        df.to_csv(str(output_path), sep='\t', na_rep='', 
-                index_label='time', float_format='%.3f')
-    
-    def _process_forcing_variable(self, ds: xr.Dataset, varname: str, conversion: callable) -> Dict[str, np.ndarray]:
-        """Process a single forcing variable efficiently."""
-        # Extract and convert data
-        data = ds[varname].copy()
-        data.values = conversion(data.values)
-        
-        # Calculate daily statistics efficiently using xarray operations
-        daily_data = data.resample(time='D')
-        
-        return {
-            'mean': daily_data.mean().values,
-            'max': daily_data.max().values,
-            'min': daily_data.min().values,
-            'time': daily_data.time.values
-        }
+        """Process and write a single forcing file with proper orientation."""
+        try:
+            self.logger.debug(f"Processing {var_name} to {out_name}")
+            
+            # Rename GRU_ID to id if present
+            if 'GRU_ID' in ds.coords:
+                ds = ds.rename({'GRU_ID': 'id'})
+            elif 'GRU_ID' in ds:
+                ds = ds.rename({'GRU_ID': 'id'})
+                
+            ds.coords['id'] = ds.coords['id'].astype(int)
+            
+            # Keep only necessary variables
+            variables_to_keep = [var_name, 'time', 'id']
+            ds = ds.drop([v for v in ds.variables if v not in variables_to_keep])
+            
+            # Apply time shift if needed
+            if time_diff != 0:
+                ds['time'] = ds['time'].roll(time=time_diff)
+                if time_diff < 0:
+                    ds = ds.isel(time=slice(None, time_diff))
+                elif time_diff > 0:
+                    ds = ds.isel(time=slice(time_diff, None))
+            
+            # Convert units before resampling for precipitation
+            if out_name == 'Pobs':
+                ds[var_name] = ds[var_name].pint.quantify(unit_conversion['in_units'])
+                ds[var_name] = ds[var_name].pint.to('mm/hr')
+                ds = ds.pint.dequantify()
+            
+            # Calculate daily statistics
+            if stat == 'max':
+                ds_daily = ds.resample(time='D').max()
+            elif stat == 'min':
+                ds_daily = ds.resample(time='D').min()
+            elif stat == 'sum':
+                ds_daily = ds.resample(time='D').sum() * 24  # Convert hourly sum to daily sum
+            else:  # mean is default
+                ds_daily = ds.resample(time='D').mean()
+                if out_name == 'Pobs':
+                    ds_daily = ds_daily * 24  # Convert hourly mean to daily sum for precipitation
+            
+            # Convert units after resampling if not precipitation
+            if out_name != 'Pobs':
+                ds_daily[var_name] = ds_daily[var_name].pint.quantify(unit_conversion['in_units'])
+                ds_daily[var_name] = ds_daily[var_name].pint.to(unit_conversion['out_units'])
+                ds_daily = ds_daily.pint.dequantify()
+            
+            # Convert to DataFrame and handle MultiIndex
+            df = ds_daily[var_name].to_dataframe()
+            
+            # Reset index to get all columns
+            df = df.reset_index()
+            
+            # Pivot the data to get dates as rows and stations as columns
+            df_pivot = df.pivot(index='time', columns='id', values=var_name)
+            
+            # Convert column names to integers while keeping them as object type
+            df_pivot.columns = [str(int(x)) for x in df_pivot.columns]
+            
+            # Sort rows by date and columns by ID (numerically, but as strings)
+            df_pivot = df_pivot.sort_index()
+            df_pivot = df_pivot.reindex(sorted(df_pivot.columns, key=lambda x: int(x)), axis=1)
+            
+            # Write to file with precise formatting
+            output_path = self.hype_setup_dir / f'{out_name}.txt'
+            df_pivot.to_csv(output_path,
+                        sep='\t',
+                        float_format='%.3f',
+                        date_format='%Y-%m-%d',
+                        na_rep='-9999')
+            
+            self.logger.info(f"Successfully wrote {out_name} file")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing {out_name}: {str(e)}")
+            self.logger.error(f"DataFrame head:\n{df.head() if 'df' in locals() else 'DataFrame not created'}")
+            raise
+
     
     def _process_temperature(self, ds: xr.Dataset, units: Dict[str, str]):
         """Process temperature data efficiently."""
@@ -534,45 +567,89 @@ class HYPEPreProcessor:
         
         return precip_daily
 
-    '''
-    def _process_temperature(self, ds: xr.Dataset, units: Dict[str, str]):
-        """Process temperature data for HYPE."""
-        temp = ds[units['in_varname']].copy()
-        
-        # Convert units
-        if units['in_units'] == 'kelvin':
-            temp = temp - 273.15
-        
-        # Calculate daily statistics
-        tmax = temp.resample(time='D').max()
-        tmin = temp.resample(time='D').min()
-        tmean = temp.resample(time='D').mean()
-        
-        # Write files
-        for name, data in [('TMAXobs.txt', tmax), ('TMINobs.txt', tmin), ('Tobs.txt', tmean)]:
-            df = data.to_dataframe()
-            df.to_csv(self.hype_setup_dir / name, sep='\t', float_format='%.3f')
-
-    def _process_precipitation(self, ds: xr.Dataset, units: Dict[str, str]):
-        """Process precipitation data for HYPE."""
-        precip = ds[units['in_varname']].copy()
-        
-        # Convert units (m/hr to mm/day)
-        precip = precip * 24000  # m/hr * 24hr/day * 1000mm/m
-        
-        # Calculate daily mean
-        precip_daily = precip.resample(time='D').mean()
-        
-        # Write file
-        df = precip_daily.to_dataframe()
-        df.to_csv(self.hype_setup_dir / 'Pobs.txt', sep='\t', float_format='%.3f')
-    '''
-
     def write_hype_par_file(self):
-        """Write HYPE parameter file."""
-        par_template = self._get_par_template()
-        with open(self.hype_setup_dir / 'par.txt', 'w') as f:
-            f.write(par_template)
+        """Write HYPE parameter file following the simple format from documentation"""
+        self.logger.info("Writing HYPE parameter file")
+        
+        try:
+            # Read GeoClass.txt
+            geoclass_path = self.hype_setup_dir / 'GeoClass.txt'
+            if not geoclass_path.exists():
+                raise FileNotFoundError("GeoClass.txt not found")
+            
+            # Read with explicit whitespace separator
+            geoclass = pd.read_csv(geoclass_path, sep='\s+', comment='!', header=None,
+                                names=['SLC', 'LULC', 'SOIL_TYPE', 'CROP1', 'CROP2', 'CROP_ROT', 
+                                    'VEG_TYPE', 'SPECIAL', 'TILE_DEPTH', 'STREAM_DEPTH', 
+                                    'N_SOIL_LAYERS', 'DEPTH1', 'DEPTH2', 'DEPTH3'])
+            
+            # Get unique values
+            land_types = sorted(geoclass['LULC'].unique())
+            soil_types = sorted(geoclass['SOIL_TYPE'].unique())
+            
+            output_path = self.hype_setup_dir / 'par.txt'
+            
+            with open(output_path, 'w') as f:
+                # Write header comment
+                f.write("!! Parameter file for HYPE model - Generated by CONFLUENCE\n")
+                
+                # General parameters
+                f.write("!! General parameters\n")
+                f.write(f"ttpi {1.7083}\n")
+                f.write(f"sdnsnew {0.13}\n")
+                f.write(f"snowdensdt {0.0016}\n")
+                f.write(f"fsceff {1.0}\n")
+                f.write(f"cmrefr {0.2}\n")
+                f.write(f"lp {0.6613}\n")
+                f.write(f"epotdist {4.7088}\n")
+                f.write(f"rrcs3 {0.0939}\n")
+                f.write(f"deepmem {1000}\n")
+                
+                # Land use dependent parameters
+                f.write("!! Land use dependent parameters\n")
+                f.write(f"ttmp {' '.join([f'{v:.4f}' for v in [-0.9253, -1.5960, -0.9620, -2.7121, 2.6945]])}\n")
+                f.write(f"cmlt {' '.join([f'{v:.4f}' for v in [9.6497, 9.2928, 9.8897, 5.5393, 2.5333]])}\n")
+                f.write(f"cevp {' '.join([f'{v:.4f}' for v in [0.4689, 0.7925, 0.6317, 0.1699, 0.4506]])}\n")
+                f.write(f"ttrig {' '.join([f'{v:.4f}' for v in [0.0, 0.0, 0.0, 0.0, 0.0]])}\n")
+                f.write(f"treda {' '.join([f'{v:.4f}' for v in [0.84, 0.84, 0.84, 0.84, 0.95]])}\n")
+                f.write(f"tredb {' '.join([f'{v:.4f}' for v in [0.4, 0.4, 0.4, 0.4, 0.4]])}\n")
+                f.write(f"fepotsnow {' '.join([f'{v:.4f}' for v in [0.8, 0.8, 0.8, 0.8, 0.8]])}\n")
+                f.write(f"surfmem {' '.join([f'{v:.4f}' for v in [17.8, 17.8, 17.8, 17.8, 5.15]])}\n")
+                f.write(f"depthrel {' '.join([f'{v:.4f}' for v in [1.1152, 1.1152, 1.1152, 1.1152, 2.47]])}\n")
+                f.write(f"frost {' '.join([f'{v:.4f}' for v in [2.0, 2.0, 2.0, 2.0, 2.0]])}\n")
+                
+                # Soil type dependent parameters
+                f.write("!! Soil type dependent parameters\n")
+                f.write(f"bfroznsoil {' '.join([f'{v:.4f}' for v in [3.7518, 3.2838, 3.7518]])}\n")
+                f.write(f"logsatmp {' '.join([f'{v:.4f}' for v in [1.15, 1.15, 1.15]])}\n")
+                f.write(f"bcosby {' '.join([f'{v:.4f}' for v in [11.2208, 19.6669, 11.2208]])}\n")
+                f.write(f"rrcs1 {' '.join([f'{v:.4f}' for v in [0.4345, 0.5985, 0.4345]])}\n")
+                f.write(f"rrcs2 {' '.join([f'{v:.4f}' for v in [0.1201, 0.1853, 0.1201]])}\n")
+                f.write(f"wcwp {' '.join([f'{v:.4f}' for v in [0.1171, 0.0280, 0.1171]])}\n")
+                f.write(f"wcfc {' '.join([f'{v:.4f}' for v in [0.3771, 0.2009, 0.3771]])}\n")
+                f.write(f"wcep {' '.join([f'{v:.4f}' for v in [0.4047, 0.4165, 0.4047]])}\n")
+                
+                # Lake parameters
+                f.write("!! Lake parameters\n")
+                f.write(f"ilratk {149.9593}\n")
+                f.write(f"ilratp {4.9537}\n")
+                f.write(f"illdepth {0.33}\n")
+                f.write(f"ilicatch {1.0}\n")
+                
+                # River parameters
+                f.write("!! River parameters\n")
+                f.write(f"damp {0.2719}\n")
+                f.write(f"rivvel {9.7605}\n")
+                f.write(f"qmean {200}\n")
+            
+            self.logger.info(f"Parameter file written to {output_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error writing parameter file: {str(e)}")
+            if 'geoclass' in locals():
+                self.logger.error(f"GeoClass data:\n{geoclass.head()}")
+            raise
+
 
     def write_hype_info_filedir_files(self, spinup_days: int):
         """Write HYPE info and filedir files."""
@@ -587,18 +664,20 @@ class HYPEPreProcessor:
             results_dir = self.hype_setup_dir / 'results'
             results_dir.mkdir(exist_ok=True)
             
-            # Read and process Pobs dates - following colleague's approach
+            # Read Pobs.txt - ensure we parse the time column correctly
             Pobs = pd.read_csv(self.hype_setup_dir / 'Pobs.txt', 
-                            sep='\t', 
-                            parse_dates=['time'])
+                            sep='\t',
+                            index_col='time', 
+                            parse_dates=True)
             
-            # Convert time column to datetime
-            Pobs['time'] = pd.to_datetime(Pobs['time'])
-            
-            # Get start and end dates
-            start_date = Pobs['time'].iloc[0]
-            end_date = Pobs['time'].iloc[-1]
+            # Get start and end dates from index
+            start_date = Pobs.index.min()
+            end_date = Pobs.index.max()
             spinup_date = start_date + pd.Timedelta(days=spinup_days)
+            
+            self.logger.debug(f"Start date: {start_date}")
+            self.logger.debug(f"Spinup date: {spinup_date}")
+            self.logger.debug(f"End date: {end_date}")
             
             # Write info.txt
             info_content = [
@@ -636,8 +715,8 @@ class HYPEPreProcessor:
                 "readswobs\tn\t!! For observed shortwave radiation",
                 "readuobs\tn\t!! For observed wind speeds",
                 "readrhobs\tn\t!! For observed relative humidity",
-                "readtminobs\ty\t!! For observed min air temperature",
-                "readtmaxobs\ty\t!! For observed max air temperature",
+                "readtminobs\tn\t!! For observed min air temperature",
+                "readtmaxobs\tn\t!! For observed max air temperature",
                 "soiliniwet\tn\t!! Use porosity instead of field capacity",
                 "usestop84\tn\t!! Use old return code",
                 "!! -----------------------------------------------------------------------------",
@@ -681,191 +760,12 @@ class HYPEPreProcessor:
             
         except Exception as e:
             self.logger.error(f"Error writing HYPE info files: {str(e)}")
-            # Add more debug information
-            self.logger.error(f"spinup_days type: {type(spinup_days)}")
+            # Add detailed error info
+            self.logger.error(f"Current directory contents: {list((self.hype_setup_dir).glob('*'))}")
             if 'start_date' in locals():
-                self.logger.error(f"start_date type: {type(start_date)}")
-                self.logger.error(f"start_date value: {start_date}")
+                self.logger.error(f"Start date: {start_date}")
             raise
         
-    def _get_par_template(self) -> str:
-        """
-        Get HYPE parameter file template.
-        Contains essential model parameters with documentation.
-        """
-        return """!!	=======================================================================================================									
-!! Parameter file for:										
-!! HYPE -- Generated by CONFLUENCE							
-!!	=======================================================================================================									
-!!										
-!!	------------------------									
-!!										
-!!	=======================================================================================================									
-!!	"SNOW - MELT, ACCUMULATION, AND DISTRIBUTION; sublimation under Evapotranspiration"									
-!!	-----									
-!!	"General snow accumulation and melt related parameters"									
-ttpi	1.7083	!! width of the temperature interval with mixed precipitation								
-sdnsnew	0.13	!! density of fresh snow (kg/dm3)								
-snowdensdt	0.0016	!! snow densification parameter								
-fsceff	1	!! efficiency of fractional snow cover to reduce melt and evap								
-cmrefr	0.2	!! snow refreeze capacity (fraction of degreeday melt factor)							
-!!	-----									
-!!	Landuse dependent snow melt parameters									
-!!LUSE:	LU1	LU2	LU3	LU4	LU5					
-ttmp	-0.9253	-1.5960	-0.9620	-2.7121	2.6945	!! Snowmelt threshold temperature (deg)				
-cmlt	9.6497	9.2928	9.8897	5.5393	2.5333	!! Snowmelt degree day coef (mm/deg/timestep)							
-!!	-----									
-!!	=======================================================================================================									
-!!	EVAPOTRANSPIRATION PARAMETERS									
-!!	-----									
-!!	General evapotranspiration parameters									
-lp	0.6613	!! Threshold for water content reduction of transpiration							
-epotdist	4.7088	!! Coefficient in exponential function for potential evapotranspiration depth dependency							
-!!	-----									
-!!										
-!!LUSE:	LU1	LU2	LU3	LU4	LU5					
-cevp	0.4689	0.7925	0.6317	0.1699	0.4506	!! PET correction factor
-ttrig	0	0	0	0	0	!! Soil temperature threshold for transpiration			
-treda	0.84	0.84	0.84	0.84	0.95	!! Coefficient in soil temperature response 				
-tredb	0.4	0.4	0.4	0.4	0.4	!! Coefficient in soil temperature response				
-fepotsnow	0.8	0.8	0.8	0.8	0.8	!! Fraction of PET for snow sublimation				
-!!										
-!! Frozen soil infiltration parameters										
-!! SOIL:	S1	S2								
-bfroznsoil	3.7518	3.2838	!! Frozen soil parameter							
-logsatmp	1.15	1.15	!! Saturated matrix potential							
-bcosby	11.2208	19.6669	!! Brooks-Cosby parameter							
-!!	=======================================================================================================									
-!!	SOIL HYDRAULIC PARAMETERS									
-!!	-----									
-!!	Soil-class parameters									
-!!	S1	S2								
-rrcs1	0.4345	0.5985	!! recession coefficient upper soil layer							
-rrcs2	0.1201	0.1853	!! recession coefficient lower soil layer							
-rrcs3	0.0939	!! Recession coefficient slope dependance								
-sfrost	1	1	!! frost depth parameter							
-wcwp	0.1171	0.0280	!! Wilting point water content							
-wcfc	0.3771	0.2009	!! Field capacity							
-wcep	0.4047	0.4165	!! Effective porosity							
-!!	-----									
-!!	Landuse-class parameters									
-!!LUSE:	LU1	LU2	LU3	LU4	LU5					
-srrcs	0.0673	0.1012	0.1984	0.0202	0.0202	!! Surface runoff coefficient				
-!!	-----									
-!!	Regional groundwater parameters									
-rcgrw	0	!! recession coefficient for regional groundwater outflow								
-!!	=======================================================================================================									
-!!	SOIL TEMPERATURE AND FROST DEPTH									
-!!	-----									
-!!	General parameters									
-deepmem	1000	!! temperature memory of deep soil (days)															
-!!-----										
-!!LUSE:	LU1	LU2	LU3	LU4	LU5					
-surfmem	17.8	17.8	17.8	17.8	5.15	!! upper soil temperature memory				
-depthrel	1.1152	1.1152	1.1152	1.1152	2.47	!! depth relation for soil temperature				
-frost	2	2	2	2	2	!! frost depth parameter				
-!!	-----									
-!!	=======================================================================================================									
-!!	LAKE PARAMETERS									
-!!	-----									
-!!	ILAKE parameters									
-!! ilRegion	1									
-ilratk	149.9593	!! Rating curve constant						
-ilratp	4.9537	!! Rating curve exponent						
-illdepth	0.33	!! Lake depth					
-ilicatch	1.0	!! Ice catchment coefficient								
-!!										
-!!	=======================================================================================================									
-!!	RIVER PARAMETERS									
-!!	-----									
-damp	0.2719	!! damping parameter								
-rivvel	9.7605	!! river velocity								
-qmean	200	!! initial mean flow (mm/yr)"""
-
-    def _get_info_template(self, start_date: datetime, spinup_date: datetime, end_date: datetime) -> str:
-        """
-        Get HYPE info file template with proper formatting.
-        Contains simulation setup and output specifications.
-        """
-        return f"""!! ----------------------------------------------------------------------------							
-!! HYPE Model Configuration - Generated by CONFLUENCE
-!! -----------------------------------------------------------------------------							
-!! Input data checking settings
-indatacheckonoff 	2						
-indatachecklevel	2		
-
-!! -----------------------------------------------------------------------------							
-!! Simulation settings:							
-!! -----------------	
-bdate	{start_date.strftime('%Y-%m-%d')}
-cdate	{spinup_date.strftime('%Y-%m-%d')}
-edate	{end_date.strftime('%Y-%m-%d')}
-resultdir	./results/
-instate	n
-warning	y
-
-!! Data read settings
-readdaily 	y						
-submodel 	n						
-calibration	n						
-readobsid   n							
-soilstretch	n						
-steplength	1d							
-
-!! -----------------------------------------------------------------------------							
-!! Input file settings
-!! -----------------							
-readsfobs	n	!! Observed snowfall fractions							
-readswobs	n	!! Observed shortwave radiation
-readuobs	n	!! Observed wind speeds
-readrhobs	n	!! Observed relative humidity					
-readtminobs	y	!! Observed min air temperature				
-readtmaxobs	y	!! Observed max air temperature
-soiliniwet	n	!! Soil water initialization
-usestop84	n	!! Return code setting					
-
-!! -----------------------------------------------------------------------------							
-!! Model options							
-!! -----------------							
-modeloption snowfallmodel	0						
-modeloption snowdensity	0
-modeloption snowfalldist	2
-modeloption snowheat	0
-modeloption snowmeltmodel	0	
-modeloption	snowevapmodel	1				
-modeloption snowevaporation	1					
-modeloption lakeriverice	0									
-modeloption deepground	0 	
-modeloption glacierini	1
-modeloption floodmodel 0
-modeloption frozensoil 2
-modeloption infiltration 3
-modeloption surfacerunoff 0
-modeloption petmodel	1
-modeloption wetlandmodel 2		
-modeloption connectivity 0					
-
-!! -----------------------------------------------------------------------------							
-!! Output specifications
-!! -----------------							
-!! meanperiod options: 1=daily, 2=weekly, 3=monthly, 4=yearly, 5=total period
-
-timeoutput	variable	cout
-timeoutput	variable	evap
-timeoutput	variable	snow
-timeoutput	meanperiod	1
-timeoutput	decimals	3
-
-!! -----------------------------------------------------------------------------							
-!! Model evaluation criteria
-!! -----------------							
-!! crit meanperiod	1
-!! crit datalimit	30
-!! crit 1 criterion	NSE     !! Nash-Sutcliffe Efficiency
-!! crit 1 cvariable	cout    !! Compare computed outflow
-!! crit 1 rvariable	rout    !! with recorded outflow
-!! crit 1 weight	1"""
-
     def _create_geoclass(self):
         """
         Create the GeoClass.txt file with proper NALCMS mapping and all required HYPE columns
@@ -1317,28 +1217,6 @@ class HYPEPostProcessor:
             float: Mean bias as percentage
         """
         return 100 * (sim.mean() - obs.mean()) / obs.mean()
-
-    def _save_with_metadata(self, df: pd.DataFrame, filepath: Path, metadata: Dict[str, Any]):
-        """
-        Save DataFrame with metadata.
-        
-        Args:
-            df (pd.DataFrame): Data to save
-            filepath (Path): Output file path
-            metadata (Dict[str, Any]): Metadata dictionary
-        """
-        # Save data
-        df.to_csv(filepath)
-        
-        # Save metadata to companion file
-        meta_file = filepath.with_suffix('.meta')
-        with open(meta_file, 'w') as f:
-            f.write("HYPE Output Metadata\n")
-            f.write("==================\n\n")
-            for key, value in metadata.items():
-                f.write(f"{key}: {value}\n")
-        
-        self.logger.debug(f"Saved {filepath.name} with metadata")
 
     def compile_summary_report(self) -> Optional[Path]:
         """

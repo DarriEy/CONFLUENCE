@@ -329,10 +329,10 @@ class FLUXRunner:
         output_dir = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FLUX'
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Convert to xarray Dataset
+        # Convert to xarray Dataset - changed variable name to discharge_cms
         ds = xr.Dataset(
             {
-                "streamflow": (["time"], results['predicted_streamflow'].values)
+                "discharge_cms": (["time"], results['predicted_streamflow'].values)
             },
             coords={
                 "time": results.index
@@ -340,8 +340,8 @@ class FLUXRunner:
         )
         
         # Add attributes
-        ds.streamflow.attrs['units'] = 'm3 s-1'
-        ds.streamflow.attrs['long_name'] = 'Simulated streamflow'
+        ds.discharge_cms.attrs['units'] = 'm3 s-1'
+        ds.discharge_cms.attrs['long_name'] = 'Simulated streamflow'
         
         # Save as NetCDF
         output_file = output_dir / f"{self.config.get('EXPERIMENT_ID')}_FLUX_output.nc"
@@ -357,7 +357,7 @@ class FLUXRunner:
         # Prepare data
         sim_dates = results.index
         sim_flow = results['predicted_streamflow']
-        obs_flow = obs_df.reindex(sim_dates)['streamflow']
+        obs_flow = obs_df['discharge_cms']  # Changed from 'streamflow' to 'discharge_cms'
         
         # Calculate metrics
         metrics = {
@@ -540,7 +540,7 @@ class FLUXPostProcessor:
             ds = xr.open_dataset(sim_path)
             
             # Extract streamflow
-            q_sim = ds['streamflow'].to_pandas()
+            q_sim = ds['discharge_cms'].to_pandas()
             
             # Get catchment area from river basins shapefile
             basin_name = self.config.get('RIVER_BASINS_NAME')
@@ -642,7 +642,7 @@ class FLUXPostProcessor:
             obs_df = pd.read_csv(obs_path, parse_dates=['datetime']).set_index('datetime')
             
             # Align data
-            sim_flow = sim_ds['streamflow'].to_pandas()
+            sim_flow = sim_ds['discharge_cms'].to_pandas()
             obs_flow = obs_df['discharge_cms'].reindex(sim_flow.index)
             
             # Calculate performance metrics
