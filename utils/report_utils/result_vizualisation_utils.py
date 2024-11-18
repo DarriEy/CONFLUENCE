@@ -37,7 +37,7 @@ class TimeseriesVisualizer:
         self.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         
         # Define model names
-        self.model_names = ['FUSE', 'GR', 'SUMMA']
+        self.model_names = ['FUSE', 'GR', 'SUMMA', 'HYPE', 'MESH', 'FLASH']
 
     def read_results(self) -> pd.DataFrame:
         """Read simulation results and observed streamflow."""

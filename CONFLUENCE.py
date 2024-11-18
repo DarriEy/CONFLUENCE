@@ -16,10 +16,10 @@ from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedD
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
-from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
+#from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
-from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
+#from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 from utils.models_utils.summa_utils import SUMMAPostprocessor # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
@@ -104,11 +104,11 @@ class CONFLUENCE:
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
-            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input1").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}1").exists()),
+            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
-            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
             (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv2").exists()),  
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
@@ -393,8 +393,9 @@ class CONFLUENCE:
             elif model == 'FLUX':
                 fr = FLUXRunner(self.config, self.logger)
                 fr.run_flux()       
-        else:
-            self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
+
+            else:
+                self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
 
         self.logger.info("Model runs completed")
 
@@ -438,7 +439,7 @@ class CONFLUENCE:
     def run_benchmarking(self):
         # Preprocess data for benchmarking
         preprocessor = BenchmarkPreprocessor(self.config, self.logger)
-        #benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['CALIBRATION_PERIOD'].split(',')[0]}", f"{self.config['EVALUATION_PERIOD'].split(',')[1]}")
+        benchmark_data = preprocessor.preprocess_benchmark_data(f"{self.config['CALIBRATION_PERIOD'].split(',')[0]}", f"{self.config['EVALUATION_PERIOD'].split(',')[1]}")
 
         # Run benchmarking
         benchmarker = Benchmarker(self.config, self.logger)
@@ -462,6 +463,9 @@ class CONFLUENCE:
             elif model == 'FLUX':
                 fpp = FLUXPostProcessor(self.config, self.logger)
                 results_file = fpp.extract_streamflow()
+            elif model == 'HYPE':
+                hpp = HYPEPostProcessor(self.config, self.logger)
+                results_file = hpp.extract_streamflow()
             else:
                 pass
 

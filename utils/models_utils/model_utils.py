@@ -3,7 +3,7 @@ import sys
 import glob
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import pandas as pd # type: ignore
 import torch # type: ignore
 import torch.nn as nn # type: ignore
@@ -212,18 +212,18 @@ class FLASH:
         self.logger.info(f"Initialized FLASH model with device: {self.device}")
 
 
-    def preprocess_data(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, pd.DatetimeIndex, pd.Index]:
+    def preprocess_data(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: Optional[pd.DataFrame] = None) -> Tuple[torch.Tensor, torch.Tensor, pd.DatetimeIndex, pd.Index, pd.DataFrame]:
         self.logger.info("Preprocessing data for FLASH model")
         
         # Align the data
-        common_dates = forcing_df.index.get_level_values('time').intersection(streamflow_df.index).intersection(snow_df.index)
+        common_dates = forcing_df.index.get_level_values('time').intersection(streamflow_df.index)
+        if snow_df is not None:
+            common_dates = common_dates.intersection(snow_df.index)
+        
         forcing_df = forcing_df.loc[pd.IndexSlice[common_dates, :], :]
         streamflow_df = streamflow_df.loc[common_dates]
-        snow_df = snow_df.loc[common_dates]
-
-        self.logger.info(f"Shape of aligned forcing_df: {forcing_df.shape}")
-        self.logger.info(f"Shape of aligned streamflow_df: {streamflow_df.shape}")
-        self.logger.info(f"Shape of aligned snow_df: {snow_df.shape}")
+        if snow_df is not None:
+            snow_df = snow_df.loc[common_dates]
 
         # Prepare features (forcing data)
         features = forcing_df.reset_index()
@@ -231,22 +231,27 @@ class FLASH:
         
         # Average features across all HRUs for each timestep
         features_avg = forcing_df.groupby('time')[feature_columns].mean()
-        self.logger.info(f'Averaged features shape: {features_avg.shape}')
 
         # Scale features
         self.feature_scaler = StandardScaler()
         scaled_features = self.feature_scaler.fit_transform(features_avg)
-        scaled_features = np.clip(scaled_features, -10, 10)  # Clip to avoid extreme values
+        scaled_features = np.clip(scaled_features, -10, 10)
 
-        # Prepare targets (streamflow and snow)
-        targets = pd.concat([streamflow_df['streamflow'], snow_df['snw']], axis=1)
-        targets.columns = ['streamflow', 'SWE']
+        # Prepare targets (streamflow and optionally snow)
+        if snow_df is not None:
+            targets = pd.concat([streamflow_df['streamflow'], snow_df['snw']], axis=1)
+            targets.columns = ['streamflow', 'SWE']
+            self.output_size = 2
+            self.target_names = ['streamflow', 'SWE']
+        else:
+            targets = pd.DataFrame(streamflow_df['streamflow'], columns=['streamflow'])
+            self.output_size = 1
+            self.target_names = ['streamflow']
         
         # Scale targets
         self.target_scaler = StandardScaler()
         scaled_targets = self.target_scaler.fit_transform(targets)
-        scaled_targets = np.clip(scaled_targets, -10, 10)  # Clip to avoid extreme values
-        self.logger.info(f"Shape of targets: {targets.shape}")
+        scaled_targets = np.clip(scaled_targets, -10, 10)
 
         # Create sequences
         X, y = [], []
@@ -400,7 +405,7 @@ class FLASH:
         memory_info = process.memory_info()
         self.logger.info(f"Memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")
 
-    def simulate(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: pd.DataFrame) -> pd.DataFrame:
+    def simulate(self, forcing_df: pd.DataFrame, streamflow_df: pd.DataFrame, snow_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         self.logger.info("Running full simulation with FLASH model")
         X, _, common_dates, _, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
         
@@ -422,8 +427,14 @@ class FLASH:
         # Handle NaN values
         predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e15, neginf=-1e15)
         
+        # Create column names based on number of targets
+        if self.output_size == 2:
+            columns = ['predicted_streamflow', 'predicted_SWE']
+        else:
+            columns = ['predicted_streamflow']
+        
         # Create a DataFrame for predictions
-        pred_df = pd.DataFrame(predictions, columns=['predicted_streamflow', 'predicted_SWE'], index=common_dates[self.lookback:])
+        pred_df = pd.DataFrame(predictions, columns=columns, index=common_dates[self.lookback:])
         
         # Join predictions with the original averaged features
         result = features_avg.join(pred_df, how='outer')
@@ -439,21 +450,21 @@ class FLASH:
             'feature_scaler': self.feature_scaler,
             'target_scaler': self.target_scaler,
             'lookback': self.lookback,
+            'output_size': self.output_size,
+            'target_names': self.target_names
         }, path)
         self.logger.info("Model saved successfully")
 
 
     def load_model(self, path: Path):
         self.logger.info(f"Loading FLASH model from {path}")
-        model_state = torch.load(path, weights_only = False)
-        self.logger.info(f"model_state: {model_state}")
-        #self.model.load_state_dict(checkpoint['model_state_dict'])
-        #self.feature_scaler = checkpoint['feature_scaler']
-        #self.target_scaler = checkpoint['target_scaler']
-        #self.lookback = checkpoint['lookback']
-        #self.model.eval()
-        self.logger.info("Model loaded successfully")
-        return model_state.get('model_state_dict')
+        checkpoint = torch.load(path, map_location=self.device)
+        self.output_size = checkpoint['output_size']
+        self.target_names = checkpoint['target_names']
+        self.feature_scaler = checkpoint['feature_scaler']
+        self.target_scaler = checkpoint['target_scaler']
+        self.lookback = checkpoint['lookback']
+        return checkpoint['model_state_dict']
 
     def run_flash(self):
         self.logger.info("Starting FLASH model run")
@@ -465,39 +476,39 @@ class FLASH:
             # Define path to save model
             model_save_path = self.project_dir / 'models' / 'flash_model.pt'
 
+            # Check if snow data should be used based on config
+            use_snow = self.config.get('FLASH_USE_SNOW', True)
+            snow_df_input = snow_df if use_snow else None
+
             # Preprocess data
-            X, y, common_dates, hru_ids, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
+            X, y, common_dates, hru_ids, features_avg = self.preprocess_data(
+                forcing_df, streamflow_df, snow_df_input
+            )
+            
             input_size = X.shape[2]
             hidden_size = self.config.get('FLASH_HIDDEN_SIZE', 64)
             num_layers = self.config.get('FLASH_NUM_LAYERS', 2)
-            output_size = 2  # streamflow and SWE
 
             if self.config.get('FLASH_LOAD', False):
                 # Load pre-trained model
                 self.logger.info("Loading pre-trained FLASH model")
-                model_state = self.load_model(model_save_path)  
-                self.create_model(input_size, hidden_size, num_layers, output_size)  # Use the existing create_model function
-                self.model.load_state_dict(model_state)  # Load the state into the model
-
+                model_state = self.load_model(model_save_path)
+                self.create_model(input_size, hidden_size, num_layers, self.output_size)
+                self.model.load_state_dict(model_state)
             else:
-                # Train the model
-                X, y, common_dates, hru_ids, features_avg = self.preprocess_data(forcing_df, streamflow_df, snow_df)
-                
                 # Create and train model
-                self.create_model(input_size, hidden_size, num_layers, output_size)
+                self.create_model(input_size, hidden_size, num_layers, self.output_size)
                 self.train_model(X, y,
                                 epochs=self.config.get('FLASH_EPOCHS', 100),
                                 batch_size=self.config.get('FLASH_BATCH_SIZE', 32),
                                 learning_rate=self.config.get('FLASH_LEARNING_RATE', 0.001))
-
-                # Save model
                 self.save_model(model_save_path)
-    
+
             # Run simulation
-            results = self.simulate(forcing_df, streamflow_df, snow_df)
+            results = self.simulate(forcing_df, streamflow_df, snow_df_input)
             
             # Visualize results
-            self.visualize_results(results, streamflow_df, snow_df)
+            self.visualize_results(results, streamflow_df, snow_df_input)
             
             # Save results
             self._save_results(results)
