@@ -263,95 +263,126 @@ class HYPEPostProcessor:
         self.logger.info("Extracting HYPE results")
         
         try:
-            results = {}
             
             # Process streamflow
-            streamflow_path = self.extract_streamflow()
-            if streamflow_path:
-                results['streamflow'] = streamflow_path
-                
-                # Create and save comparison plot
-                plot_path = self.plot_streamflow_comparison()
-                if plot_path:
-                    results['streamflow_plot'] = plot_path
-            
-            return results
+            self.extract_streamflow()
+            self.logger.info("Streamflow extracted successfully")
+
+            self.plot_streamflow_comparison()
+            self.logger.info("Streamflow comparison plot created successfully")
             
         except Exception as e:
             self.logger.error(f"Error extracting HYPE results: {str(e)}")
             raise
 
     def extract_streamflow(self) -> Optional[Path]:
-        """
-        Extract and process streamflow results for the outlet subbasin only.
-        Handles unit conversions and data organization.
-        """
         try:
             self.logger.info("Processing HYPE streamflow results for outlet")
             
-            # Read computed discharge, skipping the metadata line starting with !!
-            cout = pd.read_csv(self.sim_dir / "timeCOUT.txt", 
-                         sep='\t', 
-                         skiprows=lambda x: x == 0,
-                         parse_dates=['DATE'])
+            # Log input file path
+            cout_path = self.sim_dir / "timeCOUT.txt"
+            self.logger.info(f"Reading HYPE output from: {cout_path}")
             
-            # Set DATE as index while keeping all columns
+            # Read computed discharge
+            cout = pd.read_csv(cout_path, sep='\t', skiprows=lambda x: x == 0, parse_dates=['DATE'])
+            self.logger.info(f"Initial cout DataFrame shape: {cout.shape}")
+            self.logger.info(f"Cout columns: {cout.columns.tolist()}")
+            
+            # Set DATE as index
             cout.set_index('DATE', inplace=True)
+            self.logger.info(f"Index type: {type(cout.index)}")
             
-            # Create results DataFrame - fixed to create proper DataFrame
-            results = pd.DataFrame(cout[str(self.config['SIM_REACH_ID'])])
+            # Get outlet ID and log it
+            outlet_id = str(self.config['SIM_REACH_ID'])
+            self.logger.info(f"Processing outlet ID: {outlet_id}")
+            
+            # Create results DataFrame
+            if outlet_id not in cout.columns:
+                self.logger.error(f"Outlet ID {outlet_id} not found in columns: {cout.columns.tolist()}")
+                raise KeyError(f"Outlet ID {outlet_id} not found in HYPE output")
+                
+            results = pd.DataFrame(cout[outlet_id])
             results.columns = ['HYPE_discharge_cms']
+            self.logger.info(f"Results DataFrame shape: {results.shape}")
+            self.logger.info(f"Results columns: {results.columns.tolist()}")
             
             # Save individual streamflow results
             output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow.csv"
+            self.logger.info(f"Saving individual results to: {output_file}")
             results.to_csv(output_file)
             
             # Append to experiment results file
             results_file = self.project_dir / "results" / f"{self.config['EXPERIMENT_ID']}_results.csv"
+            self.logger.info(f"Appending to combined results file: {results_file}")
             
-            # The cms_data selection is no longer needed since results is already properly formatted
             cms_data = results.copy()
             
-            # Read existing results if file exists, otherwise create new
             if results_file.exists():
+                self.logger.info("Reading existing results file")
                 existing_results = pd.read_csv(results_file, index_col=0, parse_dates=True)
+                self.logger.info(f"Existing results shape: {existing_results.shape}")
                 combined_results = pd.concat([existing_results, cms_data], axis=1)
             else:
+                self.logger.info("No existing results file found, creating new")
                 combined_results = cms_data
                 
-            # Save combined results
+            self.logger.info(f"Final combined results shape: {combined_results.shape}")
             combined_results.to_csv(results_file)
-            
-            return output_file
-            
+                        
         except Exception as e:
             self.logger.error(f"Error extracting streamflow: {str(e)}")
+            self.logger.exception("Full traceback:")
             return None
         
     def plot_streamflow_comparison(self) -> Optional[Path]:
-        """
-        Create a comparison plot of simulated vs observed streamflow.
-        
-        Returns:
-            Optional[Path]: Path to the saved plot file
-        """
         try:
             self.logger.info("Creating streamflow comparison plot")
             
             # Read simulated streamflow
             sim_path = self.results_dir / f"{self.config['EXPERIMENT_ID']}_streamflow.csv"
-            sim_flow = pd.read_csv(sim_path, index_col=0, parse_dates=True)
+            self.logger.info(f"Reading simulated streamflow from: {sim_path}")
+            
+            # Add explicit time parsing
+            sim_flow = pd.read_csv(sim_path)
+            self.logger.info("Original sim_flow columns: " + str(sim_flow.columns.tolist()))
+            
+            # Convert the first column to datetime index
+            time_col = sim_flow.columns[0]  # Get the name of the first column
+            self.logger.info(f"Converting time column: {time_col}")
+            sim_flow[time_col] = pd.to_datetime(sim_flow[time_col])
+            sim_flow.set_index(time_col, inplace=True)
+            
+            self.logger.info(f"Simulated flow DataFrame shape: {sim_flow.shape}")
+            self.logger.info(f"Simulated flow columns: {sim_flow.columns.tolist()}")
+            self.logger.info(f"Simulated flow index type: {type(sim_flow.index)}")
             
             # Read observed streamflow
             obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.domain_name}_streamflow_processed.csv"
-            obs_flow = pd.read_csv(obs_path, parse_dates=['datetime'])
+            self.logger.info(f"Reading observed streamflow from: {obs_path}")
+            
+            # Add explicit datetime parsing for observed data
+            obs_flow = pd.read_csv(obs_path)
+            obs_flow['datetime'] = pd.to_datetime(obs_flow['datetime'])
             obs_flow.set_index('datetime', inplace=True)
+            
+            self.logger.info(f"Observed flow DataFrame shape: {obs_flow.shape}")
+            self.logger.info(f"Observed flow columns: {obs_flow.columns.tolist()}")
+            self.logger.info(f"Observed flow index type: {type(obs_flow.index)}")
             
             # Get outlet ID
             outlet_id = str(self.config['SIM_REACH_ID'])
+            self.logger.info(f"Processing outlet ID: {outlet_id}")
             
-            # The column name should match what we created in extract_streamflow
-            sim_col = 'HYPE_discharge_cms'  # Removed the outlet_id from column name
+            sim_col = 'HYPE_discharge_cms'
+            self.logger.info(f"Looking for simulation column: {sim_col}")
+            
+            if sim_col not in sim_flow.columns:
+                self.logger.error(f"Column {sim_col} not found in simulated flow columns: {sim_flow.columns.tolist()}")
+                raise KeyError(f"Column {sim_col} not found in simulated flow data")
+            
+            if 'discharge_cms' not in obs_flow.columns:
+                self.logger.error(f"Column 'discharge_cms' not found in observed flow columns: {obs_flow.columns.tolist()}")
+                raise KeyError("Column 'discharge_cms' not found in observed flow data")
             
             # Create figure
             plt.figure(figsize=(12, 6))
@@ -370,14 +401,15 @@ class HYPEPostProcessor:
             
             # Save plot
             plot_path = plot_dir / f"{self.config['EXPERIMENT_ID']}_HYPE_streamflow_comparison.png"
+            self.logger.info(f"Saving plot to: {plot_path}")
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
             
-            self.logger.info(f"Streamflow comparison plot saved to {plot_path}")
             return plot_path
             
         except Exception as e:
             self.logger.error(f"Error creating streamflow comparison plot: {str(e)}")
+            self.logger.exception("Full traceback:")
             return None
         
         

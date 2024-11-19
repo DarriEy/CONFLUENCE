@@ -25,6 +25,7 @@ from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDeci
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flux_utils import FLUXPreProcessor, FLUXRunner, FLUXPostProcessor # type: ignore
 from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
+from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
 from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
@@ -105,12 +106,12 @@ class CONFLUENCE:
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
-            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}1").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
-            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
-            (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv2").exists()),  
+            (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),  
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
         ]
         
@@ -343,6 +344,10 @@ class CONFLUENCE:
                 fpp = FLUXPreProcessor(self.config, self.logger)
                 fpp.run_preprocessing()
 
+            elif model == 'MESH':
+                mpp = MESHPreProcessor(self.config, self.logger)
+                mpp.run_preprocessing() 
+
 
     @get_function_logger
     def run_models(self):
@@ -393,6 +398,10 @@ class CONFLUENCE:
             elif model == 'FLUX':
                 fr = FLUXRunner(self.config, self.logger)
                 fr.run_flux()       
+
+            elif model == 'MESH':
+                mr = MESHRunner(self.config, self.logger)
+                mr.run_MESH()   
 
             else:
                 self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
@@ -465,7 +474,10 @@ class CONFLUENCE:
                 results_file = fpp.extract_streamflow()
             elif model == 'HYPE':
                 hpp = HYPEPostProcessor(self.config, self.logger)
-                results_file = hpp.extract_streamflow()
+                results_file = hpp.extract_results()
+            elif model == 'MESH':
+                mpp = MESHPostProcessor(self.config, self.logger)
+                results_file = mpp.extract_streamflow() 
             else:
                 pass
 

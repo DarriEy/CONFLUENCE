@@ -49,6 +49,7 @@ class TimeseriesVisualizer:
             
             # Try parsing with different date formats
             sim_df = pd.read_csv(results_file)
+            sim_df['time'] = sim_df.index.values
             sim_df['time'] = pd.to_datetime(sim_df['time'], format='mixed', dayfirst=True)
             sim_df.set_index('time', inplace=True)
             
