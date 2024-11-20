@@ -114,8 +114,6 @@ DATA_ACQUIRE: HPC                                              # Where to acquir
 
 # Forcing data settings
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2018"                                     # Forcing start year
-FORCING_END_YEAR: "2018"                                       # Forcing end year 
 FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -228,17 +226,45 @@ GEOFABRIC_MAPPING:
 
 # FUSE settings
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
-SETTINGS_FUSE_FILEMANAGER: fileManager.txt                     # Name of FUSE file manager
+SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
 FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
 FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+EXPERIMENT_OUTPUT_FUSE: default                                # Directory for FUSE experiment output
 
 # GR settings
-SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
-SETTINGS_GR_CONTROL: default                                   # Path to GR control file
-GR_INSTALL_PATH: default                                       # Path to GR installation, if default uses self.data_dir / installs / GR
-GR_EXE: GR.r                                                   # Name of GR executable script
-GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
+GR_SPATIAL_MODE: lumped                                        # Spatial discretisation of GR, options: lumped or semi-distributed (to be implemented)
+
+#FLASH settings
+FLASH_LOAD: True                                               # Load existing flash model from storage. If false creates and trains new model.
+FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
+FLASH_NUM_LAYERS: 3                                            # Number of active layers
+FLASH_EPOCHS: 300                                               # Number of training epochs
+FLASH_BATCH_SIZE: 64                                           # Training batch size
+FLASH_LEARNING_RATE: 0.001                                     # LSTM learning rate
+FLASH_LEARNING_PATIENCE: 50                                    # LSTM learning patience
+FLASH_LOOKBACK: 700                                            # Lookback timesteps
+FLASH_DROPOUT: 0.2                                             # LSTM Dropout ratio
+FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularization
+FLASH_USE_ATTENTION: True                                      # Use attention
+FLASH_USE_SNOW: False                                          # Use snow data
+
+# HYPE settings
+SETTINGS_HYPE_PATH: default                                    # Path to HYPE run settings, if default self.data_dir / settings / HYPE
+SETTINGS_HYPE_CONTROL_FILE: info.txt                           # Name of HYPE file manager
+HYPE_INSTALL_PATH: default                                     # HYPE installation path, if default, self.code_dir / installs / hype / bin
+HYPE_EXE: hype           
+EXPERIMENT_OUTPUT_HYPE: default                                # Path to HYPE output. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/HYPE'.
+HYPE_SPINUP_DAYS: 274                                          # Number of days to spinup HYPE
+HYPE_FRAC_THRESHOLD: 0.01                                      # Fraction of landcover to exclude
+HYPE_TIMESHIFT: -6                                             # Timeshift in hours
+EXPERIMENT_OUTPUT_HYPE: default                                # Path to HYPE output. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/HYPE'.
+
+# MESH settings 
+SETTINGS_MESH_PATH: default                                    # Path to MESH run settings, if default self.data_dir / settings / MESH
+SETTINGS_MESH_CONTROL_FILE: control.txt                        # Name of MESH control file
+MESH_INSTALL_PATH: default                                     # MESH installation path, if default, self.code_dir / installs / mesh / bin
+MESH_EXE: sa_mesh                                              # Name of MESH executable                                           # Spatial discretisation of GR, options: lumped or semi-distributed
 
 
 ### ============================================= 5. Evaluation settings: =================================================================
