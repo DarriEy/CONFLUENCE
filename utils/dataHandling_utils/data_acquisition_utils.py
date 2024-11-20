@@ -311,8 +311,11 @@ class era5Downloader:
 
     def era5Merger(self):
         self.logger.info("Starting ERA5 surface and pressure level merger")
-        
-        for year in range(self.config['FORCING_START_YEAR'], self.config['FORCING_END_YEAR'] + 1):
+        raw_time = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
+        for year in range(raw_time[0], raw_time[1] + 1):
             for month in range(1, 13):
                 data_pres = f'ERA5_pressureLevel137_{year}{month:02d}.nc'
                 data_surf = f'ERA5_surface_{year}{month:02d}.nc'

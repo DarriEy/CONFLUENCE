@@ -125,7 +125,9 @@ class SUMMAPostprocessor:
             
             # Get simulation output path
             if self.config.get('SIMULATIONS_PATH') == 'default':
-                sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f"{self.config['EXPERIMENT_ID']}.h.{self.config['FORCING_START_YEAR']}-01-01-03600.nc"
+                # Parse the start time and extract the date portion
+                start_date = self.config['EXPERIMENT_TIME_START'].split()[0]  # Gets '2011-01-01' from '2011-01-01 01:00'
+                sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'mizuRoute' / f"{self.config['EXPERIMENT_ID']}.h.{start_date}-03600.nc"
             else:
                 sim_file_path = Path(self.config.get('SIMULATIONS_PATH'))
                 

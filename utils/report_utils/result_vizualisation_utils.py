@@ -33,11 +33,12 @@ class TimeseriesVisualizer:
         self.plots_dir = self.project_dir / "plots" / "results"
         self.plots_dir.mkdir(parents=True, exist_ok=True)
         
-        # Define color scheme
-        self.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        # Extend the colors list to match the number of possible models
+        self.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', 
+                      '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
-        # Define model names
-        self.model_names = ['FUSE', 'GR', 'SUMMA', 'HYPE', 'MESH', 'FLASH']
+        # Define model names and ensure they match your data columns
+        self.model_names = ['FUSE', 'GR', 'FLASH', 'HYPE', 'SUMMA']  # Update this list to match your actual model names
 
     def read_results(self) -> pd.DataFrame:
         """Read simulation results and observed streamflow."""
@@ -47,12 +48,46 @@ class TimeseriesVisualizer:
             if not results_file.exists():
                 raise FileNotFoundError(f"Results file not found: {results_file}")
             
-            # Try parsing with different date formats
+            # Read the CSV file and handle the time column
             sim_df = pd.read_csv(results_file)
-            sim_df['time'] = sim_df.index.values
-            sim_df['time'] = pd.to_datetime(sim_df['time'], format='mixed', dayfirst=True)
-            sim_df.set_index('time', inplace=True)
+            print(f'{sim_df}')
             
+            # Check if the DataFrame is empty
+            if sim_df.empty:
+                self.logger.error("Results file is empty")
+                raise ValueError("Results file contains no data")
+            
+            # Convert time column to datetime and set as index
+            if 'time' in sim_df.columns:
+                sim_df['time'] = pd.to_datetime(sim_df['time'])
+                sim_df.set_index('time', inplace=True)
+            elif 'datetime' in sim_df.columns:
+                sim_df['datetime'] = pd.to_datetime(sim_df['datetime'])
+                sim_df.set_index('datetime', inplace=True)
+            elif 'Unnamed: 0' in sim_df.columns:
+                # Handle case where dates are in 'Unnamed: 0' column
+                sim_df['datetime'] = pd.to_datetime(sim_df['Unnamed: 0'])
+                sim_df.set_index('datetime', inplace=True)
+                sim_df.drop('Unnamed: 0', axis=1, errors='ignore')  # Remove the column if it wasn't used as index
+            elif sim_df.index.name is None and isinstance(sim_df.index, pd.Index):
+                # Try to convert the unnamed index to datetime
+                try:
+                    sim_df.index = pd.to_datetime(sim_df.index)
+                except (ValueError, TypeError):
+                    raise ValueError("Index cannot be converted to datetime format")
+            else:
+                raise ValueError("No time or datetime column found in results file")
+            
+            print(f'{sim_df}')
+            # Check if the DataFrame is empty
+            if sim_df.empty:
+                self.logger.error("Results file is empty")
+                raise ValueError("Results file contains no data")
+            
+            # Round to nearest day
+            #sim_df.set_index('time', inplace=True)
+            print(f'{sim_df}')
+               
             # Read observations
             obs_file_path = self.config.get('OBSERVATIONS_PATH')
             if obs_file_path == 'default':
@@ -60,19 +95,37 @@ class TimeseriesVisualizer:
             else:
                 obs_file_path = Path(obs_file_path)
 
+            if not obs_file_path.exists():
+                raise FileNotFoundError(f"Observations file not found: {obs_file_path}")
+
             obs_df = pd.read_csv(obs_file_path)
+            
+            # Check if observations DataFrame is empty
+            if obs_df.empty:
+                self.logger.error("Observations file is empty")
+                raise ValueError("Observations file contains no data")
+            
             obs_df['datetime'] = pd.to_datetime(obs_df['datetime'], format='mixed', dayfirst=True)
             obs_df.set_index('datetime', inplace=True)
             obs_df = obs_df['discharge_cms'].resample('D').mean()
             
             # Combine into single dataframe
             results_df = sim_df.copy()
+            print(f'{results_df}')
+            print(f'{obs_df}')
             results_df['Observed'] = obs_df
+            # Check if we have any data after combining
+            if results_df.empty:
+                raise ValueError("No data available after combining simulations and observations")
             
             # Skip first year (spin-up period)
-            first_year = results_df.index[0].year
-            start_date = pd.Timestamp(year=first_year + 1, month=1, day=1)
-            results_df = results_df[results_df.index >= start_date]
+            if len(results_df.index) > 0:  # Only if we have data
+                first_year = results_df.index[0].year
+                start_date = pd.Timestamp(year=first_year + 1, month=1, day=1)
+                results_df = results_df[results_df.index >= start_date]
+                
+                if results_df.empty:
+                    raise ValueError("No data available after removing spin-up period")
             
             self.logger.info(f"Data period: {results_df.index[0]} to {results_df.index[-1]}")
             return results_df
@@ -86,7 +139,11 @@ class TimeseriesVisualizer:
         metrics = []
         obs = df['Observed'].values
         
-        for model in self.model_names:
+        # Only process models that actually exist in the data
+        available_models = [model for model in self.model_names 
+                           if f"{model}_discharge_cms" in df.columns]
+        
+        for model in available_models:
             col = f"{model}_discharge_cms"
             if col in df.columns:
                 sim = df[col].values
@@ -117,36 +174,73 @@ class TimeseriesVisualizer:
         return exceedance_prob, sorted_flows
 
     def plot_timeseries(self, df: pd.DataFrame):
-        """Create timeseries plots of all available model results."""
+        """Create timeseries plot of all available model results."""
         plt.style.use('default')
         
-        # Create figure with two subplots - linear and log scale
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 12), sharex=True)
+        # Create single figure
+        fig, ax = plt.subplots(figsize=(15, 6))
         
-        # Plot observed data on both
-        df['Observed'].plot(ax=ax1, color='black', label='Observed', alpha=0.6, linewidth=1)
-        df['Observed'].plot(ax=ax2, color='black', label='Observed', alpha=0.6, linewidth=1)
+        # Find overlapping time period
+        available_models = [model for model in self.model_names 
+                          if f"{model}_discharge_cms" in df.columns]
         
-        # Plot each model result
-        for i, model in enumerate(self.model_names):
+        # Start with observed data's valid range
+        mask = ~df['Observed'].isna()
+        
+        # Add model data validity to mask
+        for model in available_models:
             col = f"{model}_discharge_cms"
-            if col in df.columns:
-                df[col].plot(ax=ax1, label=model, alpha=0.6, linewidth=1, color=self.colors[i])
-                df[col].plot(ax=ax2, label=model, alpha=0.6, linewidth=1, color=self.colors[i])
+            mask &= ~df[col].isna()
         
-        # Customize linear scale plot
-        ax1.set_ylabel('Discharge (m³/s)')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper right')
-        ax1.set_title(f'Streamflow Comparison - {self.domain_name}')
+        # Apply mask to get overlapping period
+        df_overlap = df[mask]
         
-        # Customize log scale plot
-        ax2.set_yscale('log')
-        ax2.set_ylabel('Discharge (m³/s) - log scale')
-        ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='upper right')
+        if df_overlap.empty:
+            self.logger.warning("No overlapping time period found between models and observations")
+            return
+            
+        # Skip first year for spinup
+        if len(df_overlap.index) > 0:
+            first_year = df_overlap.index[0].year
+            start_date = pd.Timestamp(year=first_year + 1, month=1, day=1)
+            df_overlap = df_overlap[df_overlap.index >= start_date]
+            
+            if df_overlap.empty:
+                self.logger.warning("No data available after removing spinup period")
+                return
         
-        plt.xlabel('Date')
+        # Calculate metrics for the overlap period
+        metrics_df = self.calculate_metrics(df_overlap)
+        
+        # Plot each model result with KGE in legend first (behind observed data)
+        for i, model in enumerate(available_models):
+            col = f"{model}_discharge_cms"
+            color_idx = i % len(self.colors)
+            
+            # Get KGE value for this model
+            kge = metrics_df.loc[metrics_df['Model'] == model, 'KGE'].values[0]
+            
+            # Create label with KGE value
+            label = f'{model} (KGE: {kge:.3f})'
+            
+            df_overlap[col].plot(ax=ax, label=label, alpha=0.4, linewidth=1, color=self.colors[color_idx])
+        
+        # Plot observed data last (on top) with enhanced visibility
+        df_overlap['Observed'].plot(ax=ax, 
+                                  color='black', 
+                                  label='Observed', 
+                                  alpha=1.0,  # Full opacity
+                                  linewidth=1.5,  # Slightly thicker line
+                                  linestyle='-',  # Solid line
+                                  zorder=5)  # Ensure it's on top
+        
+        # Customize plot
+        ax.set_ylabel('Discharge (m³/s)')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1))  # Adjusted to prevent overlap
+        ax.set_title(f'Streamflow Comparison - {self.domain_name}\n(excluding first year for spinup)')
+        ax.set_xlabel('Date')
+        
         plt.tight_layout()
         
         # Save plot
@@ -155,64 +249,123 @@ class TimeseriesVisualizer:
 
     def plot_diagnostics(self, df: pd.DataFrame):
         """Create diagnostic plots including scatter plots and flow duration curves."""
-        n_models = len([col for col in df.columns if '_discharge_cms' in col])
-        if n_models == 0:
+        # Get models from config
+        config_models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
+        available_models = [model.strip() for model in config_models 
+                          if f"{model.strip()}_discharge_cms" in df.columns]
+        
+        if not available_models:
+            self.logger.warning("No models found in the data")
             return
             
+        n_models = len(available_models)
+        
+        # Adjust figure size based on number of models
+        fig_height = max(5, min(4 * n_models, 20))  # Cap maximum height at 20
         plt.style.use('default')
-        fig = plt.figure(figsize=(15, 5*n_models))
+        fig = plt.figure(figsize=(15, fig_height))
         
         # Create grid for subplots
         gs = plt.GridSpec(n_models, 2, figure=fig)
         
+        # Start with observed data's valid range
+        mask = ~df['Observed'].isna()
+        
+        # Add model data validity to mask
+        for model in available_models:
+            col = f"{model}_discharge_cms"
+            mask &= ~df[col].isna()
+        
+        # Apply mask to get overlapping period
+        df_overlap = df[mask]
+        
+        if df_overlap.empty:
+            self.logger.warning("No overlapping time period found between models and observations")
+            return
+            
+        # Skip first year for spinup
+        if len(df_overlap.index) > 0:
+            first_year = df_overlap.index[0].year
+            start_date = pd.Timestamp(year=first_year + 1, month=1, day=1)
+            df_overlap = df_overlap[df_overlap.index >= start_date]
+            
+            if df_overlap.empty:
+                self.logger.warning("No data available after removing spinup period")
+                return
+        
         # Calculate FDC for observed flows
-        exc_prob_obs, flows_obs = self.calculate_flow_duration_curve(df['Observed'])
+        exc_prob_obs, flows_obs = self.calculate_flow_duration_curve(df_overlap['Observed'])
         
         # Plot each model
-        metrics_df = self.calculate_metrics(df)
+        metrics_df = self.calculate_metrics(df_overlap)  # Use overlapping period for metrics
         
-        for i, model in enumerate(self.model_names):
+        for i, model in enumerate(available_models):
             col = f"{model}_discharge_cms"
-            if col in df.columns:
-                # Scatter plot
-                ax_scatter = fig.add_subplot(gs[i, 0])
-                ax_scatter.scatter(df['Observed'], df[col], alpha=0.5, s=10, color=self.colors[i])
-                
-                # Add 1:1 line
-                lims = [
-                    min(ax_scatter.get_xlim()[0], ax_scatter.get_ylim()[0]),
-                    max(ax_scatter.get_xlim()[1], ax_scatter.get_ylim()[1])
-                ]
-                ax_scatter.plot(lims, lims, 'k--', alpha=0.5)
-                
-                # Add metrics
-                model_metrics = metrics_df[metrics_df['Model'] == model].iloc[0]
-                metrics_text = f'KGE: {model_metrics["KGE"]:.3f}\nNSE: {model_metrics["NSE"]:.3f}\nRMSE: {model_metrics["RMSE"]:.3f}'
-                ax_scatter.text(0.05, 0.95, metrics_text, transform=ax_scatter.transAxes,
-                              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                
-                ax_scatter.set_xlabel('Observed (m³/s)')
-                ax_scatter.set_ylabel('Simulated (m³/s)')
-                ax_scatter.set_title(f'{model} - Scatter Plot')
-                ax_scatter.grid(True, alpha=0.3)
-                
-                # Flow Duration Curve
-                ax_fdc = fig.add_subplot(gs[i, 1])
-                exc_prob_sim, flows_sim = self.calculate_flow_duration_curve(df[col])
-                
-                ax_fdc.plot(exc_prob_obs, flows_obs, 'k-', label='Observed', alpha=0.6)
-                ax_fdc.plot(exc_prob_sim, flows_sim, '-', color=self.colors[i], label=model, alpha=0.6)
-                
-                ax_fdc.set_yscale('log')
-                ax_fdc.set_xlabel('Exceedance Probability (%)')
-                ax_fdc.set_ylabel('Discharge (m³/s)')
-                ax_fdc.set_title(f'{model} - Flow Duration Curve')
-                ax_fdc.grid(True, alpha=0.3)
-                ax_fdc.legend()
+            
+            # Scatter plot
+            ax_scatter = fig.add_subplot(gs[i, 0])
+            color_idx = i % len(self.colors)
+            
+            # Create scatter plot with hexbin for dense datasets
+            if len(df_overlap) > 1000:
+                hb = ax_scatter.hexbin(df_overlap['Observed'], df_overlap[col], 
+                                     gridsize=30, cmap='YlOrRd', 
+                                     bins='log')
+                fig.colorbar(hb, ax=ax_scatter, label='Count')
+            else:
+                ax_scatter.scatter(df_overlap['Observed'], df_overlap[col], 
+                                 alpha=0.5, s=10, color=self.colors[color_idx])
+            
+            # Add 1:1 line
+            max_val = max(df_overlap['Observed'].max(), df_overlap[col].max())
+            min_val = min(df_overlap['Observed'].min(), df_overlap[col].min())
+            lims = [min_val, max_val]
+            ax_scatter.plot(lims, lims, 'k--', alpha=0.5, label='1:1 line')
+            
+            # Add metrics
+            model_metrics = metrics_df[metrics_df['Model'] == model].iloc[0]
+            metrics_text = (f'KGE: {model_metrics["KGE"]:.3f}\n'
+                          f'NSE: {model_metrics["NSE"]:.3f}\n'
+                          f'RMSE: {model_metrics["RMSE"]:.3f}')
+            ax_scatter.text(0.05, 0.95, metrics_text, 
+                          transform=ax_scatter.transAxes,
+                          verticalalignment='top', 
+                          bbox=dict(boxstyle='round', 
+                                  facecolor='white', 
+                                  alpha=0.8))
+            
+            # Format scatter plot
+            ax_scatter.set_xlabel('Observed (m³/s)')
+            ax_scatter.set_ylabel('Simulated (m³/s)')
+            ax_scatter.set_title(f'{model} - Scatter Plot')
+            ax_scatter.grid(True, alpha=0.3)
+            
+            # Flow Duration Curve
+            ax_fdc = fig.add_subplot(gs[i, 1])
+            exc_prob_sim, flows_sim = self.calculate_flow_duration_curve(df_overlap[col])
+            
+            ax_fdc.plot(exc_prob_obs, flows_obs, 'k-', label='Observed', alpha=0.6)
+            ax_fdc.plot(exc_prob_sim, flows_sim, '-', 
+                       color=self.colors[color_idx], label=model, alpha=0.6)
+            
+            # Format FDC plot
+            ax_fdc.set_yscale('log')
+            ax_fdc.set_xlabel('Exceedance Probability (%)')
+            ax_fdc.set_ylabel('Discharge (m³/s)')
+            ax_fdc.set_title(f'{model} - Flow Duration Curve')
+            ax_fdc.grid(True, alpha=0.3)
+            ax_fdc.legend()
+        
+        # Add overall title
+        fig.suptitle(f'Diagnostic Plots - {self.domain_name}', 
+                    fontsize=14, y=1.02)
         
         plt.tight_layout()
-        plt.savefig(self.plots_dir / f'{self.config["EXPERIMENT_ID"]}_diagnostic_plots.png', dpi=300, bbox_inches='tight')
+        plot_path = self.plots_dir / f'{self.config["EXPERIMENT_ID"]}_diagnostic_plots.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close()
+        
+        self.logger.info(f"Diagnostic plots saved to: {plot_path}")
 
     def create_visualizations(self):
         """Create all visualizations."""

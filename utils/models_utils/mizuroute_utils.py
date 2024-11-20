@@ -258,7 +258,10 @@ class MizuRoutePreProcessor:
         self.sim_end = self.config.get('EXPERIMENT_TIME_END')
 
         if self.sim_start == 'default' or self.sim_end == 'default':
-            raw_time = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
+            raw_time = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
             self.sim_start = f"{raw_time[0]}-01-01 00:00" if self.sim_start == 'default' else self.sim_start
             self.sim_end = f"{raw_time[1]}-12-31 23:00" if self.sim_end == 'default' else self.sim_end
 
@@ -316,7 +319,10 @@ class MizuRoutePreProcessor:
     def _get_default_time(self, time_key, default_year):
         time_value = self.config.get(time_key)
         if time_value == 'default':
-            raw_time = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
+            raw_time = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
             year = raw_time[0] if default_year == 'start' else raw_time[1]
             return f"{year}-{'01-01 00:00' if default_year == 'start' else '12-31 23:00'}"
         return time_value

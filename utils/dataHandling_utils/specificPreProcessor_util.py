@@ -1056,8 +1056,10 @@ class SummaPreProcessor_spatial:
         """
         self.logger.info("Starting to merge RDRS forcing data")
 
-        
-        years = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
+        years = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
         years = range(int(years[0])-1, int(years[1]) + 1)
         
         file_name_pattern = f"domain_{self.domain_name}_*.nc"

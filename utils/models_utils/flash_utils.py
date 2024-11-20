@@ -623,8 +623,16 @@ class FLASHPostProcessor:
                 'units': 'm3/s'
             }
             
-            # Save to CSV
+            # Load existing results if file exists, otherwise create new DataFrame
             output_file = self.results_dir / f"{self.config['EXPERIMENT_ID']}_results.csv"
+            if output_file.exists():
+                existing_df = pd.read_csv(output_file, index_col=0, parse_dates=True)
+                # Reindex the new results to match existing index
+                results_df = results_df.reindex(existing_df.index)
+                # Merge existing results with new results
+                results_df = pd.concat([existing_df, results_df], axis=1)
+            
+            # Save to CSV
             results_df.to_csv(output_file)
             
             self.logger.info(f"Results saved to: {output_file}")

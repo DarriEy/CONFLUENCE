@@ -1076,6 +1076,10 @@ class SummaPreProcessor_spatial:
 
         
         years = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
+        years = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
         years = range(int(years[0])-1, int(years[1]) + 1)
         
         file_name_pattern = f"domain_{self.domain_name}_*.nc"
@@ -1857,14 +1861,14 @@ class SummaPreProcessor_spatial:
         Raises:
             ValueError: If the time format in the configuration is invalid.
         """
-        sim_start = self.config.get('EXPERIMENT_TIME_START')
-        sim_end = self.config.get('EXPERIMENT_TIME_END')
+        sim_start =self.config.get('EXPERIMENT_TIME_START').split('-')[0]
+        sim_end = self.config.get('EXPERIMENT_TIME_END').split('-')[0]
 
         if sim_start == 'default' or sim_end == 'default':
-            start_year = self.config.get('FORCING_START_YEAR')
-            end_year = self.config.get('FORCING_END_YEAR')
+            start_year = self.config.get('EXPERIMENT_TIME_START').split('-')[0]
+            end_year = self.config.get('EXPERIMENT_TIME_END').split('-')[0]
             if not start_year or not end_year:
-                raise ValueError("FORCING_START_YEAR or FORCING_END_YEAR is missing from configuration")
+                raise ValueError("EXPERIMENT_TIME_START or EXPERIMENT_TIME_END is missing from configuration")
             sim_start = f"{start_year}-01-01 01:00" if sim_start == 'default' else sim_start
             sim_end = f"{end_year}-12-31 22:00" if sim_end == 'default' else sim_end
 

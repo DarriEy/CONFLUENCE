@@ -22,6 +22,7 @@ from typing import Dict, List, Tuple, Any
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
+from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
 
 class FUSEPreProcessor:
     """
@@ -189,9 +190,12 @@ class FUSEPreProcessor:
             # Debug print the forcing files found
             self.logger.info(f"Found forcing files: {[f.name for f in forcing_files]}")
             
+            variable_handler = VariableHandler(config=self.config, logger=self.logger)
             # Open and concatenate all forcing files
             ds = xr.open_mfdataset(forcing_files)
-            
+            dsVariableHandler = variable_handler.process_forcing_data(ds)
+            self.logger.info(f'after variable handler {dsVariableHandler}')
+            self.logger.info(f'before variable handler {ds}')
             # Average across HRUs if needed
             ds = ds.mean(dim='hru')
             
@@ -251,7 +255,9 @@ class FUSEPreProcessor:
             ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
-
+            self.logger.info(f'{ds}')
+            self.logger.info(f'{obs_ds}')
+            self.logger.info(f'{pet}')
             # Convert time to days since 1970-01-01
             time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
 
@@ -270,7 +276,7 @@ class FUSEPreProcessor:
                     'time': ('time', ds_coords['time'])
                 }
             )
-
+            self.logger.info(f'{fuse_forcing}')
             # Add coordinate attributes (without _FillValue)
             fuse_forcing.longitude.attrs = {
                 'units': 'degreesE',
@@ -320,7 +326,7 @@ class FUSEPreProcessor:
                 'latitude': {'dtype': 'float64'},
                 'time': {'dtype': 'float64'}
             })
-
+            self.logger.info(f'{fuse_forcing} at saving')
             # Save forcing data
             output_file = self.forcing_fuse_path / f"{self.domain_name}_input.nc"
             fuse_forcing.to_netcdf(
