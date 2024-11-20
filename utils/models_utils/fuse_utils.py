@@ -190,10 +190,11 @@ class FUSEPreProcessor:
             # Debug print the forcing files found
             self.logger.info(f"Found forcing files: {[f.name for f in forcing_files]}")
             
-            variable_handler = VariableHandler(config=self.config, logger=self.logger)
+            variable_handler = VariableHandler(config=self.config, logger=self.logger, dataset=self.config['FORCING_DATASET'], model='FUSE')
             # Open and concatenate all forcing files
             ds = xr.open_mfdataset(forcing_files)
             dsVariableHandler = variable_handler.process_forcing_data(ds)
+            ds = dsVariableHandler
             self.logger.info(f'after variable handler {dsVariableHandler}')
             self.logger.info(f'before variable handler {ds}')
             # Average across HRUs if needed
@@ -242,7 +243,7 @@ class FUSEPreProcessor:
             mean_lon, mean_lat = self._get_catchment_centroid(catchment)
             
             # Calculate PET using Oudin formula
-            pet = self.calculate_pet_oudin(ds['airtemp'], mean_lat)
+            pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
 
             # Find overlapping time period
             start_time = max(ds.time.min().values, obs_ds.time.min().values)
@@ -293,8 +294,8 @@ class FUSEPreProcessor:
 
             # Prepare data variables
             var_mapping = [
-                ('pr', ds['pptrate'].values * 86400, 'precipitation', 'mm/day', 'Mean daily precipitation'),
-                ('temp', ds['airtemp'].values - 273.15, 'temperature', 'degC', 'Mean daily temperature'),
+                ('pr', ds['pr'].values, 'precipitation', 'mm/day', 'Mean daily precipitation'),
+                ('temp', ds['temp'].values, 'temperature', 'degC', 'Mean daily temperature'),
                 ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet'),
                 ('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge')
             ]

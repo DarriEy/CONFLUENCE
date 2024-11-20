@@ -69,7 +69,7 @@ class VariableHandler:
         }
     }
 
-    def __init__(self, config: Dict[str, Any], logger: logging.Logger):
+    def __init__(self, config: Dict[str, Any], logger: logging.Logger, dataset: str, model: str):
         """
         Initialize VariableHandler with configuration settings.
         
@@ -79,8 +79,8 @@ class VariableHandler:
         """
         self.config = config
         self.logger = logger
-        self.dataset = config.get('FORCING_DATASET')
-        self.model = config.get('HYDROLOGICAL_MODEL')
+        self.dataset = dataset if dataset is not None else config.get('FORCING_DATASET')
+        self.model = model if model is not None else config.get('HYDROLOGICAL_MODEL')
         
         self.logger.info(f"Initializing VariableHandler for dataset: {self.dataset} and model: {self.model}")
         

@@ -173,9 +173,59 @@ class GeofabricDelineator:
             self.logger.info(f"Completed TauDEM step: {step}")
 
     def run_gdal_processing(self):
-        command = f"gdal_polygonize.py {self.interim_dir}/elv-watersheds.tif {self.interim_dir}/basin-watersheds.shp"
-        self.run_command(command)
-        self.logger.info("Completed GDAL polygonization")
+        """Convert watershed raster to polygon shapefile"""
+        # Ensure output directory exists
+        output_dir = self.interim_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        input_raster = str(self.interim_dir / "elv-watersheds.tif")
+        output_shapefile = str(self.interim_dir / "basin-watersheds.shp")
+        
+        try:
+            # First attempt: Using gdal.Polygonize directly
+            src_ds = gdal.Open(input_raster)
+            if src_ds is None:
+                raise RuntimeError(f"Could not open input raster: {input_raster}")
+                
+            srcband = src_ds.GetRasterBand(1)
+            
+            # Create output shapefile
+            drv = ogr.GetDriverByName("ESRI Shapefile")
+            if os.path.exists(output_shapefile):
+                drv.DeleteDataSource(output_shapefile)
+                
+            dst_ds = drv.CreateDataSource(output_shapefile)
+            if dst_ds is None:
+                raise RuntimeError(f"Could not create output shapefile: {output_shapefile}")
+                
+            dst_layer = dst_ds.CreateLayer("watersheds", srs=None)
+            if dst_layer is None:
+                raise RuntimeError("Could not create output layer")
+                
+            # Add field for raster value
+            fd = ogr.FieldDefn("DN", ogr.OFTInteger)
+            dst_layer.CreateField(fd)
+            
+            # Run polygonize
+            gdal.Polygonize(srcband, srcband.GetMaskBand(), dst_layer, 0)
+            
+            # Cleanup
+            dst_ds = None
+            src_ds = None
+            
+            self.logger.info("Completed GDAL polygonization using direct method")
+            
+        except Exception as e:
+            self.logger.warning(f"Direct polygonization failed: {str(e)}, trying command line method...")
+            try:
+                # Second attempt: Using command line tool without MPI
+                command = f"gdal_polygonize.py -f 'ESRI Shapefile' {input_raster} {output_shapefile}"
+                subprocess.run(command, shell=True, check=True)
+                self.logger.info("Completed GDAL polygonization using command line method")
+                
+            except Exception as e:
+                self.logger.error(f"All polygonization attempts failed: {str(e)}")
+                raise
 
     def subset_upstream_geofabric(self) -> Tuple[Optional[Path], Optional[Path]]:
         try:
