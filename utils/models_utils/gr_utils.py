@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional
-import sys
 from pathlib import Path
+import sys
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
 import xarray as xr # type: ignore
@@ -12,6 +12,7 @@ from rpy2.robjects import pandas2ri # type: ignore
 from rpy2.robjects.conversion import localconverter # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
 from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
 
 class GRPreProcessor:
@@ -128,22 +129,18 @@ class GRPreProcessor:
             # Debug print the forcing files found
             self.logger.info(f"Found forcing files: {[f.name for f in forcing_files]}")
             
-            # Initialize VariableHandler
-            variable_handler = VariableHandler(config=self.config, logger=self.logger, dataset=self.config['FORCING_DATASET'], model='GR')
-            
             # Open and concatenate all forcing files
             ds = xr.open_mfdataset(forcing_files)
-            
-            # Process forcing data through variable handler
-            ds = variable_handler.process_forcing_data(ds)
-            self.logger.info("Variable mapping and unit conversion completed")
-            
+            variable_handler = VariableHandler(config=self.config, logger=self.logger, dataset=self.config['FORCING_DATASET'], model='GR')
             # Average across HRUs if needed
             ds = ds.mean(dim='hru')
-            
+            self.logger.info(f'before variable handler {ds}')
+            ds_variable_handler = variable_handler.process_forcing_data(ds)
+            self.logger.info(f'after variable handler {ds_variable_handler}')
             # Convert forcing data to daily resolution
+            ds = ds_variable_handler
             ds = ds.resample(time='D').mean()
-            
+                    
             # Load streamflow observations
             obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
             
@@ -157,49 +154,121 @@ class GRPreProcessor:
             # Convert to daily resolution
             obs_daily = obs_df.resample('D').mean()
 
-            # Get area from river basins shapefile and convert units
-            basin_name = self.config.get('RIVER_BASINS_NAME', f"{self.domain_name}_riverBasins_delineate.shp")
+            # Convert to mm/day
+            # Get area from river basins shapefile using GRU_area
+            basin_name = self.config.get('RIVER_BASINS_NAME')
             if basin_name == 'default':
-                basin_name = f"{self.domain_name}_riverBasins_delineate.shp"
+                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
             basin_gdf = gpd.read_file(basin_path)
             
+            # Sum the GRU_area column and convert from m2 to km2
             area_km2 = basin_gdf['GRU_area'].sum() / 1e6
             self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
             
             # Convert units from cms to mm/day 
+            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
             obs_daily['discharge_mmday'] = obs_daily['discharge_cms'] / area_km2 * 86.4
             
-            # Create observation dataset
+            # Create observation dataset with explicit time dimension
             obs_ds = xr.Dataset(
                 {'q_obs': ('time', obs_daily['discharge_mmday'].values)},
                 coords={'time': obs_daily.index.values}
             )
 
-            # Get catchment centroid for metadata
+            # Read catchment and get centroid
             catchment = gpd.read_file(self.catchment_path / self.catchment_name)
             mean_lon, mean_lat = self._get_catchment_centroid(catchment)
-
-            # Create time index
-            time_index = pd.date_range(start=obs_ds.time.min().values, 
-                                    end=obs_ds.time.max().values, 
-                                    freq='D')
             
-            # Create GR forcing DataFrame with proper columns
-            gr_forcing = pd.DataFrame(
-                index=time_index,
-                data={
-                    'pr': ds['pr'].values.flatten(),
-                    'temp': ds['temp'].values.flatten(),
-                    'pet': ds.get('pet', self.calculate_pet_oudin(ds['temp'], mean_lat)).values.flatten(),
-                    'q_obs': obs_daily['discharge_mmday'].reindex(time_index)
+            # Calculate PET using Oudin formula
+            pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
+
+            # Find overlapping time period
+            start_time = max(ds.time.min().values, obs_ds.time.min().values)
+            end_time = min(ds.time.max().values, obs_ds.time.max().values)
+            
+            # Create explicit time index
+            time_index = pd.date_range(start=start_time, end=end_time, freq='D')
+            
+            # Select the common time period and align to the new time index
+            ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+
+            # Convert time to days since 1970-01-01
+            #time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
+
+            # Create FUSE forcing data with correct dimensions
+            ds_coords = {
+                'longitude': [mean_lon],
+                'latitude': [mean_lat],
+                'time': time_index
+            }
+            
+            # Create the dataset with dimensions first
+            gr_forcing = xr.Dataset(
+                coords={
+                    'longitude': ('longitude', ds_coords['longitude']),
+                    'latitude': ('latitude', ds_coords['latitude']),
+                    'time': ('time', ds_coords['time'])
                 }
             )
+
+            # Add coordinate attributes (without _FillValue)
+            gr_forcing.longitude.attrs = {
+                'units': 'degreesE',
+                'long_name': 'longitude'
+            }
+            gr_forcing.latitude.attrs = {
+                'units': 'degreesN',
+                'long_name': 'latitude'
+            }
+            gr_forcing.time.attrs = {
+                'units': 'date',
+                'long_name': 'time'
+            }
+
+            # Prepare data variables
+            var_mapping = [
+                ('pr', ds['pr'].values, 'precipitation', 'mm/day', 'Mean daily precipitation'),
+                ('temp', ds['temp'].values, 'temperature', 'degC', 'Mean daily temperature'),
+                ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet'),
+                ('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge')
+            ]
+
+            encoding = {}
             
-            # Save to CSV
+            for var_name, data, _, units, long_name in var_mapping:
+                if np.any(np.isnan(data)):
+                    data = np.nan_to_num(data, nan=-9999.0)
+                
+                gr_forcing[var_name] = xr.DataArray(
+                    data.reshape(-1, 1, 1),
+                    dims=['time', 'latitude', 'longitude'],
+                    coords=gr_forcing.coords,
+                    attrs={
+                        'units': units,
+                        'long_name': long_name
+                    }
+                )
+                
+                encoding[var_name] = {
+                    '_FillValue': -9999.0,
+                    'dtype': 'float32'
+                }
+
+            # Add dimension encoding
+            encoding.update({
+                'longitude': {'dtype': 'float64'},
+                'latitude': {'dtype': 'float64'},
+                'time': {'dtype': 'float64'}
+            })
+
+            # Save forcing data
             output_file = self.forcing_gr_path / f"{self.domain_name}_input.csv"
+            gr_forcing = gr_forcing.to_dataframe()
+            gr_forcing = gr_forcing[['pr','temp','pet','q_obs']]
             gr_forcing.to_csv(output_file)
-            self.logger.info(f"GR input file saved to: {output_file}")
 
             return output_file
 
@@ -317,19 +386,9 @@ class GRRunner:
             
             # Execute GR model
             if self.spatial_mode == 'lumped':
-                success = self._execute_gr_lumped()
+                self._execute_gr_lumped()
             else:  # semi-distributed
-                success = self._execute_gr_distributed()
-            
-            if success:
-                # Process outputs
-                self._process_outputs()
-                self._backup_run_files()
-                self.logger.info("GR run completed successfully")
-                return self.output_path
-            else:
-                self.logger.error("GR run failed")
-                return None
+                self._execute_gr_distributed()
                 
         except Exception as e:
             self.logger.error(f"Error during GR run: {str(e)}")

@@ -45,7 +45,43 @@ class VariableHandler:
             'RDRS_v2.1_P_FI_SFC': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'},
             'RDRS_v2.1_P_FB_SFC': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
             'RDRS_v2.1_A_PR0_SFC': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
+        },
+        'DayMet': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
+        },
+        'NEX-GDDP': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'GWF-I': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'GWF-II': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'CCRN-CanRCM4': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'CCRN-WFDEI': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'Ouranos-ESPO': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'Ouranos-MRCC5': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+        },
+        'AGCD': {
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
         }
+
     }
 
     # Model variable requirements
@@ -64,6 +100,14 @@ class VariableHandler:
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
         },
         'GR': {
+            'temp': {'standard_name': 'air_temperature', 'units': 'degC'},
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
+        }, 
+        'HYPE': {
+            'temp': {'standard_name': 'air_temperature', 'units': 'degC'},
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
+        },
+        'MESH': {
             'temp': {'standard_name': 'air_temperature', 'units': 'degC'},
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
         }

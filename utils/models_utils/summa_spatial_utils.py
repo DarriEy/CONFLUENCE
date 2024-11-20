@@ -1074,8 +1074,7 @@ class SummaPreProcessor_spatial:
         """
         self.logger.info("Starting to merge RDRS forcing data")
 
-        
-        years = [self.config.get('FORCING_START_YEAR'),self.config.get('FORCING_END_YEAR')]
+    
         years = [
                     self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
                     self.config.get('EXPERIMENT_TIME_END').split('-')[0]

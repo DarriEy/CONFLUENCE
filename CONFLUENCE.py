@@ -519,6 +519,7 @@ class CONFLUENCE:
                     return sensitivity_results
                 else:
                     pass
+ 
         except Exception as e:
             self.logger.error(f"Error during sensitivity analysis: {str(e)}")
             return None
@@ -526,6 +527,7 @@ class CONFLUENCE:
     @get_function_logger  
     def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
+
         for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
             if model == 'SUMMA':
                 decision_analyzer = DecisionAnalyzer(self.config, self.logger)
@@ -541,9 +543,10 @@ class CONFLUENCE:
             elif model == 'FUSE':
                 FUSE_decision_analyser = FuseDecisionAnalyzer(self.config, self.logger)
                 FUSE_decision_analyser.run_decision_analysis()
+            
+            else:
+                pass
 
-
-            return results_file, best_combinations
     
     @get_function_logger
     def subset_geofabric(self):
