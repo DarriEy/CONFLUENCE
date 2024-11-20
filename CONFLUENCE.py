@@ -12,7 +12,7 @@ import argparse
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
-from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor # type: ignore  
+from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor, DataAcquisitionProcessor # type: ignore  
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
@@ -32,6 +32,7 @@ from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
 from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger, log_configuration # type: ignore
 from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
+from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
 
 class CONFLUENCE:
 
@@ -81,7 +82,7 @@ class CONFLUENCE:
 
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
         self.reporter = VisualizationReporter(self.config, self.logger)
-
+        self.variable_handler = VariableHandler(self.config, self.logger, 'ERA5', 'SUMMA')
 
     def setup_logging(self):
         log_dir = self.project_dir / f"_workLog_{self.config.get('DOMAIN_NAME')}"
@@ -276,7 +277,10 @@ class CONFLUENCE:
         lonlims = f"{bbox[1]},{bbox[3]}"
 
         # Create the gistool command
-        datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = self.config['FORCING_VARIABLES'], start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
+        variables = self.config['FORCING_VARIABLES']
+        if variables == 'default':
+            variables = self.variable_handler.get_dataset_variables(dataset = self.config['FORCING_DATASET'])
+        datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = variables, start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
         dr.execute_datatool_command(datatool_command)
 
     @get_function_logger
@@ -301,6 +305,11 @@ class CONFLUENCE:
 
         # Run resampling
         fr.run_resampling()
+
+        # Prepare run the MAF Orchestrator
+        dap = DataAcquisitionProcessor(self.config, self.logger)
+        dap.run_data_acquisition()
+
        
     @get_function_logger
     def process_observed_data(self):

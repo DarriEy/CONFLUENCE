@@ -47,39 +47,83 @@ class VariableHandler:
             'RDRS_v2.1_A_PR0_SFC': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
         },
         'DayMet': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
+            'dayl': {'standard_name': 'day_length', 'units': 's/day'},
+            'prcp': {'standard_name': 'precipitation_flux', 'units': 'mm/day'},
+            'srad': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'swe': {'standard_name': 'snow_water_equivalent', 'units': 'kg/m^2'},
+            'tmax': {'standard_name': 'air_temperature_max', 'units': 'degC'},
+            'tmin': {'standard_name': 'air_temperature_min', 'units': 'degC'},
+            'vp': {'standard_name': 'water_vapor_pressure', 'units': 'Pa'}
         },
         'NEX-GDDP': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'},
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'},
+            'tasmax': {'standard_name': 'air_temperature_max', 'units': 'K'},
+            'tasmin': {'standard_name': 'air_temperature_min', 'units': 'K'},
+            'hurs': {'standard_name': 'relative_humidity', 'units': '%'},
+            'huss': {'standard_name': 'specific_humidity', 'units': '1'},
+            'rlds': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'},
+            'rsds': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'sfcWind': {'standard_name': 'wind_speed', 'units': 'm/s'}
         },
         'GWF-I': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'PSFC': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'Q2': {'standard_name': 'specific_humidity', 'units': '1'},
+            'T2': {'standard_name': 'air_temperature', 'units': 'K'},
+            'U10': {'standard_name': 'eastward_wind', 'units': 'm/s'},
+            'V10': {'standard_name': 'northward_wind', 'units': 'm/s'},
+            'PREC_ACC_NC': {'standard_name': 'precipitation_flux', 'units': 'mm/hr'},  
+            'SWDOWN': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'GLW': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'}
         },
         'GWF-II': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'PSFC': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'Q2': {'standard_name': 'specific_humidity', 'units': '1'},
+            'T2': {'standard_name': 'air_temperature', 'units': 'K'},
+            'U10': {'standard_name': 'eastward_wind', 'units': 'm/s'},
+            'V10': {'standard_name': 'northward_wind', 'units': 'm/s'},
+            'PREC_ACC_NC': {'standard_name': 'precipitation_flux', 'units': 'mm/hr'},  
+            'SWDOWN': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'GLW': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'}
         },
         'CCRN-CanRCM4': {
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'ta': {'standard_name': 'air_temperature', 'units': 'K'},
+            'ps': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'hus': {'standard_name': 'specific_humidity', 'units': '1'},
+            'wind': {'standard_name': 'wind_speed', 'units': 'm/s'},
+            'rsds': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'lsds': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'}
         },
         'CCRN-WFDEI': {
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'ta': {'standard_name': 'air_temperature', 'units': 'K'},
+            'ps': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'hus': {'standard_name': 'specific_humidity', 'units': '1'},
+            'wind': {'standard_name': 'wind_speed', 'units': 'm/s'},
+            'rsds': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'lsds': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'}
         },
         'Ouranos-ESPO': {
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'tasmax': {'standard_name': 'air_temperature_max', 'units': 'K'},
+            'tasmin': {'standard_name': 'air_temperature_min', 'units': 'K'}
         },
         'Ouranos-MRCC5': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'tas': {'standard_name': 'air_temperature', 'units': 'K'},
+            'ps': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'huss': {'standard_name': 'specific_humidity', 'units': '1'},
+            'uas': {'standard_name': 'eastward_wind', 'units': 'm/s'},
+            'vas': {'standard_name': 'northward_wind', 'units': 'm/s'},
+            'rlds': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'},
+            'rsds': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
         },
         'AGCD': {
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
-            'tas': {'standard_name': 'air_temperature', 'units': 'K'}
+            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'},
+            'tmax': {'standard_name': 'air_temperature_max', 'units': 'degC'},
+            'tmin': {'standard_name': 'air_temperature_min', 'units': 'degC'}
         }
 
     }
@@ -108,8 +152,13 @@ class VariableHandler:
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
         },
         'MESH': {
-            'temp': {'standard_name': 'air_temperature', 'units': 'degC'},
-            'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
+            'airtemp': {'standard_name': 'air_temperature', 'units': 'K'},
+            'airpres': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'spechum': {'standard_name': 'specific_humidity', 'units': '1'},
+            'windspd': {'standard_name': 'wind_speed', 'units': 'm/s'},
+            'LWRadAtm': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'},
+            'SWRadAtm': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'pptrate': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
         }
     }
 
@@ -140,6 +189,29 @@ class VariableHandler:
             self.logger.error(f"Unsupported model: {self.model}")
             raise ValueError(f"Unsupported model: {self.model}")
 
+    def get_dataset_variables(self, dataset: Optional[str] = None) -> list:
+        """
+        Get the list of forcing variable keys for a specified dataset.
+        
+        Args:
+            dataset (Optional[str]): Name of the dataset. If None, uses the instance's dataset.
+            
+        Returns:
+            list: List of variable keys for the specified dataset
+            
+        Raises:
+            ValueError: If the specified dataset is not supported
+        """
+        # Use instance dataset if none provided
+        dataset_name = dataset if dataset is not None else self.dataset
+        
+        # Check if dataset exists in mappings
+        if dataset_name not in self.DATASET_MAPPINGS:
+            self.logger.error(f"Unsupported dataset: {dataset_name}")
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+        
+        return list(self.DATASET_MAPPINGS[dataset_name].keys())
+    
     def process_forcing_data(self, data: xr.Dataset) -> xr.Dataset:
         """Process forcing data by mapping variable names and converting units."""
         self.logger.info("Starting forcing data processing")

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import subprocess
 from pathlib import Path
@@ -13,6 +14,8 @@ import csv
 from datetime import datetime
 import xarray as xr # type: ignore
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
 
 class ProjectInitialisation:
     def __init__(self, config, logger):
@@ -82,6 +85,7 @@ class DataAcquisitionProcessor:
         self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
+        self.variable_handler = VariableHandler(self.config, self.logger, 'ERA5', 'SUMMA')
         
 
     def prepare_maf_json(self) -> Path:
@@ -91,14 +95,17 @@ class DataAcquisitionProcessor:
         gis_path = str(self.root_path / "installs/gistool/" / "extract-gis.sh")
         easymore_client = str(self.config.get('EASYMORE_CLIENT'))
 
-        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        subbasins_name = self.config.get('RIVER_BASINS_NAME')
         if subbasins_name == 'default':
-            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
 
         tool_cache = self.config.get('TOOL_CACHE')
         if tool_cache == 'default':
             tool_cache = '$HOME/cache_dir/'
 
+        variables = self.config['FORCING_VARIABLES']
+        if variables == 'default':
+            variables = self.variable_handler.get_dataset_variables(dataset = self.config['FORCING_DATASET'])
 
         maf_config = {
             "exec": {
@@ -110,11 +117,11 @@ class DataAcquisitionProcessor:
                 "met": [{
                     "dataset": self.config.get('FORCING_DATASET'),
                     "dataset-dir": str(Path(self.config.get('DATATOOL_DATASET_ROOT')) / "era5/"),
-                    "variable": self.config.get('FORCING_VARIABLES'),
-                    "output-dir": str(self.project_dir / "forcing/raw_data"),
+                    "variable": variables,
+                    "output-dir": str(self.project_dir / "forcing/datatool-outputs"),
                     "start-date": f"{self.config.get('EXPERIMENT_TIME_START')}",
                     "end-date": f"{self.config.get('EXPERIMENT_TIME_END')}",
-                    "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
+                    "shape-file": str(self.project_dir / "shapefiles/river_basins" / subbasins_name),
                     "prefix": f"domain_{self.domain_name}_",
                     "cache": tool_cache,
                     "account": self.config.get('TOOL_ACCOUNT'),
@@ -130,69 +137,61 @@ class DataAcquisitionProcessor:
                         "variable": "MCD12Q1.061",
                         "start-date": "2001-01-01",
                         "end-date": "2020-01-01",
-                        "output-dir": str(self.project_dir / "attributes/land_class/"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
+                        "output-dir": str(self.project_dir / "attributes/gistool-outputs"),
+                        "shape-file": str(self.project_dir / "shapefiles/river_basins" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["frac", "majority", "coords"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
-                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
+                        "fid": self.config.get('RIVER_BASIN_SHP_RM_GRUID'),
                         "_flags": ["include-na", "parsable"]#, "submit-job"]
                     },
                     {
                         "dataset": "soil_class",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "soil_classes"),
                         "variable": "soil_classes",
-                        "output-dir": str(self.project_dir / "attributes/soil_class/"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
+                        "output-dir": str(self.project_dir / "attributes/gistool-outputs"),
+                        "shape-file": str(self.project_dir / "shapefiles/river_basins" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["majority"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
-                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
+                        "fid": self.config.get('RIVER_BASIN_SHP_RM_GRUID'),
                         "_flags": ["include-na", "parsable"]#, "submit-job"]
                     },
                     {
                         "dataset": "merit-hydro",
                         "dataset-dir": str(Path(self.config.get('GISTOOL_DATASET_ROOT')) / "MERIT-Hydro"),
                         "variable": "elv,hnd",
-                        "output-dir": str(self.project_dir / "attributes/elevation"),
-                        "shape-file": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
+                        "output-dir": str(self.project_dir / "attributes/gistool-outputs"),
+                        "shape-file": str(self.project_dir / "shapefiles/river_basins" / subbasins_name),
                         "print-geotiff": "true",
                         "stat": ["min", "max", "mean", "median"],
                         "lib-path": self.config.get('GISTOOL_LIB_PATH'),
                         "cache": tool_cache,
                         "prefix": f"domain_{self.domain_name}_",
                         "account": self.config.get('TOOL_ACCOUNT'),
-                        "fid": self.config.get('CATCHMENT_SHP_HRUID'),
+                        "fid": self.config.get('RIVER_BASIN_SHP_RM_GRUID'),
                         "_flags": ["include-na", "parsable"]#, "submit-job",]
                     }
                 ],
                 "remap": [{
                     "case-name": "remapped",
                     "cache": tool_cache,
-                    "shapefile": str(self.project_dir / "shapefiles/catchment" / subbasins_name),
-                    "shapefile-id": self.config.get('CATCHMENT_SHP_HRUID'),
-                    "source-nc": str(self.project_dir / "forcing/raw_data/**/*.nc*"),
+                    "shapefile": str(self.project_dir / "shapefiles/river_basins" / subbasins_name),
+                    "shapefile-id": self.config.get('RIVER_BASIN_SHP_RM_GRUID'),
+                    "source-nc": str(self.project_dir / "forcing/datatool-outputs/**/*.nc*"),
                     "variable-lon": "lon",
                     "variable-lat": "lat",
-                    "variable": self.config.get('FORCING_VARIABLES', [
-                        "RDRS_v2.1_P_P0_SFC",
-                        "RDRS_v2.1_P_HU_09944",
-                        "RDRS_v2.1_P_TT_09944",
-                        "RDRS_v2.1_P_UVC_09944",
-                        "RDRS_v2.1_A_PR0_SFC",
-                        "RDRS_v2.1_P_FB_SFC",
-                        "RDRS_v2.1_P_FI_SFC"
-                    ]),
+                    "variable": variables,
                     "remapped-var-id": "hruId",
                     "remapped-dim-id": "hru",
-                    "output-dir": str(self.project_dir / "forcing/basin_averaged_data/") + '/',
-                    "job-conf": str(Path(self.config.get('CONFLUENCE_DATA_DIR')) / self.config.get('EASYMORE_JOB_CONF')),
+                    "output-dir": str(self.project_dir / "forcing/easymore-outputs/") + '/',
+                    "job-conf": self.config.get('EASYMORE_JOB_CONF'),
                     #"_flags": ["submit-job"]
                 }]
             },
