@@ -159,6 +159,8 @@ class GRPreProcessor:
 
             # Get area from river basins shapefile and convert units
             basin_name = self.config.get('RIVER_BASINS_NAME', f"{self.domain_name}_riverBasins_delineate.shp")
+            if basin_name == 'default':
+                basin_name = f"{self.domain_name}_riverBasins_delineate.shp"
             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
             basin_gdf = gpd.read_file(basin_path)
             

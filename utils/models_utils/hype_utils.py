@@ -42,9 +42,9 @@ class HYPEPreProcessor:
         # Define HYPE-specific paths
         self.hype_setup_dir = self.project_dir / "settings" / "HYPE"
         self.hype_setup_dir.mkdir(parents=True, exist_ok=True)
-        self.gistool_output = f"{str(self.project_dir / "attributes" / "gistool-outputs")}/"
-        self.easymore_output = f"{str(self.project_dir / "forcing" / "easymore-outputs")}/"
-        self.hype_setup_dir = f"{str(self.project_dir / "settings" / "HYPE")}/"
+        self.gistool_output = f"{str(self.project_dir / 'attributes' / 'gistool-outputs')}/"
+        self.easymore_output = f"{str(self.project_dir / 'forcing' / 'easymore-outputs')}/"
+        self.hype_setup_dir = f"{str(self.project_dir / 'settings' / 'HYPE')}/"
         self.hype_results_dir = self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "HYPE"
         self.hype_results_dir.mkdir(parents=True, exist_ok=True)
         self.hype_results_dir = f"{str(self.hype_results_dir)}/"

@@ -64,7 +64,7 @@ class VariableHandler:
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
         },
         'GR': {
-            'temp': {'standard_name': 'air_temperature', 'units': 'C'},
+            'temp': {'standard_name': 'air_temperature', 'units': 'degC'},
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/day'}
         }
     }
