@@ -19,18 +19,17 @@ from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler,
 #from utils.dataHandling_utils.specificPreProcessor_util import SummaPreProcessor_spatial, flashPreProcessor # type: ignore
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
-#from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor # type: ignore
-from utils.models_utils.summa_utils import SUMMAPostprocessor # type: ignore
+#from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
+from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
-from utils.models_utils.flux_utils import FLUXPreProcessor, FLUXRunner, FLUXPostProcessor # type: ignore
+from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
 from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
 from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
-from utils.models_utils.model_utils import SummaRunner, MizuRouteRunner, FLASH # type: ignore
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
 from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
-from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger, log_configuration # type: ignore
 from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
 
@@ -74,7 +73,12 @@ class CONFLUENCE:
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.evaluation_dir = self.project_dir / 'evaluation'
         self.evaluation_dir.mkdir(parents=True, exist_ok=True)
+
         self.setup_logging()
+       # Log configuration file using the original config path
+        log_dir = self.project_dir / f"_workLog_{self.domain_name}"
+        self.config_log_file = log_configuration(config, log_dir, self.domain_name)
+
         self.project_initialisation = ProjectInitialisation(self.config, self.logger)
         self.reporter = VisualizationReporter(self.config, self.logger)
 
@@ -84,7 +88,7 @@ class CONFLUENCE:
         log_dir.mkdir(parents=True, exist_ok=True)
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = log_dir / f'confluence_general_{self.domain_name}_{current_time}.log'
-        self.logger = setup_logger('confluence_general', log_file)
+        self.logger = setup_logger('confluence_general', log_file)        
 
     @get_function_logger
     def run_workflow(self):
@@ -340,10 +344,6 @@ class CONFLUENCE:
                 hpp = HYPEPreProcessor(self.config, self.logger)
                 hpp.run_preprocessing()
 
-            elif model == 'FLUX':
-                fpp = FLUXPreProcessor(self.config, self.logger)
-                fpp.run_preprocessing()
-
             elif model == 'MESH':
                 mpp = MESHPreProcessor(self.config, self.logger)
                 mpp.run_preprocessing() 
@@ -393,11 +393,7 @@ class CONFLUENCE:
                     hr = HYPERunner(self.config, self.logger)
                     hr.run_hype()
                 except Exception as e:
-                    self.logger.error(f"Error during HYPE model run: {str(e)}")
-
-            elif model == 'FLUX':
-                fr = FLUXRunner(self.config, self.logger)
-                fr.run_flux()       
+                    self.logger.error(f"Error during HYPE model run: {str(e)}")   
 
             elif model == 'MESH':
                 mr = MESHRunner(self.config, self.logger)
@@ -469,8 +465,8 @@ class CONFLUENCE:
             elif model == 'SUMMA':
                 spp = SUMMAPostprocessor(self.config, self.logger)
                 results_file = spp.extract_streamflow()
-            elif model == 'FLUX':
-                fpp = FLUXPostProcessor(self.config, self.logger)
+            elif model == 'FLASH':
+                fpp = FLASHPostProcessor(self.config, self.logger)
                 results_file = fpp.extract_streamflow()
             elif model == 'HYPE':
                 hpp = HYPEPostProcessor(self.config, self.logger)

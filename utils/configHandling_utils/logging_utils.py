@@ -55,3 +55,25 @@ def get_function_logger(func):
 def log_exception(logger, exc):
     """Function to log exceptions"""
     logger.exception(f"An exception occurred: {exc}")
+
+def log_configuration(config_path: str | Path, log_dir: Path, domain_name: str):
+    """Log configuration file with timestamp for version control.
+    
+    Args:
+        config_path (str | Path): Path to original config file (as string or Path)
+        log_dir (Path): Directory to save logged config
+        domain_name (str): Name of the domain for file naming
+    
+    Returns:
+        Path: Path to the logged config file
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_log_file = log_dir / f"config_{domain_name}_{timestamp}.yaml"
+    
+    # Convert input path to Path object if it's a string
+    config_path = Path(config_path)
+    
+    # Copy the config file with timestamp
+    config_log_file.write_text(config_path.read_text())
+            
+    return config_log_file
