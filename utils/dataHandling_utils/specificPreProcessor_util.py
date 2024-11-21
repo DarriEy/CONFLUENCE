@@ -1846,8 +1846,8 @@ class SummaPreProcessor_spatial:
         Raises:
             ValueError: If the time format in the configuration is invalid.
         """
-        sim_start = self.config.get('EXPERIMENT_TIME_START').split('-')[0]
-        sim_end = self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+        sim_start = self.config.get('EXPERIMENT_TIME_START')
+        sim_end = self.config.get('EXPERIMENT_TIME_END')
 
         if sim_start == 'default' or sim_end == 'default':
             start_year = self.config.get('EXPERIMENT_TIME_START').split('-')[0]
