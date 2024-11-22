@@ -309,7 +309,7 @@ class TimeseriesVisualizer:
             # Create scatter plot with hexbin for dense datasets
             if len(df_overlap) > 1000:
                 hb = ax_scatter.hexbin(df_overlap['Observed'], df_overlap[col], 
-                                     gridsize=30, cmap='YlOrRd', 
+                                     gridsize=30, cmap='viridis', 
                                      bins='log')
                 fig.colorbar(hb, ax=ax_scatter, label='Count')
             else:
