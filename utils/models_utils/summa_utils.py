@@ -320,10 +320,10 @@ class SummaRunner:
 #SBATCH --array=0-{n_array_jobs}
 
 # Load required modules
-module load gcc/9.3.0
-module load netcdf-fortran
-module load openblas
-module load caf
+module load StdEnv/2023
+module load gcc/12.3
+module load openblas/0.3.24
+module load netcdf-fortran/4.6.1
 
 # Calculate GRU range for this job
 gru_max={total_grus}

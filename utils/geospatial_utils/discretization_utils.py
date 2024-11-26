@@ -13,8 +13,6 @@ import pvlib # type: ignore
 import pandas as pd # type: ignore
 from pyproj import CRS # type: ignore
 import rasterstats # type: ignore
-import gc
-from memory_profiler import profile  # type: ignore # Optional, for debugging memory usage
 import time
 
 class DomainDiscretizer:
