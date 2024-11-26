@@ -1168,6 +1168,7 @@ class VisualizationReporter:
     def plot_fuse_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]]) -> Optional[Path]:
         """
         Plot FUSE simulated streamflow against observations with calibration/evaluation period shading.
+        Only plots the overlapping time period between observations and simulations.
         Converts FUSE output from mm/day to cms using GRU areas.
         """
         self.logger.info("Creating FUSE streamflow comparison plot")
@@ -1176,15 +1177,26 @@ class VisualizationReporter:
             # Create single figure
             fig, ax = plt.subplots(figsize=(12, 6))
             
-            # Plot observations first
+            # Get observation data and time range
+            obs_data = []
+            obs_start = None
+            obs_end = None
             for obs_name, obs_file in obs_files:
                 obs_df = pd.read_csv(obs_file, parse_dates=['datetime'])
                 obs_df.set_index('datetime', inplace=True)
-                obs_flow = obs_df['discharge_cms']
-                ax.plot(obs_df.index, obs_flow, 'k-', label=f'Observed', linewidth=1.5)
-                self.logger.info(f"Plotted observations from {obs_file}")
+                obs_data.append((obs_name, obs_df))
+                
+                # Update overall observation time range
+                if obs_start is None or obs_df.index.min() > obs_start:
+                    obs_start = obs_df.index.min()
+                if obs_end is None or obs_df.index.max() < obs_end:
+                    obs_end = obs_df.index.max()
             
-            # Plot simulated streamflow
+            # Get simulation data and time range
+            sim_data = []
+            sim_start = None
+            sim_end = None
+            
             for model_name, output_file in model_outputs:
                 if model_name.upper() == 'FUSE':
                     with xr.open_dataset(output_file) as ds:
@@ -1201,35 +1213,46 @@ class VisualizationReporter:
                             # Convert to pandas series with datetime index
                             sim_series = sim_flow.to_pandas()
                             
-                            # Log pre-conversion values
-                            self.logger.info(f"Pre-conversion simulation flow range: {sim_series.min():.2f} to {sim_series.max():.2f}")
-                            
-                            # Get area from river basins shapefile using GRU_area
+                            # Get area from river basins shapefile
                             basin_name = self.config.get('RIVER_BASINS_NAME')
                             if basin_name == 'default':
                                 basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
                             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
                             basin_gdf = gpd.read_file(basin_path)
                             
-                            # Sum the GRU_area column and convert from m2 to km2
-                            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
-                            self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
-                            
                             # Convert units from mm/day to cms
-                            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
+                            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
                             sim_series = sim_series * area_km2 / 86.4
                             
-                            # Log post-conversion values
-                            self.logger.info(f"Post-conversion simulation flow range: {sim_series.min():.2f} to {sim_series.max():.2f}")
+                            sim_data.append((model_name, sim_series))
                             
-                            # Plot simulation
-                            ax.plot(sim_series.index, sim_series.values, '-', 
-                                label='FUSE', linewidth=1.5, color='#1f77b4')
-                                    
+                            # Update overall simulation time range
+                            if sim_start is None or sim_series.index.min() > sim_start:
+                                sim_start = sim_series.index.min()
+                            if sim_end is None or sim_series.index.max() < sim_end:
+                                sim_end = sim_series.index.max()
+                                
                         except Exception as e:
                             self.logger.error(f"Error processing FUSE output: {str(e)}")
                             self.logger.error(f"Traceback: {traceback.format_exc()}")
                             continue
+            
+            # Determine overlapping time period
+            start_date = max(obs_start, sim_start)
+            end_date = min(obs_end, sim_end)
+            
+            self.logger.info(f"Plotting overlapping period: {start_date} to {end_date}")
+            
+            # Plot simulations for overlapping period
+            for model_name, sim_series in sim_data:
+                sim_flow = sim_series.loc[start_date:end_date]
+                ax.plot(sim_flow.index, sim_flow.values, '-', 
+                       label='FUSE', linewidth=1.5, color='#1f77b4')
+                
+            # Plot observations for overlapping period
+            for obs_name, obs_df in obs_data:
+                obs_flow = obs_df['discharge_cms'].loc[start_date:end_date]
+                ax.plot(obs_flow.index, obs_flow, 'k-', label=f'Observed', linewidth=1.5)
             
             # Get calibration and evaluation periods
             cal_start = pd.Timestamp(self.config.get('CALIBRATION_PERIOD').split(',')[0].strip())
@@ -1237,28 +1260,29 @@ class VisualizationReporter:
             eval_start = pd.Timestamp(self.config.get('EVALUATION_PERIOD').split(',')[0].strip())
             eval_end = pd.Timestamp(self.config.get('EVALUATION_PERIOD').split(',')[1].strip())
             
-            # Add shaded regions for calibration and evaluation periods
-            ax.axvspan(cal_start, cal_end, alpha=0.2, color='gray', label='Calibration Period')
-            ax.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+            # Add shaded regions only within the overlapping period
+            cal_start = max(cal_start, start_date)
+            cal_end = min(cal_end, end_date)
+            eval_start = max(eval_start, start_date)
+            eval_end = min(eval_end, end_date)
             
-            # Customize plot
+            #ax.axvspan(cal_start, cal_end, alpha=0.2, color='gray', label='Calibration Period')
+            #ax.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
+            
+            # Rest of the plotting code remains the same
             ax.set_title('FUSE Streamflow Comparison', fontsize=14, fontweight='bold')
             ax.set_xlabel('Date', fontsize=12)
             ax.set_ylabel('Streamflow (cms)', fontsize=12)
             
-            # Format axis
             ax.tick_params(axis='both', which='major', labelsize=10)
             ax.xaxis.set_major_locator(mdates.YearLocator())
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
             
-            # Add grid and set background
             ax.grid(True, alpha=0.3)
             ax.set_facecolor('#f8f9fa')
             
-            # Add legend with better positioning
             ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
             
-            # Adjust layout
             plt.tight_layout()
             
             # Save plot

@@ -194,6 +194,151 @@ class SummaRunner:
 
     def run_summa(self):
         """
+        Run the SUMMA model either in parallel or serial mode based on configuration.
+        """
+        if self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
+            self.run_summa_parallel()
+        else:
+            self.run_summa_serial()
+        
+    def run_summa_parallel(self):
+        """
+        Run SUMMA in parallel using SLURM array jobs.
+        This method handles GRU-based parallelization using SLURM's job array capability.
+        """
+        self.logger.info("Starting parallel SUMMA run with SLURM")
+
+        # Set up paths and filenames
+        summa_path = self.config.get('SETTINGS_SUMMA_PARALLEL_PATH')
+        if summa_path == 'default':
+            summa_path = self.root_path / 'installs/summa/bin/'
+        else:
+            summa_path = Path(summa_path)
+
+        summa_exe = self.config.get('SETTINGS_SUMMA_PARALLEL_EXE')
+        settings_path = self._get_config_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA/')
+        filemanager = self.config.get('SETTINGS_SUMMA_FILEMANAGER')
+        
+        experiment_id = self.config.get('EXPERIMENT_ID')
+        summa_log_path = self._get_config_path('EXPERIMENT_LOG_SUMMA', f"simulations/{experiment_id}/SUMMA/SUMMA_logs/")
+        summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
+
+        # Calculate number of array jobs needed
+        total_grus = self.config.get('SETTINGS_SUMMA_GRU_COUNT')
+        grus_per_job = self.config.get('SETTINGS_SUMMA_GRU_PER_JOB')
+        n_array_jobs = -(-total_grus // grus_per_job)  # Ceiling division
+        
+        # Create SLURM script
+        slurm_script = self._create_slurm_script(
+            summa_path=summa_path,
+            summa_exe=summa_exe,
+            settings_path=settings_path,
+            filemanager=filemanager,
+            summa_log_path=summa_log_path,
+            summa_out_path=summa_out_path,
+            total_grus=total_grus,
+            grus_per_job=grus_per_job,
+            n_array_jobs=n_array_jobs - 1  # SLURM arrays are 0-based
+        )
+        
+        # Write SLURM script
+        script_path = self.project_dir / 'run_summa_parallel.sh'
+        with open(script_path, 'w') as f:
+            f.write(slurm_script)
+        script_path.chmod(0o755)  # Make executable
+        
+        # Submit job
+        try:
+            cmd = f"sbatch {script_path}"
+            result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+            job_id = result.stdout.strip().split()[-1]
+            self.logger.info(f"Submitted SLURM array job with ID: {job_id}")
+            
+            # Backup settings if required
+            if self.config.get('EXPERIMENT_BACKUP_SETTINGS') == 'yes':
+                backup_path = summa_out_path / "run_settings"
+                self._backup_settings(settings_path, backup_path)
+                
+            return job_id
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to submit SLURM job: {e}")
+            raise
+
+    def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
+                            filemanager: str, summa_log_path: Path, summa_out_path: Path,
+                            total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+        """
+        Create SLURM submission script for parallel SUMMA execution.
+        
+        Args:
+            summa_path: Path to SUMMA executable
+            summa_exe: Name of SUMMA executable
+            settings_path: Path to SUMMA settings
+            filemanager: Name of filemanager file
+            summa_log_path: Path for SUMMA logs
+            summa_out_path: Path for SUMMA output
+            total_grus: Total number of GRUs
+            grus_per_job: Number of GRUs per job
+            n_array_jobs: Number of array jobs (0-based)
+            
+        Returns:
+            str: Content of SLURM submission script
+        """
+        script = f"""#!/bin/bash
+#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
+#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
+#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM')}
+#SBATCH --constraint=broadwell
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --job-name=Summa-Actors
+#SBATCH --output=%x-%j.out
+#SBATCH --array=0-{n_array_jobs}
+
+# Load required modules
+module load gcc/9.3.0
+module load netcdf-fortran
+module load openblas
+module load caf
+
+# Calculate GRU range for this job
+gru_max={total_grus}
+gru_count={grus_per_job}
+
+offset=$SLURM_ARRAY_TASK_ID
+gru_start=$(( 1 + gru_count*offset ))
+check=$(( $gru_start + $gru_count ))
+
+# Adjust the number of GRUs for the last job
+if [ $check -gt $gru_max ]; then
+    gru_count=$(( gru_max - gru_start + 1 ))
+fi
+
+echo "Processing GRUs $gru_start to $(( gru_start + gru_count - 1 ))"
+
+# Create output directories
+mkdir -p {summa_log_path}
+mkdir -p {summa_out_path}
+
+# Run SUMMA
+{summa_path}/{summa_exe} -g $gru_start $gru_count -m {settings_path}/{filemanager} \\
+    --caf.scheduler.max-threads=$SLURM_CPUS_PER_TASK \\
+    > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
+
+# Create log directory and save run information
+log_path="{summa_out_path}/_workflow_log"
+mkdir -p $log_path
+
+# Log run details
+log_file="${{log_path}}/$(date '+%F')_SUMMA_run_log_grus_${{gru_start}}_${{gru_count}}.txt"
+echo "Log generated on $(date '+%F %H:%M:%S')" > $log_file
+echo "Ran SUMMA for ${{gru_count}} GRUs, starting at GRU ${{gru_start}}" >> $log_file
+"""
+        return script
+
+    def run_summa_serial(self):
+        """
         Run the SUMMA model.
 
         This method sets up the necessary paths, executes the SUMMA model,

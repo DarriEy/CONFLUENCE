@@ -186,17 +186,12 @@ class FUSEPreProcessor:
             forcing_files = sorted(self.forcing_basin_path.glob('*.nc'))
             if not forcing_files:
                 raise FileNotFoundError("No forcing files found in basin-averaged data directory")
-            
-            # Debug print the forcing files found
-            self.logger.info(f"Found forcing files: {[f.name for f in forcing_files]}")
-            
+                        
             variable_handler = VariableHandler(config=self.config, logger=self.logger, dataset=self.config['FORCING_DATASET'], model='FUSE')
             # Open and concatenate all forcing files
             ds = xr.open_mfdataset(forcing_files)
             dsVariableHandler = variable_handler.process_forcing_data(ds)
             ds = dsVariableHandler
-            self.logger.info(f'after variable handler {dsVariableHandler}')
-            self.logger.info(f'before variable handler {ds}')
             # Average across HRUs if needed
             ds = ds.mean(dim='hru')
             
@@ -256,9 +251,6 @@ class FUSEPreProcessor:
             ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
-            self.logger.info(f'{ds}')
-            self.logger.info(f'{obs_ds}')
-            self.logger.info(f'{pet}')
             # Convert time to days since 1970-01-01
             time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
 
@@ -277,7 +269,6 @@ class FUSEPreProcessor:
                     'time': ('time', ds_coords['time'])
                 }
             )
-            self.logger.info(f'{fuse_forcing}')
             # Add coordinate attributes (without _FillValue)
             fuse_forcing.longitude.attrs = {
                 'units': 'degreesE',
@@ -327,7 +318,7 @@ class FUSEPreProcessor:
                 'latitude': {'dtype': 'float64'},
                 'time': {'dtype': 'float64'}
             })
-            self.logger.info(f'{fuse_forcing} at saving')
+
             # Save forcing data
             output_file = self.forcing_fuse_path / f"{self.domain_name}_input.nc"
             fuse_forcing.to_netcdf(
@@ -812,11 +803,31 @@ class FuseDecisionAnalyzer:
         self.output_folder.mkdir(parents=True, exist_ok=True)
         self.model_decisions_path = self.project_dir / "settings" / "FUSE" / f"fuse_zDecisions_{self.config['EXPERIMENT_ID']}.txt"
 
-        # Initialize FuseRunner (you'll need to implement this)
+        # Initialize FuseRunner
         self.fuse_runner = FUSERunner(config, logger)
 
-        # Define FUSE decision options
-        self.decision_options = {
+        # Get decision options from config or use defaults
+        self.decision_options = self._initialize_decision_options()
+        
+        # Log the decision options being used
+        self.logger.info("Initialized FUSE decision options:")
+        for decision, options in self.decision_options.items():
+            self.logger.info(f"{decision}: {options}")
+
+        # Add storage for simulation results
+        self.simulation_results = {}
+        self.observed_streamflow = None
+        self.area_km2 = None
+
+    def _initialize_decision_options(self) -> Dict[str, List[str]]:
+        """
+        Initialize decision options from config file or use defaults.
+        
+        Returns:
+            Dict[str, List[str]]: Dictionary of decision options
+        """
+        # Default decision options as fallback
+        default_options = {
             'RFERR': ['additive_e', 'multiplc_e'],
             'ARCH1': ['tension1_1', 'tension2_1', 'onestate_1'],
             'ARCH2': ['tens2pll_2', 'unlimfrc_2', 'unlimpow_2', 'fixedsiz_2'],
@@ -827,6 +838,38 @@ class FuseDecisionAnalyzer:
             'Q_TDH': ['rout_gamma', 'no_routing'],
             'SNOWM': ['temp_index', 'no_snowmod']
         }
+
+        # Try to get decision options from config
+        config_options = self.config.get('FUSE_DECISION_OPTIONS')
+        
+        if config_options:
+            self.logger.info("Using decision options from config file")
+            
+            # Validate config options
+            validated_options = {}
+            for decision, options in default_options.items():
+                if decision in config_options:
+                    # Ensure options are in list format
+                    config_decision_options = config_options[decision]
+                    if isinstance(config_decision_options, list):
+                        validated_options[decision] = config_decision_options
+                    else:
+                        self.logger.warning(
+                            f"Invalid options format for decision {decision} in config. "
+                            f"Using defaults: {options}"
+                        )
+                        validated_options[decision] = options
+                else:
+                    self.logger.warning(
+                        f"Decision {decision} not found in config. "
+                        f"Using defaults: {options}"
+                    )
+                    validated_options[decision] = options
+            
+            return validated_options
+        else:
+            self.logger.info("No decision options found in config. Using defaults.")
+            return default_options
 
     def generate_combinations(self) -> List[Tuple[str, ...]]:
         """Generate all possible combinations of model decisions."""
@@ -879,6 +922,96 @@ class FuseDecisionAnalyzer:
             self.logger.error(f"Error updating model decisions: {str(e)}")
             raise
 
+    def get_current_decisions(self) -> List[str]:
+        """Read current decisions from the FUSE decisions file."""
+        with open(self.model_decisions_path, 'r') as f:
+            lines = f.readlines()
+        
+        # Extract the first word from lines 2-10
+        decisions = []
+        for line in lines[1:10]:  # Lines 2-10 in 1-based indexing
+            decision = line.strip().split()[0]
+            decisions.append(decision)
+        
+        return decisions
+
+    def plot_hydrographs(self, results_file: Path, metric: str = 'kge'):
+        """
+        Plot all simulated hydrographs with top 5% highlighted, showing only the overlapping period.
+        
+        Args:
+            results_file (Path): Path to the results CSV file
+            metric (str): Metric to use for selecting top performers ('kge', 'nse', etc.)
+        """
+        self.logger.info(f"Creating hydrograph plot using {metric} metric")
+        
+        # Read results file
+        results_df = pd.read_csv(results_file)
+        
+        # Calculate threshold for top 5%
+        if metric in ['mae', 'rmse']:  # Lower is better
+            threshold = results_df[metric].quantile(0.05)
+            top_combinations = results_df[results_df[metric] <= threshold]
+        else:  # Higher is better
+            threshold = results_df[metric].quantile(0.95)
+            top_combinations = results_df[results_df[metric] >= threshold]
+
+        # Find overlapping period across all simulations and observations
+        start_date = self.observed_streamflow.index.min()
+        end_date = self.observed_streamflow.index.max()
+        
+        for sim in self.simulation_results.values():
+            start_date = max(start_date, sim.index.min())
+            end_date = min(end_date, sim.index.max())
+        
+        # Create the plot
+        plt.figure(figsize=(15, 10))
+        
+        # Plot all simulations in light gray (only overlapping period)
+        for combo, sim in self.simulation_results.items():
+            sim_overlap = sim.loc[start_date:end_date]
+            plt.plot(sim_overlap.index, sim_overlap.values, 
+                    color='lightgray', alpha=0.3, linewidth=0.5)
+        
+        # Plot top 5% in blue (only overlapping period)
+        for _, row in top_combinations.iterrows():
+            combo = tuple(row[list(self.decision_options.keys())])
+            if combo in self.simulation_results:
+                sim = self.simulation_results[combo]
+                sim_overlap = sim.loc[start_date:end_date]
+                plt.plot(sim_overlap.index, sim_overlap.values, 
+                        color='blue', alpha=0.3, linewidth=1)
+        
+        # Plot observed streamflow in red (only overlapping period)
+        obs_overlap = self.observed_streamflow.loc[start_date:end_date]
+        plt.plot(obs_overlap.index, obs_overlap.values, 
+                color='red', linewidth=2, label='Observed')
+        
+        # Customize plot
+        plt.title(f'Hydrograph Comparison ({start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")})\n'
+                 f'Top 5% combinations by {metric} metric highlighted', 
+                 fontsize=14, pad=20)
+        plt.xlabel('Date', fontsize=12)
+        plt.ylabel('Streamflow (m³/s)', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        
+        # Add legend
+        plt.plot([], [], color='lightgray', label='All combinations')
+        plt.plot([], [], color='blue', alpha=0.3, label=f'Top 5% by {metric}')
+        plt.legend(fontsize=10)
+        
+        # Save plot
+        plot_file = self.output_folder / f'hydrograph_comparison_{metric}.png'
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        self.logger.info(f"Hydrograph plot saved to: {plot_file}")
+        
+        # Create summary of top combinations
+        summary_file = self.output_folder / f'top_combinations_{metric}.csv'
+        top_combinations.to_csv(summary_file, index=False)
+        self.logger.info(f"Top combinations saved to: {summary_file}")
+
     def calculate_performance_metrics(self) -> Tuple[float, float, float, float, float]:
         """Calculate performance metrics comparing simulated and observed streamflow."""
         obs_file_path = self.config.get('OBSERVATIONS_PATH')
@@ -889,9 +1022,10 @@ class FuseDecisionAnalyzer:
 
         sim_file_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'FUSE' / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"
 
-        # Read observations
-        dfObs = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
-        dfObs = dfObs['discharge_cms'].resample('d').mean()
+        # Read observations if not already loaded
+        if self.observed_streamflow is None:
+            dfObs = pd.read_csv(obs_file_path, index_col='datetime', parse_dates=True)
+            self.observed_streamflow = dfObs['discharge_cms'].resample('d').mean()
 
         # Read simulations
         dfSim = xr.open_dataset(sim_file_path)
@@ -902,23 +1036,28 @@ class FuseDecisionAnalyzer:
                             )
         dfSim = dfSim.to_pandas()
 
-        # Get area from river basins shapefile using GRU_area
-        basin_name = self.config.get('RIVER_BASINS_NAME')
-        if basin_name == 'default':
-            basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
-        basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
-        basin_gdf = gpd.read_file(basin_path)
-        
-        # Sum the GRU_area column and convert from m2 to km2
-        area_km2 = basin_gdf['GRU_area'].sum() / 1e6
-        self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
+        # Get area from river basins shapefile using GRU_area if not already calculated
+        if self.area_km2 is None:
+            basin_name = self.config.get('RIVER_BASINS_NAME')
+            if basin_name == 'default':
+                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
+            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+            basin_gdf = gpd.read_file(basin_path)
+            
+            # Sum the GRU_area column and convert from m2 to km2
+            self.area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+            self.logger.info(f"Total catchment area from GRU_area: {self.area_km2:.2f} km2")
         
         # Convert units from mm/day to cms
         # Q(cms) = Q(mm/day) * Area(km2) / 86.4
-        dfSim = dfSim * area_km2 / 86.4
+        dfSim = dfSim * self.area_km2 / 86.4
+
+        # Store this simulation result
+        current_combo = tuple(self.get_current_decisions())
+        self.simulation_results[current_combo] = dfSim
 
         # Align timestamps and handle missing values
-        dfObs = dfObs.reindex(dfSim.index).dropna()
+        dfObs = self.observed_streamflow.reindex(dfSim.index).dropna()
         dfSim = dfSim.reindex(dfObs.index).dropna()
 
         # Calculate metrics
@@ -934,7 +1073,12 @@ class FuseDecisionAnalyzer:
         return kge, kgep, nse, mae, rmse
 
     def run_decision_analysis(self):
-        """Run the full decision analysis process."""
+        """
+        Run the complete FUSE decision analysis workflow, including generating plots and analyzing results.
+        
+        Returns:
+            Tuple[Path, Dict]: Path to results file and dictionary of best combinations
+        """
         self.logger.info("Starting FUSE decision analysis")
         
         combinations = self.generate_combinations()
@@ -961,7 +1105,7 @@ class FuseDecisionAnalyzer:
                 
                 # Calculate performance metrics
                 kge, kgep, nse, mae, rmse = self.calculate_performance_metrics()
-                print(combination, kge)
+
                 # Write results to master file
                 with open(master_file, 'a', newline='') as f:
                     writer = csv.writer(f)
@@ -977,7 +1121,18 @@ class FuseDecisionAnalyzer:
                     writer.writerow([i] + list(combination) + ['erroneous combination'])
 
         self.logger.info("FUSE decision analysis completed")
-        return master_file
+        
+        # Create hydrograph plots for different metrics
+        for metric in ['kge', 'nse', 'kgep']:
+            self.plot_hydrographs(master_file, metric)
+        
+        # Create decision impact plots
+        self.plot_decision_impacts(master_file)
+        
+        # Analyze and save best combinations
+        best_combinations = self.analyze_results(master_file)
+        
+        return master_file, best_combinations
 
     def plot_decision_impacts(self, results_file: Path):
         """Create plots showing the impact of each decision on model performance."""
@@ -1034,13 +1189,6 @@ class FuseDecisionAnalyzer:
 
         self.logger.info("FUSE decision analysis results saved")
         return best_combinations
-
-    def run_full_analysis(self):
-        """Run the complete FUSE decision analysis workflow."""
-        results_file = self.run_decision_analysis()
-        self.plot_decision_impacts(results_file)
-        best_combinations = self.analyze_results(results_file)
-        return results_file, best_combinations
 
     def _get_file_path(self, file_type, file_def_path, file_name):
         if self.config.get(f'{file_type}') == 'default':
