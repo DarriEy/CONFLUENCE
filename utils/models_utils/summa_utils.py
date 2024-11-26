@@ -223,9 +223,32 @@ class SummaRunner:
         summa_log_path = self._get_config_path('EXPERIMENT_LOG_SUMMA', f"simulations/{experiment_id}/SUMMA/SUMMA_logs/")
         summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
 
-        # Calculate number of array jobs needed
+        # Get and validate GRU count
         total_grus = self.config.get('SETTINGS_SUMMA_GRU_COUNT')
+        if total_grus == 'default':
+            # Get catchment shapefile path
+            subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+            if subbasins_name == 'default':
+                subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+            subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / subbasins_name
+            
+            # Read shapefile and count unique GRU_IDs
+            gdf = gpd.read_file(subbasins_shapefile)
+            total_grus = len(gdf['GRU_ID'].unique())
+            self.logger.info(f"Counted {total_grus} unique GRUs from shapefile")
+
+        # Get and validate GRUs per job
         grus_per_job = self.config.get('SETTINGS_SUMMA_GRU_PER_JOB')
+        if grus_per_job == 'default':
+            if total_grus > 500:
+                # Divide GRUs among 500 jobs (rounded up to ensure all GRUs are covered)
+                grus_per_job = -(-total_grus // 500)  # Ceiling division
+                self.logger.info(f"Setting GRUs per job to {grus_per_job} to distribute {total_grus} GRUs across ~500 jobs")
+            else:
+                grus_per_job = 1
+                self.logger.info("Setting default of 1 GRU per job")
+
+        # Calculate number of array jobs needed
         n_array_jobs = -(-total_grus // grus_per_job)  # Ceiling division
         
         # Create SLURM script

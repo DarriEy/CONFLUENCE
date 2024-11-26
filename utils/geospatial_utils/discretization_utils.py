@@ -13,6 +13,9 @@ import pvlib # type: ignore
 import pandas as pd # type: ignore
 from pyproj import CRS # type: ignore
 import rasterstats # type: ignore
+import gc
+from memory_profiler import profile  # type: ignore # Optional, for debugging memory usage
+import time
 
 class DomainDiscretizer:
     """
@@ -139,10 +142,8 @@ class DomainDiscretizer:
     def discretize_domain(self) -> Optional[Path]:
         """
         Discretize the domain based on the method specified in the configuration.
-
-        Returns:
-            Optional[Path]: Path to the output shapefile, or None if discretization fails.
         """
+        start_time = time.time()
         discretization_method = self.config.get('DOMAIN_DISCRETIZATION').lower()
         self.logger.info(f"Starting domain discretization using method: {discretization_method}")
 
@@ -159,10 +160,15 @@ class DomainDiscretizer:
             self.logger.error(f"Invalid discretization method: {discretization_method}")
             raise ValueError(f"Invalid discretization method: {discretization_method}")
 
+        self.logger.info("Step 1/2: Running discretization method")
         method_map[discretization_method]()
+        
+        self.logger.info("Step 2/2: Sorting catchment shape")
         shp = self.sort_catchment_shape()
 
-        return shp        
+        elapsed_time = time.time() - start_time
+        self.logger.info(f"Domain discretization completed in {elapsed_time:.2f} seconds")
+        return shp
 
     def _use_grus_as_hrus(self):
         """
@@ -435,132 +441,147 @@ class DomainDiscretizer:
 
     def _read_and_prepare_data(self, shapefile_path, raster_path, band_size=None):
         """
-        Read and prepare data for discretization.
-
+        Read and prepare data with chunking for large rasters.
+        
         Args:
-            shapefile_path (Path): Path to the GRU shapefile.
-            raster_path (Path): Path to the raster file.
-            band_size (Optional[float]): Size of bands for discretization.
-
-        Returns:
-            Tuple[gpd.GeoDataFrame, np.ndarray]: Prepared GeoDataFrame and thresholds.
-        """
-        gru_gdf = self._read_shapefile(shapefile_path)
-        if 'gruId' not in gru_gdf.columns:
-            gru_gdf['gruId'] = gru_gdf.index.astype(str)
-
-        gru_gdf['geometry'] = gru_gdf['geometry'].apply(lambda geom: geom if geom.is_valid else geom.buffer(0))
-
-        with rasterio.open(raster_path) as src:
-            out_image, out_transform = rasterio.mask.mask(src, gru_gdf.geometry, crop=False)
-            out_image = out_image[0]  # Get the first band
-            valid_data = out_image[out_image != src.nodata]
+            shapefile_path: Path to the GRU shapefile
+            raster_path: Path to the raster file
+            band_size: Optional band size for discretization
             
-            if band_size:
-                min_value = np.floor(np.min(valid_data))
-                max_value = np.ceil(np.max(valid_data))
-                thresholds = np.arange(min_value, max_value + band_size, band_size)
-            else:
-                thresholds = np.unique(valid_data)
+        Returns:
+            tuple: (gru_gdf, thresholds) where:
+                - gru_gdf is the GeoDataFrame containing GRU data
+                - thresholds are the class boundaries for discretization
+        """
+        # Read the GRU shapefile
+        gru_gdf = self._read_shapefile(shapefile_path)
+        
+        # Process raster in chunks
+        CHUNK_SIZE = 1024  # Adjust based on available memory
+        valid_data = []
+        
+        with rasterio.open(raster_path) as src:
+            height = src.height
+            width = src.width
+            
+            for y in range(0, height, CHUNK_SIZE):
+                for x in range(0, width, CHUNK_SIZE):
+                    window = rasterio.windows.Window(x, y, 
+                        min(CHUNK_SIZE, width - x),
+                        min(CHUNK_SIZE, height - y))
+                    chunk = src.read(1, window=window)
+                    valid_data.extend(chunk[chunk != src.nodata].flatten())
+        
+        # Calculate thresholds based on the data
+        if band_size is not None:
+            # For elevation-based or radiation-based discretization
+            min_val = np.min(valid_data)
+            max_val = np.max(valid_data)
+            thresholds = np.arange(min_val, max_val + band_size, band_size)
+        else:
+            # For soil or land class-based discretization
+            thresholds = np.unique(valid_data)
         
         return gru_gdf, thresholds
 
     def _process_hrus(self, gru_gdf, raster_path, thresholds, attribute_name):
         """
         Process HRUs based on the given raster and thresholds.
-
-        Args:
-            gru_gdf (gpd.GeoDataFrame): GeoDataFrame of GRUs.
-            raster_path (Path): Path to the raster file.
-            thresholds (np.ndarray): Thresholds for discretization.
-            attribute_name (str): Name of the attribute for classification.
-
-        Returns:
-            gpd.GeoDataFrame: Processed HRU GeoDataFrame.
         """
+        total_grus = len(gru_gdf)
+        self.logger.info(f"Processing {total_grus} GRUs using {multiprocessing.cpu_count() // 2} cores")
+        
+        processed_grus = 0
         all_hrus = []
         num_cores = max(1, multiprocessing.cpu_count() // 2)
         
         with ProcessPoolExecutor(max_workers=num_cores) as executor:
             future_to_row = {executor.submit(self._create_hrus, row, raster_path, thresholds, attribute_name): row for _, row in gru_gdf.iterrows()}
             for future in as_completed(future_to_row):
+                processed_grus += 1
+                if processed_grus % max(1, total_grus // 10) == 0:  # Log every 10%
+                    self.logger.info(f"Processed {processed_grus}/{total_grus} GRUs ({(processed_grus/total_grus)*100:.1f}%)")
                 all_hrus.extend(future.result())
 
-        hru_gdf = gpd.GeoDataFrame(all_hrus, crs=gru_gdf.crs)
-        return self._postprocess_hrus(hru_gdf)
+        self.logger.info(f"Created {len(all_hrus)} HRUs from {total_grus} GRUs")
+        return self._postprocess_hrus(gpd.GeoDataFrame(all_hrus, crs=gru_gdf.crs))
 
     def _create_hrus(self, row, raster_path: Path, thresholds: np.ndarray, attribute_name: str) -> List[Dict[str, Any]]:
         """
-        Create HRUs for a single GRU based on the given raster and thresholds.
-
-        Args:
-            row: A single row from the GRU GeoDataFrame.
-            raster_path (Path): Path to the raster file.
-            thresholds (np.ndarray): Thresholds for discretization.
-            attribute_name (str): Name of the attribute for classification.
-
-        Returns:
-            List[Dict[str, Any]]: List of HRU dictionaries.
+        Create HRUs for a single GRU with improved performance.
         """
         with rasterio.open(raster_path) as src:
-            out_image, out_transform = mask(src, [row.geometry], crop=False, all_touched=False)
+            # Use precise bounds to reduce memory usage
+            bounds = row.geometry.bounds
+            window = rasterio.windows.from_bounds(*bounds, src.transform)
+            out_image, out_transform = mask(src, [row.geometry], crop=True, all_touched=False)
             out_image = out_image[0]
             
+            # Pre-calculate attributes to avoid repeated dict operations
             gru_attributes = row.drop('geometry').to_dict()
             
             hrus = []
+            # Process multiple thresholds at once using numpy operations
             for i in range(len(thresholds) - 1):
                 lower, upper = thresholds[i:i+2]
                 class_mask = (out_image >= lower) & (out_image < upper)
+                
                 if np.any(class_mask):
-                    shapes = rasterio.features.shapes(class_mask.astype(np.uint8), mask=class_mask, transform=out_transform)
-                    class_polys = [shape(shp) for shp, _ in shapes]
+                    # Use rasterio's shapes function more efficiently
+                    shapes = list(rasterio.features.shapes(
+                        class_mask.astype(np.uint8), 
+                        mask=class_mask, 
+                        transform=out_transform,
+                        connectivity=8  # Use 8-connectivity for better shape detection
+                    ))
                     
-                    if class_polys:
-                        merged_poly = unary_union(class_polys).intersection(row.geometry)
-                        if not merged_poly.is_empty:
-                            if isinstance(merged_poly, (Polygon, MultiPolygon)):
-                                geoms = [merged_poly] if isinstance(merged_poly, Polygon) else merged_poly.geoms
-                            elif isinstance(merged_poly, LineString):
-                                # Skip LineString geometries
-                                self.logger.warning(f"Skipping LineString geometry in GRU {row['gruId']}")
-                                continue
-                            else:
-                                # For other geometry types, try to buffer to create a polygon
-                                buffered = merged_poly.buffer(0.0000001)  # Small buffer
-                                if isinstance(buffered, (Polygon, MultiPolygon)):
-                                    geoms = [buffered] if isinstance(buffered, Polygon) else buffered.geoms
-                                else:
-                                    self.logger.warning(f"Skipping invalid geometry in GRU {row['gruId']}")
-                                    continue
-
-                            for geom in geoms:
-                                if isinstance(geom, Polygon):
-                                    hrus.append({
-                                        'geometry': geom,
-                                        'gruNo': row.name,
-                                        'gruId': row['gruId'],
-                                        attribute_name: i + 1,
-                                        f'avg_{attribute_name.lower()}': np.mean(out_image[class_mask]),
-                                        **gru_attributes
-                                    })
+                    if shapes:
+                        class_polys = [shape(shp) for shp, _ in shapes]
+                        if class_polys:
+                            # Merge polygons before intersection for better performance
+                            merged_poly = unary_union(class_polys).intersection(row.geometry)
+                            if not merged_poly.is_empty:
+                                hrus.extend(self._process_merged_poly(
+                                    merged_poly, row, i, out_image, class_mask, 
+                                    attribute_name, gru_attributes
+                                ))
             
+            # Handle case where no HRUs were created
             if not hrus:
-                # If no valid HRUs were created, use the entire GRU as a single HRU
-                self.logger.warning(f"No valid HRUs created for GRU {row['gruId']}. Using entire GRU as single HRU.")
-                hrus.append({
-                    'geometry': row.geometry,
-                    'gruNo': row.name,
-                    'gruId': row['gruId'],
-                    attribute_name: -9999,  # No-data value
-                    f'avg_{attribute_name.lower()}': np.mean(out_image),
-                    **gru_attributes
-                })
+                hrus.append(self._create_fallback_hru(row, out_image, attribute_name, gru_attributes))
             
             return hrus
 
+    def _process_merged_poly(self, merged_poly, row, i, out_image, class_mask, attribute_name, gru_attributes):
+        """
+        Helper method to process merged polygons (extracted for clarity and reuse).
+        """
+        results = []
+        if isinstance(merged_poly, (Polygon, MultiPolygon)):
+            geoms = [merged_poly] if isinstance(merged_poly, Polygon) else merged_poly.geoms
+        else:
+            buffered = merged_poly.buffer(0.0000001)
+            if isinstance(buffered, (Polygon, MultiPolygon)):
+                geoms = [buffered] if isinstance(buffered, Polygon) else buffered.geoms
+            else:
+                return results
+
+        for geom in geoms:
+            if isinstance(geom, Polygon):
+                results.append({
+                    'geometry': geom,
+                    'gruNo': row.name,
+                    'GRU_ID': row['GRU_ID'],
+                    attribute_name: i + 1,
+                    f'avg_{attribute_name.lower()}': np.mean(out_image[class_mask]),
+                    **gru_attributes
+                })
+        return results
+
     def _merge_small_hrus(self, hru_gdf, min_hru_size, class_column):
-        self.logger.info(f"Merging small HRUs (minimum size: {min_hru_size} km²)")
+        self.logger.info(f"Starting HRU merging process (minimum size: {min_hru_size} km²)")
+        initial_count = len(hru_gdf)
+        
         hru_gdf.set_crs(epsg=4326, inplace=True)
         utm_crs = hru_gdf.estimate_utm_crs()
         hru_gdf_utm = hru_gdf.to_crs(utm_crs)
@@ -648,12 +669,16 @@ class DomainDiscretizer:
         
         hru_gdf_utm = hru_gdf_utm.reset_index(drop=True)
         hru_gdf_utm['HRU_ID'] = range(1, len(hru_gdf_utm) + 1)
-        hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
+        hru_gdf_utm['hruId'] = hru_gdf_utm['GRU_ID'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
         hru_gdf_utm['area'] = hru_gdf_utm.geometry.area / 1_000_000
         
         hru_gdf_merged = hru_gdf_utm.to_crs(hru_gdf.crs)
         
-        self.logger.info(f"Merged {merged_count} small HRUs. Final HRU count: {len(hru_gdf_merged)}")
+        self.logger.info(f"HRU merging statistics:")
+        self.logger.info(f"- Initial HRUs: {initial_count}")
+        self.logger.info(f"- Merged {merged_count} small HRUs")
+        self.logger.info(f"- Final HRUs: {len(hru_gdf_merged)}")
+        self.logger.info(f"- Reduction: {((initial_count - len(hru_gdf_merged)) / initial_count) * 100:.1f}%")
         return hru_gdf_merged
 
     def _find_neighbors(self, geometry, gdf, current_index, buffer_distance=1e-6):
@@ -762,13 +787,7 @@ class DomainDiscretizer:
         if 'avg_elevation' in hru_gdf_utm.columns:
             hru_gdf_utm['avg_elevation'] = hru_gdf_utm['avg_elevation'].astype('float64')
 
-        # Determine the class column name
-        #class_column = next((col for col in ['elevClass', 'soilClass', 'landClass', 'radiationClass'] if col in hru_gdf_utm.columns), None)
-        #if class_column:
-        #    hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm[class_column].astype(str)
-        #else:
-        #    hru_gdf_utm['hruId'] = hru_gdf_utm['gruId'].astype(str) + '_' + hru_gdf_utm['hruNo'].astype(str)
-        
+        # Calculate centroids
         centroids_utm = hru_gdf_utm.geometry.centroid
         centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
         
