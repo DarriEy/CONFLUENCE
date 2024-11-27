@@ -304,7 +304,7 @@ class SummaRunner:
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
 #SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM_LIMIT')}
+#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM')}
 #SBATCH --constraint=broadwell
 #SBATCH --exclusive
 #SBATCH --nodes=1
