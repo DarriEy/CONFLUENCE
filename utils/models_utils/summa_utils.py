@@ -8,6 +8,7 @@ import geopandas as gpd # type: ignore
 import xarray as xr # type: ignore
 from typing import Dict, Any, Optional
 import subprocess
+import json
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -288,14 +289,54 @@ class SummaRunner:
             self.logger.error(f"Failed to submit SLURM job: {e}")
             raise
 
+    def _create_actor_config(self, settings_path: Path):
+        """Create SUMMA-Actors config.json file."""
+        config = {
+            "Distributed_Settings": {
+                "distributed_mode": False,
+                "servers_list": [],
+                "port": 4444,
+                "total_hru_count": self.config.get('SETTINGS_SUMMA_GRU_COUNT', 800),
+                "num_hru_per_batch": 1
+            },
+            "Summa_Actor": {
+                "max_gru_per_job": 1,
+                "enable_logging": True,
+                "log_directory": str(settings_path / "SUMMA_logs")
+            },
+            "File_Access_Actor": {
+                "num_partitions_in_output_buffer": 8,
+                "num_timesteps_in_output_buffer": 250
+            },
+            "Job_Actor": {
+                "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
+                "max_run_attempts": 3,
+                "data_assimilation_mode": False,
+                "batch_size": 1
+            },
+            "HRU_Actor": {
+                "print_output": True,
+                "output_frequency": 1000,
+                "dt_init_factor": 1
+            }
+        }
+        
+        config_file = settings_path / "config.json"
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=4)
+        return config_file
+
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
-                        filemanager: str, summa_log_path: Path, summa_out_path: Path,
-                        total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
-        """Create SLURM submission script for parallel SUMMA execution."""
+                            filemanager: str, summa_log_path: Path, summa_out_path: Path,
+                            total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+        
+        # Create actor config file
+        actor_config = self._create_actor_config(settings_path)
+        
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
 #SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem=32G           # Set explicit memory rather than 0
+#SBATCH --mem=64G
 #SBATCH --constraint=broadwell
 #SBATCH --exclusive
 #SBATCH --nodes=1
@@ -311,53 +352,38 @@ module load flexiblas/3.3.1
 module load netcdf-fortran/4.6.1
 module load hdf5/1.14.2
 
-# Create output directories with error checking
-mkdir -p {summa_log_path} || {{ echo "Failed to create log directory"; exit 1; }}
-mkdir -p {summa_out_path} || {{ echo "Failed to create output directory"; exit 1; }}
+# Enable core dumps for debugging
+ulimit -c unlimited
+
+# Create output directories
+mkdir -p {summa_log_path}
+mkdir -p {summa_out_path}
 
 # Calculate GRU range for this job
 gru_max={total_grus}
-gru_count={grus_per_job}
-
+gru_count=1  # Force single GRU per job
 offset=$SLURM_ARRAY_TASK_ID
-gru_start=$(( 1 + gru_count*offset ))
-check=$(( $gru_start + $gru_count ))
+gru_start=$(( 1 + offset ))
 
-# Adjust the number of GRUs for the last job
-if [ $check -gt $gru_max ]; then
-    gru_count=$(( gru_max - gru_start + 1 ))
-fi
+echo "Processing GRU $gru_start"
 
-echo "Processing GRUs $gru_start to $(( gru_start + gru_count - 1 ))"
-
-# Verify input files exist
-if [ ! -f "{settings_path}/{filemanager}" ]; then
-    echo "Error: File manager not found at {settings_path}/{filemanager}"
-    exit 1
-fi
-
-# Add delay between job starts to prevent I/O contention
-sleep $(( RANDOM % 10 ))
-
-# Run SUMMA with error checking
-{summa_path}/{summa_exe} -g $gru_start $gru_count -m {settings_path}/{filemanager} \\
-    --caf.scheduler.max-threads=$SLURM_CPUS_PER_TASK \\
+# Run SUMMA with config file
+{summa_path}/{summa_exe} -g $gru_start $gru_count \\
+    -m {settings_path}/{filemanager} \\
+    -c {actor_config} \\
     > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
 
-# Check exit status
-if [ $? -ne 0 ]; then
-    echo "SUMMA failed with exit code $?"
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "SUMMA failed with exit code $exit_code"
+    if [ -f core* ]; then
+        gdb {summa_path}/{summa_exe} core* -ex "bt" -ex "quit" > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt
+    fi
     exit 1
 fi
 
-# Create log directory and save run information
-log_path="{summa_out_path}/_workflow_log"
-mkdir -p $log_path
-
-# Log run details
-log_file="${{log_path}}/$(date '+%F')_SUMMA_run_log_grus_${{gru_start}}_${{gru_count}}.txt"
-echo "Log generated on $(date '+%F %H:%M:%S')" > $log_file
-echo "Ran SUMMA for ${{gru_count}} GRUs, starting at GRU ${{gru_start}}" >> $log_file
+# Log completion
+echo "Completed GRU $gru_start"
 """
         return script
 
