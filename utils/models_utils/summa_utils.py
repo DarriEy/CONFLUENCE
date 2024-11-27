@@ -291,34 +291,38 @@ class SummaRunner:
 
     def _create_actor_config(self, settings_path: Path):
         """Create SUMMA-Actors config.json file with conservative settings."""
+        # Create log directory first
+        log_dir = settings_path / "SUMMA_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
         config = {
             "Distributed_Settings": {
                 "distributed_mode": False,
                 "port": 4444,
-                "total_hru_count": -9999,  # Let SUMMA calculate this
+                "total_hru_count": -9999,
                 "num_hru_per_batch": 1,
                 "load_balancing": False,
                 "num_nodes": 1,
-                "servers_list": []  # Empty since we're not in distributed mode
+                "servers_list": []
             },
             "Summa_Actor": {
-                "max_gru_per_job": 1,  # Restrict to one GRU per job
+                "max_gru_per_job": 1,
                 "enable_logging": True,
-                "log_dir": str(settings_path / "SUMMA_logs")
+                "log_dir": str(log_dir)
             },
             "File_Access_Actor": {
-                "num_partitions_in_output_buffer": 1,  # Single partition for safety
-                "num_timesteps_in_output_buffer": 100  # Smaller buffer
+                "num_partitions_in_output_buffer": 1,
+                "num_timesteps_in_output_buffer": 100
             },
             "Job_Actor": {
                 "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
                 "max_run_attempts": 5,
                 "data_assimilation_mode": False,
-                "batch_size": 1  # Single batch
+                "batch_size": 1
             },
             "HRU_Actor": {
                 "print_output": True,
-                "output_frequency": 500  # More frequent output for debugging
+                "output_frequency": 500
             }
         }
         
@@ -331,23 +335,70 @@ class SummaRunner:
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
                             filemanager: str, summa_log_path: Path, summa_out_path: Path,
                             total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+        
         actor_config = self._create_actor_config(settings_path)
         
         script = f"""#!/bin/bash
-[previous SLURM directives remain the same]
+#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
+#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
+#SBATCH --mem=64G
+#SBATCH --constraint=broadwell
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --job-name=Summa-Actors
+#SBATCH --output={summa_log_path}/summa_%A_%a.out
+#SBATCH --error={summa_log_path}/summa_%A_%a.err
+#SBATCH --array=0-{n_array_jobs}
 
-# Enable core dumps with more detail
-ulimit -c unlimited
-export TBBMALLOC_USE_HUGE_PAGES=1
-export CAF_LOG_LEVEL=DEBUG
-export CAF_STREAM_MAX_CONSECUTIVE_READS=50
-export CAF_WORK_STEALING_AGGRESSIVE_POLL_ATTEMPTS=100
-export CAF_WORK_STEALING_AGGRESSIVE_STEAL_INTERVAL=10
-export CAF_LOGGER_FILE={summa_log_path}/caf_log_${{SLURM_ARRAY_TASK_ID}}.txt
+# Set thread behavior
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export CAF_NUM_WORKERS=1
 
-# Change to log directory and ensure it exists
-cd {summa_log_path} || mkdir -p {summa_log_path}
-mkdir -p {summa_out_path}
+# Create all necessary directories
+echo "Creating directories..."
+for dir in \\
+    {summa_log_path} \\
+    {summa_out_path} \\
+    {settings_path}/SUMMA_logs
+do
+    mkdir -p $dir
+    if [ ! -d "$dir" ]; then
+        echo "ERROR: Failed to create directory: $dir"
+        exit 1
+    else
+        echo "Created/verified directory: $dir"
+        ls -ld "$dir"
+    fi
+done
+
+# Verify files
+echo "Checking required files..."
+required_files=(
+    "{settings_path}/coldState.nc"
+    "{settings_path}/attributes.nc"
+    "{settings_path}/trialParams.nc"
+    "{settings_path}/forcingFileList.txt"
+    "{settings_path}/modelDecisions.txt"
+    "{settings_path}/outputControl.txt"
+    "{settings_path}/localParamInfo.txt"
+    "{settings_path}/basinParamInfo.txt"
+    "{settings_path}/TBL_VEGPARM.TBL"
+    "{settings_path}/TBL_SOILPARM.TBL"
+    "{settings_path}/TBL_GENPARM.TBL"
+    "{settings_path}/TBL_MPTABLE.TBL"
+)
+
+for file in "${{required_files[@]}}"; do
+    if [ ! -f "$file" ]; then
+        echo "ERROR: Required file not found: $file"
+        exit 1
+    else
+        echo "Found: $file"
+        ls -l "$file"
+    fi
+done
 
 # Calculate GRU range
 gru_max={total_grus}
@@ -355,50 +406,30 @@ gru_count=1
 offset=$SLURM_ARRAY_TASK_ID
 gru_start=$(( 1 + offset ))
 
-echo "=== Job Info ===" > job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-echo "Node: $(hostname)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-echo "Start time: $(date)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-echo "Directory: $(pwd)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-echo "Memory info:" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-free -h >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Starting job for GRU $gru_start at $(date)"
+echo "Environment settings:"
+env | grep -E 'OMP|MKL|CAF|SUMMA'
 
-# Set thread behavior
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export CAF_NUM_WORKERS=1
-export CAF_NO_WORK_STEALING=1
-export CAF_STEALING_CALLS=0
+# Run SUMMA with config file
+command="{summa_path}/{summa_exe} -g $gru_start $gru_count -m {settings_path}/{filemanager} -c {actor_config}"
+echo "Executing: $command"
 
-# Run with strace for debugging if it fails
-{summa_path}/{summa_exe} -g $gru_start $gru_count \\
-    -m {settings_path}/{filemanager} \\
-    -c {actor_config} || \\
-    strace -f -o {summa_log_path}/strace_${{SLURM_ARRAY_TASK_ID}}.txt \\
-    {summa_path}/{summa_exe} -g $gru_start $gru_count \\
-    -m {settings_path}/{filemanager} \\
-    -c {actor_config}
-summa_exit=$?
-echo "Exit code: $summa_exit" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+$command > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2> {summa_log_path}/summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
 
-# Handle any core dumps
-if [ $summa_exit -ne 0 ]; then
-    echo "=== Error Information ===" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+    echo "SUMMA failed with exit code $exit_code"
+    echo "Directory contents:"
+    ls -lR {settings_path} > {summa_log_path}/files_${{SLURM_ARRAY_TASK_ID}}.txt
     if [ -f core* ]; then
-        echo "Found core dump, generating analysis" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-        for core in core*; do
-            gdb {summa_path}/{summa_exe} $core -ex "thread apply all bt full" -ex "info registers" -ex "quit" \\
-                > backtrace_${{SLURM_ARRAY_TASK_ID}}_$(date +%s).txt 2>/dev/null
-        done
+        gdb {summa_path}/{summa_exe} core* -ex "thread apply all bt full" -ex "info registers" -ex "quit" \\
+            > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt 2>/dev/null
     fi
-    
-    # Collect system state
-    echo "=== System State ===" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-    top -b -n 1 >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-    free -h >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
-    
+    cat {summa_log_path}/summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
     exit 1
 fi
+
+echo "Job completed for GRU $gru_start at $(date)"
 """
         return script
 
