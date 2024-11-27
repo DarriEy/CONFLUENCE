@@ -290,7 +290,7 @@ class SummaRunner:
             raise
 
     def _create_actor_config(self, settings_path: Path):
-        """Create SUMMA-Actors config.json file."""
+        """Create SUMMA-Actors config.json file with conservative settings."""
         config = {
             "Distributed_Settings": {
                 "distributed_mode": False,
@@ -302,23 +302,25 @@ class SummaRunner:
             "Summa_Actor": {
                 "max_gru_per_job": 1,
                 "enable_logging": True,
-                "log_directory": str(settings_path / "SUMMA_logs")
+                "log_directory": str(settings_path / "SUMMA_logs"),
+                "use_synchronous_mode": True  # Force synchronous execution
             },
             "File_Access_Actor": {
-                "num_partitions_in_output_buffer": 4,  # Reduced from 8
-                "num_timesteps_in_output_buffer": 100,  # Reduced from 250
-                "output_file_suffix": ""
+                "num_partitions_in_output_buffer": 1,  # Single partition
+                "num_timesteps_in_output_buffer": 100,
+                "output_file_suffix": "",
+                "buffer_mode": "synchronous"  # Force synchronous I/O
             },
             "Job_Actor": {
                 "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
-                "max_run_attempts": 5,  # Increased from 3
+                "max_run_attempts": 5,
                 "data_assimilation_mode": False,
                 "batch_size": 1
             },
             "HRU_Actor": {
                 "print_output": True,
-                "output_frequency": 500,  # More frequent output
-                "dt_init_factor": 0.5  # Added to be more conservative with timesteps
+                "output_frequency": 500,
+                "dt_init_factor": 0.5
             }
         }
         
@@ -361,12 +363,22 @@ echo "Directory: $(pwd)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
 echo "Memory info:" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
 free -h >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
 
-# Run SUMMA with memory profiling
-/usr/bin/time -v {summa_path}/{summa_exe} -g $gru_start $gru_count \\
-    -m {settings_path}/{filemanager} \\
-    -c {actor_config} \\
-    > summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2> summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
+# Set thread behavior
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export CAF_NUM_WORKERS=1
+export CAF_NO_WORK_STEALING=1
+export CAF_STEALING_CALLS=0
 
+# Run with strace for debugging if it fails
+{summa_path}/{summa_exe} -g $gru_start $gru_count \\
+    -m {settings_path}/{filemanager} \\
+    -c {actor_config} || \\
+    strace -f -o {summa_log_path}/strace_${{SLURM_ARRAY_TASK_ID}}.txt \\
+    {summa_path}/{summa_exe} -g $gru_start $gru_count \\
+    -m {settings_path}/{filemanager} \\
+    -c {actor_config}
 summa_exit=$?
 echo "Exit code: $summa_exit" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
 
