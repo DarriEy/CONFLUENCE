@@ -189,15 +189,15 @@ class VariableHandler:
             self.logger.error(f"Unsupported model: {self.model}")
             raise ValueError(f"Unsupported model: {self.model}")
 
-    def get_dataset_variables(self, dataset: Optional[str] = None) -> list:
+    def get_dataset_variables(self, dataset: Optional[str] = None) -> str:
         """
-        Get the list of forcing variable keys for a specified dataset.
+        Get the forcing variable keys for a specified dataset as a comma-separated string.
         
         Args:
             dataset (Optional[str]): Name of the dataset. If None, uses the instance's dataset.
             
         Returns:
-            list: List of variable keys for the specified dataset
+            str: Comma-separated string of variable keys for the specified dataset
             
         Raises:
             ValueError: If the specified dataset is not supported
@@ -210,7 +210,7 @@ class VariableHandler:
             self.logger.error(f"Unsupported dataset: {dataset_name}")
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         
-        return list(self.DATASET_MAPPINGS[dataset_name].keys())
+        return ','.join(self.DATASET_MAPPINGS[dataset_name].keys())
     
     def process_forcing_data(self, data: xr.Dataset) -> xr.Dataset:
         """Process forcing data by mapping variable names and converting units."""
