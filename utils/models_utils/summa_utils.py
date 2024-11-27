@@ -272,9 +272,8 @@ class SummaRunner:
         script_path.chmod(0o755)  # Make executable
         
         # Submit job
-        
         try:
-            '''
+            
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -293,7 +292,7 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
-            '''
+            
             return self.merge_parallel_outputs()
             
         except Exception as e:
@@ -411,85 +410,105 @@ echo "Completed all GRUs for this job"
     def merge_parallel_outputs(self):
         """
         Merge parallel SUMMA outputs into MizuRoute-readable files.
-        This function is called after parallel SUMMA execution completes.
+        Handles both daily and timestep outputs, then cleans up individual GRU files.
         """
         self.logger.info("Starting to merge parallel SUMMA outputs")
         
         # Get experiment settings
         experiment_id = self.config.get('EXPERIMENT_ID')
         summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
-        mizu_in_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/mizuRoute/input/")
+        mizu_in_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
         mizu_in_path.mkdir(parents=True, exist_ok=True)
         
         # Get time settings
         start_year = int(self.config.get('EXPERIMENT_TIME_START').split('-')[0])
         end_year = int(self.config.get('EXPERIMENT_TIME_END').split('-')[0])
         
-        # Source file pattern (all GRU outputs)
-        src_pattern = f"{experiment_id}_G*_day.nc"
+        # Define patterns for both daily and timestep files
+        file_patterns = {
+            'day': {'src': f"{experiment_id}_G*_day.nc", 'dest': f"{experiment_id}_{{year}}_day.nc"},
+            'timestep': {'src': f"{experiment_id}_G*_timestep.nc", 'dest': f"{experiment_id}_{{year}}_timestep.nc"}
+        }
         
         # Define the variable we want to extract for MizuRoute
         src_variable = 'averageRoutedRunoff'
         
-        # Output file pattern for MizuRoute
-        dest_pattern = f"{experiment_id}_{{year}}.nc"
-        
         try:
-            # Process each year
-            for year in range(start_year, end_year + 1):
-                self.logger.info(f"Processing year {year}")
+            # Process each file type (day and timestep)
+            for file_type, patterns in file_patterns.items():
+                self.logger.info(f"Processing {file_type} files")
                 
-                # Check if output already exists
-                output_file = mizu_in_path / dest_pattern.format(year=year)
-                if output_file.exists():
-                    self.logger.info(f"Output file for {year} already exists, skipping")
-                    continue
-                
-                # Get all source files for this year
-                src_files = list(summa_out_path.glob(src_pattern))
-                src_files.sort()
-                
-                if not src_files:
-                    self.logger.warning(f"No source files found matching pattern: {src_pattern}")
-                    continue
-                
-                # Initialize merged dataset
-                merged_ds = None
-                
-                # Process each GRU file
-                for src_file in src_files:
-                    try:
-                        # Open dataset and select the year
-                        ds = xr.open_dataset(src_file)
-                        ds = ds.sel(time=str(year))
-                        
-                        # Keep only the variable needed for MizuRoute
-                        for var in list(ds.data_vars):
-                            if var != src_variable:
-                                ds = ds.drop_vars(var)
-                        
-                        # Merge with existing data
-                        if merged_ds is None:
-                            merged_ds = ds
-                        else:
-                            merged_ds = xr.merge([merged_ds, ds])
-                        
-                        ds.close()
-                        
-                    except Exception as e:
-                        self.logger.error(f"Error processing file {src_file}: {str(e)}")
+                # Process each year
+                for year in range(start_year, end_year + 1):
+                    self.logger.info(f"Processing year {year} for {file_type} files")
+                    
+                    # Check if output already exists
+                    output_file = mizu_in_path / patterns['dest'].format(year=year)
+                    if output_file.exists():
+                        self.logger.info(f"Output file for {year} ({file_type}) already exists, skipping")
                         continue
-                
-                # Save merged data
-                if merged_ds is not None:
-                    merged_ds.to_netcdf(output_file)
-                    self.logger.info(f"Successfully created merged file for {year}: {output_file}")
-                    merged_ds.close()
-                
-            self.logger.info("SUMMA output merging completed successfully")
+                    
+                    # Get all source files for this year
+                    src_files = list(summa_out_path.glob(patterns['src']))
+                    src_files.sort()
+                    
+                    if not src_files:
+                        self.logger.warning(f"No source files found matching pattern: {patterns['src']}")
+                        continue
+                    
+                    # Initialize merged dataset
+                    merged_ds = None
+                    
+                    # Process each GRU file
+                    for src_file in src_files:
+                        try:
+                            # Open dataset and select the year
+                            ds = xr.open_dataset(src_file)
+                            ds = ds.sel(time=str(year))
+                            
+                            # Keep only the variable needed for MizuRoute
+                            for var in list(ds.data_vars):
+                                if var != src_variable:
+                                    ds = ds.drop_vars(var)
+                            
+                            # Merge with existing data
+                            if merged_ds is None:
+                                merged_ds = ds
+                            else:
+                                merged_ds = xr.merge([merged_ds, ds])
+                            
+                            ds.close()
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error processing file {src_file}: {str(e)}")
+                            continue
+                    
+                    # Save merged data
+                    if merged_ds is not None:
+                        merged_ds.to_netcdf(output_file)
+                        self.logger.info(f"Successfully created merged file for {year} ({file_type}): {output_file}")
+                        merged_ds.close()
+            
+            # Cleanup: remove individual GRU files after successful merging
+            self.logger.info("Starting cleanup of individual GRU files")
+            patterns_to_remove = [
+                f"{experiment_id}_G*_day.nc",
+                f"{experiment_id}_G*_timestep.nc"
+            ]
+            
+            files_removed = 0
+            for pattern in patterns_to_remove:
+                for file_path in summa_out_path.glob(pattern):
+                    try:
+                        file_path.unlink()
+                        files_removed += 1
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove file {file_path}: {str(e)}")
+            
+            self.logger.info(f"Cleanup completed. Removed {files_removed} individual GRU files")
             return mizu_in_path
             
         except Exception as e:
-            self.logger.error(f"Error merging SUMMA outputs: {str(e)}")
+            self.logger.error(f"Error in SUMMA output processing: {str(e)}")
             raise
 
