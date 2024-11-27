@@ -9,6 +9,7 @@ import xarray as xr # type: ignore
 from typing import Dict, Any, Optional
 import subprocess
 import json
+import time
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -283,10 +284,18 @@ class SummaRunner:
                 backup_path = summa_out_path / "run_settings"
                 self._backup_settings(settings_path, backup_path)
                 
-            return job_id
+            # Wait for SLURM job to complete
+            while True:
+                result = subprocess.run(f"squeue -j {job_id}", shell=True, capture_output=True, text=True)
+                if result.stdout.count('\n') <= 1:  # Only header line remains
+                    break
+                time.sleep(60)  # Check every minute
             
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to submit SLURM job: {e}")
+            self.logger.info("SUMMA parallel run completed, starting output merge")
+            return self.merge_parallel_outputs()
+            
+        except Exception as e:
+            self.logger.error(f"Error in parallel SUMMA workflow: {str(e)}")
             raise
 
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
@@ -300,7 +309,7 @@ class SummaRunner:
 #SBATCH --constraint=broadwell
 #SBATCH --exclusive
 #SBATCH --nodes=1
-#SBATCH --job-name=Summa-Actors
+#SBATCH --job-name=Summa-Parallel
 #SBATCH --output={summa_log_path}/summa_%A_%a.out
 #SBATCH --error={summa_log_path}/summa_%A_%a.err
 #SBATCH --array=0-{n_array_jobs}
@@ -309,66 +318,36 @@ class SummaRunner:
 mkdir -p {summa_out_path}
 mkdir -p {summa_log_path}
 
-# Calculate GRU number
-gru_start=$(( 1 + $SLURM_ARRAY_TASK_ID ))
+# Calculate GRU range for this job
+gru_start=$(( ({grus_per_job} * $SLURM_ARRAY_TASK_ID) + 1 ))
+gru_end=$(( gru_start + {grus_per_job} - 1 ))
 
-echo "Processing GRU $gru_start"
-
-# Run SUMMA
-{summa_path}/{summa_exe} -g $gru_start 1 -m {settings_path}/{filemanager}
-
-exit_code=$?
-if [ $exit_code -ne 0 ]; then
-    echo "SUMMA failed for GRU $gru_start with exit code $exit_code"
-    exit 1
+# Ensure we don't exceed total GRUs
+if [ $gru_end -gt {total_grus} ]; then
+    gru_end={total_grus}
 fi
 
-echo "Completed GRU $gru_start"
+echo "Processing GRUs $gru_start to $gru_end"
+
+# Process each GRU in the range
+for gru in $(seq $gru_start $gru_end); do
+    echo "Starting GRU $gru"
+    
+    # Run SUMMA
+    {summa_path}/{summa_exe} -g $gru 1 -m {settings_path}/{filemanager}
+    
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "SUMMA failed for GRU $gru with exit code $exit_code"
+        exit 1
+    fi
+    
+    echo "Completed GRU $gru"
+done
+
+echo "Completed all GRUs for this job"
 """
         return script
-
-    def _create_actor_config(self, settings_path: Path):
-        """Create SUMMA-Actors config.json file."""
-        # Create log directory 
-        log_dir = settings_path / "SUMMA_logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        config = {
-        "Distributed_Settings": {
-            "distributed_mode": False,
-            "port": 4444,
-            "total_hru_count": -9999,
-            "num_hru_per_batch": 1,
-            "load_balancing": False,
-            "num_nodes": 1,
-            "servers_list": []
-        },
-        "Summa_Actor": {
-            "max_gru_per_job": 1,
-            "enable_logging": True,
-            "log_dir": str(log_dir)
-        },
-        "File_Access_Actor": {
-            "num_partitions_in_output_buffer": 1,
-            "num_timesteps_in_output_buffer": 100
-        },
-        "Job_Actor": {
-            "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
-            "max_run_attempts": 5,
-            "data_assimilation_mode": False,
-            "batch_size": 1
-        },
-        "HRU_Actor": {
-            "print_output": True,
-            "output_frequency": 500
-        }
-        }
-        
-        config_path = settings_path / "config.json"
-        with open(config_path, 'w') as f:
-            json.dump(config, f, indent=4)
-        
-        return config_path
 
     def run_summa_serial(self):
         """
@@ -426,4 +405,89 @@ echo "Completed GRU $gru_start"
         backup_path.mkdir(parents=True, exist_ok=True)
         os.system(f"cp -R {source_path}/. {backup_path}")
         self.logger.info(f"Settings backed up to {backup_path}")
+
+    def merge_parallel_outputs(self):
+        """
+        Merge parallel SUMMA outputs into MizuRoute-readable files.
+        This function is called after parallel SUMMA execution completes.
+        """
+        self.logger.info("Starting to merge parallel SUMMA outputs")
+        
+        # Get experiment settings
+        experiment_id = self.config.get('EXPERIMENT_ID')
+        summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
+        mizu_in_path = self._get_config_path('EXPERIMENT_INPUT_MIZUROUTE', f"simulations/{experiment_id}/mizuRoute/input/")
+        mizu_in_path.mkdir(parents=True, exist_ok=True)
+        
+        # Get time settings
+        start_year = int(self.config.get('EXPERIMENT_TIME_START').split('-')[0])
+        end_year = int(self.config.get('EXPERIMENT_TIME_END').split('-')[0])
+        
+        # Source file pattern (all GRU outputs)
+        src_pattern = f"{experiment_id}_G*_day.nc"
+        
+        # Define the variable we want to extract for MizuRoute
+        src_variable = 'averageRoutedRunoff'
+        
+        # Output file pattern for MizuRoute
+        dest_pattern = f"{experiment_id}_{{year}}.nc"
+        
+        try:
+            # Process each year
+            for year in range(start_year, end_year + 1):
+                self.logger.info(f"Processing year {year}")
+                
+                # Check if output already exists
+                output_file = mizu_in_path / dest_pattern.format(year=year)
+                if output_file.exists():
+                    self.logger.info(f"Output file for {year} already exists, skipping")
+                    continue
+                
+                # Get all source files for this year
+                src_files = list(summa_out_path.glob(src_pattern))
+                src_files.sort()
+                
+                if not src_files:
+                    self.logger.warning(f"No source files found matching pattern: {src_pattern}")
+                    continue
+                
+                # Initialize merged dataset
+                merged_ds = None
+                
+                # Process each GRU file
+                for src_file in src_files:
+                    try:
+                        # Open dataset and select the year
+                        ds = xr.open_dataset(src_file)
+                        ds = ds.sel(time=str(year))
+                        
+                        # Keep only the variable needed for MizuRoute
+                        for var in list(ds.data_vars):
+                            if var != src_variable:
+                                ds = ds.drop_vars(var)
+                        
+                        # Merge with existing data
+                        if merged_ds is None:
+                            merged_ds = ds
+                        else:
+                            merged_ds = xr.merge([merged_ds, ds])
+                        
+                        ds.close()
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error processing file {src_file}: {str(e)}")
+                        continue
+                
+                # Save merged data
+                if merged_ds is not None:
+                    merged_ds.to_netcdf(output_file)
+                    self.logger.info(f"Successfully created merged file for {year}: {output_file}")
+                    merged_ds.close()
+                
+            self.logger.info("SUMMA output merging completed successfully")
+            return mizu_in_path
+            
+        except Exception as e:
+            self.logger.error(f"Error merging SUMMA outputs: {str(e)}")
+            raise
 
