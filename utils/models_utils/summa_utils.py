@@ -294,40 +294,39 @@ class SummaRunner:
         config = {
             "Distributed_Settings": {
                 "distributed_mode": False,
-                "servers_list": [],
                 "port": 4444,
-                "total_hru_count": self.config.get('SETTINGS_SUMMA_GRU_COUNT', 800),
-                "num_hru_per_batch": 1
+                "total_hru_count": -9999,  # Let SUMMA calculate this
+                "num_hru_per_batch": 1,
+                "load_balancing": False,
+                "num_nodes": 1,
+                "servers_list": []  # Empty since we're not in distributed mode
             },
             "Summa_Actor": {
-                "max_gru_per_job": 1,
+                "max_gru_per_job": 1,  # Restrict to one GRU per job
                 "enable_logging": True,
-                "log_directory": str(settings_path / "SUMMA_logs"),
-                "use_synchronous_mode": True  # Force synchronous execution
+                "log_dir": str(settings_path / "SUMMA_logs")
             },
             "File_Access_Actor": {
-                "num_partitions_in_output_buffer": 1,  # Single partition
-                "num_timesteps_in_output_buffer": 100,
-                "output_file_suffix": "",
-                "buffer_mode": "synchronous"  # Force synchronous I/O
+                "num_partitions_in_output_buffer": 1,  # Single partition for safety
+                "num_timesteps_in_output_buffer": 100  # Smaller buffer
             },
             "Job_Actor": {
                 "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
                 "max_run_attempts": 5,
                 "data_assimilation_mode": False,
-                "batch_size": 1
+                "batch_size": 1  # Single batch
             },
             "HRU_Actor": {
                 "print_output": True,
-                "output_frequency": 500,
-                "dt_init_factor": 0.5
+                "output_frequency": 500  # More frequent output for debugging
             }
         }
         
-        config_file = settings_path / "config.json"
-        with open(config_file, 'w') as f:
+        config_path = settings_path / "config.json"
+        with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
-        return config_file
+            
+        return config_path
 
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
                             filemanager: str, summa_log_path: Path, summa_out_path: Path,
