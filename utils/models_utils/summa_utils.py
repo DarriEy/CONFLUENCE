@@ -304,7 +304,7 @@ class SummaRunner:
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
 #SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem=64G
+#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM_LIMIT')}
 #SBATCH --constraint=broadwell
 #SBATCH --exclusive
 #SBATCH --nodes=1
@@ -415,7 +415,7 @@ echo "Completed all GRUs for this job"
         # Get experiment settings
         experiment_id = self.config.get('EXPERIMENT_ID')
         summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
-        mizu_in_path = self._get_config_path('EXPERIMENT_INPUT_MIZUROUTE', f"simulations/{experiment_id}/mizuRoute/input/")
+        mizu_in_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/mizuRoute/input/")
         mizu_in_path.mkdir(parents=True, exist_ok=True)
         
         # Get time settings
