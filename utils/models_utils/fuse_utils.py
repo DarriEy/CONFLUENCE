@@ -964,29 +964,15 @@ class FuseDecisionAnalyzer:
             start_date = max(start_date, sim.index.min())
             end_date = min(end_date, sim.index.max())
         
-        # Create the plot
-        plt.figure(figsize=(15, 10))
-        
-        # Plot all simulations in light gray (only overlapping period)
-        for combo, sim in self.simulation_results.items():
-            sim_overlap = sim.loc[start_date:end_date]
-            plt.plot(sim_overlap.index, sim_overlap.values, 
-                    color='lightgray', alpha=0.3, linewidth=0.5)
-        
-        # Plot top 5% in blue (only overlapping period)
+        # Calculate y-axis limit from top 5% simulations
+        max_top5 = 0
         for _, row in top_combinations.iterrows():
             combo = tuple(row[list(self.decision_options.keys())])
             if combo in self.simulation_results:
                 sim = self.simulation_results[combo]
                 sim_overlap = sim.loc[start_date:end_date]
-                plt.plot(sim_overlap.index, sim_overlap.values, 
-                        color='blue', alpha=0.3, linewidth=1)
-        
-        # Plot observed streamflow in red (only overlapping period)
-        obs_overlap = self.observed_streamflow.loc[start_date:end_date]
-        plt.plot(obs_overlap.index, obs_overlap.values, 
-                color='red', linewidth=2, label='Observed')
-        
+                max_top5 = max(max_top5, sim_overlap.max())
+
         # Customize plot
         plt.title(f'Hydrograph Comparison ({start_date.strftime("%Y-%m-%d")} to {end_date.strftime("%Y-%m-%d")})\n'
                  f'Top 5% combinations by {metric} metric highlighted', 
@@ -994,6 +980,7 @@ class FuseDecisionAnalyzer:
         plt.xlabel('Date', fontsize=12)
         plt.ylabel('Streamflow (m³/s)', fontsize=12)
         plt.grid(True, alpha=0.3)
+        plt.ylim(0, max_top5 * 1.1)  # Add 10% padding above the maximum value
         
         # Add legend
         plt.plot([], [], color='lightgray', label='All combinations')

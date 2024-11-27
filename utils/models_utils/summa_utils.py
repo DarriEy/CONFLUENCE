@@ -8,7 +8,6 @@ import geopandas as gpd # type: ignore
 import xarray as xr # type: ignore
 from typing import Dict, Any, Optional
 import subprocess
-import json
 import time
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
