@@ -289,34 +289,19 @@ class SummaRunner:
             raise
 
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
-                            filemanager: str, summa_log_path: Path, summa_out_path: Path,
-                            total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
-        """
-        Create SLURM submission script for parallel SUMMA execution.
-        
-        Args:
-            summa_path: Path to SUMMA executable
-            summa_exe: Name of SUMMA executable
-            settings_path: Path to SUMMA settings
-            filemanager: Name of filemanager file
-            summa_log_path: Path for SUMMA logs
-            summa_out_path: Path for SUMMA output
-            total_grus: Total number of GRUs
-            grus_per_job: Number of GRUs per job
-            n_array_jobs: Number of array jobs (0-based)
-            
-        Returns:
-            str: Content of SLURM submission script
-        """
+                        filemanager: str, summa_log_path: Path, summa_out_path: Path,
+                        total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+        """Create SLURM submission script for parallel SUMMA execution."""
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
 #SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM')}
+#SBATCH --mem=32G           # Set explicit memory rather than 0
 #SBATCH --constraint=broadwell
 #SBATCH --exclusive
 #SBATCH --nodes=1
 #SBATCH --job-name=Summa-Actors
-#SBATCH --output=%x-%j.out
+#SBATCH --output={summa_log_path}/summa_%A_%a.out
+#SBATCH --error={summa_log_path}/summa_%A_%a.err
 #SBATCH --array=0-{n_array_jobs}
 
 # Load required modules
@@ -325,6 +310,10 @@ module load gcc/12.3
 module load flexiblas/3.3.1
 module load netcdf-fortran/4.6.1
 module load hdf5/1.14.2
+
+# Create output directories with error checking
+mkdir -p {summa_log_path} || {{ echo "Failed to create log directory"; exit 1; }}
+mkdir -p {summa_out_path} || {{ echo "Failed to create output directory"; exit 1; }}
 
 # Calculate GRU range for this job
 gru_max={total_grus}
@@ -341,14 +330,25 @@ fi
 
 echo "Processing GRUs $gru_start to $(( gru_start + gru_count - 1 ))"
 
-# Create output directories
-mkdir -p {summa_log_path}
-mkdir -p {summa_out_path}
+# Verify input files exist
+if [ ! -f "{settings_path}/{filemanager}" ]; then
+    echo "Error: File manager not found at {settings_path}/{filemanager}"
+    exit 1
+fi
 
-# Run SUMMA
+# Add delay between job starts to prevent I/O contention
+sleep $(( RANDOM % 10 ))
+
+# Run SUMMA with error checking
 {summa_path}/{summa_exe} -g $gru_start $gru_count -m {settings_path}/{filemanager} \\
     --caf.scheduler.max-threads=$SLURM_CPUS_PER_TASK \\
     > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
+
+# Check exit status
+if [ $? -ne 0 ]; then
+    echo "SUMMA failed with exit code $?"
+    exit 1
+fi
 
 # Create log directory and save run information
 log_path="{summa_out_path}/_workflow_log"
