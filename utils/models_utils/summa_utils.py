@@ -289,53 +289,10 @@ class SummaRunner:
             self.logger.error(f"Failed to submit SLURM job: {e}")
             raise
 
-    def _create_actor_config(self, settings_path: Path):
-        """Create SUMMA-Actors config.json file with conservative settings."""
-        # Create log directory first
-        log_dir = settings_path / "SUMMA_logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        config = {
-            "Distributed_Settings": {
-                "distributed_mode": False,
-                "port": 4444,
-                "total_hru_count": -9999,
-                "num_hru_per_batch": 1,
-                "load_balancing": False,
-                "num_nodes": 1,
-                "servers_list": []
-            },
-            "Summa_Actor": {
-                "max_gru_per_job": 1,
-                "enable_logging": True,
-                "log_dir": str(log_dir)
-            },
-            "File_Access_Actor": {
-                "num_partitions_in_output_buffer": 1,
-                "num_timesteps_in_output_buffer": 100
-            },
-            "Job_Actor": {
-                "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
-                "max_run_attempts": 5,
-                "data_assimilation_mode": False,
-                "batch_size": 1
-            },
-            "HRU_Actor": {
-                "print_output": True,
-                "output_frequency": 500
-            }
-        }
-        
-        config_path = settings_path / "config.json"
-        with open(config_path, 'w') as f:
-            json.dump(config, f, indent=4)
-            
-        return config_path
-
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
-                            filemanager: str, summa_log_path: Path, summa_out_path: Path,
-                            total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
-        
+                        filemanager: str, summa_log_path: Path, summa_out_path: Path,
+                        total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+    
         actor_config = self._create_actor_config(settings_path)
         
         script = f"""#!/bin/bash
@@ -356,49 +313,18 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export CAF_NUM_WORKERS=1
 
-# Create all necessary directories
-echo "Creating directories..."
-for dir in \\
-    {summa_log_path} \\
-    {summa_out_path} \\
-    {settings_path}/SUMMA_logs
-do
-    mkdir -p $dir
-    if [ ! -d "$dir" ]; then
-        echo "ERROR: Failed to create directory: $dir"
-        exit 1
-    else
-        echo "Created/verified directory: $dir"
-        ls -ld "$dir"
-    fi
-done
+# Analysis function
+analyze_gru() {{
+gru_num=$1
+echo "=== Analyzing GRU $gru_num ==="
+echo "Attributes data for GRU $gru_num:"
+ncdump -v GRU,hruId {settings_path}/attributes.nc | grep "GRU = $gru_num" -A 10
+echo "Forcing file check:"
+grep "gru_$gru_num" {settings_path}/forcingFileList.txt
+}}
 
-# Verify files
-echo "Checking required files..."
-required_files=(
-    "{settings_path}/coldState.nc"
-    "{settings_path}/attributes.nc"
-    "{settings_path}/trialParams.nc"
-    "{settings_path}/forcingFileList.txt"
-    "{settings_path}/modelDecisions.txt"
-    "{settings_path}/outputControl.txt"
-    "{settings_path}/localParamInfo.txt"
-    "{settings_path}/basinParamInfo.txt"
-    "{settings_path}/TBL_VEGPARM.TBL"
-    "{settings_path}/TBL_SOILPARM.TBL"
-    "{settings_path}/TBL_GENPARM.TBL"
-    "{settings_path}/TBL_MPTABLE.TBL"
-)
-
-for file in "${{required_files[@]}}"; do
-    if [ ! -f "$file" ]; then
-        echo "ERROR: Required file not found: $file"
-        exit 1
-    else
-        echo "Found: $file"
-        ls -l "$file"
-    fi
-done
+# Create output directories
+mkdir -p {summa_log_path} {summa_out_path} {settings_path}/SUMMA_logs
 
 # Calculate GRU range
 gru_max={total_grus}
@@ -406,32 +332,74 @@ gru_count=1
 offset=$SLURM_ARRAY_TASK_ID
 gru_start=$(( 1 + offset ))
 
-echo "Starting job for GRU $gru_start at $(date)"
-echo "Environment settings:"
-env | grep -E 'OMP|MKL|CAF|SUMMA'
+# Pre-run analysis
+analyze_gru $gru_start > {summa_log_path}/analysis_pre_${{SLURM_ARRAY_TASK_ID}}.txt
 
-# Run SUMMA with config file
-command="{summa_path}/{summa_exe} -g $gru_start $gru_count -m {settings_path}/{filemanager} -c {actor_config}"
-echo "Executing: $command"
-
-$command > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2> {summa_log_path}/summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
+# Run SUMMA
+echo "Starting SUMMA run for GRU $gru_start"
+{summa_path}/{summa_exe} -g $gru_start $gru_count \\
+-m {settings_path}/{filemanager} \\
+-c {actor_config} \\
+> {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
 
 exit_code=$?
 if [ $exit_code -ne 0 ]; then
-    echo "SUMMA failed with exit code $exit_code"
-    echo "Directory contents:"
-    ls -lR {settings_path} > {summa_log_path}/files_${{SLURM_ARRAY_TASK_ID}}.txt
-    if [ -f core* ]; then
-        gdb {summa_path}/{summa_exe} core* -ex "thread apply all bt full" -ex "info registers" -ex "quit" \\
-            > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt 2>/dev/null
-    fi
-    cat {summa_log_path}/summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
-    exit 1
+echo "SUMMA failed for GRU $gru_start with exit code $exit_code"
+echo "=== Error Analysis ===" > {summa_log_path}/error_${{SLURM_ARRAY_TASK_ID}}.txt
+tail -n 20 {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt >> {summa_log_path}/error_${{SLURM_ARRAY_TASK_ID}}.txt
+if [ -f core* ]; then
+    gdb {summa_path}/{summa_exe} core* -ex "thread apply all bt full" -ex "quit" \\
+        > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt 2>/dev/null
+fi
+exit 1
 fi
 
-echo "Job completed for GRU $gru_start at $(date)"
+echo "Job completed for GRU $gru_start"
 """
         return script
+
+    def _create_actor_config(self, settings_path: Path):
+        """Create SUMMA-Actors config.json file."""
+        # Create log directory 
+        log_dir = settings_path / "SUMMA_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        config = {
+        "Distributed_Settings": {
+            "distributed_mode": False,
+            "port": 4444,
+            "total_hru_count": -9999,
+            "num_hru_per_batch": 1,
+            "load_balancing": False,
+            "num_nodes": 1,
+            "servers_list": []
+        },
+        "Summa_Actor": {
+            "max_gru_per_job": 1,
+            "enable_logging": True,
+            "log_dir": str(log_dir)
+        },
+        "File_Access_Actor": {
+            "num_partitions_in_output_buffer": 1,
+            "num_timesteps_in_output_buffer": 100
+        },
+        "Job_Actor": {
+            "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
+            "max_run_attempts": 5,
+            "data_assimilation_mode": False,
+            "batch_size": 1
+        },
+        "HRU_Actor": {
+            "print_output": True,
+            "output_frequency": 500
+        }
+        }
+        
+        config_path = settings_path / "config.json"
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=4)
+        
+        return config_path
 
     def run_summa_serial(self):
         """
