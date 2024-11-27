@@ -290,10 +290,8 @@ class SummaRunner:
             raise
 
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
-                        filemanager: str, summa_log_path: Path, summa_out_path: Path,
-                        total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
-    
-        actor_config = self._create_actor_config(settings_path)
+                            filemanager: str, summa_log_path: Path, summa_out_path: Path,
+                            total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
         
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
@@ -307,54 +305,25 @@ class SummaRunner:
 #SBATCH --error={summa_log_path}/summa_%A_%a.err
 #SBATCH --array=0-{n_array_jobs}
 
-# Set thread behavior
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export CAF_NUM_WORKERS=1
+# Create required directories
+mkdir -p {summa_out_path}
+mkdir -p {summa_log_path}
 
-# Analysis function
-analyze_gru() {{
-gru_num=$1
-echo "=== Analyzing GRU $gru_num ==="
-echo "Attributes data for GRU $gru_num:"
-ncdump -v GRU,hruId {settings_path}/attributes.nc | grep "GRU = $gru_num" -A 10
-echo "Forcing file check:"
-grep "gru_$gru_num" {settings_path}/forcingFileList.txt
-}}
+# Calculate GRU number
+gru_start=$(( 1 + $SLURM_ARRAY_TASK_ID ))
 
-# Create output directories
-mkdir -p {summa_log_path} {summa_out_path} {settings_path}/SUMMA_logs
-
-# Calculate GRU range
-gru_max={total_grus}
-gru_count=1
-offset=$SLURM_ARRAY_TASK_ID
-gru_start=$(( 1 + offset ))
-
-# Pre-run analysis
-analyze_gru $gru_start > {summa_log_path}/analysis_pre_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Processing GRU $gru_start"
 
 # Run SUMMA
-echo "Starting SUMMA run for GRU $gru_start"
-{summa_path}/{summa_exe} -g $gru_start $gru_count \\
--m {settings_path}/{filemanager} \\
--c {actor_config} \\
-> {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
+{summa_path}/{summa_exe} -g $gru_start 1 -m {settings_path}/{filemanager}
 
 exit_code=$?
 if [ $exit_code -ne 0 ]; then
-echo "SUMMA failed for GRU $gru_start with exit code $exit_code"
-echo "=== Error Analysis ===" > {summa_log_path}/error_${{SLURM_ARRAY_TASK_ID}}.txt
-tail -n 20 {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt >> {summa_log_path}/error_${{SLURM_ARRAY_TASK_ID}}.txt
-if [ -f core* ]; then
-    gdb {summa_path}/{summa_exe} core* -ex "thread apply all bt full" -ex "quit" \\
-        > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt 2>/dev/null
-fi
-exit 1
+    echo "SUMMA failed for GRU $gru_start with exit code $exit_code"
+    exit 1
 fi
 
-echo "Job completed for GRU $gru_start"
+echo "Completed GRU $gru_start"
 """
         return script
 
