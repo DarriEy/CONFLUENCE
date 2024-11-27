@@ -322,8 +322,9 @@ class SummaRunner:
 # Load required modules
 module load StdEnv/2023
 module load gcc/12.3
-module load openblas/0.3.24
+module load flexiblas/3.3.1
 module load netcdf-fortran/4.6.1
+module load hdf5/1.14.2
 
 # Calculate GRU range for this job
 gru_max={total_grus}
