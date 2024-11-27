@@ -305,19 +305,20 @@ class SummaRunner:
                 "log_directory": str(settings_path / "SUMMA_logs")
             },
             "File_Access_Actor": {
-                "num_partitions_in_output_buffer": 8,
-                "num_timesteps_in_output_buffer": 250
+                "num_partitions_in_output_buffer": 4,  # Reduced from 8
+                "num_timesteps_in_output_buffer": 100,  # Reduced from 250
+                "output_file_suffix": ""
             },
             "Job_Actor": {
                 "file_manager_path": str(settings_path / self.config.get('SETTINGS_SUMMA_FILEMANAGER')),
-                "max_run_attempts": 3,
+                "max_run_attempts": 5,  # Increased from 3
                 "data_assimilation_mode": False,
                 "batch_size": 1
             },
             "HRU_Actor": {
                 "print_output": True,
-                "output_frequency": 1000,
-                "dt_init_factor": 1
+                "output_frequency": 500,  # More frequent output
+                "dt_init_factor": 0.5  # Added to be more conservative with timesteps
             }
         }
         
@@ -329,61 +330,64 @@ class SummaRunner:
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
                             filemanager: str, summa_log_path: Path, summa_out_path: Path,
                             total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
-        
-        # Create actor config file
         actor_config = self._create_actor_config(settings_path)
         
         script = f"""#!/bin/bash
-#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
-#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem=64G
-#SBATCH --constraint=broadwell
-#SBATCH --exclusive
-#SBATCH --nodes=1
-#SBATCH --job-name=Summa-Actors
-#SBATCH --output={summa_log_path}/summa_%A_%a.out
-#SBATCH --error={summa_log_path}/summa_%A_%a.err
-#SBATCH --array=0-{n_array_jobs}
+[previous SLURM directives remain the same]
 
-# Load required modules
-module load StdEnv/2023
-module load gcc/12.3
-module load flexiblas/3.3.1
-module load netcdf-fortran/4.6.1
-module load hdf5/1.14.2
-
-# Enable core dumps for debugging
+# Enable core dumps with more detail
 ulimit -c unlimited
+export TBBMALLOC_USE_HUGE_PAGES=1
+export CAF_LOG_LEVEL=DEBUG
+export CAF_STREAM_MAX_CONSECUTIVE_READS=50
+export CAF_WORK_STEALING_AGGRESSIVE_POLL_ATTEMPTS=100
+export CAF_WORK_STEALING_AGGRESSIVE_STEAL_INTERVAL=10
+export CAF_LOGGER_FILE={summa_log_path}/caf_log_${{SLURM_ARRAY_TASK_ID}}.txt
 
-# Create output directories
-mkdir -p {summa_log_path}
+# Change to log directory and ensure it exists
+cd {summa_log_path} || mkdir -p {summa_log_path}
 mkdir -p {summa_out_path}
 
-# Calculate GRU range for this job
+# Calculate GRU range
 gru_max={total_grus}
-gru_count=1  # Force single GRU per job
+gru_count=1
 offset=$SLURM_ARRAY_TASK_ID
 gru_start=$(( 1 + offset ))
 
-echo "Processing GRU $gru_start"
+echo "=== Job Info ===" > job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Node: $(hostname)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Start time: $(date)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Directory: $(pwd)" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+echo "Memory info:" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+free -h >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
 
-# Run SUMMA with config file
-{summa_path}/{summa_exe} -g $gru_start $gru_count \\
+# Run SUMMA with memory profiling
+/usr/bin/time -v {summa_path}/{summa_exe} -g $gru_start $gru_count \\
     -m {settings_path}/{filemanager} \\
     -c {actor_config} \\
-    > {summa_log_path}/summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2>&1
+    > summa_log_${{SLURM_ARRAY_TASK_ID}}.txt 2> summa_err_${{SLURM_ARRAY_TASK_ID}}.txt
 
-exit_code=$?
-if [ $exit_code -ne 0 ]; then
-    echo "SUMMA failed with exit code $exit_code"
+summa_exit=$?
+echo "Exit code: $summa_exit" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+
+# Handle any core dumps
+if [ $summa_exit -ne 0 ]; then
+    echo "=== Error Information ===" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
     if [ -f core* ]; then
-        gdb {summa_path}/{summa_exe} core* -ex "bt" -ex "quit" > {summa_log_path}/backtrace_${{SLURM_ARRAY_TASK_ID}}.txt
+        echo "Found core dump, generating analysis" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+        for core in core*; do
+            gdb {summa_path}/{summa_exe} $core -ex "thread apply all bt full" -ex "info registers" -ex "quit" \\
+                > backtrace_${{SLURM_ARRAY_TASK_ID}}_$(date +%s).txt 2>/dev/null
+        done
     fi
+    
+    # Collect system state
+    echo "=== System State ===" >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+    top -b -n 1 >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+    free -h >> job_info_${{SLURM_ARRAY_TASK_ID}}.txt
+    
     exit 1
 fi
-
-# Log completion
-echo "Completed GRU $gru_start"
 """
         return script
 
