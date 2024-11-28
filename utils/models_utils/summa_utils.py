@@ -2320,11 +2320,16 @@ echo "Completed all GRUs for this job"
                     try:
                         ds = xr.open_dataset(src_file)
                         
-                        # Ensure time encoding is correct
-                        ds.time.encoding.update({
-                            'units': 'seconds since 1990-1-1 0:0:0.0 -0:00',
-                            'calendar': 'standard'
-                        })
+                        # Convert time to seconds since reference date
+                        reference_date = pd.Timestamp('1990-01-01')
+                        time_values = pd.to_datetime(ds.time.values)
+                        seconds_since_ref = (time_values - reference_date).total_seconds()
+                        
+                        # Replace the time coordinate with seconds since reference
+                        ds = ds.assign_coords(time=seconds_since_ref)
+                        ds.time.attrs['units'] = 'seconds since 1990-1-1 0:0:0.0 -0:00'
+                        ds.time.attrs['calendar'] = 'standard'
+                        ds.time.attrs['long_name'] = 'time since time reference (instant)'
                         
                         # Merge with existing data
                         if merged_ds is None:
@@ -2338,7 +2343,7 @@ echo "Completed all GRUs for this job"
                         self.logger.error(f"Error processing file {src_file}: {str(e)}")
                         continue
                 
-                # Save merged data with correct encoding
+                # Save merged data
                 if merged_ds is not None:
                     # Create encoding dict for all variables
                     encoding = {
@@ -2362,13 +2367,18 @@ echo "Completed all GRUs for this job"
                             'summaVersion': '',
                             'buildTime': '',
                             'gitBranch': '',
-                            'gitHash': ''
+                            'gitHash': '',
                         }
                     
+                    # Update merged dataset attributes
+                    merged_ds.attrs.update(global_attrs)
+                    
+                    # Save to netCDF
                     merged_ds.to_netcdf(
                         output_file,
                         encoding=encoding,
-                        unlimited_dims=['time']
+                        unlimited_dims=['time'],
+                        format='NETCDF4'
                     )
                     self.logger.info(f"Successfully created merged file: {output_file}")
                     merged_ds.close()
