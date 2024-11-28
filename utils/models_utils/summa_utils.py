@@ -2327,9 +2327,13 @@ echo "Completed all GRUs for this job"
                         
                         # Replace the time coordinate with seconds since reference
                         ds = ds.assign_coords(time=seconds_since_ref)
-                        ds.time.attrs['units'] = 'seconds since 1990-1-1 0:0:0.0 -0:00'
-                        ds.time.attrs['calendar'] = 'standard'
-                        ds.time.attrs['long_name'] = 'time since time reference (instant)'
+                        
+                        # Set time attributes
+                        ds.time.attrs = {
+                            'units': 'seconds since 1990-1-1 0:0:0.0 -0:00',
+                            'calendar': 'standard',
+                            'long_name': 'time since time reference (instant)'
+                        }
                         
                         # Merge with existing data
                         if merged_ds is None:
@@ -2349,8 +2353,6 @@ echo "Completed all GRUs for this job"
                     encoding = {
                         'time': {
                             'dtype': 'double',
-                            'units': 'seconds since 1990-1-1 0:0:0.0 -0:00',
-                            'calendar': 'standard',
                             '_FillValue': None
                         }
                     }
