@@ -10,13 +10,22 @@ import shutil
 from scipy import stats # type: ignore
 import argparse
 
+# Import CONFLUENCE Utility functions
 sys.path.append(str(Path(__file__).resolve().parent))
 
+# Data and config management utilities 
 from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor, DataAcquisitionProcessor # type: ignore  
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
+from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
+from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
+from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger, log_configuration # type: ignore
+
+# Domain definition utilities
 from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
+
+# Model specific utilities
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
 from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
@@ -24,13 +33,14 @@ from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocesso
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
 from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
 from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
-from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
-from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
-from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
-from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger, log_configuration # type: ignore
+
+# Evaluation utilities
 from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
-from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
+
+# Reporting utilities
+from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
+from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
 
 class CONFLUENCE:
 
@@ -305,9 +315,9 @@ class CONFLUENCE:
         fr.run_resampling()
 
         # Prepare run the MAF Orchestrator
-        dap = DataAcquisitionProcessor(self.config, self.logger)
-        dap.run_data_acquisition()
-
+        if 'MESH' in self.config.get('HYDROLOGICAL_MODEL').split(',') or 'HYPE' in self.config.get('HYDROLOGICAL_MODEL').split(','):
+            dap = DataAcquisitionProcessor(self.config, self.logger)
+            dap.run_data_acquisition()
        
     @get_function_logger
     def process_observed_data(self):
