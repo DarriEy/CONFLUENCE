@@ -274,7 +274,7 @@ class SummaRunner:
         # Submit job
         
         try:
-            
+            '''
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -293,7 +293,7 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
-            
+            '''
             return self.merge_parallel_outputs()
             
         except Exception as e:
@@ -446,9 +446,9 @@ echo "Completed all GRUs for this job"
                         ds = xr.open_dataset(src_file)
                         
                         # Keep only the variable needed for MizuRoute
-                        for var in list(ds.data_vars):
-                            if var != src_variable:
-                                ds = ds.drop_vars(var)
+                        #for var in list(ds.data_vars):
+                        ##    if var != src_variable:
+                         #       ds = ds.drop_vars(var)
                         
                         # Merge with existing data
                         if merged_ds is None:
@@ -482,9 +482,9 @@ echo "Completed all GRUs for this job"
                         ds = xr.open_dataset(src_file)
                         
                         # Keep only the variable needed for MizuRoute
-                        for var in list(ds.data_vars):
-                            if var != src_variable:
-                                ds = ds.drop_vars(var)
+                        #for var in list(ds.data_vars):
+                        #    if var != src_variable:
+                        #        ds = ds.drop_vars(var)
                         
                         # Merge with existing data
                         if merged_ds is None:
