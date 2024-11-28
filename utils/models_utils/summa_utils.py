@@ -2287,6 +2287,7 @@ echo "Completed all GRUs for this job"
         Merge parallel SUMMA outputs into two MizuRoute-readable files:
         one for timestep data and one for daily data.
         This function is called after parallel SUMMA execution completes.
+        Preserves all variables from the original SUMMA output.
         """
         self.logger.info("Starting to merge parallel SUMMA outputs")
         
@@ -2305,24 +2306,25 @@ echo "Completed all GRUs for this job"
             timestep_pattern = f"{experiment_id}_G*_timestep.nc"
             daily_pattern = f"{experiment_id}_G*_day.nc"
             
-            # Define the variable we want to extract for MizuRoute
-            src_variable = 'averageRoutedRunoff'
-            
-            # Process timestep files
-            self.logger.info("Processing timestep files")
-            timestep_files = list(summa_out_path.glob(timestep_pattern))
-            timestep_files.sort()
-            
-            if timestep_files:
+            def process_and_merge_files(file_pattern, output_file):
+                self.logger.info(f"Processing files matching {file_pattern}")
+                input_files = list(summa_out_path.glob(file_pattern))
+                input_files.sort()
+                
+                if not input_files:
+                    self.logger.warning(f"No files found matching pattern: {file_pattern}")
+                    return
+                
                 merged_ds = None
-                for src_file in timestep_files:
+                for src_file in input_files:
                     try:
                         ds = xr.open_dataset(src_file)
                         
-                        # Keep only the variable needed for MizuRoute
-                        #for var in list(ds.data_vars):
-                        ##    if var != src_variable:
-                         #       ds = ds.drop_vars(var)
+                        # Ensure time encoding is correct
+                        ds.time.encoding.update({
+                            'units': 'seconds since 1990-1-1 0:0:0.0 -0:00',
+                            'calendar': 'standard'
+                        })
                         
                         # Merge with existing data
                         if merged_ds is None:
@@ -2333,52 +2335,47 @@ echo "Completed all GRUs for this job"
                         ds.close()
                         
                     except Exception as e:
-                        self.logger.error(f"Error processing timestep file {src_file}: {str(e)}")
+                        self.logger.error(f"Error processing file {src_file}: {str(e)}")
                         continue
                 
-                # Save merged timestep data
+                # Save merged data with correct encoding
                 if merged_ds is not None:
-                    merged_ds.to_netcdf(timestep_output)
-                    self.logger.info(f"Successfully created merged timestep file: {timestep_output}")
+                    # Create encoding dict for all variables
+                    encoding = {
+                        'time': {
+                            'dtype': 'double',
+                            'units': 'seconds since 1990-1-1 0:0:0.0 -0:00',
+                            'calendar': 'standard',
+                            '_FillValue': None
+                        }
+                    }
+                    
+                    # Add encoding for all other variables
+                    for var in merged_ds.data_vars:
+                        encoding[var] = {'_FillValue': None}
+                    
+                    # Preserve the original attributes
+                    if 'summaVersion' in merged_ds.attrs:
+                        global_attrs = merged_ds.attrs
+                    else:
+                        global_attrs = {
+                            'summaVersion': '',
+                            'buildTime': '',
+                            'gitBranch': '',
+                            'gitHash': ''
+                        }
+                    
+                    merged_ds.to_netcdf(
+                        output_file,
+                        encoding=encoding,
+                        unlimited_dims=['time']
+                    )
+                    self.logger.info(f"Successfully created merged file: {output_file}")
                     merged_ds.close()
-            else:
-                self.logger.warning(f"No timestep files found matching pattern: {timestep_pattern}")
             
-            # Process daily files
-            self.logger.info("Processing daily files")
-            daily_files = list(summa_out_path.glob(daily_pattern))
-            daily_files.sort()
-            
-            if daily_files:
-                merged_ds = None
-                for src_file in daily_files:
-                    try:
-                        ds = xr.open_dataset(src_file)
-                        
-                        # Keep only the variable needed for MizuRoute
-                        #for var in list(ds.data_vars):
-                        #    if var != src_variable:
-                        #        ds = ds.drop_vars(var)
-                        
-                        # Merge with existing data
-                        if merged_ds is None:
-                            merged_ds = ds
-                        else:
-                            merged_ds = xr.merge([merged_ds, ds])
-                        
-                        ds.close()
-                        
-                    except Exception as e:
-                        self.logger.error(f"Error processing daily file {src_file}: {str(e)}")
-                        continue
-                
-                # Save merged daily data
-                if merged_ds is not None:
-                    merged_ds.to_netcdf(daily_output)
-                    self.logger.info(f"Successfully created merged daily file: {daily_output}")
-                    merged_ds.close()
-            else:
-                self.logger.warning(f"No daily files found matching pattern: {daily_pattern}")
+            # Process both timestep and daily files
+            process_and_merge_files(timestep_pattern, timestep_output)
+            process_and_merge_files(daily_pattern, daily_output)
             
             self.logger.info("SUMMA output merging completed successfully")
             return mizu_in_path
