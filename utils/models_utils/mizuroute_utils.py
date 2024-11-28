@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import copyfile
 from datetime import datetime
 from typing import Dict, Any
-import easymore.easymore as esmr # type: ignore
+import easymore as esmr # type: ignore
 import subprocess
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))

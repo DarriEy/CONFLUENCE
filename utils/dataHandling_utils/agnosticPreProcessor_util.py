@@ -241,63 +241,65 @@ class forcingResampler:
     def remap_forcing(self):
         self.logger.info("Starting forcing remapping process")
         self._create_one_weighted_forcing_file()
-        self._create_all_weighted_forcing_files()
+        #self._create_all_weighted_forcing_files()
         self.logger.info("Forcing remapping process completed")
 
     def _create_one_weighted_forcing_file(self):
         self.logger.info("Creating one weighted forcing file")
         
         forcing_path = self.merged_forcing_path
-        esmr = easymore.easymore()
-
-        esmr.author_name = 'SUMMA public workflow scripts'
-        esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
-        esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
-
-        esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
-        esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
-
-        esmr.target_shp = self.catchment_path / self.catchment_name
-        esmr.target_shp_ID = self.config.get('CATCHMENT_SHP_HRUID')
-        esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
-        esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
-
         forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
-        var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
-        var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
+        for file in forcing_files:
+            esmr = easymore.Easymore()
 
-        esmr.source_nc = str(forcing_files[0])
-        esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
-        esmr.var_lat = var_lat 
-        esmr.var_lon = var_lon
-        esmr.var_time = 'time'
+            esmr.author_name = 'SUMMA public workflow scripts'
+            esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
+            esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
 
-        esmr.temp_dir = str(self.project_dir / 'forcing' / 'temp_easymore') + '/'
-        esmr.output_dir = str(self.forcing_basin_path) + '/'
+            esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
+            esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
+            esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
 
-        esmr.remapped_dim_id = 'hru'
-        esmr.remapped_var_id = 'hruId'
-        esmr.format_list = ['f4']
-        esmr.fill_value_list = ['-9999']
+            esmr.target_shp = self.catchment_path / self.catchment_name
+            esmr.target_shp_ID = self.config.get('CATCHMENT_SHP_HRUID')
+            esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
+            esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
 
-        esmr.save_csv = False
-        esmr.remap_csv = ''
-        esmr.sort_ID = False
+            
+            var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
+            var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
+        
+            esmr.source_nc = str(file)
+            esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
+            esmr.var_lat = var_lat 
+            esmr.var_lon = var_lon
+            esmr.var_time = 'time'
 
-        esmr.nc_remapper()
+            esmr.temp_dir = str(self.project_dir / 'forcing' / 'temp_easymore') + '/'
+            esmr.output_dir = str(self.forcing_basin_path) + '/'
 
-        # Move files to prescribed locations
-        remap_file = f"{esmr.case_name}_remapping.csv"
-        self.intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
-        self.intersect_path.mkdir(parents=True, exist_ok=True)
-        os.rename(os.path.join(esmr.temp_dir, remap_file), self.intersect_path / remap_file)
+            esmr.remapped_dim_id = 'hru'
+            esmr.remapped_var_id = 'hruId'
+            esmr.format_list = ['f4']
+            esmr.fill_value_list = ['-9999']
 
-        for file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
-            os.rename(file, self.intersect_path / file.name)
+            esmr.save_csv = False
+            esmr.remap_csv = ''
+            esmr.sort_ID = False
 
-        # Remove temporary directory
-        shutil.rmtree(esmr.temp_dir, ignore_errors=True)
+            esmr.nc_remapper()
+
+            # Move files to prescribed locations
+            remap_file = f"{esmr.case_name}_remapping.nc"
+            self.intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
+            self.intersect_path.mkdir(parents=True, exist_ok=True)
+            os.rename(os.path.join(esmr.temp_dir, remap_file), self.intersect_path / remap_file)
+
+            for file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
+                os.rename(file, self.intersect_path / file.name)
+
+            # Remove temporary directory
+            shutil.rmtree(esmr.temp_dir, ignore_errors=True)
 
     def _create_all_weighted_forcing_files(self):
         self.logger.info("Creating all weighted forcing files")
@@ -306,7 +308,7 @@ class forcingResampler:
         var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
         var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
 
-        esmr = easymore.easymore()
+        esmr = easymore.Easymore()
 
         esmr.author_name = 'SUMMA public workflow scripts'
         esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
@@ -326,7 +328,7 @@ class forcingResampler:
         esmr.fill_value_list = ['-9999']
 
         esmr.save_csv = False
-        esmr.remap_csv = str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_remapping.csv")
+        esmr.remap_csv = ''# str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_remapping.csv")
         esmr.sort_ID = False
         esmr.overwrite_existing_remap = False
 
