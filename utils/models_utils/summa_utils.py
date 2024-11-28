@@ -409,8 +409,8 @@ echo "Completed all GRUs for this job"
 
     def merge_parallel_outputs(self):
         """
-        Merge parallel SUMMA outputs into MizuRoute-readable files.
-        Handles both daily and timestep outputs, then cleans up individual GRU files.
+        Merge parallel SUMMA outputs into single MizuRoute-readable files for timestep and daily data.
+        Cleans up individual GRU files after merging.
         """
         self.logger.info("Starting to merge parallel SUMMA outputs")
         
@@ -420,74 +420,65 @@ echo "Completed all GRUs for this job"
         mizu_in_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
         mizu_in_path.mkdir(parents=True, exist_ok=True)
         
-        # Get time settings
-        start_year = int(self.config.get('EXPERIMENT_TIME_START').split('-')[0])
-        end_year = int(self.config.get('EXPERIMENT_TIME_END').split('-')[0])
-        
         # Define patterns for both daily and timestep files
         file_patterns = {
-            'day': {'src': f"{experiment_id}_G*_day.nc", 'dest': f"{experiment_id}_{{year}}_day.nc"},
-            'timestep': {'src': f"{experiment_id}_G*_timestep.nc", 'dest': f"{experiment_id}_{{year}}_timestep.nc"}
+            'day': {'src': f"{experiment_id}_G*_day.nc", 'dest': f"{experiment_id}_day.nc"},
+            'timestep': {'src': f"{experiment_id}_G*_timestep.nc", 'dest': f"{experiment_id}_timestep.nc"}
         }
         
         # Define the variable we want to extract for MizuRoute
         src_variable = 'averageRoutedRunoff'
         
         try:
+            # Initialize merged datasets for day and timestep
+            merged_ds_day = None
+            merged_ds_timestep = None
+            
             # Process each file type (day and timestep)
             for file_type, patterns in file_patterns.items():
                 self.logger.info(f"Processing {file_type} files")
                 
-                # Process each year
-                for year in range(start_year, end_year + 1):
-                    self.logger.info(f"Processing year {year} for {file_type} files")
-                    
-                    # Check if output already exists
-                    output_file = mizu_in_path / patterns['dest'].format(year=year)
-                    if output_file.exists():
-                        self.logger.info(f"Output file for {year} ({file_type}) already exists, skipping")
+                # Get all source files for this type
+                src_files = list(summa_out_path.glob(patterns['src']))
+                src_files.sort()
+                
+                if not src_files:
+                    self.logger.warning(f"No source files found matching pattern: {patterns['src']}")
+                    continue
+                
+                # Process each GRU file
+                for src_file in src_files:
+                    try:
+                        # Open dataset
+                        ds = xr.open_dataset(src_file)
+                        
+                        # Keep only the variable needed for MizuRoute
+                        for var in list(ds.data_vars):
+                            if var != src_variable:
+                                ds = ds.drop_vars(var)
+                        
+                        # Merge with existing data
+                        if file_type == 'day':
+                            merged_ds_day = ds if merged_ds_day is None else xr.merge([merged_ds_day, ds])
+                        else:  # timestep
+                            merged_ds_timestep = ds if merged_ds_timestep is None else xr.merge([merged_ds_timestep, ds])
+                        
+                        ds.close()
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error processing file {src_file}: {str(e)}")
                         continue
-                    
-                    # Get all source files for this year
-                    src_files = list(summa_out_path.glob(patterns['src']))
-                    src_files.sort()
-                    
-                    if not src_files:
-                        self.logger.warning(f"No source files found matching pattern: {patterns['src']}")
-                        continue
-                    
-                    # Initialize merged dataset
-                    merged_ds = None
-                    
-                    # Process each GRU file
-                    for src_file in src_files:
-                        try:
-                            # Open dataset and select the year
-                            ds = xr.open_dataset(src_file)
-                            ds = ds.sel(time=str(year))
-                            
-                            # Keep only the variable needed for MizuRoute
-                            for var in list(ds.data_vars):
-                                if var != src_variable:
-                                    ds = ds.drop_vars(var)
-                            
-                            # Merge with existing data
-                            if merged_ds is None:
-                                merged_ds = ds
-                            else:
-                                merged_ds = xr.merge([merged_ds, ds])
-                            
-                            ds.close()
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error processing file {src_file}: {str(e)}")
-                            continue
-                    
-                    # Save merged data
-                    if merged_ds is not None:
-                        merged_ds.to_netcdf(output_file)
-                        self.logger.info(f"Successfully created merged file for {year} ({file_type}): {output_file}")
-                        merged_ds.close()
+            
+            # Save merged data for day and timestep
+            if merged_ds_day is not None:
+                merged_ds_day.to_netcdf(mizu_in_path / patterns['dest'].format(year=''))  # Save as single day file
+                self.logger.info(f"Successfully created merged file for day: {mizu_in_path / patterns['dest'].format(year='')}")
+                merged_ds_day.close()
+                
+            if merged_ds_timestep is not None:
+                merged_ds_timestep.to_netcdf(mizu_in_path / patterns['dest'].format(year=''))  # Save as single timestep file
+                self.logger.info(f"Successfully created merged file for timestep: {mizu_in_path / patterns['dest'].format(year='')}")
+                merged_ds_timestep.close()
             
             # Cleanup: remove individual GRU files after successful merging
             self.logger.info("Starting cleanup of individual GRU files")
