@@ -76,6 +76,8 @@ class SummaPreProcessor_spatial:
 
         self.dem_path = self._get_default_path('DEM_PATH', f"attributes/elevation/dem/{dem_name}")
         self.forcing_basin_path = self.project_dir / 'forcing' / 'basin_averaged_data'
+        self.forcing_basin_path.mkdir(parents=True, exist_ok=True)
+
         self.forcing_summa_path = self.project_dir / 'forcing' / 'SUMMA_input'
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
