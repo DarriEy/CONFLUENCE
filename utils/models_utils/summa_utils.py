@@ -272,8 +272,9 @@ class SummaRunner:
         script_path.chmod(0o755)  # Make executable
         
         # Submit job
+        
         try:
-            
+            '''
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -292,7 +293,7 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
-            
+            '''
             return self.merge_parallel_outputs()
             
         except Exception as e:
@@ -409,8 +410,9 @@ echo "Completed all GRUs for this job"
 
     def merge_parallel_outputs(self):
         """
-        Merge parallel SUMMA outputs into single MizuRoute-readable files for timestep and daily data.
-        Cleans up individual GRU files after merging.
+        Merge parallel SUMMA outputs into two MizuRoute-readable files:
+        one for timestep data and one for daily data.
+        This function is called after parallel SUMMA execution completes.
         """
         self.logger.info("Starting to merge parallel SUMMA outputs")
         
@@ -420,36 +422,27 @@ echo "Completed all GRUs for this job"
         mizu_in_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
         mizu_in_path.mkdir(parents=True, exist_ok=True)
         
-        # Define patterns for both daily and timestep files
-        file_patterns = {
-            'day': {'src': f"{experiment_id}_G*_day.nc", 'dest': f"{experiment_id}_day.nc"},
-            'timestep': {'src': f"{experiment_id}_G*_timestep.nc", 'dest': f"{experiment_id}_timestep.nc"}
-        }
-        
-        # Define the variable we want to extract for MizuRoute
-        src_variable = 'averageRoutedRunoff'
-        
         try:
-            # Initialize merged datasets for day and timestep
-            merged_ds_day = None
-            merged_ds_timestep = None
+            # Define output files
+            timestep_output = mizu_in_path / f"{experiment_id}_timestep.nc"
+            daily_output = mizu_in_path / f"{experiment_id}_day.nc"
             
-            # Process each file type (day and timestep)
-            for file_type, patterns in file_patterns.items():
-                self.logger.info(f"Processing {file_type} files")
-                
-                # Get all source files for this type
-                src_files = list(summa_out_path.glob(patterns['src']))
-                src_files.sort()
-                
-                if not src_files:
-                    self.logger.warning(f"No source files found matching pattern: {patterns['src']}")
-                    continue
-                
-                # Process each GRU file
-                for src_file in src_files:
+            # Source file patterns
+            timestep_pattern = f"{experiment_id}_G*_timestep.nc"
+            daily_pattern = f"{experiment_id}_G*_day.nc"
+            
+            # Define the variable we want to extract for MizuRoute
+            src_variable = 'averageRoutedRunoff'
+            
+            # Process timestep files
+            self.logger.info("Processing timestep files")
+            timestep_files = list(summa_out_path.glob(timestep_pattern))
+            timestep_files.sort()
+            
+            if timestep_files:
+                merged_ds = None
+                for src_file in timestep_files:
                     try:
-                        # Open dataset
                         ds = xr.open_dataset(src_file)
                         
                         # Keep only the variable needed for MizuRoute
@@ -458,48 +451,65 @@ echo "Completed all GRUs for this job"
                                 ds = ds.drop_vars(var)
                         
                         # Merge with existing data
-                        if file_type == 'day':
-                            merged_ds_day = ds if merged_ds_day is None else xr.merge([merged_ds_day, ds])
-                        else:  # timestep
-                            merged_ds_timestep = ds if merged_ds_timestep is None else xr.merge([merged_ds_timestep, ds])
+                        if merged_ds is None:
+                            merged_ds = ds
+                        else:
+                            merged_ds = xr.merge([merged_ds, ds])
                         
                         ds.close()
                         
                     except Exception as e:
-                        self.logger.error(f"Error processing file {src_file}: {str(e)}")
+                        self.logger.error(f"Error processing timestep file {src_file}: {str(e)}")
                         continue
-            
-            # Save merged data for day and timestep
-            if merged_ds_day is not None:
-                merged_ds_day.to_netcdf(mizu_in_path / patterns['dest'].format(year=''))  # Save as single day file
-                self.logger.info(f"Successfully created merged file for day: {mizu_in_path / patterns['dest'].format(year='')}")
-                merged_ds_day.close()
                 
-            if merged_ds_timestep is not None:
-                merged_ds_timestep.to_netcdf(mizu_in_path / patterns['dest'].format(year=''))  # Save as single timestep file
-                self.logger.info(f"Successfully created merged file for timestep: {mizu_in_path / patterns['dest'].format(year='')}")
-                merged_ds_timestep.close()
+                # Save merged timestep data
+                if merged_ds is not None:
+                    merged_ds.to_netcdf(timestep_output)
+                    self.logger.info(f"Successfully created merged timestep file: {timestep_output}")
+                    merged_ds.close()
+            else:
+                self.logger.warning(f"No timestep files found matching pattern: {timestep_pattern}")
             
-            # Cleanup: remove individual GRU files after successful merging
-            self.logger.info("Starting cleanup of individual GRU files")
-            patterns_to_remove = [
-                f"{experiment_id}_G*_day.nc",
-                f"{experiment_id}_G*_timestep.nc"
-            ]
+            # Process daily files
+            self.logger.info("Processing daily files")
+            daily_files = list(summa_out_path.glob(daily_pattern))
+            daily_files.sort()
             
-            files_removed = 0
-            for pattern in patterns_to_remove:
-                for file_path in summa_out_path.glob(pattern):
+            if daily_files:
+                merged_ds = None
+                for src_file in daily_files:
                     try:
-                        file_path.unlink()
-                        files_removed += 1
+                        ds = xr.open_dataset(src_file)
+                        
+                        # Keep only the variable needed for MizuRoute
+                        for var in list(ds.data_vars):
+                            if var != src_variable:
+                                ds = ds.drop_vars(var)
+                        
+                        # Merge with existing data
+                        if merged_ds is None:
+                            merged_ds = ds
+                        else:
+                            merged_ds = xr.merge([merged_ds, ds])
+                        
+                        ds.close()
+                        
                     except Exception as e:
-                        self.logger.warning(f"Failed to remove file {file_path}: {str(e)}")
+                        self.logger.error(f"Error processing daily file {src_file}: {str(e)}")
+                        continue
+                
+                # Save merged daily data
+                if merged_ds is not None:
+                    merged_ds.to_netcdf(daily_output)
+                    self.logger.info(f"Successfully created merged daily file: {daily_output}")
+                    merged_ds.close()
+            else:
+                self.logger.warning(f"No daily files found matching pattern: {daily_pattern}")
             
-            self.logger.info(f"Cleanup completed. Removed {files_removed} individual GRU files")
+            self.logger.info("SUMMA output merging completed successfully")
             return mizu_in_path
             
         except Exception as e:
-            self.logger.error(f"Error in SUMMA output processing: {str(e)}")
+            self.logger.error(f"Error merging SUMMA outputs: {str(e)}")
             raise
 
