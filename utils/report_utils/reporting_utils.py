@@ -992,22 +992,44 @@ class VisualizationReporter:
             else:
                 legend_labels = [f'Class {i}' for i in unique_classes]
 
+                        
             # Get colors from the specified colormap
             base_cmap = plt.get_cmap(mapping['cm'])
-            
+
             # Handle cases where we need more colors than the base colormap provides
             if n_classes > base_cmap.N:
                 # Use multiple colormaps and combine them
                 additional_cmaps = ['Set3', 'Set2', 'Set1', 'Paired', 'tab20']
                 all_colors = []
-                for cmap_name in [mapping['cm']] + additional_cmaps:
-                    cmap = plt.get_cmap(cmap_name)
-                    all_colors.extend([cmap(i) for i in np.linspace(0, 1, cmap.N)])
+                
+                # First, get colors from the base colormap
+                all_colors.extend([base_cmap(i) for i in np.linspace(0, 1, base_cmap.N)])
+                
+                # Then add colors from additional colormaps until we have enough
+                for cmap_name in additional_cmaps:
                     if len(all_colors) >= n_classes:
                         break
-                colors = all_colors[:n_classes]
+                    cmap = plt.get_cmap(cmap_name)
+                    all_colors.extend([cmap(i) for i in np.linspace(0, 1, cmap.N)])
+                
+                # Ensure we have exactly n_classes colors by interpolating if necessary
+                if len(all_colors) < n_classes:
+                    # Convert colors to array for interpolation
+                    colors_array = np.array(all_colors)
+                    # Create evenly spaced indices
+                    indices = np.linspace(0, len(colors_array) - 1, n_classes)
+                    # Interpolate to get exactly n_classes colors
+                    colors = [colors_array[int(i)] if i < len(colors_array) else colors_array[-1] for i in indices]
+                else:
+                    # Take exactly n_classes colors
+                    colors = all_colors[:n_classes]
             else:
+                # If we have enough colors in the base colormap, use linear spacing
                 colors = [base_cmap(i) for i in np.linspace(0, 1, n_classes)]
+
+            # Ensure we have exactly n_classes colors
+            assert len(colors) == n_classes, f"Color mismatch: {len(colors)} colors for {n_classes} classes"
+
 
             # Create custom colormap and normalization
             cmap = ListedColormap(colors)
