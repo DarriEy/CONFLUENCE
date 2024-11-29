@@ -250,8 +250,6 @@ class forcingResampler:
         forcing_path = self.merged_forcing_path
         forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
         shp_id = self.config.get('CATCHMENT_SHP_HRUID')
-        if self.config['DOMAIN_DISCRETIZATION'] == 'GRUs':
-            shp_id = self.config['CATCHMENT_SHP_GRUID']
 
         for file in forcing_files:
             esmr = easymore.Easymore()

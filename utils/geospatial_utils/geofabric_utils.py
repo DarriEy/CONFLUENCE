@@ -28,6 +28,7 @@ import rasterio # type: ignore
 import numpy as np # type: ignore
 from shapely.geometry import Polygon # type: ignore
 import multiprocessing  
+from shapely.ops import unary_union # type: ignore
 import time
 
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -46,6 +47,7 @@ class GeofabricDelineator:
         self._set_taudem_path()
         self.max_retries = self.config.get('MAX_RETRIES', 3)
         self.retry_delay = self.config.get('RETRY_DELAY', 5)
+        self.min_gru_size = self.config.get('MIN_GRU_SIZE', 5.0)  # Default 1 km²
         #self.pour_point_path = self.project_dir / 'shapefiles' / 'pour_point' / f"{self.config['DOMAIN_NAME']}_pourPoint.shp"
 
     def _get_dem_path(self) -> Path:
@@ -88,7 +90,9 @@ class GeofabricDelineator:
             self.run_taudem_steps(self.dem_path, self.pour_point_path)
             self.run_gdal_processing()
             river_network_path, river_basins_path = self.subset_upstream_geofabric()
+
             self.cleanup()
+
             self.logger.info(f"Geofabric delineation completed for {self.domain_name}")
             return river_network_path, river_basins_path
         except Exception as e:
@@ -172,6 +176,128 @@ class GeofabricDelineator:
             self.run_command(f"-n {self.mpi_processes} {step}")
             self.logger.info(f"Completed TauDEM step: {step}")
 
+    def _clean_geometries(self, geometry):
+        """Clean and validate geometry."""
+        if geometry is None or not geometry.is_valid:
+            return None
+        try:
+            return geometry.buffer(0)
+        except:
+            return None
+
+    def _simplify_geometry(self, geometry, tolerance=1):
+        """Simplify geometry while preserving topology."""
+        try:
+            return geometry.simplify(tolerance, preserve_topology=True)
+        except:
+            return geometry
+
+    def _find_neighbors(self, geometry, gdf, exclude_idx):
+        """Find neighboring GRUs that share a boundary."""
+        return gdf[
+            (gdf.index != exclude_idx) & 
+            (gdf.geometry.boundary.intersects(geometry.boundary))
+        ]
+
+    def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Merge GRUs smaller than the minimum size threshold with their neighbors.
+        
+        Args:
+            gru_gdf (gpd.GeoDataFrame): Input GeoDataFrame containing GRUs
+            
+        Returns:
+            gpd.GeoDataFrame: GeoDataFrame with merged GRUs
+        """
+        self.logger.info(f"Starting GRU merging process (minimum size: {self.min_gru_size} km²)")
+        initial_count = len(gru_gdf)
+        
+        # Ensure CRS is geographic and convert to UTM for area calculations
+        gru_gdf.set_crs(epsg=4326, inplace=True)
+        utm_crs = gru_gdf.estimate_utm_crs()
+        gru_gdf_utm = gru_gdf.to_crs(utm_crs)
+        
+        # Clean geometries
+        gru_gdf_utm['geometry'] = gru_gdf_utm['geometry'].apply(self._clean_geometries)
+        gru_gdf_utm = gru_gdf_utm[gru_gdf_utm['geometry'].notnull()]
+        
+        # Store original boundary
+        original_boundary = unary_union(gru_gdf_utm.geometry)
+        
+        # Calculate areas in km²
+        gru_gdf_utm['area'] = gru_gdf_utm.geometry.area / 1_000_000
+        gru_gdf_utm = gru_gdf_utm.sort_values('area')
+        
+        merged_count = 0
+        while True:
+            small_grus = gru_gdf_utm[gru_gdf_utm['area'] < self.min_gru_size]
+            if len(small_grus) == 0:
+                break
+            
+            progress = False
+            for idx, small_gru in small_grus.iterrows():
+                try:
+                    small_gru_geom = self._clean_geometries(small_gru.geometry)
+                    if small_gru_geom is None:
+                        gru_gdf_utm = gru_gdf_utm.drop(idx)
+                        continue
+
+                    # Find neighbors and merge with the largest one
+                    neighbors = self._find_neighbors(small_gru_geom, gru_gdf_utm, idx)
+                    if len(neighbors) > 0:
+                        largest_neighbor = neighbors.loc[neighbors['area'].idxmax()]
+                        merged_geometry = unary_union([small_gru_geom, largest_neighbor.geometry])
+                        merged_geometry = self._simplify_geometry(merged_geometry)
+                        
+                        if merged_geometry and merged_geometry.is_valid:
+                            gru_gdf_utm.at[largest_neighbor.name, 'geometry'] = merged_geometry
+                            gru_gdf_utm.at[largest_neighbor.name, 'area'] = merged_geometry.area / 1_000_000
+                            gru_gdf_utm = gru_gdf_utm.drop(idx)
+                            merged_count += 1
+                            progress = True
+                    
+                except Exception as e:
+                    self.logger.error(f"Error merging GRU {idx}: {str(e)}")
+            
+            if not progress:
+                break
+            
+            gru_gdf_utm['area'] = gru_gdf_utm.geometry.area / 1_000_000
+            gru_gdf_utm = gru_gdf_utm.sort_values('area')
+        
+        # Ensure complete coverage
+        current_coverage = unary_union(gru_gdf_utm.geometry)
+        gaps = original_boundary.difference(current_coverage)
+        if not gaps.is_empty:
+            if gaps.geom_type == 'MultiPolygon':
+                gap_geoms = list(gaps.geoms)
+            else:
+                gap_geoms = [gaps]
+            
+            for gap in gap_geoms:
+                if gap.area > 0:
+                    nearest_gru = gru_gdf_utm.geometry.distance(gap.centroid).idxmin()
+                    merged_geom = self._clean_geometries(unary_union([gru_gdf_utm.at[nearest_gru, 'geometry'], gap]))
+                    if merged_geom and merged_geom.is_valid:
+                        gru_gdf_utm.at[nearest_gru, 'geometry'] = merged_geom
+                        gru_gdf_utm.at[nearest_gru, 'area'] = merged_geom.area / 1_000_000
+        
+        # Reset index and update IDs
+        gru_gdf_utm = gru_gdf_utm.reset_index(drop=True)
+        gru_gdf_utm['GRU_ID'] = range(1, len(gru_gdf_utm) + 1)
+        gru_gdf_utm['gru_to_seg'] = gru_gdf_utm['GRU_ID']
+        
+        # Convert back to original CRS
+        gru_gdf_merged = gru_gdf_utm.to_crs(gru_gdf.crs)
+        
+        self.logger.info(f"GRU merging statistics:")
+        self.logger.info(f"- Initial GRUs: {initial_count}")
+        self.logger.info(f"- Merged {merged_count} small GRUs")
+        self.logger.info(f"- Final GRUs: {len(gru_gdf_merged)}")
+        self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
+        
+        return gru_gdf_merged
+    
     def run_gdal_processing(self):
         """Convert watershed raster to polygon shapefile"""
         # Ensure output directory exists
@@ -249,6 +375,8 @@ class GeofabricDelineator:
                 subset_rivers = rivers[rivers['GRU_ID'].isin(upstream_basin_ids)].copy()
             else:
                 subset_basins, subset_rivers = basins, rivers
+            
+            subset_basins = self._merge_small_grus(subset_basins)
 
             self._save_geofabric(subset_basins, subset_rivers, subset_basins_path, subset_rivers_path)
             return subset_rivers_path, subset_basins_path

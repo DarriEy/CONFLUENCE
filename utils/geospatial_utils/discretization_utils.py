@@ -181,9 +181,6 @@ class DomainDiscretizer:
 
         gru_gdf = self._read_shapefile(gru_shapefile)
         gru_gdf['HRU_ID'] = range(1, len(gru_gdf) + 1)
-        #gru_gdf = gru_gdf.to_crs('epsg:3763')
-        #gru_gdf['HRU_area'] = gru_gdf.geometry.area 
-        #gru_gdf = gru_gdf.to_crs('epsg:4326')
         gru_gdf['hru_type'] = 'GRU'
 
         # Calculate mean elevation for each HRU
