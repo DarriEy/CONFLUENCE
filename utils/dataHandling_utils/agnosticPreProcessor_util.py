@@ -44,7 +44,7 @@ class forcingResampler:
 
     def run_resampling(self):
         self.logger.info("Starting forcing data resampling process")
-        self.create_shapefile()
+        #self.create_shapefile()
         self.remap_forcing()
         self.logger.info("Forcing data resampling process completed")
 
@@ -249,6 +249,10 @@ class forcingResampler:
         
         forcing_path = self.merged_forcing_path
         forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
+        shp_id = self.config.get('CATCHMENT_SHP_HRUID')
+        if self.config['DOMAIN_DISCRETIZATION'] == 'GRUs':
+            shp_id = self.config['CATCHMENT_SHP_GRUID']
+
         for file in forcing_files:
             esmr = easymore.Easymore()
 
@@ -261,7 +265,7 @@ class forcingResampler:
             esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
 
             esmr.target_shp = self.catchment_path / self.catchment_name
-            esmr.target_shp_ID = self.config.get('CATCHMENT_SHP_HRUID')
+            esmr.target_shp_ID = shp_id
             esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
             esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
 
