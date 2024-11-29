@@ -815,7 +815,25 @@ class SummaPreProcessor_spatial:
         self.logger.info("Starting to apply temperature lapse rate and add data step")
 
         # Find intersection file
-        intersect_name = f"{self.domain_name}_{self.config.get('FORCING_DATASET')}_intersected_shapefile.csv"
+        intersect_base = f"{self.domain_name}_{self.config.get('FORCING_DATASET')}_intersected_shapefile"
+        intersect_csv = self.intersect_path / f"{intersect_base}.csv"
+        intersect_shp = self.intersect_path / f"{intersect_base}.shp"
+
+        # If CSV doesn't exist but shapefile does, convert shapefile to CSV
+        if not intersect_csv.exists() and intersect_shp.exists():
+            self.logger.info(f"Converting {intersect_shp} to CSV format")
+            try:
+                shp_df = gpd.read_file(intersect_shp)
+                shp_df.to_csv(intersect_csv, index=False)
+                self.logger.info(f"Successfully created {intersect_csv}")
+            except Exception as e:
+                self.logger.error(f"Failed to convert shapefile to CSV: {str(e)}")
+                raise
+        elif not intersect_csv.exists() and not intersect_shp.exists():
+            raise FileNotFoundError(f"Neither {intersect_csv} nor {intersect_shp} exist")
+
+        # Continue with existing code using the CSV file
+        topo_data = pd.read_csv(intersect_csv)
         
         # Get forcing files
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
@@ -825,7 +843,7 @@ class SummaPreProcessor_spatial:
         self.forcing_summa_path.mkdir(parents=True, exist_ok=True)
 
         # Load area-weighted information for each basin
-        topo_data = pd.read_csv(self.intersect_path / intersect_name)
+        #topo_data = pd.read_csv(self.intersect_path / intersect_name)
 
         # Specify column names
         gru_id = f'S_1_{self.gruId}'
