@@ -850,7 +850,7 @@ class SummaPreProcessor_spatial:
         gru_id = f'S_1_{self.gruId}'
         hru_id = f'S_1_{self.hruId}'
         forcing_id = 'S_2_ID'
-        catchment_elev = 'S_1_elev_mean'
+        catchment_elev = 'S_1_elev_m'
         forcing_elev = 'S_2_elev_m'
         weights = 'weight'
 
