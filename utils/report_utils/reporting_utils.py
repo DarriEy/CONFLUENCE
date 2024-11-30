@@ -1320,3 +1320,137 @@ class VisualizationReporter:
             self.logger.error(f"Error creating FUSE streamflow comparison plot: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
+    
+    def plot_summa_outputs(self, experiment_id: str) -> Dict[str, str]:
+        """
+        Creates visualization plots for each variable in the SUMMA output file.
+        Each plot contains a map of the average value and a time series.
+        
+        Args:
+            experiment_id (str): ID of the experiment to plot
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping variable names to their plot file paths
+        """
+        try:
+            # Construct path to SUMMA output file
+            summa_output_file = self.project_dir / "simulations" / experiment_id / "SUMMA" / f"{experiment_id}_timestep.nc"
+            
+            if not summa_output_file.exists():
+                self.logger.error(f"SUMMA output file not found: {summa_output_file}")
+                return {}
+                
+            # Create output directory
+            plot_folder = self.project_dir / "plots" / "summa_outputs" / experiment_id
+            plot_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Load SUMMA output data
+            ds = xr.open_dataset(summa_output_file)
+            
+            # Load HRU shapefile for spatial plotting
+            hru_name = self.config.get('CATCHMENT_SHP_NAME')
+            if hru_name == 'default':
+                hru_name = f"{self.config.get('DOMAIN_NAME')}_HRUs_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+            hru_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', hru_name)
+            hru_gdf = gpd.read_file(hru_path)
+            
+            # Dictionary to store plot paths
+            plot_files = {}
+            
+            # Skip these variables as they're typically dimensions or metadata
+            skip_vars = {'hru', 'time', 'gru', 'dateId'}
+            
+            # Plot each variable
+            for var_name in ds.data_vars:
+                if var_name in skip_vars:
+                    continue
+                    
+                try:
+                    self.logger.info(f"Plotting variable: {var_name}")
+                    
+                    # Create figure with two subplots
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
+                    fig.suptitle(f'SUMMA Output: {var_name}', fontsize=16, fontweight='bold')
+                    
+                    # Calculate temporal mean for spatial plot
+                    var_mean = ds[var_name].mean(dim='time')
+                    
+                    # Create GeoDataFrame with mean values
+                    plot_gdf = hru_gdf.copy()
+                    plot_gdf['value'] = var_mean.values
+                    
+                    # Plot spatial distribution
+                    vmin, vmax = np.percentile(var_mean.values, [2, 98])  # Remove outliers
+                    plot_gdf.plot(column='value', 
+                                ax=ax1,
+                                legend=True,
+                                legend_kwds={'label': f'Mean {var_name}',
+                                        'orientation': 'horizontal'},
+                                vmin=vmin,
+                                vmax=vmax,
+                                cmap='viridis')
+                    
+                    # Add HRU boundaries
+                    plot_gdf.boundary.plot(ax=ax1, color='black', linewidth=0.5, alpha=0.5)
+                    
+                    # Add title and remove axes
+                    ax1.set_title(f'Spatial Distribution of Mean {var_name}', fontsize=12)
+                    ax1.set_axis_off()
+                    
+                    # Add scale bar and north arrow
+                    self._add_scale_bar(ax1)
+                    self._add_north_arrow(ax1)
+                    
+                    # Plot time series
+                    # Calculate mean, min, and max across HRUs
+                    mean_ts = ds[var_name].mean(dim='hru')
+                    min_ts = ds[var_name].min(dim='hru')
+                    max_ts = ds[var_name].max(dim='hru')
+                    
+                    # Plot mean line with shaded min-max range
+                    ax2.fill_between(mean_ts.time, min_ts, max_ts, 
+                                alpha=0.3, color='gray', label='HRU Range')
+                    ax2.plot(mean_ts.time, mean_ts, 
+                            color='blue', linewidth=1.5, label='Mean across HRUs')
+                    
+                    # Customize time series plot
+                    ax2.set_xlabel('Date', fontsize=12)
+                    ax2.set_ylabel(f'{var_name} {ds[var_name].units if hasattr(ds[var_name], "units") else ""}', 
+                                fontsize=12)
+                    ax2.set_title(f'Time Series of {var_name}', fontsize=12)
+                    ax2.grid(True, linestyle=':', alpha=0.6)
+                    ax2.legend()
+                    
+                    # Format x-axis to show years
+                    ax2.xaxis.set_major_locator(mdates.YearLocator())
+                    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                    
+                    # Add some basic statistics
+                    stats_text = (f"Statistics:\n"
+                                f"Mean: {float(mean_ts.mean()):.2f}\n"
+                                f"Min: {float(min_ts.min()):.2f}\n"
+                                f"Max: {float(max_ts.max()):.2f}")
+                    ax2.text(0.02, 0.98, stats_text,
+                            transform=ax2.transAxes,
+                            verticalalignment='top',
+                            bbox=dict(facecolor='white', alpha=0.7))
+                    
+                    # Adjust layout and save
+                    plt.tight_layout()
+                    plot_file = plot_folder / f'{var_name}.png'
+                    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    
+                    plot_files[var_name] = str(plot_file)
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error plotting variable {var_name}: {str(e)}")
+                    continue
+            
+            ds.close()
+            return plot_files
+            
+        except Exception as e:
+            self.logger.error(f"Error in plot_summa_outputs: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return {}

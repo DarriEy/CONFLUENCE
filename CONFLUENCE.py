@@ -430,6 +430,7 @@ class CONFLUENCE:
             visualizer = VisualizationReporter(self.config, self.logger)
 
             if model == 'SUMMA':
+                visualizer.plot_summa_outputs(self.config['EXPERIMENT_ID'])
                 if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
                     plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
                 else:
