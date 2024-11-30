@@ -11,9 +11,7 @@ from matplotlib.gridspec import GridSpec # type: ignore
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap # type: ignore
 import traceback
 import rasterio # type: ignore
-
-# New imports for domain plotting
-import contextily as ctx # type: ignore
+from matplotlib import gridspec
 from matplotlib_scalebar.scalebar import ScaleBar # type: ignore
 from matplotlib.lines import Line2D # type: ignore
 from matplotlib.patches import Patch # type: ignore
@@ -1373,8 +1371,11 @@ class VisualizationReporter:
                         self.logger.info(f"Skipping {var_name} - no time dimension")
                         continue
                     
-                    # Create figure with two subplots
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), dpi=150)  # Reduced DPI
+                    # Create figure with two subplots with adjusted heights
+                    fig = plt.figure(figsize=(12, 12))
+                    gs = gridspec.GridSpec(2, 1, height_ratios=[1.5, 1])
+                    ax1 = fig.add_subplot(gs[0])
+                    ax2 = fig.add_subplot(gs[1])
                     fig.suptitle(f'SUMMA Output: {var_name}', fontsize=16, fontweight='bold')
                     
                     # Calculate temporal mean for spatial plot using chunks
@@ -1397,19 +1398,82 @@ class VisualizationReporter:
                     ax1.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
                     
                     # Plot spatial distribution with simplified geometries
-                    plot_gdf.geometry = plot_gdf.geometry.simplify(tolerance=100)  # Simplify geometries
-                    vmin, vmax = np.percentile(var_mean.values, [2, 98])  # Remove outliers
-                    plot_gdf.plot(column='value', 
+                    plot_gdf.geometry = plot_gdf.geometry.simplify(tolerance=100)
+                    vmin, vmax = np.percentile(var_mean.values, [2, 98])
+                    plot = plot_gdf.plot(column='value', 
                                 ax=ax1,
                                 legend=True,
-                                legend_kwds={'label': f'Mean {var_name}',
-                                        'orientation': 'horizontal'},
+                                legend_kwds={
+                                    'label': f'Mean {var_name}',
+                                    'orientation': 'horizontal',
+                                    'fraction': 0.03,  # Make colorbar smaller
+                                    'pad': 0.01,  # Reduce padding
+                                    'aspect': 40  # Make colorbar thinner
+                                },
                                 vmin=vmin,
                                 vmax=vmax,
-                                cmap='viridis')
+                                cmap='RdYlBu_r')  # Changed colormap to Red-Yellow-Blue reversed
                     
                     # Add HRU boundaries with simplified geometries
-                    plot_gdf.boundary.plot(ax=ax1, color='black', linewidth=0.5, alpha=0.5)
+                    plot_gdf.boundary.plot(ax=ax1, color='black', linewidth=0.3, alpha=0.3)
+                    
+                    # Add title and remove axes
+                    ax1.set_title(f'Spatial Distribution of Mean {var_name}', fontsize=12)
+                    ax1.set_axis_off()
+                    
+                    # Add scale bar and north arrow
+                    self._add_scale_bar(ax1)
+                    self._add_north_arrow(ax1)
+                    
+                    # Plot time series using chunked computation
+                    time_series = ds[var_name].chunk({'time': -1, 'hru': 100})
+                    
+                    # Calculate appropriate resampling frequency
+                    n_points = len(time_series.time)
+                    if n_points > 10000:
+                        freq = 'W'
+                    elif n_points > 1000:
+                        freq = 'D'
+                    else:
+                        freq = None
+                    
+                    if freq:
+                        time_series = time_series.resample(time=freq).mean()
+                    
+                    # Only compute and plot the mean across HRUs
+                    mean_ts = time_series.mean(dim='hru').compute()
+                    
+                    # Further reduce points if still too many
+                    if len(mean_ts) > 1000:
+                        step = len(mean_ts) // 1000
+                        mean_ts = mean_ts[::step]
+                    
+                    # Plot only the mean line
+                    ax2.plot(mean_ts.time, mean_ts, 
+                            color='#1f77b4',  # Use a nice blue color
+                            linewidth=1.5,
+                            label='Mean across HRUs')
+                    
+                    # Customize time series plot
+                    ax2.set_xlabel('Date', fontsize=12)
+                    ax2.set_ylabel(f'{var_name} {ds[var_name].units if hasattr(ds[var_name], "units") else ""}', 
+                                fontsize=12)
+                    ax2.set_title(f'Time Series of {var_name}', fontsize=12)
+                    ax2.grid(True, linestyle=':', alpha=0.6)
+                    
+                    # Format x-axis to show years
+                    ax2.xaxis.set_major_locator(mdates.YearLocator())
+                    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                    
+                    # Add some basic statistics
+                    stats_text = (f"Statistics:\n"
+                                f"Mean: {float(mean_ts.mean()):.2f}\n"
+                                f"Min: {float(mean_ts.min()):.2f}\n"
+                                f"Max: {float(mean_ts.max()):.2f}")
+                    ax2.text(0.02, 0.98, stats_text,
+                            transform=ax2.transAxes,
+                            verticalalignment='top',
+                            bbox=dict(facecolor='white', alpha=0.7))
                     
                     # Add title and remove axes
                     ax1.set_title(f'Spatial Distribution of Mean {var_name}', fontsize=12)
