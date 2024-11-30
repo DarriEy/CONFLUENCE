@@ -1334,7 +1334,7 @@ class VisualizationReporter:
         """
         try:
             # Construct path to SUMMA output file
-            summa_output_file = self.project_dir / "simulations" / experiment_id / "SUMMA" / f"{experiment_id}_timestep.nc"
+            summa_output_file = self.project_dir / "simulations" / experiment_id / "SUMMA" / f"{experiment_id}_day.nc"
             
             if not summa_output_file.exists():
                 self.logger.error(f"SUMMA output file not found: {summa_output_file}")
@@ -1358,7 +1358,7 @@ class VisualizationReporter:
             plot_files = {}
             
             # Skip these variables as they're typically dimensions or metadata
-            skip_vars = {'hru', 'time', 'gru', 'dateId'}
+            skip_vars = {'hru', 'time', 'gru', 'dateId', 'latitude', 'longitude', 'hruId', 'gruId'}
             
             # Plot each variable
             for var_name in ds.data_vars:
@@ -1368,12 +1368,17 @@ class VisualizationReporter:
                 try:
                     self.logger.info(f"Plotting variable: {var_name}")
                     
+                    # Check if variable has time dimension
+                    if 'time' not in ds[var_name].dims:
+                        self.logger.info(f"Skipping {var_name} - no time dimension")
+                        continue
+                    
                     # Create figure with two subplots
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), dpi=150)  # Reduced DPI
                     fig.suptitle(f'SUMMA Output: {var_name}', fontsize=16, fontweight='bold')
                     
-                    # Calculate temporal mean for spatial plot
-                    var_mean = ds[var_name].mean(dim='time')
+                    # Calculate temporal mean for spatial plot using chunks
+                    var_mean = ds[var_name].chunk({'time': -1, 'hru': 100}).mean(dim='time').compute()
                     
                     # Create GeoDataFrame with mean values
                     plot_gdf = hru_gdf.copy()
@@ -1401,11 +1406,16 @@ class VisualizationReporter:
                     self._add_scale_bar(ax1)
                     self._add_north_arrow(ax1)
                     
-                    # Plot time series
-                    # Calculate mean, min, and max across HRUs
-                    mean_ts = ds[var_name].mean(dim='hru')
-                    min_ts = ds[var_name].min(dim='hru')
-                    max_ts = ds[var_name].max(dim='hru')
+                    # Plot time series using chunked computation
+                    # Downsample time series if needed
+                    time_series = ds[var_name].chunk({'time': -1, 'hru': 100})
+                    if len(time_series.time) > 1000:
+                        # Resample to daily data if we have more than 1000 time steps
+                        time_series = time_series.resample(time='D').mean()
+                    
+                    mean_ts = time_series.mean(dim='hru').compute()
+                    min_ts = time_series.min(dim='hru').compute()
+                    max_ts = time_series.max(dim='hru').compute()
                     
                     # Plot mean line with shaded min-max range
                     ax2.fill_between(mean_ts.time, min_ts, max_ts, 
