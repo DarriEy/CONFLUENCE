@@ -2154,6 +2154,7 @@ class SummaRunner:
         # Submit job
         
         try:
+            '''
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -2172,6 +2173,7 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
+            '''
             return self.merge_parallel_outputs()
             
         except Exception as e:
@@ -2307,8 +2309,8 @@ echo "Completed all GRUs for this job"
             daily_output = mizu_in_path / f"{experiment_id}_day.nc"
             
             # Source file patterns
-            timestep_pattern = f"{experiment_id}_G*_timestep.nc"
-            daily_pattern = f"{experiment_id}_G*_day.nc"
+            timestep_pattern = f"{experiment_id}_*_timestep.nc"
+            daily_pattern = f"{experiment_id}_*_day.nc"
             
             def process_and_merge_files(file_pattern, output_file):
                 self.logger.info(f"Processing files matching {file_pattern}")
