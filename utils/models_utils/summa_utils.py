@@ -824,6 +824,7 @@ class SummaPreProcessor_spatial:
             self.logger.info(f"Converting {intersect_shp} to CSV format")
             try:
                 shp_df = gpd.read_file(intersect_shp)
+                shp_df['weight'] = shp_df['AP1']
                 shp_df.to_csv(intersect_csv, index=False)
                 self.logger.info(f"Successfully created {intersect_csv}")
             except Exception as e:
@@ -834,7 +835,7 @@ class SummaPreProcessor_spatial:
 
         # Continue with existing code using the CSV file
         topo_data = pd.read_csv(intersect_csv)
-        
+
         # Get forcing files
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
         forcing_files.sort()
