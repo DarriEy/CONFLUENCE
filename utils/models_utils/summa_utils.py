@@ -1588,66 +1588,42 @@ class SummaPreProcessor_spatial:
         
         return results
 
-    def calculate_contour_length(self, hru_dem, hru_geometry, transform, hru_id, crs):
+    def calculate_contour_length(self, hru_dem, hru_geometry, downstream_geometry, transform, hru_id):
         """
-        Calculate the total length of contours within an HRU and save contours to files.
+        Calculate the length of intersection between an HRU and its downstream neighbor.
+        
+        Args:
+            hru_dem (numpy.ndarray): DEM data for the HRU
+            hru_geometry (shapely.geometry): Geometry of the current HRU
+            downstream_geometry (shapely.geometry): Geometry of the downstream HRU
+            transform (affine.Affine): Transform for converting pixel to geographic coordinates
+            hru_id (int): ID of the current HRU
+        
+        Returns:
+            float: Length of the intersection between the HRU and its downstream neighbor
         """
-        # Create a mask for the HRU
-        hru_mask = features.geometry_mask([hru_geometry], out_shape=hru_dem.shape, transform=transform, invert=True)
+        # If there's no downstream HRU (outlet), use the HRU's minimum perimeter length
+        if downstream_geometry is None:
+            min_dimension = min(hru_geometry.bounds[2] - hru_geometry.bounds[0], 
+                            hru_geometry.bounds[3] - hru_geometry.bounds[1])
+            self.logger.info(f"HRU {hru_id} is an outlet. Using minimum dimension: {min_dimension}")
+            return min_dimension
+
+        # Find the intersection between current and downstream HRUs
+        intersection = hru_geometry.intersection(downstream_geometry)
         
-        # Apply the mask to the DEM
-        masked_dem = np.ma.masked_array(hru_dem, mask=~hru_mask)
+        if intersection.is_empty:
+            self.logger.warning(f"No intersection found between HRU {hru_id} and its downstream HRU")
+            # Use minimum perimeter length as a fallback
+            min_dimension = min(hru_geometry.bounds[2] - hru_geometry.bounds[0], 
+                            hru_geometry.bounds[3] - hru_geometry.bounds[1])
+            return min_dimension
         
-        elevation_range = np.ptp(masked_dem.compressed())
-        if elevation_range == 0:
-            self.logger.warning(f"No elevation variation in HRU {hru_id}")
-            return 0  # Flat area, no contours
-
-        num_contours = min(max(int(elevation_range / 10), 5), 20)  # Between 5 and 20 contours
-        contour_intervals = np.linspace(masked_dem.min(), masked_dem.max(), num_contours)
-
-        total_length = 0
-        all_contours_list = []
-        contour_levels = []
-
-        for level in contour_intervals:
-            # Generate contours only within the masked area
-            contours = measure.find_contours(masked_dem.filled(masked_dem.min()), level)
-            
-            for contour in contours:
-                # Convert contour coordinates to geospatial coordinates
-                coords = [rasterio.transform.xy(transform, y, x) for y, x in contour]
-                
-                # Create a LineString from the coordinates
-                contour_line = LineString(coords)
-                
-                # Clip the contour to the HRU boundary (this should now be unnecessary, but kept as a safeguard)
-                clipped_contour = contour_line.intersection(hru_geometry)
-                
-                if not clipped_contour.is_empty and isinstance(clipped_contour, (LineString, MultiLineString)):
-                    if isinstance(clipped_contour, LineString):
-                        all_contours_list.append(clipped_contour)
-                        contour_levels.append(level)
-                    else:  # MultiLineString
-                        all_contours_list.extend(list(clipped_contour.geoms))
-                        contour_levels.extend([level] * len(clipped_contour.geoms))
-                    total_length += clipped_contour.length
-
-        if not all_contours_list:
-            self.logger.warning(f"No valid contours found for HRU {hru_id}")
-            return total_length
-
-        # Save all_contours to shapefile
-        all_contours_gdf = gpd.GeoDataFrame(geometry=all_contours_list, crs=crs)
-        all_contours_gdf['hru_id'] = hru_id
-        all_contours_gdf['contour_l'] = contour_levels
-        all_contours_file = self.project_dir / f'contours/all_contours_hru_{hru_id}.shp'
-        all_contours_file.parent.mkdir(parents=True, exist_ok=True)
-        all_contours_gdf.to_file(all_contours_file)
-
-        self.logger.info(f"Saved {len(all_contours_list)} contours for HRU {hru_id} to {all_contours_file}")
-
-        return total_length
+        # Calculate the length of the intersection
+        contour_length = intersection.length
+        
+        self.logger.info(f"Calculated contour length {contour_length:.2f} m for HRU {hru_id}")
+        return contour_length
 
 
     def create_attributes_file(self):
@@ -2178,7 +2154,6 @@ class SummaRunner:
         # Submit job
         
         try:
-            '''
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -2197,7 +2172,6 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
-            '''
             return self.merge_parallel_outputs()
             
         except Exception as e:
