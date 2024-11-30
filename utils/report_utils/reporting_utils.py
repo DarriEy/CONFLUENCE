@@ -1350,7 +1350,7 @@ class VisualizationReporter:
             # Load HRU shapefile for spatial plotting
             hru_name = self.config.get('CATCHMENT_SHP_NAME')
             if hru_name == 'default':
-                hru_name = f"{self.config.get('DOMAIN_NAME')}_HRUs_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+                hru_name = f"{self.config.get('DOMAIN_NAME')}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp"
             hru_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', hru_name)
             hru_gdf = gpd.read_file(hru_path)
             
