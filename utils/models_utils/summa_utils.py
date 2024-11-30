@@ -2154,7 +2154,7 @@ class SummaRunner:
         # Submit job
         
         try:
-            '''
+            
             cmd = f"sbatch {script_path}"
             result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
             job_id = result.stdout.strip().split()[-1]
@@ -2173,7 +2173,7 @@ class SummaRunner:
                 time.sleep(60)  # Check every minute
             
             self.logger.info("SUMMA parallel run completed, starting output merge")
-            '''
+            
             return self.merge_parallel_outputs()
             
         except Exception as e:
