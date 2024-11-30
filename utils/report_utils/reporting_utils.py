@@ -1412,7 +1412,7 @@ class VisualizationReporter:
                                 },
                                 vmin=vmin,
                                 vmax=vmax,
-                                cmap='RdYlBu_r')  # Changed colormap to Red-Yellow-Blue reversed
+                                cmap='RdYlBu')  # Changed colormap to Red-Yellow-Blue
                     
                     # Add HRU boundaries with simplified geometries
                     plot_gdf.boundary.plot(ax=ax1, color='black', linewidth=0.3, alpha=0.3)
@@ -1482,23 +1482,7 @@ class VisualizationReporter:
                     # Add scale bar and north arrow
                     self._add_scale_bar(ax1)
                     self._add_north_arrow(ax1)
-                    
-                    # Plot time series using chunked computation
-                    # Downsample time series if needed
-                    time_series = ds[var_name].chunk({'time': -1, 'hru': 100})
-                    if len(time_series.time) > 1000:
-                        # Resample to daily data if we have more than 1000 time steps
-                        time_series = time_series.resample(time='D').mean()
-                    
-                    mean_ts = time_series.mean(dim='hru').compute()
-                    min_ts = time_series.min(dim='hru').compute()
-                    max_ts = time_series.max(dim='hru').compute()
-                    
-                    # Plot mean line with shaded min-max range
-                    ax2.fill_between(mean_ts.time, min_ts, max_ts, 
-                                alpha=0.3, color='gray', label='HRU Range')
-                    ax2.plot(mean_ts.time, mean_ts, 
-                            color='blue', linewidth=1.5, label='Mean across HRUs')
+                
                     
                     # Customize time series plot
                     ax2.set_xlabel('Date', fontsize=12)
@@ -1511,12 +1495,8 @@ class VisualizationReporter:
                     # Format x-axis to show years
                     ax2.xaxis.set_major_locator(mdates.YearLocator())
                     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-                    
-                    # Add some basic statistics
-                    stats_text = (f"Statistics:\n"
-                                f"Mean: {float(mean_ts.mean()):.2f}\n"
-                                f"Min: {float(min_ts.min()):.2f}\n"
-                                f"Max: {float(max_ts.max()):.2f}")
+
+
                     ax2.text(0.02, 0.98, stats_text,
                             transform=ax2.transAxes,
                             verticalalignment='top',
