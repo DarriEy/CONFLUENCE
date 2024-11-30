@@ -1538,7 +1538,7 @@ class SummaPreProcessor_spatial:
 
     def calculate_slope_and_contour(self, shp, dem_path):
         """
-        Calculate average slope and contour length for each HRU using a more sophisticated method.
+        Calculate average slope and contour length for each HRU using vectorized operations.
         
         Args:
             shp (gpd.GeoDataFrame): GeoDataFrame containing HRU polygons
@@ -1549,32 +1549,43 @@ class SummaPreProcessor_spatial:
         """
         self.logger.info("Calculating slope and contour length for each HRU")
         
+        # Calculate contour lengths using vectorized operation
+        contour_lengths = np.sqrt(shp.geometry.area)
+        
+        # Read DEM once
         with rasterio.open(dem_path) as src:
             dem = src.read(1)
             transform = src.transform
-
+            
+            # Calculate dx and dy for the entire DEM once
+            cell_size_x = transform[0]
+            cell_size_y = -transform[4]  # Negative because Y increases downward in pixel space
+            
+            # Calculate gradients for entire DEM once
+            dy, dx = np.gradient(dem, cell_size_y, cell_size_x)
+            slope = np.arctan(np.sqrt(dx*dx + dy*dy))
+            
+            # Use zonal_stats to get mean slope for all HRUs at once
+            mean_slopes = rasterstats.zonal_stats(
+                shp.geometry,
+                slope,
+                affine=transform,
+                stats=['mean'],
+                nodata=np.nan
+            )
+        
+        # Create results dictionary using vectorized operations
         results = {}
         for idx, row in shp.iterrows():
             hru_id = row[self.config.get('CATCHMENT_SHP_HRUID')]
+            avg_slope = mean_slopes[idx]['mean']
             
-            # Mask the DEM for the current HRU
-            mask = rasterio.features.geometry_mask([row.geometry], out_shape=dem.shape, transform=transform, invert=True)
-            hru_dem = np.ma.masked_array(dem, ~mask)
-            
-            if hru_dem.count() == 0:
-                self.logger.warning(f"No DEM data found for HRU {hru_id}")
+            if avg_slope is None or np.isnan(avg_slope):
+                self.logger.warning(f"No valid slope data found for HRU {hru_id}")
                 results[hru_id] = (0.1, 30)  # Default values
-                continue
-
-            # Calculate slope
-            dy, dx = np.gradient(hru_dem)
-            slope = np.arctan(np.sqrt(dx*dx + dy*dy))
-            avg_slope = np.mean(slope)
-
-            # Calculate contours
-            contour_length = np.sqrt(row.geometry.area) #self.calculate_contour_length(hru_dem, row.geometry, transform, hru_id, shp.crs) #
-            results[hru_id] = (avg_slope, contour_length)
-
+            else:
+                results[hru_id] = (avg_slope, contour_lengths[idx])
+        
         return results
 
     def calculate_contour_length(self, hru_dem, hru_geometry, transform, hru_id, crs):
@@ -1735,9 +1746,9 @@ class SummaPreProcessor_spatial:
                 # Set slope and contour length
                 hru_id = shp.iloc[idx][self.config.get('CATCHMENT_SHP_HRUID')]
                 slope, contour_length = slope_contour.get(hru_id, (0.1, 30))  # Use default values if not found
-                att['tan_slope'][idx] = 0.1 #np.tan(slope)  # Convert slope to tan(slope)
-                att['contourLength'][idx] = 1# contour_length
-                self.logger.info(f"Setting tan slope to: {np.tan(slope)} and contourLength to: {contour_length} in hru: {hru_id} ")
+                att['tan_slope'][idx] = np.tan(slope)  # Convert slope to tan(slope)
+                att['contourLength'][idx] = contour_length
+                #self.logger.info(f"Setting tan slope to: {np.tan(slope)} and contourLength to: {contour_length} in hru: {hru_id} ")
 
                 att['slopeTypeIndex'][idx] = 1
                 att['mHeight'][idx] = self.forcing_measurement_height
