@@ -1735,8 +1735,8 @@ class SummaPreProcessor_spatial:
                 # Set slope and contour length
                 hru_id = shp.iloc[idx][self.config.get('CATCHMENT_SHP_HRUID')]
                 slope, contour_length = slope_contour.get(hru_id, (0.1, 30))  # Use default values if not found
-                att['tan_slope'][idx] = np.tan(slope)  # Convert slope to tan(slope)
-                att['contourLength'][idx] = contour_length
+                att['tan_slope'][idx] = 0.1 #np.tan(slope)  # Convert slope to tan(slope)
+                att['contourLength'][idx] = 1# contour_length
                 self.logger.info(f"Setting tan slope to: {np.tan(slope)} and contourLength to: {contour_length} in hru: {hru_id} ")
 
                 att['slopeTypeIndex'][idx] = 1
