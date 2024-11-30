@@ -1384,7 +1384,20 @@ class VisualizationReporter:
                     plot_gdf = hru_gdf.copy()
                     plot_gdf['value'] = var_mean.values
                     
-                    # Plot spatial distribution
+                    # Reproject to Web Mercator for consistent plotting
+                    plot_gdf = plot_gdf.to_crs(epsg=3857)
+                    
+                    # Calculate bounds with buffer
+                    bounds = plot_gdf.total_bounds
+                    buffer_x = (bounds[2] - bounds[0]) * 0.1
+                    buffer_y = (bounds[3] - bounds[1]) * 0.1
+                    
+                    # Set map extent
+                    ax1.set_xlim([bounds[0] - buffer_x, bounds[2] + buffer_x])
+                    ax1.set_ylim([bounds[1] - buffer_y, bounds[3] + buffer_y])
+                    
+                    # Plot spatial distribution with simplified geometries
+                    plot_gdf.geometry = plot_gdf.geometry.simplify(tolerance=100)  # Simplify geometries
                     vmin, vmax = np.percentile(var_mean.values, [2, 98])  # Remove outliers
                     plot_gdf.plot(column='value', 
                                 ax=ax1,
@@ -1395,7 +1408,7 @@ class VisualizationReporter:
                                 vmax=vmax,
                                 cmap='viridis')
                     
-                    # Add HRU boundaries
+                    # Add HRU boundaries with simplified geometries
                     plot_gdf.boundary.plot(ax=ax1, color='black', linewidth=0.5, alpha=0.5)
                     
                     # Add title and remove axes
