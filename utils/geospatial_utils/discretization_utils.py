@@ -484,11 +484,11 @@ class DomainDiscretizer:
         Process HRUs based on the given raster and thresholds.
         """
         total_grus = len(gru_gdf)
-        self.logger.info(f"Processing {total_grus} GRUs using {multiprocessing.cpu_count() // 2} cores")
+        self.logger.info(f"Processing {total_grus} GRUs using {multiprocessing.cpu_count()} cores")
         
         processed_grus = 0
         all_hrus = []
-        num_cores = max(1, multiprocessing.cpu_count() // 2)
+        num_cores = max(1, multiprocessing.cpu_count())
         
         with ProcessPoolExecutor(max_workers=num_cores) as executor:
             future_to_row = {executor.submit(self._create_hrus, row, raster_path, thresholds, attribute_name): row for _, row in gru_gdf.iterrows()}
