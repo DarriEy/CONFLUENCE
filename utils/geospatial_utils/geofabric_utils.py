@@ -199,7 +199,7 @@ class GeofabricDelineator:
             (gdf.index != exclude_idx) & 
             (gdf.geometry.boundary.intersects(geometry.boundary))
         ]
-    
+    '''
     def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
         Merge GRUs smaller than the minimum size threshold with their neighbors.
@@ -332,7 +332,7 @@ class GeofabricDelineator:
         self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
         
         return gru_gdf_merged
-    '''
+
     def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
         Merge GRUs smaller than the minimum size threshold with their neighbors.
@@ -431,7 +431,7 @@ class GeofabricDelineator:
         self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
         
         return gru_gdf_merged
-
+    '''
 
     def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
@@ -535,7 +535,7 @@ class GeofabricDelineator:
         self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
         
         return gru_gdf_merged
-    '''
+
     def run_gdal_processing(self):
         """Convert watershed raster to polygon shapefile"""
         # Ensure output directory exists
