@@ -10,7 +10,7 @@ import shutil
 from scipy import stats # type: ignore
 import argparse
 
-# Import CONFLUENCE Utility functions
+# Import CONFLUENCE utility functions
 sys.path.append(str(Path(__file__).resolve().parent))
 
 # Data and config management utilities 

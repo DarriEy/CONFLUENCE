@@ -30,6 +30,7 @@ from shapely.geometry import Polygon # type: ignore
 import multiprocessing  
 from shapely.ops import unary_union # type: ignore
 import time
+import shapely
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
@@ -198,7 +199,7 @@ class GeofabricDelineator:
             (gdf.index != exclude_idx) & 
             (gdf.geometry.boundary.intersects(geometry.boundary))
         ]
-
+    '''
     def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
         Merge GRUs smaller than the minimum size threshold with their neighbors.
@@ -297,7 +298,111 @@ class GeofabricDelineator:
         self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
         
         return gru_gdf_merged
-    
+    '''
+
+    def _merge_small_grus(self, gru_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Merge GRUs smaller than the minimum size threshold with their neighbors.
+        Optimized version with spatial indexing and vectorized operations.
+        """
+        self.logger.info(f"Starting GRU merging process (minimum size: {self.min_gru_size} km²)")
+        initial_count = len(gru_gdf)
+        
+        # Ensure CRS is geographic and convert to UTM for area calculations
+        gru_gdf.set_crs(epsg=4326, inplace=True)
+        utm_crs = gru_gdf.estimate_utm_crs()
+        gru_gdf_utm = gru_gdf.to_crs(utm_crs)
+        
+        # Clean geometries (vectorized)
+        gru_gdf_utm['geometry'] = gru_gdf_utm['geometry'].apply(self._clean_geometries)
+        gru_gdf_utm = gru_gdf_utm[gru_gdf_utm['geometry'].notnull()]
+        
+        # Store original boundary
+        original_boundary = unary_union(gru_gdf_utm.geometry)
+        
+        # Calculate areas in km² (vectorized)
+        gru_gdf_utm['area'] = gru_gdf_utm.geometry.area / 1_000_000
+        
+        # Create spatial index for faster neighbor finding
+        spatial_index = gru_gdf_utm.sindex
+        
+        merged_count = 0
+        while True:
+            small_grus = gru_gdf_utm[gru_gdf_utm['area'] < self.min_gru_size]
+            if len(small_grus) == 0:
+                break
+                
+            # Process multiple small GRUs in parallel
+            small_grus_to_merge = small_grus.head(100)  # Process in batches
+            if len(small_grus_to_merge) == 0:
+                break
+                
+            for idx, small_gru in small_grus_to_merge.iterrows():
+                try:
+                    small_gru_geom = self._clean_geometries(small_gru.geometry)
+                    if small_gru_geom is None:
+                        gru_gdf_utm = gru_gdf_utm.drop(idx)
+                        continue
+                    
+                    # Use spatial index to find potential neighbors
+                    possible_matches_idx = list(spatial_index.intersection(small_gru_geom.bounds))
+                    possible_matches = gru_gdf_utm.iloc[possible_matches_idx]
+                    
+                    # Filter actual neighbors
+                    neighbors = possible_matches[
+                        (possible_matches.index != idx) & 
+                        (possible_matches.geometry.boundary.intersects(small_gru_geom.boundary))
+                    ]
+                    
+                    if len(neighbors) > 0:
+                        largest_neighbor = neighbors.loc[neighbors['area'].idxmax()]
+                        merged_geometry = unary_union([small_gru_geom, largest_neighbor.geometry])
+                        merged_geometry = self._simplify_geometry(merged_geometry)
+                        
+                        if merged_geometry and merged_geometry.is_valid:
+                            gru_gdf_utm.at[largest_neighbor.name, 'geometry'] = merged_geometry
+                            gru_gdf_utm.at[largest_neighbor.name, 'area'] = merged_geometry.area / 1_000_000
+                            gru_gdf_utm = gru_gdf_utm.drop(idx)
+                            merged_count += 1
+                            
+                except Exception as e:
+                    self.logger.error(f"Error merging GRU {idx}: {str(e)}")
+            
+            # Update spatial index after batch processing
+            spatial_index = gru_gdf_utm.sindex
+        
+        # Handle gaps (vectorized where possible)
+        current_coverage = unary_union(gru_gdf_utm.geometry)
+        gaps = original_boundary.difference(current_coverage)
+        if not gaps.is_empty:
+            gap_geoms = list(gaps.geoms) if gaps.geom_type == 'MultiPolygon' else [gaps]
+            
+            for gap in gap_geoms:
+                if gap.area > 0:
+                    # Use spatial index to find nearest GRU
+                    possible_matches_idx = list(spatial_index.nearest(gap.bounds))
+                    nearest_gru = possible_matches_idx[0]
+                    merged_geom = self._clean_geometries(unary_union([gru_gdf_utm.iloc[nearest_gru].geometry, gap]))
+                    if merged_geom and merged_geom.is_valid:
+                        gru_gdf_utm.iloc[nearest_gru, gru_gdf_utm.columns.get_loc('geometry')] = merged_geom
+                        gru_gdf_utm.iloc[nearest_gru, gru_gdf_utm.columns.get_loc('area')] = merged_geom.area / 1_000_000
+        
+        # Reset index and update IDs (vectorized)
+        gru_gdf_utm = gru_gdf_utm.reset_index(drop=True)
+        gru_gdf_utm['GRU_ID'] = range(1, len(gru_gdf_utm) + 1)
+        gru_gdf_utm['gru_to_seg'] = gru_gdf_utm['GRU_ID']
+        
+        # Convert back to original CRS
+        gru_gdf_merged = gru_gdf_utm.to_crs(gru_gdf.crs)
+        
+        self.logger.info(f"GRU merging statistics:")
+        self.logger.info(f"- Initial GRUs: {initial_count}")
+        self.logger.info(f"- Merged {merged_count} small GRUs")
+        self.logger.info(f"- Final GRUs: {len(gru_gdf_merged)}")
+        self.logger.info(f"- Reduction: {((initial_count - len(gru_gdf_merged)) / initial_count) * 100:.1f}%")
+        
+        return gru_gdf_merged
+
     def run_gdal_processing(self):
         """Convert watershed raster to polygon shapefile"""
         # Ensure output directory exists
@@ -411,12 +516,52 @@ class GeofabricDelineator:
         return subset_basins_path, subset_rivers_path
 
     def _save_geofabric(self, basins: gpd.GeoDataFrame, rivers: gpd.GeoDataFrame, basins_path: Path, rivers_path: Path):
+        """Save geofabric files with corrected geometries."""
         basins_path.parent.mkdir(parents=True, exist_ok=True)
         rivers_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Fix polygon winding order
+        basins['geometry'] = basins['geometry'].apply(lambda geom: self._fix_polygon_winding(geom))
+        
+        # Save files
         basins.to_file(basins_path)
         rivers.to_file(rivers_path)
         self.logger.info(f"Subset basins shapefile saved to: {basins_path}")
         self.logger.info(f"Subset rivers shapefile saved to: {rivers_path}")
+
+    def _fix_polygon_winding(self, geometry):
+        """Ensure correct winding order for polygon geometries."""
+        if geometry is None:
+            return None
+            
+        try:
+            # First try the new Shapely 2.0+ method
+            if geometry.geom_type == 'Polygon':
+                return geometry.orient(1.0)
+            elif geometry.geom_type == 'MultiPolygon':
+                return geometry.__class__([geom.orient(1.0) for geom in geometry.geoms])
+        except AttributeError:
+            # Fallback for older Shapely versions
+            if geometry.geom_type == 'Polygon':
+                # Make exterior ring counterclockwise
+                if not geometry.exterior.is_ccw:
+                    geometry = shapely.geometry.Polygon(
+                        list(geometry.exterior.coords)[::-1],
+                        [list(interior.coords)[::-1] for interior in geometry.interiors]
+                    )
+            elif geometry.geom_type == 'MultiPolygon':
+                # Fix each polygon in the multipolygon
+                polygons = []
+                for poly in geometry.geoms:
+                    if not poly.exterior.is_ccw:
+                        poly = shapely.geometry.Polygon(
+                            list(poly.exterior.coords)[::-1],
+                            [list(interior.coords)[::-1] for interior in poly.interiors]
+                        )
+                    polygons.append(poly)
+                geometry = shapely.geometry.MultiPolygon(polygons)
+        
+        return geometry
 
     def load_geopandas(self, path: Path) -> gpd.GeoDataFrame:
         gdf = gpd.read_file(path)
