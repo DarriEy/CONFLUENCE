@@ -102,6 +102,8 @@ class datatoolRunner:
         dataset_dir = dataset
         if dataset == "ERA5":
             dataset_dir = 'era5'
+        elif dataset == "RDRS":
+            dataset_dir = 'rdrsv2.1'
 
         datatool_command = [
         f"{self.datatool_path}/extract-dataset.sh",
