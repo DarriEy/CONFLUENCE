@@ -871,21 +871,29 @@ class SummaPreProcessor_spatial:
         # Process each forcing file
         for file in forcing_files:
             self.logger.info(f"Processing {file}")
+            #self.logger.info(f'lapse values: {lapse_values}')
+            
             try: 
                 output_file = self.forcing_summa_path / file
                 #if output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS') != True :
                 #    self.logger.info(f"{file} already exists ... skipping")
                 #å    continue
+                #self.logger.info(f'output file: {output_file}')
 
                 with xr.open_dataset(self.forcing_basin_path / file) as dat:
+                    #self.logger.info(f"file content: {dat}")
+                    #self.logger.info(f'lapsevalues: {lapse_values['lapse_values']} dathruID: {dat['hruId'].values}')
                     # Temperature lapse rates
                     lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
-                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
 
+                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
+                    #self.logger.info(f'addThis {addThis}')
                     # Apply datastep
                     dat['data_step'] = self.data_step
                     dat.data_step.attrs['long_name'] = 'data step length in seconds'
                     dat.data_step.attrs['units'] = 's'
+
+                    self.logger.info(f'datastep: {dat['data_step']}')
 
                     if self.config.get('APPLY_LAPSE_RATE') == True:
                         # Get air temperature attributes
@@ -1771,6 +1779,13 @@ class SummaPreProcessor_spatial:
 
             shp = gpd.read_file(intersect_path / intersect_name)
 
+            # Check and create missing USGS_X columns
+            for i in range(13):
+                col_name = f'USGS_{i}'
+                if col_name not in shp.columns:
+                    shp[col_name] = 0  # Add the missing column and initialize with 0 or any suitable default value
+
+
             with nc4.Dataset(attribute_file, "r+") as att:
                 for idx in range(len(att['hruId'])):
                     attribute_hru = att['hruId'][idx]
@@ -1783,7 +1798,7 @@ class SummaPreProcessor_spatial:
                             tmp_hist.append(shp[col_name][shp_mask].values[0])
                         else:
                             tmp_hist.append(0)
-                    
+
                     tmp_hist[0] = -1
                     tmp_sc = np.argmax(np.asarray(tmp_hist))
                     

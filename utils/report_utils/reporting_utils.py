@@ -66,7 +66,7 @@ class VisualizationReporter:
                     continue
 
             # Determine time range based on simulations
-            start_date = max([data.index.min() for _, data in sim_data]) + pd.Timedelta(50, unit="d")
+            start_date = max([data.index.min() for _, data in sim_data]) + pd.Timedelta(100, unit="d")
             end_date = min([data.index.max() for _, data in sim_data])
 
             # Filter simulation data to common time range

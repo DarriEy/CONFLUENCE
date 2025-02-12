@@ -140,6 +140,11 @@ class GRPreProcessor:
             # Convert forcing data to daily resolution
             ds = ds_variable_handler
             ds = ds.resample(time='D').mean()
+            try:
+                ds['temp'] = ds['airtemp'] - 273.15
+                ds['pr'] = ds['pptrate'] * 86400
+            except:
+                pass
                     
             # Load streamflow observations
             obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
@@ -154,7 +159,7 @@ class GRPreProcessor:
             # Convert to daily resolution
             obs_daily = obs_df.resample('D').mean()
 
-            # Convert to mm/day
+
             # Get area from river basins shapefile using GRU_area
             basin_name = self.config.get('RIVER_BASINS_NAME')
             if basin_name == 'default':
@@ -167,7 +172,6 @@ class GRPreProcessor:
             self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
             
             # Convert units from cms to mm/day 
-            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
             obs_daily['discharge_mmday'] = obs_daily['discharge_cms'] / area_km2 * 86.4
             
             # Create observation dataset with explicit time dimension
@@ -194,6 +198,20 @@ class GRPreProcessor:
             ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+
+            # Interpolate observed dataset
+            # 1. Create the mask (same as before)
+            #invalid_mask = obs_ds['q_obs'] == -9999  # Replace 'data_var'
+
+            # 2. Identify valid coordinates (along the dimension you want to interpolate)
+            #valid_x = obs_ds.time[~invalid_mask.any(dim='q_obs')] # Replace 'x' and 'y' with your dimensions.
+            # This assumes you want to interpolate along the x dimension and that the invalid values are marked along the y dimension.
+
+            # 3. Interpolate to the valid coordinates
+            #obs_ds['q_obs'] = obs_ds['q_obs'].interp(time=valid_x) #Replace 'x' with your dimension name.
+
+            # 4. Fill the remaining NaN values (if any, at the edges) with linear interpolation
+            #obs_ds['q_obs'] = obs_ds['q_obs'].interpolate_na(dim='time', method='linear', fill_value="extrapolate") #Replace 'x' with your dimension name.
 
             # Convert time to days since 1970-01-01
             #time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
@@ -507,6 +525,8 @@ class GRRunner:
                     CalibOptions = CalibOptions,
                     FUN_MOD = RunModel_CemaNeigeGR4J
                 )
+
+                save(OutputsCalib, file = "{str(self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'GR' / 'GR_calib.Rdata')}")
                 
 
                 # Simulation

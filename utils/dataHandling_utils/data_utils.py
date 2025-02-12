@@ -604,6 +604,7 @@ class ObservedDataProcessor:
         resample_freq = self.get_resample_freq()
         resampled_data = data.resample(resample_freq).mean()
         resampled_data = resampled_data.interpolate(method='time', limit=24)
+        #resampled_data = resampled_data.dropna()
 
         output_file = self.streamflow_processed_path / f'{self.domain_name}_streamflow_processed.csv'
         data_to_write = [('datetime', 'discharge_cms')] + list(resampled_data.items())

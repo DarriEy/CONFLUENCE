@@ -317,7 +317,7 @@ class FLASH:
             model_save_path = self.project_dir / 'models' / 'flash_model.pt'
 
             # Check if snow data should be used based on config
-            use_snow = self.config.get('FLASH_USE_SNOW', True)
+            use_snow = self.config.get('FLASH_USE_SNOW', False)
             snow_df_input = snow_df if use_snow else None
 
             # Preprocess data
@@ -383,7 +383,7 @@ class FLASH:
 
         # Load streamflow data
         streamflow_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
-        streamflow_df = pd.read_csv(streamflow_path, parse_dates=['datetime'])
+        streamflow_df = pd.read_csv(streamflow_path, parse_dates=['datetime'], dayfirst=True)
         streamflow_df = streamflow_df.set_index('datetime').rename(columns={'discharge_cms': 'streamflow'})
         streamflow_df.index = pd.to_datetime(streamflow_df.index)
 
@@ -393,7 +393,7 @@ class FLASH:
         if not snow_files:
             raise FileNotFoundError(f"No snow observation files found in {snow_path}")
         
-        snow_df = pd.concat([pd.read_csv(file, parse_dates=['datetime']) for file in snow_files])
+        snow_df = pd.concat([pd.read_csv(file, parse_dates=['datetime'], dayfirst=True) for file in snow_files])
         
         # Aggregate snow data across all stations
         snow_df = snow_df.groupby('datetime')['snw'].mean().reset_index()
