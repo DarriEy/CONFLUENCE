@@ -131,10 +131,11 @@ class CONFLUENCE:
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv1").exists()),
 
             # Result analysis and optimisation
-            #(self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
             (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),  
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
+
         ]
         
         for step_func, check_func in workflow_steps:

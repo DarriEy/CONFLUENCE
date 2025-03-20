@@ -116,13 +116,14 @@ class datatoolRunner:
         f"--lon-lims={lon_lims}",
         f"--variable={variables}",
         f"--prefix=domain_{self.domain_name}_",
-        #"--submit-job",
+        f"--submit-job",
         f"--cache={self.tool_cache}",
-        f"--account={self.config['TOOL_ACCOUNT']}"
+        f"--cluster={self.config['CLUSTER_JSON']}",
+        #f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
 
         return datatool_command
-    
+
     def execute_datatool_command(self, datatool_command):
         
         #Run the datatool command

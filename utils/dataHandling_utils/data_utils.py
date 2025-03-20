@@ -633,16 +633,6 @@ class BenchmarkPreprocessor:
     def preprocess_benchmark_data(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
         Preprocess data for hydrobm benchmarking.
-        
-        Args:
-            start_date (str): Start date for the experiment run period (YYYY-MM-DD).
-            end_date (str): End date for the experiment run period (YYYY-MM-DD).
-        
-        Returns:
-            pd.DataFrame: Daily DataFrame with columns:
-                - temperature (K)
-                - streamflow (m³/s)
-                - precipitation (mm/day)
         """
         self.logger.info("Starting benchmark data preprocessing")
 
@@ -651,16 +641,14 @@ class BenchmarkPreprocessor:
         forcing_data = self._load_forcing_data()
         merged_data = self._merge_data(streamflow_data, forcing_data)
         
-        # Ensure daily timestep and correct units
+        # Aggregate to daily timestep using a single resample pass
         daily_data = self._process_to_daily(merged_data)
         
         # Filter data for the experiment run period
         filtered_data = daily_data.loc[start_date:end_date]
         
-        # Validate data
+        # Validate and save data
         self._validate_data(filtered_data)
-        
-        # Save preprocessed data
         output_path = self.project_dir / 'evaluation'
         output_path.mkdir(exist_ok=True)
         filtered_data.to_csv(output_path / "benchmark_input_data.csv")
@@ -668,29 +656,20 @@ class BenchmarkPreprocessor:
         return filtered_data
 
     def _process_to_daily(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Aggregate data to daily values with correct units."""
-        daily_data = pd.DataFrame()
-        
-        # Temperature (K): daily mean
-        daily_data['temperature'] = data['temperature'].resample('D').mean()
-        
-        # Streamflow (m³/s): daily mean
-        daily_data['streamflow'] = data['streamflow'].resample('D').mean()
-        
-        # Precipitation: sum to daily totals in mm/day
-        # Input is already in mm/hr from _load_forcing_data
-        daily_data['precipitation'] = data['precipitation'].resample('D').sum()
-        
+        """Aggregate data to daily values with correct units using a single resample."""
+        daily_data = data.resample('D').agg({
+            'temperature': 'mean',
+            'streamflow': 'mean',
+            'precipitation': 'sum'
+        })
         return daily_data
 
     def _validate_data(self, data: pd.DataFrame):
         """Validate data ranges and consistency."""
-        # Check for missing values
         missing = data.isnull().sum()
         if missing.any():
             self.logger.warning(f"Missing values detected:\n{missing}")
         
-        # Physical range checks
         if (data['temperature'] < 200).any() or (data['temperature'] > 330).any():
             self.logger.warning("Temperature values outside physical range (200-330 K)")
         
@@ -703,45 +682,44 @@ class BenchmarkPreprocessor:
         if (data['precipitation'] > 1000).any():
             self.logger.warning("Extremely high precipitation values (>1000 mm/day) detected")
 
-        # Log data statistics
         self.logger.info(f"Data statistics:\n{data.describe()}")
 
     def _load_streamflow_data(self) -> pd.DataFrame:
         """Load and basic process streamflow data."""
         streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
         data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
+        # Ensure the index is sorted for a faster merge later on
+        data.sort_index(inplace=True)
         return data.rename(columns={'discharge_cms': 'streamflow'})
 
     def _load_forcing_data(self) -> pd.DataFrame:
         """Load and process forcing data, returning hourly dataframe."""
         forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
-        datasets = [xr.open_dataset(f) for f in forcing_path.glob("*.nc")]
-        combined_ds = xr.merge(datasets)
+        # Use open_mfdataset to load all netCDF files at once efficiently
+        combined_ds = xr.open_mfdataset(list(forcing_path.glob("*.nc")), combine='by_coords')
         
         # Average across HRUs
         averaged_ds = combined_ds.mean(dim='hru')
         
-        # Convert precipitation to mm/hr (assuming input is m/s)
-        precip_data = averaged_ds['pptrate'] * 3600  # mm/s to mm/day
+        # Convert precipitation to mm/day (assuming input is in m/s)
+        precip_data = averaged_ds['pptrate'] * 3600
         
-        # Create DataFrame with temperature and converted precipitation
+        # Create DataFrame directly using to_series for better integration
         forcing_df = pd.DataFrame({
-            'temperature': averaged_ds['airtemp'].to_pandas(),
-            'precipitation': precip_data.to_pandas()
+            'temperature': averaged_ds['airtemp'].to_series(),
+            'precipitation': precip_data.to_series()
         })
-        
+        forcing_df.sort_index(inplace=True)
         return forcing_df
 
     def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: pd.DataFrame) -> pd.DataFrame:
-        """Merge streamflow and forcing data on timestamps."""
-        merged_data = pd.merge(streamflow_data, forcing_data, 
-                             left_index=True, right_index=True, 
-                             how='inner')
+        """Merge streamflow and forcing data on timestamps using concatenation for efficiency."""
+        merged_data = pd.concat([streamflow_data, forcing_data], axis=1, join='inner')
         
-        # Check data completeness
+        # Verify data completeness
         expected_records = len(pd.date_range(merged_data.index.min(), 
-                                           merged_data.index.max(), 
-                                           freq='h'))
+                                              merged_data.index.max(), 
+                                              freq='h'))
         if len(merged_data) != expected_records:
             self.logger.warning(f"Data gaps detected. Expected {expected_records} records, got {len(merged_data)}")
         
