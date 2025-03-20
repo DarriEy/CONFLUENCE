@@ -1,10 +1,12 @@
 version: 2
 
+build:
+  image: latest
+
 sphinx:
-  configuration: docs/source/conf.py  # Adjust the path if needed
+  configuration: docs/source/conf.py
 
 python:
-  version: "3.11"  # or your project's Python version
+  version: "3.11"
   install:
-    - requirements: docs/requirements.txt  # Create this file if you have extra dependencies for docs
-
+    - requirements: docs/requirements.txt
