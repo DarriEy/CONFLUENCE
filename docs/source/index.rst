@@ -10,7 +10,7 @@ Welcome to CONFLUENCE's documentation!
    :maxdepth: 2
    :caption: API Documentation
 
-   your_module_name  # replace with the actual module names generated
+   modules  # or CONFLUENCE, utils, etc.
 
 
 
