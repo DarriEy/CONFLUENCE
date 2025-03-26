@@ -38,4 +38,4 @@ html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
 
-autodoc_mock_imports = ["rasterio"]
+autodoc_mock_imports = ["rasterio", "rasterstats"]
