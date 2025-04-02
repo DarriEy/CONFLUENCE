@@ -1,21 +1,4 @@
-# After editing, mark as resolved
-git add CONFLUENCE.py
-
-# 3. Repeat for other conflicted files
-nano requirements.txt
-git add requirements.txt
-
-nano utils/models_utils/summa_spatial_utils.py
-git add utils/models_utils/summa_spatial_utils.py
-
-nano utils/models_utils/summa_utils.py
-git add utils/models_utils/summa_utils.py
-
-# 4. Complete the merge
-git commit -m "Merge remote changes with local implementation of point SUMMA"
-
-# 5. Push your changes
-git push origin mainfrom pathlib import Path
+from pathlib import Path
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -32,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 # Data and config management utilities 
 from utils.dataHandling_utils.data_utils import ProjectInitialisation, ObservedDataProcessor, BenchmarkPreprocessor, DataAcquisitionProcessor # type: ignore  
+from utils.dataHandling_utils.attribute_processing_util import attributeProcessor # type: ignore
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
 from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
@@ -128,36 +112,31 @@ class CONFLUENCE:
             # Initiate project
             (self.setup_project, (self.project_dir / 'catchment').exists),
             
-            # Geospatial domain definition
+            # Geospatial domain definition and analysis
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
-            #(self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
+            (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
+            (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
-            #(self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
+            (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            #(self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
+            (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
             
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
-            #(self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
+            (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
 
-<<<<<<< HEAD
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input1").exists()),
-=======
-            # Model specific processing
-            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
->>>>>>> b6cff5247830cf7fbea260a0299319bc4d029246
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
-            (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv1").exists()),
+            (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
 
             # Result analysis and optimisation
+            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()),
             (self.calibrate_model, lambda: (self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv").exists()),
             (self.run_decision_analysis, lambda: (self.project_dir / "optimisation " / f"{self.config.get('EXPERIMENT_ID')}_model_decisions_comparison.csv").exists()),  
             (self.run_sensitivity_analysis, lambda: (self.project_dir / "plots" / "sensitivity_analysis" / "all_sensitivity_results.csv").exists()),
-            (self.run_benchmarking, lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv1").exists()),
-
         ]
         
         for step_func, check_func in workflow_steps:
@@ -254,6 +233,36 @@ class CONFLUENCE:
         # Create the gistool command for soil classes
         gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
         gr.execute_gistool_command(gistool_command_soilclass)
+
+    @get_function_logger
+    def process_attributes(self):
+        """
+        Process catchment characteristic attributes.
+        
+        This method extracts and calculates various catchment attributes including
+        soil, topography, climate, and land cover properties, saving them to a
+        standardized CSV file.
+        """
+        if self.config.get('PROCESS_CHARACTERISTIC_ATTRIBUTES', False):
+            self.logger.info("Processing catchment characteristics")
+            
+            try:
+
+                # Create attribute processor instance - processing happens in __init__
+                ap = attributeProcessor(self.config, self.logger)
+                
+                # Check if output file was created
+                output_file = self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv"
+                if output_file.exists():
+                    self.logger.info(f"Attribute processing completed successfully: {output_file}")
+                else:
+                    self.logger.warning("Attribute processing completed but no output file was found")
+                    
+            except Exception as e:
+                self.logger.error(f"Error during attribute processing: {str(e)}")
+                raise
+        else:
+            self.logger.info("Attribute processing skipped (PROCESS_CHARACTERISTIC_ATTRIBUTES=False)")
 
 
     @get_function_logger
