@@ -198,6 +198,14 @@ class FUSEPreProcessor:
             # Convert forcing data to daily resolution
             ds = ds.resample(time='D').mean()
             
+
+            try:
+                ds['temp'] = ds['airtemp'] #- 273.15
+                ds['pr'] = ds['pptrate'] #* 86400
+            except:
+                pass
+
+
             # Load streamflow observations
             obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
             
@@ -327,7 +335,10 @@ class FUSEPreProcessor:
                 encoding=encoding,
                 format='NETCDF4'
             )
-
+            
+            print(fuse_forcing['pr'])
+            print(fuse_forcing['temp'])
+            
             return output_file
 
         except Exception as e:

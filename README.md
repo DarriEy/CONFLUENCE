@@ -19,7 +19,7 @@ NOTE: CONFLUENCE is currently in development
 1. Clone the repository:
 
 ```    
-git clone https://github.com/your-repo/CONFLUENCE.git   
+git clone https://github.com/DarriEy/CONFLUENCE.git
 ``` 
 
 2. Install the required dependencies:

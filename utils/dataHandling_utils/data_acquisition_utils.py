@@ -19,6 +19,7 @@ from osgeo import gdal # type: ignore
 import urllib.request
 import ssl
 
+# Gistool
 class gistoolRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config

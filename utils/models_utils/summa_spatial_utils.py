@@ -121,7 +121,7 @@ class SummaPreProcessor_spatial:
         self.logger.info("Starting SUMMA spatial preprocessing")
         
         try:
-            self.sort_catchment_shape(work_log_dir=self.project_dir / f"shapefiles/_workLog")
+            #self.sort_catchment_shape(work_log_dir=self.project_dir / f"shapefiles/_workLog")
             self.process_forcing_data(work_log_dir=self.project_dir / f"forcing/_workLog")
             self.copy_base_settings(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
             self.create_file_manager(work_log_dir=self.project_dir / f"settings/SUMMA/_workLog")
@@ -203,7 +203,11 @@ class SummaPreProcessor_spatial:
 
         try:
             if self.config.get('FORCING_DATASET') == 'RDRS':
+<<<<<<< HEAD
                 #self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
+=======
+                self.merge_forcings()
+>>>>>>> b6cff5247830cf7fbea260a0299319bc4d029246
                 self.logger.info("Forcings merged successfully")
             elif self.config.get('FORCING_DATASET') == 'CARRA':
                 self.process_carra(work_log_dir=self.project_dir / f"forcing/_workLog")
@@ -1073,6 +1077,7 @@ class SummaPreProcessor_spatial:
             IOError: If there are issues writing output files.
         """
         self.logger.info("Starting to merge RDRS forcing data")
+
 
     
         years = [
