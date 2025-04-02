@@ -102,6 +102,8 @@ class datatoolRunner:
         dataset_dir = dataset
         if dataset == "ERA5":
             dataset_dir = 'era5'
+        elif dataset == "RDRS":
+            dataset_dir = 'rdrsv2.1'
 
         datatool_command = [
         f"{self.datatool_path}/extract-dataset.sh",
@@ -114,19 +116,39 @@ class datatoolRunner:
         f"--lon-lims={lon_lims}",
         f"--variable={variables}",
         f"--prefix=domain_{self.domain_name}_",
-        #"--submit-job",
+        f"--submit-job",
         f"--cache={self.tool_cache}",
-        f"--account={self.config['TOOL_ACCOUNT']}"
+        f"--cluster={self.config['CLUSTER_JSON']}",
+        #f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
 
         return datatool_command
-    
+
     def execute_datatool_command(self, datatool_command):
-        
-        #Run the datatool command
         try:
-            subprocess.run(datatool_command, check=True)
-            self.logger.info("datatool completed successfully.")
+            # Submit the array job
+            result = subprocess.run(datatool_command, check=True, capture_output=True, text=True)
+            self.logger.info("datatool job submitted successfully.")
+            
+            # Extract job ID from the output
+            job_id = None
+            for line in result.stdout.split('\n'):
+                if 'Submitted batch job' in line:
+                    job_id = line.split()[-1]
+                    break
+            
+            if not job_id:
+                raise RuntimeError("Could not extract job ID from submission output")
+            
+            # Wait for all array jobs to complete
+            while True:
+                check_cmd = ['squeue', '-j', job_id, '-h']
+                status_result = subprocess.run(check_cmd, capture_output=True, text=True)
+                if not status_result.stdout.strip():
+                    break
+                time.sleep(30)
+            
+            self.logger.info("All datatool array jobs completed.")
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error running datatool: {e}")
             raise

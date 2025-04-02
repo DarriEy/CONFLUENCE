@@ -27,15 +27,15 @@ from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type
 
 # Model specific utilities
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
-from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial # type: ignore
+from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
-from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
+#from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
-from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
-from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
+#from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
+#from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
 
 # Evaluation utilities
-from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
+#from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
 
 # Reporting utilities
@@ -115,9 +115,9 @@ class CONFLUENCE:
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
             (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
-            (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
+            #(self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
-            (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
+            #(self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
             
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
@@ -125,7 +125,7 @@ class CONFLUENCE:
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
 
             # Modesl specific processing
-            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
+            (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input1").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
@@ -164,6 +164,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def create_pourPoint(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, pour point not required")
+            return None
+                    
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
             self.logger.info("Using user-provided pour point shapefile")
             return None
@@ -179,6 +183,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def acquire_attributes(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, attribute data not required")
+            return None
+
         # Create attribute directories
         dem_dir = self.project_dir / 'attributes' / 'elevation' / 'dem'
         soilclass_dir = self.project_dir / 'attributes' / 'soilclass'
@@ -203,7 +211,7 @@ class CONFLUENCE:
         end_year = 2020
 
         #Select which MODIS dataset to use
-        modis_var = "MCD12Q1.061"
+        modis_var = "MCD12Q1.006"
 
         # Create the gistool command for landcover
         gistool_command_landcover = gr.create_gistool_command(dataset = 'MODIS', output_dir = landclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = modis_var, start_date=f"{start_year}-01-01", end_date=f"{end_year}-01-01")
@@ -228,6 +236,11 @@ class CONFLUENCE:
     @get_function_logger
     def define_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+     
+        # Skip domain definition if in point mode
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, domain definition not required")
+            return
         
         if domain_method == 'subset':
             self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
@@ -235,11 +248,18 @@ class CONFLUENCE:
             self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
         elif domain_method == 'delineate':
             self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+        elif self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, delineation not required")
+            return None
         else:
             self.logger.error(f"Unknown domain definition method: {domain_method}")
 
     @get_function_logger
     def plot_domain(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, no domain to plot")
+            return None
+        
         self.logger.info("Creating domain visualization...")
         domain_plot = self.reporter.plot_domain()
         if domain_plot:
@@ -249,6 +269,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def discretize_domain(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, discretisation not performed")
+            return None
+        
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
         domain_discretizer = DomainDiscretizer(self.config, self.logger)
         hru_shapefile = domain_discretizer.discretize_domain()
@@ -269,6 +293,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def plot_discretised_domain(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, discretisation not required")
+            return None
+        
         discretization_method = self.config.get('DOMAIN_DISCRETIZATION')
         self.logger.info("Creating discretization visualization...")
         discretization_plot = self.reporter.plot_discretized_domain(discretization_method)
@@ -279,6 +307,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def acquire_forcings(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, data acquisition not required")
+            return None
+        
         # Initialize datatoolRunner class
         dr = datatoolRunner(self.config, self.logger)
 
@@ -302,6 +334,10 @@ class CONFLUENCE:
 
     @get_function_logger
     def model_agnostic_pre_processing(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, data processing not required")
+            return None
+        
         # Data directoris
         raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
         basin_averaged_data = self.project_dir / 'forcing' / 'basin_averaged_data'
@@ -330,6 +366,10 @@ class CONFLUENCE:
        
     @get_function_logger
     def process_observed_data(self):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.logger.info("Spatial mode: Point simulations, data processing not required")
+            return None
+        
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
 
@@ -340,39 +380,53 @@ class CONFLUENCE:
             self.logger.error(f"Error during observed data processing: {str(e)}")
             raise
 
-    @get_function_logger
     def model_specific_pre_processing(self):
-
+        """Process the forcing data into model-specific formats."""
+        self.logger.info("Starting model-specific preprocessing")
+        
         for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
-
-            # Data directoris
-            model_input_dir = self.project_dir / "forcing" / f"{model}_input"
-
-            # Make sure the new directories exists
-            model_input_dir.mkdir(parents = True, exist_ok = True)
-
-            if model == 'SUMMA':
-                ssp = SummaPreProcessor_spatial(self.config, self.logger)
-                ssp.run_preprocessing()
-
-                mp = MizuRoutePreProcessor(self.config,self.logger)
-                mp.run_preprocessing()
-
-            elif model == 'GR':
-                gpp = GRPreProcessor(self.config, self.logger)
-                gpp.run_preprocessing()
-
-            elif model == 'FUSE':
-                fpp = FUSEPreProcessor(self.config, self.logger)
-                fpp.run_preprocessing()
-
-            elif model == 'HYPE':
-                hpp = HYPEPreProcessor(self.config, self.logger)
-                hpp.run_preprocessing()
-
-            elif model == 'MESH':
-                mpp = MESHPreProcessor(self.config, self.logger)
-                mpp.run_preprocessing() 
+            try:
+                # Create model input directory
+                model_input_dir = self.project_dir / "forcing" / f"{model}_input"
+                model_input_dir.mkdir(parents=True, exist_ok=True)
+                
+                self.logger.info(f"Processing model: {model}")
+                
+                if model == 'SUMMA':
+                    if self.config.get('SPATIAL_MODE') == 'Point':
+                        self.logger.info("Initializing SUMMA point preprocessor")
+                        ssp = SummaPreProcessor_point(self.config, self.logger)
+                        ssp.run_preprocessing()
+                    else:
+                        self.logger.info("Initializing SUMMA spatial preprocessor")
+                        ssp = SummaPreProcessor_spatial(self.config, self.logger)
+                        ssp.run_preprocessing()
+                        
+                        self.logger.info("Initializing MizuRoute preprocessor")
+                        mp = MizuRoutePreProcessor(self.config, self.logger)
+                        mp.run_preprocessing()
+                elif model == 'GR':
+                    gpp = GRPreProcessor(self.config, self.logger)
+                    gpp.run_preprocessing()
+                elif model == 'FUSE':
+                    fpp = FUSEPreProcessor(self.config, self.logger)
+                    fpp.run_preprocessing()
+                elif model == 'HYPE':
+                    hpp = HYPEPreProcessor(self.config, self.logger)
+                    hpp.run_preprocessing()
+                elif model == 'MESH':
+                    mpp = MESHPreProcessor(self.config, self.logger)
+                    mpp.run_preprocessing()
+                else:
+                    self.logger.warning(f"Unsupported model: {model}. No preprocessing performed.")
+                    
+            except Exception as e:
+                self.logger.error(f"Error preprocessing model {model}: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
+                
+        self.logger.info("Model-specific preprocessing completed")
 
 
     @get_function_logger

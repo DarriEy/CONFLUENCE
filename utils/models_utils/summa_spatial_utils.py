@@ -203,7 +203,7 @@ class SummaPreProcessor_spatial:
 
         try:
             if self.config.get('FORCING_DATASET') == 'RDRS':
-                self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
+                #self.merge_forcings(work_log_dir=self.project_dir / f"forcing/_workLog")
                 self.logger.info("Forcings merged successfully")
             elif self.config.get('FORCING_DATASET') == 'CARRA':
                 self.process_carra(work_log_dir=self.project_dir / f"forcing/_workLog")
@@ -1645,7 +1645,7 @@ class SummaPreProcessor_spatial:
     def insert_soil_class(self, attribute_file):
         """Insert soil class data into the attributes file."""
         self.logger.info("Inserting soil class into attributes file")
-        if self.config.get('DATA_ACQUIRE') == 'HPC':
+        if self.config.get('DATA_ACQUIRE') == 'supplied':
             self._insert_soil_class_from_supplied(attribute_file)
         
             gistool_output = self.project_dir / "attributes/soil_class"
@@ -1662,7 +1662,7 @@ class SummaPreProcessor_spatial:
                     else:
                         self.logger.warning(f"No soil data found for HRU {hru_id}")
 
-        elif self.config.get('DATA_ACQUIRE') == 'supplied':
+        elif self.config.get('DATA_ACQUIRE') == 'HPC':
             """Insert soil class data from supplied intersection file."""
             intersect_path = self._get_default_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
             intersect_name = self.config.get('INTERSECT_SOIL_NAME')
@@ -1670,12 +1670,19 @@ class SummaPreProcessor_spatial:
 
             shp = gpd.read_file(intersect_path / intersect_name)
 
+            # Check and create missing USGS_X columns
+            for i in range(13):
+                col_name = f'USGS_{i}'
+                if col_name not in shp.columns:
+                    shp[col_name] = 0  # Add the missing column and initialize with 0 or any suitable default value
+
             with nc4.Dataset(attribute_file, "r+") as att:
                 for idx in range(len(att['hruId'])):
                     attribute_hru = att['hruId'][idx]
                     shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
                     
                     tmp_hist = []
+                    print('starting usgs')
                     for j in range(13):
                         col_name = f'USGS_{j}'
                         if col_name in shp.columns:

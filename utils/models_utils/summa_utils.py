@@ -8,6 +8,7 @@ import geopandas as gpd # type: ignore
 import xarray as xr # type: ignore
 from typing import Dict, Any, Optional
 import subprocess
+import math
 import time
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -312,7 +313,7 @@ class SummaPreProcessor_spatial:
 
         try:
             if self.config.get('FORCING_DATASET') == 'RDRS':
-                self.merge_forcings()
+                #self.merge_forcings()
                 self.logger.info("Forcings merged successfully")
             elif self.config.get('FORCING_DATASET') == 'CARRA':
                 self.process_carra()
@@ -812,6 +813,8 @@ class SummaPreProcessor_spatial:
             ValueError: If there are issues with data processing or lapse rate application.
             IOError: If there are issues reading or writing data files.
         """
+
+
         self.logger.info("Starting to apply temperature lapse rate and add data step")
 
         # Find intersection file
@@ -839,6 +842,7 @@ class SummaPreProcessor_spatial:
         # Get forcing files
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
         forcing_files.sort()
+        self.logger.info(f"forcing files: {forcing_files}")
 
         # Prepare output directory
         self.forcing_summa_path.mkdir(parents=True, exist_ok=True)
@@ -856,6 +860,7 @@ class SummaPreProcessor_spatial:
 
         # Define lapse rate
         lapse_rate = float(self.config.get('LAPSE_RATE'))  # [K m-1]
+
         # Calculate weighted lapse values for each HRU
         topo_data['lapse_values'] = topo_data[weights] * lapse_rate * (topo_data[forcing_elev] - topo_data[catchment_elev])
 
@@ -871,34 +876,39 @@ class SummaPreProcessor_spatial:
         # Process each forcing file
         for file in forcing_files:
             self.logger.info(f"Processing {file}")
-            try: 
-                output_file = self.forcing_summa_path / file
-                #if output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS') != True :
-                #    self.logger.info(f"{file} already exists ... skipping")
-                #å    continue
+            #try: 
+            output_file = self.forcing_summa_path / file
+            #if output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS') != True :
+            #    self.logger.info(f"{file} already exists ... skipping")
+            #å    continue
 
-                with xr.open_dataset(self.forcing_basin_path / file) as dat:
-                    # Temperature lapse rates
-                    lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
-                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
+            with xr.open_dataset(self.forcing_basin_path / file) as dat:
+                # Temperature lapse rates
+                self.logger.info(f"Current data: {dat}")
+                self.logger.info(f"lapse values: {dat['hruId'].values}")
+                self.logger.info(f"lapse values: {lapse_values['lapse_values'].loc[dat['hruId'].values]}")
 
-                    # Apply datastep
-                    dat['data_step'] = self.data_step
-                    dat.data_step.attrs['long_name'] = 'data step length in seconds'
-                    dat.data_step.attrs['units'] = 's'
+                lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
+                addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
+                self.logger.info(f"to add: {addThis}")
 
-                    if self.config.get('APPLY_LAPSE_RATE') == True:
-                        # Get air temperature attributes
-                        tmp_units = dat['airtemp'].units
-                        
-                        # Apply lapse rate correction
-                        dat['airtemp'] = dat['airtemp'] + addThis
-                        dat.airtemp.attrs['units'] = tmp_units
+                # Apply datastep
+                dat['data_step'] = self.data_step
+                dat.data_step.attrs['long_name'] = 'data step length in seconds'
+                dat.data_step.attrs['units'] = 's'
 
-                    # Save to file in new location
-                    dat.to_netcdf(output_file)
-            except:
-                self.logger.warning(f'Issue with file:{file}')
+                if self.config.get('APPLY_LAPSE_RATE') == True:
+                    # Get air temperature attributes
+                    tmp_units = dat['airtemp'].units
+                    
+                    # Apply lapse rate correction
+                    dat['airtemp'] = dat['airtemp'] + addThis
+                    dat.airtemp.attrs['units'] = tmp_units
+
+                # Save to file in new location
+                dat.to_netcdf(output_file)
+            #except:
+            #    self.logger.warning(f'Issue with file:{file}')
 
         self.logger.info(f"Completed processing of {self.forcing_dataset.upper()} forcing files with temperature lapsing")
 
@@ -1771,6 +1781,12 @@ class SummaPreProcessor_spatial:
 
             shp = gpd.read_file(intersect_path / intersect_name)
 
+            # Check and create missing USGS_X columns
+            for i in range(13):
+                col_name = f'USGS_{i}'
+                if col_name not in shp.columns:
+                    shp[col_name] = 0  # Add the missing column and initialize with 0 or any suitable default value
+
             with nc4.Dataset(attribute_file, "r+") as att:
                 for idx in range(len(att['hruId'])):
                     attribute_hru = att['hruId'][idx]
@@ -1999,8 +2015,106 @@ class SUMMAPostprocessor:
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.results_dir = self.project_dir / "results"
         self.results_dir.mkdir(parents=True, exist_ok=True)
-
+    
     def extract_streamflow(self) -> Optional[Path]:
+        """
+        Extract streamflow results from SUMMA/MizuRoute outputs.
+        
+        For spatial (MizuRoute) mode, extracts from MizuRoute outputs.
+        For point mode, extracts from direct SUMMA outputs.
+        
+        Returns:
+            Optional[Path]: Path to the results file, or None if extraction failed
+        """
+        try:
+            if self.config.get('SPATIAL_MODE') == 'Point':
+                return self.extract_point_streamflow()
+            else:
+                return self.extract_mizuroute_streamflow()
+        except Exception as e:
+            self.logger.error(f"Error extracting streamflow: {str(e)}")
+            raise
+
+    def extract_point_streamflow(self) -> Optional[Path]:
+        """Extract streamflow from direct SUMMA outputs for point mode."""
+        self.logger.info("Extracting SUMMA point simulation streamflow results")
+        
+        experiment_id = self.config.get('EXPERIMENT_ID')
+        sim_path = self.project_dir / 'simulations' / experiment_id / 'SUMMA_point'
+        
+        # Find all sites 
+        site_dirs = [d for d in sim_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
+        
+        # Prepare results dataframe
+        results_df = pd.DataFrame()
+        
+        for site_dir in site_dirs:
+            site_name = site_dir.name
+            self.logger.info(f"Processing results for site {site_name}")
+            
+            # Find the daily output file (typically *_day.nc)
+            day_files = list(site_dir.glob(f"*{site_name}*_day.nc"))
+            
+            if not day_files:
+                self.logger.warning(f"No daily output file found for site {site_name}")
+                continue
+            
+            day_file = day_files[0]
+            
+            # Read the data
+            try:
+                ds = xr.open_dataset(day_file)
+                
+                # Extract runoff data
+                if 'averageRoutedRunoff' in ds:
+                    runoff_var = 'averageRoutedRunoff'
+                elif 'scalarTotalRunoff' in ds:
+                    runoff_var = 'scalarTotalRunoff'
+                elif 'scalarAquiferBaseflow' in ds:
+                    runoff_var = 'scalarAquiferBaseflow'
+                else:
+                    # Find any variable that might contain runoff
+                    runoff_candidates = [var for var in ds.variables if 'runoff' in var.lower() or 'flow' in var.lower()]
+                    if runoff_candidates:
+                        runoff_var = runoff_candidates[0]
+                        self.logger.info(f"Using {runoff_var} as runoff variable for site {site_name}")
+                    else:
+                        self.logger.warning(f"No runoff variable found for site {site_name}")
+                        continue
+                
+                # Extract to dataframe
+                runoff_df = ds[runoff_var].to_dataframe().reset_index()
+                runoff_df = runoff_df.set_index('time')
+                
+                # Name the column with site name
+                runoff_df = runoff_df.rename(columns={runoff_var: f"{site_name}_discharge_cms"})
+                
+                # Add to results
+                if results_df.empty:
+                    results_df = runoff_df[[f"{site_name}_discharge_cms"]]
+                else:
+                    results_df = pd.merge(results_df, runoff_df[[f"{site_name}_discharge_cms"]], 
+                                        left_index=True, right_index=True, how='outer')
+                
+                ds.close()
+                
+            except Exception as e:
+                self.logger.error(f"Error processing results for site {site_name}: {str(e)}")
+        
+        if results_df.empty:
+            self.logger.warning("No results extracted from any site")
+            return None
+        
+        # Save results
+        output_file = self.results_dir / f"{experiment_id}_point_results.csv"
+        results_df.to_csv(output_file)
+        self.logger.info(f"Combined point simulation results saved to {output_file}")
+        
+        return output_file
+
+    def extract_mizuroute_streamflow(self) -> Optional[Path]:
+        """Extract streamflow from MizuRoute outputs for spatial mode."""
+        self.logger.info("Extracting SUMMA/MizuRoute streamflow results")
         try:
             self.logger.info("Extracting SUMMA/MizuRoute streamflow results")
             
@@ -2075,13 +2189,116 @@ class SummaRunner:
 
     def run_summa(self):
         """
-        Run the SUMMA model either in parallel or serial mode based on configuration.
+        Run the SUMMA model.
+        
+        This method selects the appropriate run mode (parallel, serial, or point)
+        based on configuration settings and executes the SUMMA model accordingly.
         """
-        if self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.run_summa_point()
+        elif self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
             self.run_summa_parallel()
         else:
             self.run_summa_serial()
+
+    def run_summa_point(self):
+        """
+        Run SUMMA in point simulation mode.
         
+        This method executes SUMMA for multiple point simulations, based on the
+        file manager list created during preprocessing. It handles both the
+        initial condition runs and the main simulation runs.
+        """
+        self.logger.info("Starting SUMMA point simulations")
+        
+        # Set up paths
+        summa_path = self.config.get('SUMMA_INSTALL_PATH')
+        if summa_path == 'default':
+            summa_path = self.root_path / 'installs/summa/bin/'
+        else:
+            summa_path = Path(summa_path)
+            
+        summa_exe = self.config.get('SUMMA_EXE')
+        setting_path = self._get_config_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA_point/')
+        
+        # Run all sites from the file manager lists
+        fm_ic_list_path = setting_path / 'list_fileManager_IC.txt'
+        fm_list_path = setting_path / 'list_fileManager.txt'
+        
+        # Check if file manager lists exist
+        if not fm_ic_list_path.exists() or not fm_list_path.exists():
+            self.logger.error(f"File manager lists not found at {setting_path}")
+            raise FileNotFoundError(f"Required file manager lists not found at {setting_path}")
+        
+        # Read file manager lists
+        with open(fm_ic_list_path, 'r') as f:
+            fm_ic_list = [line.strip() for line in f if line.strip()]
+        
+        with open(fm_list_path, 'r') as f:
+            fm_list = [line.strip() for line in f if line.strip()]
+        
+        if len(fm_ic_list) != len(fm_list):
+            self.logger.warning(f"Mismatch in file manager list lengths: {len(fm_ic_list)} IC files vs {len(fm_list)} main files")
+
+        # Create output directory
+        experiment_id = self.config.get('EXPERIMENT_ID')
+        main_output_path = self.project_dir / 'simulations' / experiment_id / 'SUMMA_point'
+        main_output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Process each site
+        for i, (ic_fm, main_fm) in enumerate(zip(fm_ic_list, fm_list)):
+            site_name = os.path.basename(ic_fm).split('_')[1]  # Extract site name from file manager name
+            self.logger.info(f"Processing site {i+1}/{len(fm_list)}: {site_name}")
+            
+            # Create site-specific output directory
+            site_output_path = main_output_path / site_name
+            site_output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Create log directory
+            log_path = site_output_path / "logs"
+            log_path.mkdir(parents=True, exist_ok=True)
+            
+            # Run initial conditions (IC) simulation
+            self.logger.info(f"Running initial conditions simulation for {site_name}")
+            ic_command = f"{str(summa_path / summa_exe)} -m {ic_fm} -r e"
+            
+            try:
+                with open(log_path / f"{site_name}_IC.log", 'w') as log_file:
+                    subprocess.run(ic_command, shell=True, check=True, stdout=log_file, stderr=subprocess.STDOUT)
+                
+                # Find the restart file (newest file with 'restart' in name)
+                site_setting_path = Path(os.path.dirname(ic_fm))
+                site_output_files = list(site_output_path.glob("*restart*"))
+                
+                if not site_output_files:
+                    self.logger.error(f"No restart file found for {site_name}")
+                    continue
+                
+                # Sort by modification time and get the most recent
+                restart_file = sorted(site_output_files, key=os.path.getmtime)[-1]
+                
+                # Copy to warm_state.nc in settings directory
+                shutil.copy(restart_file, site_setting_path / "warm_state.nc")
+                self.logger.info(f"Copied restart file to warm state for {site_name}")
+                
+                # Run main simulation
+                self.logger.info(f"Running main simulation for {site_name}")
+                main_command = f"{str(summa_path / summa_exe)} -m {main_fm}"
+                
+                with open(log_path / f"{site_name}_main.log", 'w') as log_file:
+                    subprocess.run(main_command, shell=True, check=True, stdout=log_file, stderr=subprocess.STDOUT)
+                
+                self.logger.info(f"Completed simulation for {site_name}")
+                
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"SUMMA run failed for {site_name} with error code {e.returncode}")
+                self.logger.error(f"Command that failed: {e.cmd}")
+            except Exception as e:
+                self.logger.error(f"Error processing site {site_name}: {str(e)}")
+        
+        self.logger.info(f"Completed all SUMMA point simulations ({len(fm_list)} sites)")
+        return main_output_path
+
     def run_summa_parallel(self):
         """
         Run SUMMA in parallel using SLURM array jobs.
@@ -2402,3 +2619,1233 @@ echo "Completed all GRUs for this job"
             self.logger.error(f"Error merging SUMMA outputs: {str(e)}")
             raise
 
+class SummaPreProcessor_point:
+    """
+    Preprocessor for point-based SUMMA simulations.
+    Adapts functionality from PLUMBER2 workflow for CONFLUENCE.
+        """
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        self.config = config
+        self.logger = logger
+        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')).resolve() / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.summa_setup_dir = self.project_dir / 'settings' / 'SUMMA'
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        
+        # Define paths for SUMMA point simulation
+        self.forcing_path = self.project_dir / 'forcing' / 'SUMMA_point'
+        self.setting_path = self.project_dir / 'settings' / 'SUMMA_point'
+        self.output_path = self.project_dir / 'simulations' / self.config.get('EXPERIMENT_ID') / 'SUMMA_point'
+        
+        # Path for raw forcing data
+        self.raw_forcing_path = self.project_dir / 'forcing' / 'raw_data'
+        
+        # Use absolute paths
+        self.forcing_path = self.forcing_path.resolve()
+        self.setting_path = self.setting_path.resolve()
+        self.output_path = self.output_path.resolve()
+        self.raw_forcing_path = self.raw_forcing_path.resolve()
+        
+        # Create required directories
+        self.forcing_path.mkdir(parents=True, exist_ok=True)
+        self.setting_path.mkdir(parents=True, exist_ok=True)
+        self.output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Author info for file generation
+        self.author = self.config.get('AUTHOR', 'CONFLUENCE SUMMA Point Workflow')
+        
+        # Create lists for file manager paths and other tracking
+        self.fm_list = []
+        self.fm_ic_list = []
+        self.setting_path_list = []
+        self.output_path_list = []
+        self.site_description_list = []
+
+    def write_global_tables(self, plumber2_vegTable, plumber2_mpTable, site_description_list):
+        """
+        Write vegetation and MP tables to global files.
+        
+        Args:
+            plumber2_vegTable (pd.DataFrame): Vegetation parameter table with all sites
+            plumber2_mpTable (pd.DataFrame): MP table with all sites
+            site_description_list (list): List of site descriptions
+        """
+        self.logger.info("Writing global vegetation and MP tables")
+        
+        # Write vegetation table
+        self.write_veg_table(plumber2_vegTable)
+        self.logger.info(f"Vegetation table written to {self.setting_path / 'TBL_VEGPARM.TBL'}")
+        
+        # Write MP table
+        self.write_mp_table(plumber2_mpTable, site_description_list)
+        self.logger.info(f"MP table written to {self.setting_path / 'TBL_MPTABLE.TBL'}")
+
+    def run_preprocessing(self):
+        """
+        Run the complete SUMMA point preprocessing workflow.
+        """
+        self.logger.info("Starting SUMMA point preprocessing")
+        
+        try:
+            # Create required directories
+            self.summa_setup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy base settings
+            self.copy_base_settings()
+            
+            # Find forcing files
+            self.logger.info("Finding forcing files")
+            self.forcing_files = []
+            for file in os.listdir(self.raw_forcing_path):
+                if file.endswith('.nc') and not file.startswith('._'):
+                    self.forcing_files.append(file)
+            self.forcing_files.sort()
+            
+            # Initialize global tracking variables
+            self.fm_list = []
+            self.fm_ic_list = []
+            self.setting_path_list = []
+            self.output_path_list = []
+            self.site_description_list = []
+            
+            # Create site list and initialize tables
+            plumber2_vegTable, plumber2_mpTable, _ = self.create_site_list(self.forcing_files)
+            
+            # Store the tables as class attributes for use in process_site
+            self.table_igbp_veg = self.table_igbp_veg  # This should be set in create_site_list
+            self.table_igbp_mp = self.table_igbp_mp    # This should be set in create_site_list
+            
+            # Process each site
+            for file in self.forcing_files:
+                self.process_site(file, plumber2_vegTable, plumber2_mpTable)
+                
+            # Save lists and global tables
+            self.save_file_manager_lists()
+            self.write_veg_table(plumber2_vegTable)   # Updated to only pass the table
+            self.write_mp_table(plumber2_mpTable, self.site_description_list)
+            
+            self.logger.info("SUMMA point preprocessing completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during SUMMA point preprocessing: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+
+    def copy_base_settings(self):
+        """Copy base SUMMA settings to the setting path."""
+        self.logger.info("Copying base SUMMA settings")
+        
+        base_setting_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA_point'
+        
+        if not base_setting_path.exists():
+            self.logger.warning(f"Base settings path {base_setting_path} does not exist. Creating minimal settings.")
+            # Create minimal required settings if base settings don't exist
+            minimal_files = {
+                'basinParamInfo.txt': '',
+                'localParamInfo.txt': '',
+                'outputControl.txt': '',
+                'outputControl_IC.txt': '',
+                'modelDecisions_exp320.txt': '',  # Adapt name as needed
+                'TBL_GENPARM.TBL': '',
+                'TBL_SOILPARM.TBL': ''
+            }
+            
+            for filename, content in minimal_files.items():
+                with open(self.setting_path / filename, 'w') as f:
+                    f.write(content)
+            
+            self.logger.info("Created minimal base settings")
+            return
+        
+        # Loop over all files in base settings and copy
+        for file in os.listdir(base_setting_path):
+            source = base_setting_path / file
+            if source.is_file():
+                dest = self.setting_path / file
+                shutil.copyfile(source, dest)
+                self.logger.debug(f"Copied {file} to {dest}")
+        
+        self.logger.info("Base settings copied successfully")
+
+    def find_forcing_files(self):
+        """Find and return list of forcing files."""
+        self.logger.info("Finding forcing files")
+        
+        # Find all .nc files, excluding hidden files
+        forcing_files = []
+        for file in os.listdir(self.raw_forcing_path):
+            if file.endswith('.nc') and not file.startswith('._'):
+                forcing_files.append(file)
+        
+        forcing_files.sort()
+        return forcing_files
+
+    def create_site_list(self, forcing_files):
+        """
+        Create site list and initialize vegetation tables.
+        
+        Args:
+            forcing_files (list): List of forcing file names
+            
+        Returns:
+            tuple: (plumber2_vegTable, plumber2_mpTable, site_description_list)
+        """
+        # Import math module
+        import math
+        
+        self.logger.info("Creating site list and initializing vegetation tables")
+        
+        # Find the locations of the tables
+        table_igbp_veg_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA_point' / 'TBL_VEGPARM.TBL'
+        table_igbp_mp_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA_point' / 'TBL_MPTABLE.TBL'
+        
+        # Try to read CSV versions first (if they exist)
+        csv_veg_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA_point' / 'TBL_VEGPARM_base.csv'
+        csv_mp_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA_point' / 'TBL_MPTABLE_base.csv'
+        
+        if csv_veg_path.exists() and csv_mp_path.exists():
+            self.logger.info("Using CSV versions of vegetation tables")
+            self.table_igbp_veg = pd.read_csv(csv_veg_path)
+            self.table_igbp_mp = pd.read_csv(csv_mp_path)
+            
+            # Set the dataframe index
+            self.table_igbp_veg = self.table_igbp_veg.set_index('20,1,')  # index = vegTypeIndex
+            self.table_igbp_mp = self.table_igbp_mp.set_index('IGBP_type')  # index = row names
+        else:
+            self.logger.info("Using TBL versions of vegetation tables")
+            # Copy the tables to the settings path first
+            os.makedirs(self.setting_path, exist_ok=True)
+            shutil.copy(table_igbp_veg_path, self.setting_path / 'TBL_VEGPARM.TBL')
+            shutil.copy(table_igbp_mp_path, self.setting_path / 'TBL_MPTABLE.TBL')
+            
+            # Create default vegetation table structure directly
+            veg_data = {
+                '20,1,': list(range(1, 21)),
+                'NROOT': [4] * 20,
+                'RGL': [100] * 20,
+                'HS': [47.35] * 20,
+                'SNUP': [0.04] * 20,
+                'MAXALB': [46] * 20,
+                'LAIMIN': [0.05] * 20,
+                'LAIMAX': [6.5] * 20,
+                'EMISSMIN': [0.625] * 20,
+                'EMISSMAX': [0.96] * 20,
+                'ALBEDOMIN': [0.05] * 20,
+                'ALBEDOMAX': [0.25] * 20,
+                'Z0MIN': [0.01] * 20,
+                'Z0MAX': [1.0] * 20,
+                'ZTOPV': [20.0] * 20,
+                'RS': [125] * 20,
+                'MODIFIED_IGBP_MODIS_NOAH': [f"'Vegetation Type {i}'" for i in range(1, 21)]
+            }
+            self.table_igbp_veg = pd.DataFrame(veg_data).set_index('20,1,')
+            
+            # Create default MP table structure
+            mp_columns = [str(i) for i in range(1, 21)]
+            mp_rows = ['HVT', 'HVB']
+            self.table_igbp_mp = pd.DataFrame(columns=mp_columns, index=mp_rows)
+            
+            # Fill with default values - using loc to avoid chained assignment warning
+            for col in mp_columns:
+                self.table_igbp_mp.loc['HVT', col] = 20.0  # Default canopy top height
+                self.table_igbp_mp.loc['HVB', col] = 2.0   # Default canopy bottom height
+        
+        # Create empty dataframes for vegetation parameter tables
+        plumber2_vegTable = pd.DataFrame(index=self.table_igbp_veg.index, columns=self.table_igbp_veg.columns).dropna()
+        plumber2_mpTable = pd.DataFrame(index=self.table_igbp_mp.index)
+        
+        # Create site description list
+        site_description_list = []
+        
+        return plumber2_vegTable, plumber2_mpTable, site_description_list
+        
+    def process_site(self, file, plumber2_vegTable, plumber2_mpTable):
+        """
+        Process a single site (forcing file).
+        
+        Args:
+            file (str): Forcing file name
+            plumber2_vegTable (DataFrame): Vegetation parameter table
+            plumber2_mpTable (DataFrame): MP table
+        """
+        # Extract site name from file name
+        site_name = file[:6]  # Assuming first 6 characters are the site name
+        self.logger.info(f"Processing site: {site_name}")
+        
+        # Create site-specific directories
+        forcing_site_path = self.forcing_path / site_name
+        setting_site_path = self.setting_path / site_name
+        output_site_path = self.output_path / site_name
+        
+        forcing_site_path.mkdir(parents=True, exist_ok=True)
+        setting_site_path.mkdir(parents=True, exist_ok=True)
+        output_site_path.mkdir(parents=True, exist_ok=True)
+        
+        # Load forcing data
+        try:
+            dat = xr.open_dataset(self.raw_forcing_path / file)
+        except Exception as e:
+            self.logger.error(f"Could not open forcing file {file}: {str(e)}")
+            return
+        
+        # Create SUMMA forcing files (regular and IC)
+        self.make_forcing_file(dat, file, forcing_site_path)
+        forcing_ic = self.make_forcing_file(dat, file, forcing_site_path, is_IC=True, n_warmup=25)
+        
+        # Create filemanagers
+        exp = self.config.get('EXPERIMENT_ID', 'BB_NOAH_I1_E1')
+        exp_dec = self.config.get('MODEL_DECISIONS', 'exp320')
+        
+        site_fm = self.make_filemanager(
+            setting_site_path, dat, site_name, setting_site_path,
+            forcing_site_path, output_site_path, self.output_path, exp, exp_dec
+        )
+        
+        site_fm_ic = self.make_filemanager(
+            setting_site_path, forcing_ic, site_name, setting_site_path,
+            forcing_site_path, output_site_path, self.output_path, exp, exp_dec, is_IC=True
+        )
+        
+        # Create forcing file lists
+        self.make_forcing_list(setting_site_path, file)
+        self.make_forcing_list(setting_site_path, file, is_IC=True)
+        
+        # Get soil map data for soil type
+        soil_map_path = Path(self.config.get('GLOBAL_SOIL_MAP', f"{self.config.get('CONFLUENCE_CODE_DIR')}/0_base_settings/SUMMA_point/global_soil_map.tif"))
+        if soil_map_path.exists():
+            with rasterio.open(soil_map_path) as soil_map:
+                soilTypeIndex = self.find_soiltype_id(dat, soil_map)
+        else:
+            # Use default soil type if map is not available
+            soilTypeIndex = 4  # Default to loam if no map available
+            self.logger.warning(f"Soil map not found at {soil_map_path}. Using default soil type {soilTypeIndex}.")
+        
+        # Use the index in the plumber tables directly instead of looking up in forcing_files
+        vegTypeIndex_plumberTables = self.forcing_files.index(file) + 1 if hasattr(self, 'forcing_files') else 1
+        
+        # Prepare vegetation tables for this site
+        vegTable_site, mpTable_site, igbp_vegType = self.prep_vegatation_tables(
+            dat, self.table_igbp_veg, self.table_igbp_mp, vegTypeIndex_plumberTables, site_name
+        )
+        
+        # Update global tables using pd.concat instead of append
+        import pandas as pd
+        plumber2_vegTable = pd.concat([plumber2_vegTable, vegTable_site.to_frame().T])
+        
+        # Use assign for mpTable and then rename
+        if isinstance(mpTable_site, pd.Series):
+            temp_df = pd.DataFrame({mpTable_site.name: mpTable_site})
+            plumber2_mpTable = pd.concat([plumber2_mpTable, temp_df], axis=1)
+        else:
+            self.logger.warning(f"mpTable_site is not a pandas Series, it's a {type(mpTable_site)}")
+        
+        self.site_description_list.append(f"{mpTable_site.name}: {site_name}, {igbp_vegType}")
+        
+        # Create attribute, cold state, and trial parameter files
+        self.make_attribute_file(setting_site_path, dat, soilTypeIndex, vegTypeIndex_plumberTables)
+        self.make_cold_state_file(setting_site_path, dat)
+        self.make_trial_param_file(setting_site_path, dat, mpTable_site)
+        
+        # Close dataset
+        dat.close()
+        
+        # Add file manager paths to lists for later
+        self.fm_list.append(site_fm)
+        self.fm_ic_list.append(site_fm_ic)
+        self.setting_path_list.append(setting_site_path)
+        self.output_path_list.append(output_site_path)
+
+    def make_forcing_file(self, dat, file_name, dest, is_IC=False, n_warmup=-1):
+        """
+        Create a SUMMA forcing file from the input dataset.
+        
+        Args:
+            dat (xr.Dataset): Source dataset
+            file_name (str): Original file name
+            dest (Path): Destination directory
+            is_IC (bool): Whether this is an initial condition file
+            n_warmup (int): Number of warmup years for IC files
+            
+        Returns:
+            xr.Dataset: The created forcing dataset
+        """
+        self.logger.info(f"Creating {'IC ' if is_IC else ''}forcing file for {file_name}")
+        
+        # Do prep if we're making the IC forcing file
+        if is_IC:
+            # Create a backup of the input netcdf data
+            dat_in = dat.copy()
+            
+            # Duplicate the existing data as many times as needed
+            dat = self.duplicate_forcing_data_for_ICs(dat, n_warmup)
+            
+            # Update the output filename
+            file_name = file_name[0:-3] + '_IC.nc'
+        
+        # Variable mapping
+        var_names = {
+            'pptrate': 'Precip',
+            'SWRadAtm': 'SWdown',
+            'LWRadAtm': 'LWdown',
+            'airtemp': 'Tair',
+            'windspd': 'Wind',
+            'airpres': 'Psurf',
+            'spechum': 'Qair'
+        }
+        
+        # Get the required data
+        dt = (dat['time'][1].values - dat['time'][0].values) / np.timedelta64(1, 's')
+        
+        # Make a new dataframe that only has the 7 forcing variables
+        summa_forcing = xr.Dataset(
+            data_vars=dict(
+                data_step=([], dt),
+                pptrate=(['time', 'hru'], dat['Precip'].values[:, :, 0]),
+                SWRadAtm=(['time', 'hru'], dat['SWdown'].values[:, :, 0]),
+                LWRadAtm=(['time', 'hru'], dat['LWdown'].values[:, :, 0]),
+                airtemp=(['time', 'hru'], dat['Tair'].values[:, :, 0]),
+                windspd=(['time', 'hru'], dat['Wind'].values[:, :, 0]),
+                airpres=(['time', 'hru'], dat['Psurf'].values[:, :, 0]),
+                spechum=(['time', 'hru'], dat['Qair'].values[:, :, 0]),
+            ),
+            coords=dict(
+                time=dat['time'],
+            )
+        )
+        
+        # Add the hruId variable
+        summa_forcing['hruId'] = xr.DataArray(np.tile(1, (1)), dims=('hru'))
+        
+        # Copy attributes
+        for summa, source in var_names.items():
+            if is_IC:
+                summa_forcing[summa].attrs['units'] = dat_in[source].units
+                summa_forcing[summa].attrs['long_name'] = dat_in[source].long_name
+            else:
+                summa_forcing[summa].attrs['units'] = dat[source].units
+                summa_forcing[summa].attrs['long_name'] = dat[source].long_name
+        
+        summa_forcing['data_step'].attrs['long_name'] = 'data step length in seconds'
+        summa_forcing['data_step'].attrs['units'] = 's'
+        
+        # Save to data folder
+        summa_forcing.to_netcdf(dest / file_name)
+        
+        return summa_forcing
+
+    def duplicate_forcing_data_for_ICs(self, dat, n_warmup):
+        """
+        Duplicate forcing data to create a longer time series for spin-up.
+        
+        Args:
+            dat (xr.Dataset): Source dataset
+            n_warmup (int): Number of warmup years needed
+            
+        Returns:
+            xr.Dataset: Dataset with duplicated data for the requested warmup period
+        """
+        import math
+        import calendar
+        import numpy as np
+        
+        # Find number of years in existing data
+        n_data = len(dat.groupby('time.year').count().year)
+
+        # Find how often we have to duplicate the data to get to n_warmup years
+        n_repeat = math.ceil(n_warmup / n_data)
+        
+        # Get the years in the data
+        base_years = list(dat.groupby('time.year').groups.keys())
+        last_year = base_years[-1]
+        
+        # Find the time step in seconds
+        dt = (dat['time'][1].values - dat['time'][0].values) / np.timedelta64(1, 's')
+        
+        # Create a list to store all the datasets (more memory efficient than building a single DataFrame)
+        all_datasets = [dat]
+        
+        # Loop and create new years of data
+        offset = 1
+        for duplicate in range(1, n_repeat):
+            for base_year in base_years:
+                # Check if we've added enough years already
+                if n_data + offset > n_warmup:
+                    continue
+                    
+                # Define the new year
+                new_year = last_year + offset
+                offset += 1
+                
+                # Get the base data for this year
+                base_data = dat.sel(time=str(base_year))
+                
+                # Handle leap years 
+                if calendar.isleap(base_year) and not calendar.isleap(new_year):
+                    # Remove Feb 29 from leap year data
+                    mask = ~((base_data.time.dt.month == 2) & (base_data.time.dt.day == 29))
+                    base_data = base_data.sel(time=mask)
+                elif not calendar.isleap(base_year) and calendar.isleap(new_year):
+                    # Need to handle this specially - for now, just skip adding Feb 29
+                    # This is simpler than trying to interpolate data for the missing day
+                    self.logger.warning(f"Skipping Feb 29 when duplicating from non-leap year {base_year} to leap year {new_year}")
+                
+                # Shift the dates by the year difference
+                time_shift = pd.Timedelta(days=365 * (new_year - base_year))
+                if calendar.isleap(base_year) and calendar.isleap(new_year):
+                    # Both leap years, add an extra day for each leap year in between
+                    leap_years_between = sum(1 for y in range(base_year + 1, new_year) if calendar.isleap(y))
+                    time_shift += pd.Timedelta(days=leap_years_between)
+                elif not calendar.isleap(base_year) and not calendar.isleap(new_year):
+                    # Neither are leap years, add an extra day for each leap year in between
+                    leap_years_between = sum(1 for y in range(base_year + 1, new_year) if calendar.isleap(y))
+                    time_shift += pd.Timedelta(days=leap_years_between)
+                
+                # Create a new dataset with shifted dates
+                new_data = base_data.copy()
+                new_data['time'] = new_data.time + time_shift
+                
+                # Add to our list of datasets
+                all_datasets.append(new_data)
+        
+        # Combine all datasets (more efficient than repeated concatenation)
+        combined_data = xr.concat(all_datasets, dim='time')
+        
+        # Sort by time
+        combined_data = combined_data.sortby('time')
+        
+        return combined_data
+
+    def make_filemanager(self, des, dat, site_name, path_to_settings, path_to_forcing, 
+                         path_to_site_output, path_to_all_output, exp, exp_dec, is_IC=False):
+        """
+        Create a SUMMA file manager configuration file.
+        
+        Args:
+            des (Path): Destination directory
+            dat (xr.Dataset): Source dataset for simulation times
+            site_name (str): Name of the site
+            path_to_settings (Path): Path to settings directory
+            path_to_forcing (Path): Path to forcing directory
+            path_to_site_output (Path): Path to site-specific output
+            path_to_all_output (Path): Path to combined output
+            exp (str): Experiment ID
+            exp_dec (str): Model decisions identifier
+            is_IC (bool): Whether this is for initial conditions
+            
+        Returns:
+            str: Path to the created file manager
+        """
+        # Get sim start and end from forcing data
+        sim_start = dat['time'][0].dt.strftime('%Y-%m-%d %H:%M').values
+        sim_end = dat['time'][-1].dt.strftime('%Y-%m-%d %H:%M').values
+        
+        # Make the filemanager
+        if is_IC:
+            file_name = f'fileManager_{site_name}_{exp}_ICs.txt'
+            prefix = f"{site_name}_{exp}_IC"
+        else:
+            file_name = f'fileManager_{site_name}_{exp}.txt'
+            prefix = f"{site_name}_{exp}"
+        
+        full_path = des / file_name
+        
+        with open(full_path, 'w') as fm:
+            # Header
+            fm.write("controlVersion       'SUMMA_FILE_MANAGER_V3.0.0' !  file manager version \n")
+            
+            # Simulation times
+            fm.write(f"simStartTime         '{sim_start}' ! \n")
+            fm.write(f"simEndTime           '{sim_end}' ! \n")
+            fm.write("tmZoneInfo           'localTime' ! \n")
+            
+            # Prefix for SUMMA outputs
+            fm.write(f"outFilePrefix        '{prefix}' ! \n")
+            
+            # Paths
+            fm.write(f"settingsPath         '{path_to_settings}/' ! \n")
+            fm.write(f"forcingPath          '{path_to_forcing}/' ! \n")
+            
+            if is_IC:
+                fm.write(f"outputPath           '{path_to_site_output}/' ! \n")
+            else:
+                fm.write(f"outputPath           '{path_to_site_output}/' ! \n")
+            
+            # Input file names
+            fm.write(f"attributeFile        '{'attributes.nc'}' ! Relative to settingsPath \n")
+            fm.write(f"trialParamFile       '{'trial_param.nc'}' ! Relative to settingsPath \n")
+            
+            if is_IC:
+                fm.write(f"initConditionFile    '{'cold_state.nc'}' ! Relative to settingsPath \n")
+                fm.write(f"forcingListFile      '{'forcing_list_IC.txt'}' ! Relative to settingsPath \n")
+                fm.write(f"outputControlFile    '../outputControl_IC.txt' !  Relative to settingsPath \n")
+            else:
+                fm.write(f"initConditionFile    '{'warm_state.nc'}' ! Relative to settingsPath \n")
+                fm.write(f"forcingListFile      '{'forcing_list.txt'}' ! Relative to settingsPath \n")
+                fm.write(f"outputControlFile    '../outputControl_everything.txt' !  Relative to settingsPath \n")
+            
+            # Base files (not domain-dependent)
+            fm.write(f"decisionsFile        '../modelDecisions_{exp_dec}.txt' !  Relative to settingsPath \n")
+            fm.write(f"globalHruParamFile   '../localParamInfo.txt' !  Relative to settingsPath \n")
+            fm.write(f"globalGruParamFile   '../basinParamInfo.txt' !  Relative to settingsPath \n")
+            fm.write(f"vegTableFile         '../TBL_VEGPARM.TBL' ! Relative to settingsPath \n")
+            fm.write(f"soilTableFile        '../TBL_SOILPARM.TBL' ! Relative to settingsPath \n")
+            fm.write(f"generalTableFile     '../TBL_GENPARM.TBL' ! Relative to settingsPath \n")
+            fm.write(f"noahmpTableFile      '../TBL_MPTABLE.TBL' ! Relative to settingsPath \n")
+        
+        return str(full_path)
+
+    def make_forcing_list(self, des, file_name, is_IC=False):
+        """
+        Create a list of forcing files for SUMMA.
+        
+        Args:
+            des (Path): Destination directory
+            file_name (str): Name of the forcing file
+            is_IC (bool): Whether this is for initial conditions
+        """
+        if is_IC:
+            full_path = des / 'forcing_list_IC.txt'
+            file_name = file_name[0:-3] + '_IC.nc'
+        else:
+            full_path = des / 'forcing_list.txt'
+        
+        with open(full_path, 'w') as f:
+            f.write(str(file_name) + "\n")
+
+    def find_soiltype_id(self, dat, soil_map):
+        """
+        Find soil type ID for a given location.
+        
+        Args:
+            dat (xr.Dataset): Dataset with location information
+            soil_map (rasterio.DatasetReader): Soil map
+            
+        Returns:
+            int: Soil type ID
+        """
+        # Get the lat/lon coordinates
+        coords = np.zeros([1, 2])
+        coords[:, 0] = dat['longitude'].values[0]
+        coords[:, 1] = dat['latitude'].values[0]
+        
+        # Find the soiltype for those coordinates
+        soilTypeIndex = [x for x in soil_map.sample(coords)]
+        
+        return soilTypeIndex[0][0]
+
+    def map_vegtype_string_to_table_id(self, dat):
+        """
+        Map vegetation type string to IGBP table ID.
+        
+        Args:
+            dat (xr.Dataset): Dataset with vegetation type information
+            
+        Returns:
+            int: Vegetation type ID
+        """
+        # Veg type string (short)
+        vegTypeString_short = dat['IGBP_veg_short'].values.tobytes().decode("utf-8").strip().lower()
+        
+        # Mapping
+        veg_map = {
+            'evergreen needleleaf forest': 1, 'enf': 1,
+            'evergreen broadleaf forest': 2, 'ebf': 2,
+            'deciduous needleleaf forest': 3,
+            'deciduous broadleaf forest': 4, 'dbf': 4,
+            'mixed forests': 5, 'mf': 5,
+            'closed shrublands': 6, 'csh': 6,
+            'open shrublands': 7, 'osh': 7,
+            'woody savannas': 8, 'wsa': 8,
+            'savannas': 9, 'sav': 9,
+            'grasslands': 10, 'gra': 10,
+            'permanent wetlands': 11, 'wet': 11,
+            'croplands': 12, 'cro': 12,
+            'urban and built-up': 13,
+            'cropland/natural vegetation mosaic': 14,
+            'snow and ice': 15,
+            'barren or sparsely vegetated': 16,
+            'water': 17,
+            'wooded tundra': 18,
+            'mixed tundra': 19,
+            'barren tundra': 20
+        }
+        
+        return veg_map[vegTypeString_short]
+
+    def update_mpTable(self, dat, mpTable_site):
+        """
+        Update MP table with LAI/SAI data from dataset.
+        
+        Args:
+            dat (xr.Dataset): Dataset with LAI data
+            mpTable_site (pd.Series): MP table for site
+            
+        Returns:
+            pd.Series: Updated MP table
+        """
+        import numpy as np
+        import pandas as pd
+        
+        # Check which hemisphere we're in
+        in_SH = False
+        if dat['latitude'] < 0:
+            in_SH = True
+        
+        # Create mean monthly Vegetation Area Index from dataset (note: this is VAI despite its name in file)
+        mean_monthly_vai = dat['LAI'].groupby('time.month').mean().values.squeeze()
+        
+        # Get SAI from MP table - check if we have the expected data
+        try:
+            # Check if we have data for indices 43 to 55
+            if len(mpTable_site) >= 55 and 43 in range(len(mpTable_site)):
+                mean_monthly_sai = mpTable_site[43:55].values
+                
+                # Make sure mean_monthly_sai is not empty
+                if len(mean_monthly_sai) == 0:
+                    self.logger.warning("SAI values from MP table are empty, using default values")
+                    mean_monthly_sai = np.ones(12) * 0.1  # Default value of 0.1 for all months
+            else:
+                self.logger.warning("MP table structure doesn't contain expected SAI indices, using default values")
+                mean_monthly_sai = np.ones(12) * 0.1  # Default value of 0.1 for all months
+        except Exception as e:
+            self.logger.warning(f"Error retrieving SAI from MP table: {str(e)}, using default values")
+            mean_monthly_sai = np.ones(12) * 0.1  # Default value of 0.1 for all months
+        
+        # Ensure arrays have the right shape for operations
+        if len(mean_monthly_vai) != 12:
+            self.logger.warning(f"Expected 12 months of VAI data, got {len(mean_monthly_vai)}. Adjusting...")
+            if len(mean_monthly_vai) < 12:
+                # Pad with last value if less than 12 months
+                mean_monthly_vai = np.pad(mean_monthly_vai, (0, 12-len(mean_monthly_vai)), 'edge')
+            else:
+                # Truncate if more than 12 months
+                mean_monthly_vai = mean_monthly_vai[:12]
+        
+        if len(mean_monthly_sai) != 12:
+            self.logger.warning(f"Expected 12 months of SAI data, got {len(mean_monthly_sai)}. Adjusting...")
+            mean_monthly_sai = np.ones(12) * 0.1  # Default value of 0.1 for all months
+        
+        # Convert SAI to a SH pattern if needed
+        if in_SH:
+            mean_monthly_sai = np.roll(mean_monthly_sai, -6)
+        
+        # Calculate mean monthly LAI for table
+        mean_monthly_lai = mean_monthly_vai - mean_monthly_sai
+        
+        # Account for cases where we overestimate the stem area and get negative LAI
+        neg_lai = (mean_monthly_lai < 0)  # Do we have negative LAI?
+        mean_monthly_sai[neg_lai] = mean_monthly_sai[neg_lai] + mean_monthly_lai[neg_lai]  # Correct SAI
+        mean_monthly_lai[neg_lai] = 0  # Set LAI to 0 now we've corrected SAI
+        
+        # Create a new Series with the updated values
+        try:
+            # Create a copy to avoid modifying the original
+            result = mpTable_site.copy()
+            
+            # Rather than modifying the original Series, create a new one with the right values
+            new_data = {}
+            for i in range(len(result)):
+                if 43 <= i < 55:
+                    new_data[i] = mean_monthly_sai[i-43]
+                elif 55 <= i < 67:
+                    new_data[i] = mean_monthly_lai[i-55]
+                else:
+                    new_data[i] = result.iloc[i]
+            
+            # Create new Series with the same index as the original
+            result = pd.Series(new_data, index=result.index, name=result.name)
+            
+            return result
+        except Exception as e:
+            self.logger.warning(f"Error updating MP table with LAI/SAI values: {str(e)}")
+            # If we run into any issues, just return the original
+            return mpTable_site
+
+    def prep_vegatation_tables(self, dat, table_igbp_veg, table_igbp_mp, idx, site_name):
+        """
+        Prepare vegetation tables for a site.
+        
+        Args:
+            dat (xr.Dataset): Dataset with vegetation information
+            table_igbp_veg (pd.DataFrame): IGBP vegetation table
+            table_igbp_mp (pd.DataFrame): IGBP MP table
+            idx (int): Index for this site
+            site_name (str): Name of the site
+            
+        Returns:
+            tuple: (vegTable_site, mpTable_site, igbp_vegType)
+        """
+        # Find the site's IGBP vegetation type
+        vegTypeIndex = self.map_vegtype_string_to_table_id(dat)
+        
+        # Create dataframe copies of the tables for this vegetation type
+        vegTable_site = table_igbp_veg.loc[vegTypeIndex].copy(deep=True)
+        mpTable_site = table_igbp_mp[str(vegTypeIndex)].copy(deep=True)
+        
+        # Update the vegTable dataframe
+        vegTable_site.name = idx  # replace the IGBP class name with the new index
+        
+        # Make a new description (final column)
+# Make a new description (final column)
+        igbp_vegType = vegTable_site['MODIFIED_IGBP_MODIS_NOAH']
+        igbp_vegType = igbp_vegType.replace("'", "").strip()
+        site_description = f"'{site_name}; {igbp_vegType}'"
+        vegTable_site['MODIFIED_IGBP_MODIS_NOAH'] = site_description
+        
+        # Update the mpTable dataframe
+        mpTable_site = self.update_mpTable(dat, mpTable_site)
+        mpTable_site.name = idx
+        
+        return vegTable_site, mpTable_site, igbp_vegType
+
+    def make_attribute_file(self, des, dat, soil_type, veg_type):
+        """
+        Create SUMMA attributes file for a site.
+        
+        Args:
+            des (Path): Destination directory
+            dat (xr.Dataset): Dataset with site information
+            soil_type (int): Soil type ID
+            veg_type (int): Vegetation type ID
+        """
+        # Define fill values for constants/settings
+        num_gru = 1
+        num_hru = 1
+        gruId = 1
+        hruId = 1
+        hru2gru = 1
+        hruArea = 1  # m²; point simulations so it doesn't matter
+        lat = dat['latitude'].values
+        lon = dat['longitude'].values
+        m_height = dat['reference_height'].values
+        elevation = dat['elevation'].values
+        tan_slope = 0.1  # Only used in qbaseTopmodel
+        contour_length = 30  # Only used in qbaseTopmodel
+        slope_type_index = 1  # Required but not used
+        down_hru_id = 0  # Only used in qbaseTopmodel
+        
+        # Create the file
+        full_path = des / 'attributes.nc'
+        with nc4.Dataset(full_path, "w", format="NETCDF4") as att:
+            # General attributes
+            now = datetime.now()
+            att.setncattr('Author', f"Created by {self.author}, using CONFLUENCE SUMMA point workflow")
+            att.setncattr('History', 'Created ' + now.strftime('%Y/%m/%d %H:%M:%S'))
+            
+            # Define dimensions
+            att.createDimension('hru', num_hru)
+            att.createDimension('gru', num_gru)
+            
+            # Define variables
+            var = 'hruId'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index of hydrological response unit (HRU)')
+            att[var][0] = hruId
+            
+            var = 'gruId'
+            att.createVariable(var, 'i4', 'gru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index of grouped response unit (GRU)')
+            att[var][0] = gruId
+            
+            var = 'hru2gruId'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index of GRU to which the HRU belongs')
+            att[var][0] = hru2gru
+            
+            var = 'downHRUindex'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index of downslope HRU (0 = basin outlet)')
+            att[var][0] = down_hru_id
+            
+            var = 'longitude'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'Decimal degree east')
+            att.setncattr('long_name', 'Longitude of HRU''s centroid')
+            att[var][0] = lon
+            
+            var = 'latitude'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'Decimal degree north')
+            att.setncattr('long_name', 'Latitude of HRU''s centroid')
+            att[var][0] = lat
+            
+            var = 'elevation'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'm')
+            att.setncattr('long_name', 'Elevation of HRU''s centroid')
+            att[var][0] = elevation
+            
+            var = 'HRUarea'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'm^2')
+            att.setncattr('long_name', 'Area of HRU')
+            att[var][0] = hruArea
+            
+            var = 'tan_slope'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'm m-1')
+            att.setncattr('long_name', 'Average tangent slope of HRU')
+            att[var][0] = tan_slope
+            
+            var = 'contourLength'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'm')
+            att.setncattr('long_name', 'Contour length of HRU')
+            att[var][0] = contour_length
+            
+            var = 'slopeTypeIndex'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index defining slope')
+            att[var][0] = slope_type_index
+            
+            var = 'soilTypeIndex'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index defining soil type')
+            att[var][0] = soil_type
+            
+            var = 'vegTypeIndex'
+            att.createVariable(var, 'i4', 'hru', fill_value=False)
+            att.setncattr('units', '-')
+            att.setncattr('long_name', 'Index defining vegetation type')
+            att[var][0] = veg_type
+            
+            var = 'mHeight'
+            att.createVariable(var, 'f8', 'hru', fill_value=False)
+            att.setncattr('units', 'm')
+            att.setncattr('long_name', 'Measurement height above bare ground')
+            att[var][0] = m_height
+
+    def make_cold_state_file(self, des, dat):
+        """
+        Create initial conditions (cold state) file for SUMMA.
+        
+        Args:
+            des (Path): Destination directory
+            dat (xr.Dataset): Dataset with site information
+        """
+        # Define dimensions
+        num_hru = 1
+        nSoil = 8
+        nSnow = 0
+        midSoil = 8
+        midToto = 8
+        ifcToto = midToto + 1
+        scalarv = 1
+        
+        # Define HRU ID
+        hru_id = 1
+        
+        # Define time step size
+        dt_init = (dat['time'][1].values - dat['time'][0].values) / np.timedelta64(1, 's')
+        
+        # Define layer variables
+        mLayerDepth = np.asarray([0.025, 0.075, 0.15, 0.25, 0.5, 0.5, 1, 1.5])
+        iLayerHeight = np.asarray([0, 0.025, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 4])
+        
+        # Define states
+        mean_T = dat['Tair'].mean('time').values.flatten()  # Annual mean air temperature
+        scalarCanopyIce = 0      # Current ice storage in the canopy
+        scalarCanopyLiq = 0      # Current liquid water storage in the canopy
+        scalarSnowDepth = 0      # Current snow depth
+        scalarSWE = 0            # Current snow water equivalent
+        scalarSfcMeltPond = 0    # Current ponded melt water
+        scalarAquiferStorage = 1.0    # Current aquifer storage
+        scalarSnowAlbedo = 0      # Snow albedo
+        scalarCanairTemp = mean_T # Current temperature in the canopy airspace
+        scalarCanopyTemp = mean_T # Current temperature of the canopy
+        mLayerTemp = mean_T      # Current temperature of each layer
+        mLayerVolFracIce = 0      # Current ice storage in each layer
+        mLayerVolFracLiq = 0.2    # Current liquid water storage in each layer
+        mLayerMatricHead = -1.0   # Current matric head in each layer
+        
+        # Create the file
+        full_path = des / 'cold_state.nc'
+        with nc4.Dataset(full_path, "w", format="NETCDF4") as cs:
+            # General attributes
+            now = datetime.now()
+            cs.setncattr('Author', f"Created by {self.author}, using CONFLUENCE SUMMA point workflow")
+            cs.setncattr('History', 'Created ' + now.strftime('%Y/%m/%d %H:%M:%S'))
+            cs.setncattr('Purpose', 'Cold state .nc file for initial SUMMA runs')
+            
+            # Define dimensions
+            cs.createDimension('hru', num_hru)
+            cs.createDimension('midSoil', midSoil)
+            cs.createDimension('midToto', midToto)
+            cs.createDimension('ifcToto', ifcToto)
+            cs.createDimension('scalarv', scalarv)
+            
+            # Create variables
+            var = 'hruId'
+            cs.createVariable(var, 'i4', 'hru', fill_value=False)
+            cs[var].setncattr('units', '-')
+            cs[var].setncattr('long_name', 'Index of hydrological response unit (HRU)')
+            cs[var][:] = hru_id
+            
+            # Helper function for creating and filling variables
+            def create_and_fill_nc_var(nc, newVarName, newVarVal, fillDim1, fillDim2, newVarDim, newVarType, fillVal):
+                if newVarName in ['iLayerHeight', 'mLayerDepth']:
+                    fillWithThis = np.full((fillDim1, fillDim2), newVarVal).transpose()
+                else:
+                    fillWithThis = np.full((fillDim1, fillDim2), newVarVal)
+                
+                ncvar = nc.createVariable(newVarName, newVarType, (newVarDim, 'hru',), fill_value=fillVal)
+                ncvar[:] = fillWithThis
+            
+            # Time step size
+            create_and_fill_nc_var(cs, 'dt_init', dt_init, 1, num_hru, 'scalarv', 'f8', False)
+            
+            # Number of layers
+            create_and_fill_nc_var(cs, 'nSoil', nSoil, 1, num_hru, 'scalarv', 'i4', False)
+            create_and_fill_nc_var(cs, 'nSnow', nSnow, 1, num_hru, 'scalarv', 'i4', False)
+            
+            # States
+            create_and_fill_nc_var(cs, 'scalarCanopyIce', scalarCanopyIce, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarCanopyLiq', scalarCanopyLiq, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarSnowDepth', scalarSnowDepth, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarSWE', scalarSWE, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarSfcMeltPond', scalarSfcMeltPond, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarAquiferStorage', scalarAquiferStorage, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarSnowAlbedo', scalarSnowAlbedo, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarCanairTemp', scalarCanairTemp, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'scalarCanopyTemp', scalarCanopyTemp, 1, num_hru, 'scalarv', 'f8', False)
+            create_and_fill_nc_var(cs, 'mLayerTemp', mLayerTemp, midToto, num_hru, 'midToto', 'f8', False)
+            create_and_fill_nc_var(cs, 'mLayerVolFracIce', mLayerVolFracIce, midToto, num_hru, 'midToto', 'f8', False)
+            create_and_fill_nc_var(cs, 'mLayerVolFracLiq', mLayerVolFracLiq, midToto, num_hru, 'midToto', 'f8', False)
+            create_and_fill_nc_var(cs, 'mLayerMatricHead', mLayerMatricHead, midSoil, num_hru, 'midSoil', 'f8', False)
+            
+            # Layer dimensions
+            create_and_fill_nc_var(cs, 'iLayerHeight', iLayerHeight, num_hru, ifcToto, 'ifcToto', 'f8', False)
+            create_and_fill_nc_var(cs, 'mLayerDepth', mLayerDepth, num_hru, midToto, 'midToto', 'f8', False)
+
+    def find_canopy_bottom_assumption(self, vegTypeIndex):
+        """
+        Find the assumed canopy bottom height for a vegetation type.
+        
+        Args:
+            vegTypeIndex (int): Vegetation type index
+            
+        Returns:
+            float: Assumed canopy bottom height in meters
+        """
+        # Assumption about the height of the canopy bottom
+        reference_bottom_height = {
+            1: 2,   # evergreen needleleaf forest
+            2: 2,   # evergreen broadleaf forest
+            3: 2,   # deciduous needleleaf forest
+            4: 2,   # deciduous broadleaf forest
+            5: 2,   # mixed forests
+            6: 0,   # closed shrublands
+            7: 0,   # open shrublands
+            8: 0,   # woody savannas
+            9: 0,   # savannas
+            10: 0,  # grasslands
+            11: 0,  # permanent wetlands
+            12: 0,  # croplands
+            13: 0,  # urban and built-up
+            14: 0,  # cropland/natural vegetation mosaic
+            15: 0,  # snow and ice
+            16: 0,  # barren or sparsely vegetated
+            17: 0,  # water
+            18: 2,  # wooded tundra
+            19: 0,  # mixed tundra
+            20: 0   # barren tundra
+        }
+        
+        return reference_bottom_height[vegTypeIndex]
+
+    def make_trial_param_file(self, des, dat, mpTable):
+        """
+        Create SUMMA trial parameter file.
+        
+        Args:
+            des (Path): Destination directory
+            dat (xr.Dataset): Dataset with site information
+            mpTable (pd.Series): MP table for site
+        """
+        # Define dimensions
+        num_hru = 1
+        
+        # Define HRU ID
+        hru_id = 1
+        
+        # Variables
+        canopy_height = dat['canopy_height']
+        
+        # Check if canopy top is lower than canopy bottom
+        specify_canopy_bottom = False
+        if canopy_height < mpTable['HVB']:
+            canopy_bottom = mpTable['HVB'] / mpTable['HVT'] * canopy_height
+            specify_canopy_bottom = True
+        
+        # Create the file
+        full_path = des / 'trial_param.nc'
+        with nc4.Dataset(full_path, "w", format="NETCDF4") as tp:
+            # General attributes
+            now = datetime.now()
+            tp.setncattr('Author', f"Created by {self.author}, using CONFLUENCE SUMMA point workflow")
+            tp.setncattr('History', 'Created ' + now.strftime('%Y/%m/%d %H:%M:%S'))
+            tp.setncattr('Purpose', 'Site-specific parameters for SUMMA point simulation')
+            
+            # Define dimensions
+            tp.createDimension('hru', num_hru)
+            
+            # Create variables
+            var = 'hruId'
+            tp.createVariable(var, 'i4', 'hru', fill_value=False)
+            tp[var].setncattr('units', '-')
+            tp[var].setncattr('long_name', 'Index of hydrological response unit (HRU)')
+            tp[var][:] = hru_id
+            
+            var = 'heightCanopyTop'
+            tp.createVariable(var, 'f8', 'hru', fill_value=False)
+            tp[var].setncattr('units', 'm')
+            tp[var].setncattr('long_name', 'Height of top of the vegetation canopy above ground surface')
+            tp[var][:] = canopy_height
+            
+            if specify_canopy_bottom:
+                var = 'heightCanopyBottom'
+                tp.createVariable(var, 'f8', 'hru', fill_value=False)
+                tp[var].setncattr('units', 'm')
+                tp[var].setncattr('long_name', 'Height of bottom of the vegetation canopy above ground surface')
+                tp[var][:] = canopy_bottom
+
+    def write_veg_table(self, table):
+        """
+        Write vegetation table to TBL_VEGPARM.TBL.
+        
+        Args:
+            table (pd.DataFrame): Vegetation parameter table
+        """
+        import math
+        
+        # Define output file path
+        full_path = self.setting_path / 'TBL_VEGPARM.TBL'
+        
+        # Add index back as a column
+        table = table.reset_index()
+        
+        # Convert int columns to float
+        table = table.astype({'RS': float, 'RGL': float, 'MAXALB': float})
+        
+        # Column spacing
+        spacing = 10
+        
+        # Prepare header
+        columns = table.columns.values.tolist()
+        columns.remove('MODIFIED_IGBP_MODIS_NOAH')
+        columns[0] = f"{len(table)},1,"  # update count of table elements
+        
+        # Create file
+        with open(full_path, 'w') as tbl:
+            # Header
+            tbl.write("Vegetation Parameters \n")
+            tbl.write("CONFLUENCE-SUMMA-Point \n")
+            tbl.write(''.join([f"{val:<{spacing}}" for val in columns]) + '\n')
+            
+            # Data
+            for index, row in table.iterrows():
+                line = ''.join([f"{str(val)+',':<{spacing}}" for val in row.values])
+                line = line[:-1]  # remove final comma
+                tbl.write(line + '\n')
+            
+            # Final lines
+            tbl.write("TOPT_DATA \n")
+            tbl.write("298.0 \n")
+            tbl.write("CMCMAX_DATA \n")
+            tbl.write("0.5E-3 \n")
+            tbl.write("CFACTR_DATA \n")
+            tbl.write("0.5 \n")
+            tbl.write("RSMAX_DATA \n")
+            tbl.write("5000.0 \n")
+            tbl.write("BARE \n")
+            tbl.write("19 \n")
+            tbl.write("NATURAL \n")
+            tbl.write("5 \n")
+    
+        self.logger.info(f"Vegetation table written to {full_path}")
+
+    def write_mp_table(self, table, sites):
+        """
+        Write MP table to TBL_MPTABLE.TBL.
+        
+        Args:
+            table (pd.DataFrame): MP parameter table
+            sites (list): List of site descriptions
+        """
+        import math
+        
+        # Find number of entries
+        nveg = len(table.columns) 
+        
+        # Column spacing
+        header_spacing = 6
+        data_spacing = 8
+        lai_decimals = 2
+        
+        # Create file
+        full_path = self.setting_path / 'TBL_MPTABLE.TBL'
+        with open(full_path, 'w') as tbl:
+            # Header
+            tbl.write("&noah_mp_plumberSUMMA_veg_categories \n")
+            tbl.write(" VEG_DATASET_DESCRIPTION = 'monthly LAI used in the PLUMBER2 experiment' \n")
+            tbl.write(f" NVEG = {nveg}\n")
+            tbl.write("/ \n")
+            tbl.write("&noah_mp_plumberSUMMA_parameters \n")
+            tbl.write(f" ! NVEG = {nveg}\n")
+            for entry in sites:
+                tbl.write(f" ! {entry}\n")
+            tbl.write(" \n")
+            tbl.write(" ISURBAN    = -999\n")
+            tbl.write(" ISWATER    = -999\n")
+            tbl.write(" ISBARREN   = -999\n")
+            tbl.write(" ISSNOW     = -999\n")
+            tbl.write(" EBLFOREST  = -999\n")
+            tbl.write(" \n")
+            
+            # Site Header
+            line = f' ! {"":<{header_spacing}}' # Empty header for index column
+            line = line + ''.join([f"{val:<{data_spacing}}" for val in table.columns])
+            tbl.write(' !'+'-'*len(line)+'\\n')
+            tbl.write(line+'\\n')
+            tbl.write(' !'+'-'*len(line)+'\\n')
+            
+            # Site data - write each row
+            for row_idx, row_name in enumerate(table.index):
+                line = f' {row_name:<{header_spacing}}'
+                line = line + '= ' + ''.join([f"{str(table.iloc[row_idx, col_idx])+',':<{data_spacing}}" 
+                                            for col_idx in range(table.shape[1])])
+                tbl.write(line+'\\n')
+                
+                if row_name in ['HVT', 'HVB', 'LAI', 'SAI', 'RMIN', 'VCMX25', 'MP', 'BP']:
+                    tbl.write(" \\n")
+            
+            tbl.write("/ \n")
+        
+        self.logger.info(f"MP table written to {full_path}")
+
+    def save_file_manager_lists(self):
+        """Save lists of file managers, settings, and output paths to files."""
+        # Save regular file managers
+        with open(self.setting_path / 'list_fileManager.txt', 'w') as f:
+            for item in self.fm_list:
+                f.write(f"{item}\n")
+        
+        # Save IC file managers
+        with open(self.setting_path / 'list_fileManager_IC.txt', 'w') as f:
+            for item in self.fm_ic_list:
+                f.write(f"{item}\n")
+        
+        # Save settings paths
+        with open(self.setting_path / 'list_site_settings.txt', 'w') as f:
+            for item in self.setting_path_list:
+                f.write(f"{str(item)}\n")
+        
+        # Save output paths
+        with open(self.setting_path / 'list_site_outputs.txt', 'w') as f:
+            for item in self.output_path_list:
+                f.write(f"{str(item)}\n")

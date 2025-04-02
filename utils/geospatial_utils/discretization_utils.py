@@ -176,7 +176,11 @@ class DomainDiscretizer:
             Path: Path to the output HRU shapefile.
         """
         self.logger.info(f"config domain name {self.config.get('DOMAIN_NAME')}")
-        gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        if self.config.get('RIVER_BASINS_NAME') == 'default':
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        else:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
+        
         hru_output_shapefile = self._get_file_path("CATCHMENT_PATH", "shapefiles/catchment", f"{self.domain_name}_HRUs_GRUs.shp")
 
         gru_gdf = self._read_shapefile(gru_shapefile)

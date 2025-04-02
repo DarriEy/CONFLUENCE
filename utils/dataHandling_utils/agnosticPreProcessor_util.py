@@ -35,6 +35,7 @@ class forcingResampler:
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
         if self.forcing_dataset == 'rdrs':
             self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_path')
+            self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
             
     def _get_default_path(self, path_key, default_subpath):
         path_value = self.config.get(path_key)
@@ -252,6 +253,15 @@ class forcingResampler:
         shp_id = self.config.get('CATCHMENT_SHP_HRUID')
 
         for file in forcing_files:
+            # If the file already exists in the output directory, skip this iteration.
+            #if os.path.exists(forcing_path / file):
+            #    continue
+            #else:
+
+            # Define the output directory and remapped file name based on your configuration.
+            intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
+            remap_file = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_remapping.nc"
+
             esmr = easymore.Easymore()
 
             esmr.author_name = 'SUMMA public workflow scripts'
@@ -267,10 +277,9 @@ class forcingResampler:
             esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
             esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
 
-            
             var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
             var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
-        
+
             esmr.source_nc = str(file)
             esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
             esmr.var_lat = var_lat 
@@ -293,12 +302,11 @@ class forcingResampler:
 
             # Move files to prescribed locations
             remap_file = f"{esmr.case_name}_remapping.nc"
-            self.intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
-            self.intersect_path.mkdir(parents=True, exist_ok=True)
-            os.rename(os.path.join(esmr.temp_dir, remap_file), self.intersect_path / remap_file)
+            intersect_path.mkdir(parents=True, exist_ok=True)
+            os.rename(os.path.join(esmr.temp_dir, remap_file), intersect_path / remap_file)
 
-            for file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
-                os.rename(file, self.intersect_path / file.name)
+            for shp_file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
+                os.rename(shp_file, intersect_path / shp_file.name)
 
             # Remove temporary directory
             shutil.rmtree(esmr.temp_dir, ignore_errors=True)
