@@ -78,3 +78,4 @@ coverage.xml
 .pytest_cache/
 cover/*.nc
 *.err
+*.err
