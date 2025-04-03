@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=Chena 
+#SBATCH --job-name=North_America
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
 #SBATCH --time=120:00:00
-#SBATCH --ntasks=8
-#SBATCH --mem-per-cpu=50G
+#SBATCH --ntasks=20
+#SBATCH --mem-per-cpu=10G
 
 # Load necessary modules (adjust as needed for your HPC environment)
 . /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
@@ -25,6 +25,6 @@ module load python/3.11.7
 source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
 
 # Run the Python script
-python CONFLUENCE.py --config 0_config_files/config_Chena.yaml 
+python CONFLUENCE.py --config 0_config_files/config_North_America.yaml 
 
 echo "CONFLUENCE job complete"

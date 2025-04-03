@@ -45,7 +45,7 @@ class forcingResampler:
 
     def run_resampling(self):
         self.logger.info("Starting forcing data resampling process")
-        #self.create_shapefile()
+        self.create_shapefile()
         self.remap_forcing()
         self.logger.info("Forcing data resampling process completed")
 

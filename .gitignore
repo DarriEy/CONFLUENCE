@@ -28,7 +28,7 @@ env/
 .venv/
 
 # Config files
-0_config_files/
+# 0_config_files/
 
 # IDE
 .idea/
