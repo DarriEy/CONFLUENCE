@@ -1,0 +1,106 @@
+tar: /work/comphyd_lab/data/geospatial-dataMERIT-Hydro/elv/elv_n60w150.tar: Cannot open: No such file or directory
+tar: Error is not recoverable: exiting now
+Warning 1: Can't open /home/darri.eythorsson/cache/elv/*.tif. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/elv.vrt: No such file or directory
+mkdir: cannot create directory ‘/home/darri.eythorsson/empty_dir’: File exists
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2001.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2001.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2001.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2002.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2002.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2002.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2003.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2003.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2003.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2004.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2004.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2004.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2005.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2005.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2005.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2006.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2006.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2006.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2007.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2007.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2007.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2008.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2008.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2008.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2009.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2009.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2009.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2010.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2010.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2010.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2011.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2011.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2011.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2012.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2012.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2012.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2013.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2013.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2013.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2014.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2014.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2014.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2015.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2015.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2015.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2016.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2016.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2016.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2017.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2017.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2017.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2018.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2018.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2018.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2019.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2019.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2019.vrt
+
+Warning 1: Can't open /work/comphyd_lab/data/geospatial-dataMODIS/MCD12Q1.006/2020.01.01/*.hdf. Skipping it
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2020.vrt: No such file or directory
+ERROR 4: Failed to open source file /home/darri.eythorsson/cache/MCD12Q1.006/2020.vrt
+
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2001_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2002_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2003_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2004_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2005_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2006_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2007_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2008_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2009_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2010_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2011_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2012_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2013_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2014_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2015_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2016_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2017_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2018_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2019_4326.vrt: No such file or directory
+ERROR 4: /home/darri.eythorsson/cache/MCD12Q1.006/2020_4326.vrt: No such file or directory
+mkdir: cannot create directory ‘/home/darri.eythorsson/empty_dir’: File exists

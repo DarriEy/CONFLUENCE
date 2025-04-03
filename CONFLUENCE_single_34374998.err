@@ -1,0 +1,20 @@
+/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo/gdal.py:312: FutureWarning: Neither gdal.UseExceptions() nor gdal.DontUseExceptions() has been explicitly called. In GDAL 4.0, exceptions will be enabled by default.
+  warnings.warn(
+ERROR 4: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/domain_Canada_RDRS/taudem-interim-files/d8/elv-watersheds.tif: No such file or directory
+Traceback (most recent call last):
+  File "/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo_utils/auxiliary/gdal_argparse.py", line 229, in main
+    self.doit(**kwargs)
+  File "/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo_utils/gdal_polygonize.py", line 355, in doit
+    return gdal_polygonize(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo_utils/auxiliary/util.py", line 62, in enable_exceptions_wrapper
+    return fun(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo_utils/gdal_polygonize.py", line 77, in gdal_polygonize
+    src_ds = gdal.Open(src_filename)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/comphyd_lab/local/modules/spack/2024v5/core/__spack_path_placeholder__/__spack_path_placeholder__/__spack_path_placeholder/linux-rocky8-x86_64/gcc-14.2.0/gdal-3.9.2-y5bemmf6otvyodpm4zhjfqljg4ppbmnz/lib/python3.11/site-packages/osgeo/gdal.py", line 8817, in Open
+    return _gdal.Open(*args)
+           ^^^^^^^^^^^^^^^^^
+RuntimeError: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/domain_Canada_RDRS/taudem-interim-files/d8/elv-watersheds.tif: No such file or directory
+slurmstepd: error: *** JOB 34374998 ON mc119 CANCELLED AT 2025-04-03T02:26:16 ***

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/darri.eythorsson/code/CONFLUENCE/CONFLUENCE.py", line 20, in <module>
+    from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/darri.eythorsson/code/CONFLUENCE/utils/dataHandling_utils/agnosticPreProcessor_util.py", line 257
+    if os.path.exists(self.project_dir / 'forcing' / 'basin_averaged_data' / f'{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_{self.config.get('FORCING_DATASET')}_remapped_{str(file)}'):
+                                                                                                 ^^^^^^^^^^^
+SyntaxError: f-string: unmatched '('

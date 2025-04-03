@@ -45,7 +45,7 @@ class forcingResampler:
 
     def run_resampling(self):
         self.logger.info("Starting forcing data resampling process")
-        self.create_shapefile()
+        #self.create_shapefile()
         self.remap_forcing()
         self.logger.info("Forcing data resampling process completed")
 
@@ -253,9 +253,9 @@ class forcingResampler:
         shp_id = self.config.get('CATCHMENT_SHP_HRUID')
 
         for file in forcing_files:
-            # If the file already exists in the output directory, skip this iteration.
-            #if os.path.exists(forcing_path / file):
-            #    continue
+            # If the file already exists in the output directory, skip this iteration. Fix the path logic here
+            if os.path.exists(self.project_dir / 'forcing' / 'basin_averaged_data' / f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_{self.config['FORCING_DATASET']}_remapped_{str(file)}"):
+                continue
             #else:
 
             # Define the output directory and remapped file name based on your configuration.
