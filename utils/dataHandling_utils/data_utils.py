@@ -650,29 +650,20 @@ class ObservedDataProcessor:
 
     def _download_and_process_wsc_data(self):
         """
-        Process Water Survey of Canada (WSC) streamflow data by fetching it directly from the WSC API
-        using the Features class to interact with Environment Canada's Datamart API.
+        Process Water Survey of Canada (WSC) streamflow data by fetching it directly using HTTP requests.
         
         This function fetches discharge data for the specified WSC station,
         processes it, and resamples it to the configured time step.
         """
+        import requests
         import io
-        import copy
-        from datetime import datetime, timedelta
         import pandas as pd
-        
-        try:
-            # Try to import the Features class - your colleague's script suggests this is available in your environment
-            from datamart_api import Features
-        except ImportError:
-            self.logger.error("Could not import Features class. Make sure the datamart_api is installed.")
-            raise ImportError("Could not import Features class. Make sure the datamart_api is installed.")
+        from datetime import datetime, timedelta
         
         self.logger.info("Processing WSC streamflow data directly from API")
         
         # Get configuration parameters
         station_id = self.config.get('STATION_ID')
-        stations = [station_id]  # Create a list with the single station ID
         
         # Parse and format the start date properly
         start_date_raw = self.config.get('EXPERIMENT_TIME_START')
@@ -700,69 +691,161 @@ class ObservedDataProcessor:
         self.logger.info(f"Retrieving discharge data for WSC station {station_id}")
         self.logger.info(f"Time period: {start_date} to {end_date}")
         
-        # Define API parameters
-        api_url = "https://api.weather.gc.ca/collections"
-        collection = "hydrometric-daily-mean"  # For daily means
-        download_variable = "DISCHARGE"  # For streamflow data
-        datetime_column = "DATE"
-        other_variables = ["DISCHARGE_SYMBOL"]  # Include any data quality flags
-        limit = 10000  # Max number of records to retrieve
+        # Try different URL formats for WSC data
+        urls_to_try = [
+            # Daily mean discharge data - CSV direct download
+            f"https://dd.weather.gc.ca/hydrometric/csv/{station_id}_daily_mean_flow.csv",
+            
+            # Real-time discharge data - CSV direct download
+            f"https://dd.weather.gc.ca/hydrometric/csv/{station_id}_daily_flow.csv",
+            
+            # Historical Water Survey data from datamart (older format)
+            f"https://collaboration.cmc.ec.gc.ca/cmc/hydrometrics/www/{station_id}_daily_flow.csv"
+        ]
         
-        # Define a temporary output directory for the API call
-        import tempfile
-        temp_dir = tempfile.mkdtemp()
+        # Try each URL until we get a successful response
+        df = None
+        response = None
+        successful_url = None
         
+        for url in urls_to_try:
+            self.logger.info(f"Trying to fetch data from: {url}")
+            try:
+                response = requests.get(url, timeout=30)
+                if response.status_code == 200 and len(response.text) > 0:
+                    # Check if it's a CSV by looking for commas or other CSV indicators
+                    if "," in response.text or "\t" in response.text:
+                        self.logger.info(f"Successfully retrieved data from {url}")
+                        successful_url = url
+                        break
+                    else:
+                        self.logger.warning(f"Response from {url} does not appear to be CSV data")
+                else:
+                    self.logger.warning(f"Failed to retrieve data from {url}: Status code {response.status_code}")
+            except Exception as e:
+                self.logger.warning(f"Error fetching data from {url}: {e}")
+        
+        if not response or not successful_url:
+            self.logger.error("Could not retrieve WSC data from any of the tried URLs")
+            raise ValueError("Could not retrieve WSC data. Please check the station ID or try again later.")
+        
+        # Process the CSV data based on its format
         try:
-            # Call the retrieve_data_from_api function based on your colleague's script
-            stations_with_data = self._retrieve_data_from_api(
-                stations=stations,
-                collection=collection,
-                download_variable=download_variable,
-                datetime_column=datetime_column,
-                api_url=api_url,
-                output_dir=temp_dir,
-                other_variables=other_variables,
-                time_limits=True,
-                start_date=start_date,
-                end_date=end_date,
-                limit=limit
-            )
+            data_str = response.text
             
-            if not stations_with_data:
-                self.logger.error(f"No discharge data was found for station {station_id}")
-                raise ValueError(f"No discharge data was found for station {station_id}")
+            # Parse the CSV based on the format indicated by the URL
+            if "daily_mean_flow" in successful_url:
+                # Modern format with headers
+                self.logger.info("Processing as daily mean flow data")
+                df = pd.read_csv(io.StringIO(data_str), parse_dates=[0], skiprows=None)
             
-            # Read the CSV file that was created
-            csv_path = Path(temp_dir) / collection / f"{station_id}_{download_variable}.csv"
+            elif "daily_flow" in successful_url:
+                # Try to detect the format by looking at the first few lines
+                lines = data_str.splitlines()
+                self.logger.info(f"First few lines of data: {lines[:2]}")
+                
+                # Check if there are headers or comments
+                if lines and lines[0].startswith('#'):
+                    # Skip comment lines
+                    skip_rows = 0
+                    for line in lines:
+                        if line.startswith('#'):
+                            skip_rows += 1
+                        else:
+                            break
+                    self.logger.info(f"Skipping {skip_rows} comment rows")
+                    df = pd.read_csv(io.StringIO(data_str), parse_dates=[0], skiprows=skip_rows)
+                else:
+                    # No comments, assume standard format
+                    df = pd.read_csv(io.StringIO(data_str), parse_dates=[0])
             
-            if not csv_path.exists():
-                self.logger.error(f"Expected CSV file not found: {csv_path}")
-                raise FileNotFoundError(f"Expected CSV file not found: {csv_path}")
+            # Display column info for debugging
+            self.logger.info(f"Columns in the data: {df.columns.tolist()}")
             
-            self.logger.info(f"Reading data from {csv_path}")
-            df = pd.read_csv(csv_path, parse_dates=[0], index_col=0)
+            # Try to identify the date and discharge columns
+            date_col = None
+            discharge_col = None
             
-            # Verify that we have the DISCHARGE column
-            if download_variable not in df.columns:
-                self.logger.error(f"Expected column {download_variable} not found in the data")
+            # Common patterns for date columns
+            date_patterns = ['date', 'time', 'datetime', 'day']
+            # Common patterns for discharge columns
+            discharge_patterns = ['flow', 'discharge', 'value', 'mean']
+            
+            # Find date column
+            for col in df.columns:
+                if any(pattern in col.lower() for pattern in date_patterns):
+                    date_col = col
+                    break
+            
+            # If no date column found, use the first column
+            if date_col is None and len(df.columns) > 0:
+                date_col = df.columns[0]
+                self.logger.info(f"Using first column as date column: {date_col}")
+            
+            # Find discharge column
+            for col in df.columns:
+                if any(pattern in col.lower() for pattern in discharge_patterns):
+                    discharge_col = col
+                    break
+            
+            # If no discharge column found, try to identify a numeric column that's not the date
+            if discharge_col is None:
+                for col in df.columns:
+                    if col != date_col:
+                        try:
+                            # Check if the column can be converted to numeric
+                            pd.to_numeric(df[col], errors='raise')
+                            discharge_col = col
+                            self.logger.info(f"Using column {col} as discharge column")
+                            break
+                        except:
+                            continue
+            
+            if date_col is None or discharge_col is None:
+                self.logger.error(f"Could not identify date and discharge columns in data")
                 self.logger.debug(f"Available columns: {df.columns.tolist()}")
-                raise ValueError(f"Expected column {download_variable} not found in the data")
+                raise ValueError("Could not identify date and discharge columns in WSC data")
             
-            # Create the discharge_cms column (data is already in cubic meters per second)
-            df['discharge_cms'] = df[download_variable]
+            # Convert date column to datetime if it's not already
+            if not pd.api.types.is_datetime64_dtype(df[date_col]):
+                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             
-            # Drop rows with NaN or suspicious values
-            # Check for flag/symbol column to filter out questionable values
-            if "DISCHARGE_SYMBOL" in df.columns:
-                # Keep only rows with empty symbols or reliable data flags
-                reliable_flags = ["", " ", None, "A", "B", "C"]  # Adjust based on WSC data flag documentation
-                df = df[df["DISCHARGE_SYMBOL"].isin(reliable_flags)]
+            # Drop rows with invalid dates
+            invalid_dates = df[date_col].isna().sum()
+            if invalid_dates > 0:
+                self.logger.warning(f"Dropping {invalid_dates} rows with invalid dates")
+                df = df.dropna(subset=[date_col])
             
-            # Drop any remaining rows with NaN discharge values
-            na_count = df['discharge_cms'].isna().sum()
+            # Convert discharge values to numeric
+            df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+            
+            # Drop rows with NaN discharge values
+            na_count = df[discharge_col].isna().sum()
             if na_count > 0:
-                self.logger.warning(f"Dropping {na_count} rows with non-numeric or NaN discharge values")
-                df = df.dropna(subset=['discharge_cms'])
+                self.logger.warning(f"Dropping {na_count} rows with non-numeric discharge values")
+                df = df.dropna(subset=[discharge_col])
+            
+            # Set the date column as index
+            df.set_index(date_col, inplace=True)
+            
+            # Create the discharge_cms column (WSC data is already in m³/s)
+            df['discharge_cms'] = df[discharge_col]
+            
+            # Filter the data to our date range
+            try:
+                start_datetime = pd.to_datetime(start_date)
+                end_datetime = pd.to_datetime(end_date)
+                df = df[(df.index >= start_datetime) & (df.index <= end_datetime)]
+                self.logger.info(f"Filtered data to date range: {start_date} to {end_date}")
+            except Exception as e:
+                self.logger.warning(f"Error filtering by date range: {e}")
+            
+            # Check if we have data
+            if df.empty:
+                self.logger.error("No data available after filtering")
+                raise ValueError("No data available for the specified date range")
+            
+            self.logger.info(f"Total records after processing: {len(df)}")
             
             # Call the resampling and saving function
             self._resample_and_save(df['discharge_cms'])
@@ -774,130 +857,6 @@ class ObservedDataProcessor:
             import traceback
             self.logger.error(traceback.format_exc())
             raise
-        
-        finally:
-            # Clean up the temporary directory
-            import shutil
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                self.logger.warning(f"Could not remove temporary directory {temp_dir}: {e}")
-        
-    def _retrieve_data_from_api(self, stations, collection, download_variable, datetime_column, api_url, output_dir, 
-                            other_variables=[], time_limits=False, start_date=None, end_date=None, limit=10000):
-        """
-        Retrieve data from the Environment Canada Datamart API.
-        
-        This is adapted from the code provided by your colleague.
-        """
-        import copy
-        from pathlib import Path
-        
-        try:
-            # Try to import the Features class
-            from datamart_api import Features
-        except ImportError:
-            self.logger.error("Could not import Features class. Make sure the datamart_api is installed.")
-            raise ImportError("Could not import Features class. Make sure the datamart_api is installed.")
-        
-        # Set the time limits for the data retrieval
-        if time_limits:
-            time_ = f"{start_date}/{end_date}"
-            self.logger.info(f"Retrieving {download_variable} from {collection} for the period {time_}")
-        else:
-            self.logger.info(f"Retrieving {download_variable} from {collection} with no time limits")
-        
-        # Set columns to be saved to the dataframe
-        query_variables = [
-                        "STATION_NUMBER",
-                        "STATION_NAME"
-                        ]
-        
-        # Append additional query variables
-        query_variables.append(datetime_column)
-        query_variables.append(download_variable)
-        query_variables = query_variables + other_variables
-        self.logger.info(f"Query variables: {query_variables}")
-        
-        # Output data frame to csv file
-        collection_output_dir = Path(output_dir) / collection
-        collection_output_dir.mkdir(parents=True, exist_ok=True)
-        self.logger.info(f"Output directory: {collection_output_dir}")
-        
-        # Instantiate features
-        oafeat = Features(api_url)
-        
-        # List of stations with no water level data
-        stations_with_data = copy.copy(stations)
-        stations_without_data = []
-        
-        # Data retrieval and creation of the data frames
-        for station in stations:
-            if time_limits:
-                # Retrieval of water level data
-                hydro_data = oafeat.collection_items(
-                    collection,
-                    limit=limit,
-                    STATION_NUMBER=station,
-                    time=time_,
-                )
-            else:
-                # Retrieval of water level data
-                hydro_data = oafeat.collection_items(
-                    collection,
-                    limit=limit,
-                    STATION_NUMBER=station,
-                )
-            
-            # Creation of a data frame if there is data for the chosen time period
-            if hydro_data["features"]:
-                
-                # Creation of a dictionary in a format compatible with Pandas
-                historical_data_format = [
-                    {
-                        **el["properties"],
-                    }
-                    for el in hydro_data["features"]
-                ]
-                
-                # Creation of the data frame
-                historical_data_df = pd.DataFrame(
-                    historical_data_format,
-                    columns=query_variables,
-                )
-                
-                # Detect and convert data types of columns
-                historical_data_df = historical_data_df.infer_objects(copy=False)
-                
-                # Creating an index with the date in a datetime format
-                historical_data_df[datetime_column] = pd.to_datetime(
-                    historical_data_df[datetime_column]
-                )
-                historical_data_df.set_index([datetime_column], inplace=True, drop=True)
-                
-                output_csv_path = collection_output_dir / f'{station}_{download_variable}.csv'
-                historical_data_df.to_csv(output_csv_path, index=True)
-                self.logger.info(f"{download_variable} from {collection} for station {station} output to {output_csv_path}")
-            
-            # If there is no data for the chosen time period, the station
-            # will be removed from the dataset
-            else:
-                stations_without_data.append(station)
-        
-        # Removing hydrometric stations without water level data from the station list
-        for station in stations_without_data:
-            self.logger.warning(
-                f"Station {station} has no {download_variable} data for the chosen time period."
-            )
-            stations_with_data.remove(station)
-        
-        # Raising an error if no station is left in the list
-        if not stations_with_data:
-            raise ValueError(
-                f"No {download_variable} data was returned from {collection}, please check the query."
-            )
-        
-        return stations_with_data
 
     def _process_vi_data(self):
         self.logger.info("Processing VI (Iceland) streamflow data")

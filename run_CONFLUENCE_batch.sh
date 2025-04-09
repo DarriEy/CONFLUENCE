@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=Loveland_Lift
+#SBATCH --job-name=Bow
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
 #SBATCH --time=120:00:00
@@ -25,6 +25,6 @@ module load python/3.11.7
 source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
 
 # Run the Python script
-python CONFLUENCE.py --config 0_config_files/config_Loveland_Lift.yaml   
+python CONFLUENCE.py --config 0_config_files/config_Bow.yaml   
 
 echo "CONFLUENCE job complete"
