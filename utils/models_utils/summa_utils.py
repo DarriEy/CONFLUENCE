@@ -2040,77 +2040,336 @@ class SUMMAPostprocessor:
         self.logger.info("Extracting SUMMA point simulation streamflow results")
         
         experiment_id = self.config.get('EXPERIMENT_ID')
-        sim_path = self.project_dir / 'simulations' / experiment_id / 'SUMMA_point'
+        sim_path = self.project_dir / 'simulations' / experiment_id / 'SUMMA'
         
-        # Find all sites 
-        site_dirs = [d for d in sim_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
+        # Make sure the results directory exists
+        results_dir = self.project_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
         
-        # Prepare results dataframe
-        results_df = pd.DataFrame()
+        # Create a subdirectory for diagnostic plots
+        plots_dir = results_dir / 'diagnostic_plots'
+        plots_dir.mkdir(parents=True, exist_ok=True)
         
-        for site_dir in site_dirs:
-            site_name = site_dir.name
-            self.logger.info(f"Processing results for site {site_name}")
+        # Define the path to the SUMMA output file
+        summa_output_file = sim_path / f"{experiment_id}_timestep.nc"
+        
+        if not summa_output_file.exists():
+            # Try alternative naming patterns if the primary pattern isn't found
+            alternative_files = list(sim_path.glob("*_timestep.nc"))
+            if alternative_files:
+                summa_output_file = alternative_files[0]
+                self.logger.info(f"Using alternative SUMMA output file: {summa_output_file}")
+            else:
+                self.logger.error(f"No SUMMA output file found at {summa_output_file}")
+                return None
+        
+        # Read the netCDF file
+        try:
+            import xarray as xr
             
-            # Find the daily output file (typically *_day.nc)
-            day_files = list(site_dir.glob(f"*{site_name}*_day.nc"))
+            self.logger.info(f"Reading SUMMA output from {summa_output_file}")
+            ds = xr.open_dataset(summa_output_file)
             
-            if not day_files:
-                self.logger.warning(f"No daily output file found for site {site_name}")
-                continue
+            # Extract runoff data - prioritize averageRoutedRunoff
+            if 'averageRoutedRunoff' in ds:
+                runoff_var = 'averageRoutedRunoff'
+                self.logger.info(f"Using {runoff_var} as the streamflow variable")
+            elif 'scalarTotalRunoff' in ds:
+                runoff_var = 'scalarTotalRunoff'
+                self.logger.info(f"averageRoutedRunoff not found, using {runoff_var} instead")
+            elif 'scalarAquiferBaseflow' in ds:
+                runoff_var = 'scalarAquiferBaseflow'
+                self.logger.info(f"Primary runoff variables not found, using {runoff_var} instead")
+            else:
+                # Find any variable that might contain runoff
+                runoff_candidates = [var for var in ds.variables if 'runoff' in var.lower() or 'flow' in var.lower()]
+                if runoff_candidates:
+                    runoff_var = runoff_candidates[0]
+                    self.logger.info(f"Using alternative runoff variable: {runoff_var}")
+                else:
+                    self.logger.error("No suitable runoff variable found in SUMMA output")
+                    ds.close()
+                    return None
             
-            day_file = day_files[0]
-            
-            # Read the data
+            # Convert to dataframe - handle specific dimension structure
             try:
-                ds = xr.open_dataset(day_file)
+                # Check the dimensions of the runoff variable
+                dims = ds[runoff_var].dims
+                self.logger.info(f"Variable {runoff_var} has dimensions: {dims}")
                 
-                # Extract runoff data
-                if 'averageRoutedRunoff' in ds:
-                    runoff_var = 'averageRoutedRunoff'
-                elif 'scalarTotalRunoff' in ds:
-                    runoff_var = 'scalarTotalRunoff'
-                elif 'scalarAquiferBaseflow' in ds:
-                    runoff_var = 'scalarAquiferBaseflow'
-                else:
-                    # Find any variable that might contain runoff
-                    runoff_candidates = [var for var in ds.variables if 'runoff' in var.lower() or 'flow' in var.lower()]
-                    if runoff_candidates:
-                        runoff_var = runoff_candidates[0]
-                        self.logger.info(f"Using {runoff_var} as runoff variable for site {site_name}")
+                # Extract the data safely based on actual dimensions
+                if 'gru' in dims and 'time' in dims:
+                    # For your specific case where gru=1
+                    if ds.dims['gru'] == 1:
+                        # Use .isel() instead of .sel() to select by integer position
+                        runoff_data = ds[runoff_var].isel(gru=0).to_dataframe()
+                        self.logger.info("Extracted runoff data using isel(gru=0)")
                     else:
-                        self.logger.warning(f"No runoff variable found for site {site_name}")
-                        continue
-                
-                # Extract to dataframe
-                runoff_df = ds[runoff_var].to_dataframe().reset_index()
-                runoff_df = runoff_df.set_index('time')
-                
-                # Name the column with site name
-                runoff_df = runoff_df.rename(columns={runoff_var: f"{site_name}_discharge_cms"})
-                
-                # Add to results
-                if results_df.empty:
-                    results_df = runoff_df[[f"{site_name}_discharge_cms"]]
+                        # Sum across all GRUs
+                        runoff_data = ds[runoff_var].sum(dim='gru').to_dataframe()
+                        self.logger.info(f"Summed runoff data across {ds.dims['gru']} GRUs")
+                elif 'hru' in dims and 'time' in dims:
+                    # If runoff is by HRU rather than GRU
+                    if ds.dims['hru'] == 1:
+                        runoff_data = ds[runoff_var].isel(hru=0).to_dataframe()
+                    else:
+                        runoff_data = ds[runoff_var].sum(dim='hru').to_dataframe()
                 else:
-                    results_df = pd.merge(results_df, runoff_df[[f"{site_name}_discharge_cms"]], 
-                                        left_index=True, right_index=True, how='outer')
+                    # Simple case: just time dimension
+                    runoff_data = ds[runoff_var].to_dataframe()
+                    self.logger.info("Extracted runoff data directly to dataframe")
                 
+                # Clean up the dataframe
+                # If we have a multi-index from the to_dataframe() conversion
+                if isinstance(runoff_data.index, pd.MultiIndex):
+                    # Reset index to get time as a column
+                    runoff_data = runoff_data.reset_index()
+                    
+                    # Find the time column
+                    time_col = next((col for col in runoff_data.columns if col == 'time'), None)
+                    
+                    if time_col:
+                        # Set time as the index
+                        runoff_data = runoff_data.set_index(time_col)
+                        self.logger.info("Set time as index after resetting MultiIndex")
+                
+                # If runoff_var is still in columns, rename it
+                if runoff_var in runoff_data.columns:
+                    runoff_data = runoff_data.rename(columns={runoff_var: 'discharge_cms'})
+                    self.logger.info(f"Renamed {runoff_var} column to discharge_cms")
+                
+                # Ensure only discharge data is kept
+                if 'discharge_cms' in runoff_data.columns:
+                    runoff_data = runoff_data[['discharge_cms']]
+                else:
+                    # Try to find the runoff column if it wasn't renamed properly
+                    runoff_cols = [col for col in runoff_data.columns 
+                                if col == runoff_var or 'runoff' in col.lower() or 'flow' in col.lower()]
+                    if runoff_cols:
+                        # Use the first matching column and rename it
+                        runoff_data = runoff_data[[runoff_cols[0]]].rename(
+                            columns={runoff_cols[0]: 'discharge_cms'})
+                        self.logger.info(f"Selected and renamed column {runoff_cols[0]} to discharge_cms")
+                
+                # Ensure data is properly sorted by time
+                runoff_data = runoff_data.sort_index()
+                
+                # Save to CSV
+                output_file = results_dir / f"{experiment_id}_point_streamflow.csv"
+                runoff_data.to_csv(output_file)
+                self.logger.info(f"Point simulation streamflow saved to {output_file}")
+                
+                # Create a diagnostic plot if matplotlib is available
+                try:
+                    import matplotlib.pyplot as plt
+                    
+                    # Plot the main discharge
+                    plt.figure(figsize=(12, 6))
+                    runoff_data['discharge_cms'].plot()
+                    plt.title(f"SUMMA Point Simulation - {experiment_id}")
+                    plt.ylabel("Discharge (cms)")
+                    plt.xlabel("Date")
+                    plt.grid(True)
+                    plot_file = plots_dir / f"{experiment_id}_point_streamflow.png"
+                    plt.savefig(plot_file)
+                    plt.close()
+                    self.logger.info(f"Created streamflow diagnostic plot at {plot_file}")
+                    
+                    # Extract and plot additional variables
+                    # Variables to look for (common in SUMMA outputs)
+                    interesting_vars = [
+                        # Meteorological inputs
+                        'pptrate', 'airtemp', 'spechum', 'windspd', 'SWRadAtm', 'LWRadAtm',
+                        
+                        # Water balance components
+                        'scalarTotalRunoff', 'scalarSurfaceRunoff', 'scalarSubsurfaceRunoff', 
+                        'scalarInfiltration', 'scalarAquiferBaseflow', 'scalarAquiferRecharge',
+                        'scalarSnowMelt', 'scalarSWE', 'scalarSnowDepth',
+                        
+                        # Energy balance components
+                        'scalarSenHeatTotal', 'scalarLatHeatTotal', 'scalarNetRadiation',
+                        
+                        # Soil moisture
+                        'scalarVoliceLiq', 'scalarVolTotalSoil', 'mLayerVolFracLiq', 'mLayerVolFracIce'
+                    ]
+                    
+                    self.logger.info("Generating diagnostic plots for additional variables")
+                    
+                    # Find all variables in the NetCDF
+                    available_vars = list(ds.variables.keys())
+                    self.logger.info(f"Available variables: {available_vars}")
+                    
+                    # Plot interesting variables (5 subplots per figure)
+                    vars_to_plot = [v for v in interesting_vars if v in available_vars]
+                    
+                    # Plot meteorological forcing variables
+                    forcing_vars = [v for v in vars_to_plot if v in ['pptrate', 'airtemp', 'spechum', 'windspd', 'SWRadAtm', 'LWRadAtm']]
+                    if forcing_vars:
+                        fig, axes = plt.subplots(len(forcing_vars), 1, figsize=(12, 3*len(forcing_vars)), sharex=True)
+                        # Handle case with only 1 variable
+                        if len(forcing_vars) == 1:
+                            axes = [axes]
+                        
+                        for i, var in enumerate(forcing_vars):
+                            try:
+                                # Extract the data (handle different dimension structures)
+                                if 'hru' in ds[var].dims and 'time' in ds[var].dims:
+                                    var_data = ds[var].isel(hru=0).to_dataframe()[var]
+                                else:
+                                    var_data = ds[var].to_dataframe()[var]
+                                
+                                # Plot on the appropriate subplot
+                                var_data.plot(ax=axes[i])
+                                axes[i].set_title(var)
+                                axes[i].grid(True)
+                                
+                                # Save to CSV for reference
+                                var_file = results_dir / f"{experiment_id}_{var}.csv"
+                                var_data.to_csv(var_file)
+                                
+                            except Exception as e:
+                                self.logger.warning(f"Could not plot {var}: {str(e)}")
+                        
+                        plt.tight_layout()
+                        plt.savefig(plots_dir / f"{experiment_id}_meteorological_variables.png")
+                        plt.close()
+                        self.logger.info(f"Created meteorological variables plot")
+                    
+                    # Plot water balance variables
+                    water_vars = [v for v in vars_to_plot if v in [
+                        'scalarTotalRunoff', 'scalarSurfaceRunoff', 'scalarSubsurfaceRunoff', 
+                        'scalarInfiltration', 'scalarAquiferBaseflow', 'scalarAquiferRecharge',
+                        'scalarSnowMelt', 'scalarSWE', 'scalarSnowDepth'
+                    ]]
+                    
+                    if water_vars:
+                        fig, axes = plt.subplots(len(water_vars), 1, figsize=(12, 3*len(water_vars)), sharex=True)
+                        # Handle case with only 1 variable
+                        if len(water_vars) == 1:
+                            axes = [axes]
+                        
+                        for i, var in enumerate(water_vars):
+                            try:
+                                # Extract the data (handle different dimension structures)
+                                if 'hru' in ds[var].dims and 'time' in ds[var].dims:
+                                    var_data = ds[var].isel(hru=0).to_dataframe()[var]
+                                elif 'gru' in ds[var].dims and 'time' in ds[var].dims:
+                                    var_data = ds[var].isel(gru=0).to_dataframe()[var]
+                                else:
+                                    var_data = ds[var].to_dataframe()[var]
+                                
+                                # Plot on the appropriate subplot
+                                var_data.plot(ax=axes[i])
+                                axes[i].set_title(var)
+                                axes[i].grid(True)
+                                
+                                # Save to CSV for reference
+                                var_file = results_dir / f"{experiment_id}_{var}.csv"
+                                var_data.to_csv(var_file)
+                                
+                            except Exception as e:
+                                self.logger.warning(f"Could not plot {var}: {str(e)}")
+                        
+                        plt.tight_layout()
+                        plt.savefig(plots_dir / f"{experiment_id}_water_balance_variables.png")
+                        plt.close()
+                        self.logger.info(f"Created water balance variables plot")
+                    
+                    # Plot energy balance variables
+                    energy_vars = [v for v in vars_to_plot if v in [
+                        'scalarSenHeatTotal', 'scalarLatHeatTotal', 'scalarNetRadiation'
+                    ]]
+                    
+                    if energy_vars:
+                        fig, axes = plt.subplots(len(energy_vars), 1, figsize=(12, 3*len(energy_vars)), sharex=True)
+                        # Handle case with only 1 variable
+                        if len(energy_vars) == 1:
+                            axes = [axes]
+                        
+                        for i, var in enumerate(energy_vars):
+                            try:
+                                # Extract the data (handle different dimension structures)
+                                if 'hru' in ds[var].dims and 'time' in ds[var].dims:
+                                    var_data = ds[var].isel(hru=0).to_dataframe()[var]
+                                elif 'gru' in ds[var].dims and 'time' in ds[var].dims:
+                                    var_data = ds[var].isel(gru=0).to_dataframe()[var]
+                                else:
+                                    var_data = ds[var].to_dataframe()[var]
+                                
+                                # Plot on the appropriate subplot
+                                var_data.plot(ax=axes[i])
+                                axes[i].set_title(var)
+                                axes[i].grid(True)
+                                
+                                # Save to CSV for reference
+                                var_file = results_dir / f"{experiment_id}_{var}.csv"
+                                var_data.to_csv(var_file)
+                                
+                            except Exception as e:
+                                self.logger.warning(f"Could not plot {var}: {str(e)}")
+                        
+                        plt.tight_layout()
+                        plt.savefig(plots_dir / f"{experiment_id}_energy_balance_variables.png")
+                        plt.close()
+                        self.logger.info(f"Created energy balance variables plot")
+                    
+                    # Create a comparison plot of original file variables
+                    # Focus on variables that actually exist in the file
+                    if 'pptrate' in ds and 'averageRoutedRunoff' in ds:
+                        plt.figure(figsize=(12, 8))
+                        
+                        # Create two subplots with shared x-axis
+                        ax1 = plt.subplot(211)
+                        ax2 = plt.subplot(212, sharex=ax1)
+                        
+                        # Extract precipitation data
+                        if 'hru' in ds['pptrate'].dims:
+                            ppt_data = ds['pptrate'].isel(hru=0).to_dataframe()['pptrate']
+                        else:
+                            ppt_data = ds['pptrate'].to_dataframe()['pptrate']
+                        
+                        # Plot precipitation (inverted, from top of plot)
+                        ax1.plot(ppt_data.index, ppt_data.values)
+                        ax1.set_ylabel('Precipitation (mm/s)')
+                        ax1.set_title('Precipitation')
+                        ax1.invert_yaxis()  # Invert to show precipitation from top
+                        ax1.grid(True)
+                        
+                        # Plot runoff
+                        ax2.plot(runoff_data.index, runoff_data['discharge_cms'].values)
+                        ax2.set_ylabel('Discharge (cms)')
+                        ax2.set_title('Streamflow')
+                        ax2.grid(True)
+                        
+                        plt.tight_layout()
+                        plt.savefig(plots_dir / f"{experiment_id}_precip_vs_runoff.png")
+                        plt.close()
+                        self.logger.info(f"Created precipitation vs runoff comparison plot")
+                    
+                except ImportError:
+                    self.logger.info("Matplotlib not available, skipping diagnostic plots")
+                except Exception as e:
+                    self.logger.warning(f"Could not create diagnostic plots: {str(e)}")
+                    import traceback
+                    self.logger.warning(traceback.format_exc())
+                
+                # Close the dataset
                 ds.close()
                 
+                return output_file
+                
             except Exception as e:
-                self.logger.error(f"Error processing results for site {site_name}: {str(e)}")
-        
-        if results_df.empty:
-            self.logger.warning("No results extracted from any site")
+                self.logger.error(f"Error processing runoff data: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                ds.close()
+                return None
+            
+        except Exception as e:
+            self.logger.error(f"Error opening SUMMA output file: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return None
-        
-        # Save results
-        output_file = self.results_dir / f"{experiment_id}_point_results.csv"
-        results_df.to_csv(output_file)
-        self.logger.info(f"Combined point simulation results saved to {output_file}")
-        
-        return output_file
 
     def extract_mizuroute_streamflow(self) -> Optional[Path]:
         """Extract streamflow from MizuRoute outputs for spatial mode."""
@@ -2194,9 +2453,9 @@ class SummaRunner:
         This method selects the appropriate run mode (parallel, serial, or point)
         based on configuration settings and executes the SUMMA model accordingly.
         """
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.run_summa_point()
-        elif self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
+        #if self.config.get('SPATIAL_MODE') == 'Point':
+            #self.run_summa_point()
+        if self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
             self.run_summa_parallel()
         else:
             self.run_summa_serial()

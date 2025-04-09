@@ -22,12 +22,15 @@ class ProjectInitialisation:
         self.config = config
         self.logger = logger
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+
 
     def setup_project(self):
         self.project_dir.mkdir(parents=True, exist_ok=True)
         
+        # Create directory structure
         shapefile_dir = self.project_dir / "shapefiles"
         shapefile_dir.mkdir(parents=True, exist_ok=True)
         pourPoint_dir = shapefile_dir / "pour_point"
@@ -45,7 +48,96 @@ class ProjectInitialisation:
         attributes_dir = self.project_dir / 'attributes'
         attributes_dir.mkdir(parents=True, exist_ok=True)
 
+        # If in point mode, update bounding box coordinates
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self._update_bounding_box_for_point_mode()
+
         return self.project_dir
+
+    def _update_bounding_box_for_point_mode(self):
+        """
+        Update the bounding box coordinates in the config to create a 0.02 degree buffer
+        around the pour point for point-scale simulations.
+        """
+        try:
+            # Get pour point coordinates
+            pour_point_coords = self.config.get('POUR_POINT_COORDS', '')
+            if not pour_point_coords or pour_point_coords.lower() == 'default':
+                self.logger.warning("Pour point coordinates not specified, cannot update bounding box for point mode")
+                return
+            
+            # Parse coordinates
+            lat, lon = map(float, pour_point_coords.split('/'))
+            
+            # Define buffer distance (0.01 degree in each direction for a total of 0.02 degrees)
+            buffer_dist = 0.01
+            
+            # Create a square buffer around the point
+            min_lon = round(lon - buffer_dist, 4)
+            max_lon = round(lon + buffer_dist, 4)
+            min_lat = round(lat - buffer_dist, 4)
+            max_lat = round(lat + buffer_dist, 4)
+            
+            # Format the new bounding box string
+            new_bbox = f"{max_lat}/{min_lon}/{min_lat}/{max_lon}"
+            
+            self.logger.info(f"Updating bounding box for point-scale simulation to: {new_bbox}")
+            
+            # Update the configuration in memory
+            self.config['BOUNDING_BOX_COORDS'] = new_bbox
+            
+            # Update the active config file
+            self._update_active_config_file('BOUNDING_BOX_COORDS', new_bbox)
+            
+        except Exception as e:
+            self.logger.error(f"Error updating bounding box for point mode: {str(e)}")
+
+    def _update_active_config_file(self, key, value):
+        """
+        Update a specific key in the active configuration file.
+        
+        Args:
+            key (str): The configuration key to update
+            value (str): The new value to set
+        """
+        try:
+            # Get the path to the active config file
+            if 'CONFLUENCE_CODE_DIR' in self.config:
+                config_path = Path(self.config['CONFLUENCE_CODE_DIR']) / '0_config_files' / 'config_active.yaml'
+            else:
+                self.logger.warning("CONFLUENCE_CODE_DIR not specified, cannot update config file")
+                return
+            
+            if not config_path.exists():
+                self.logger.warning(f"Active config file not found at {config_path}")
+                return
+            
+            # Read the current config file
+            with open(config_path, 'r') as f:
+                lines = f.readlines()
+            
+            # Update the specific key
+            updated = False
+            for i, line in enumerate(lines):
+                # Look for the key at the beginning of the line
+                if line.strip().startswith(f"{key}:"):
+                    # Replace the line with the updated value
+                    lines[i] = f"{key}: {value}  # Updated for point-scale simulation\n"
+                    updated = True
+                    break
+            
+            if not updated:
+                self.logger.warning(f"Could not find {key} in config file to update")
+                return
+            
+            # Write the updated config back to the file
+            with open(config_path, 'w') as f:
+                f.writelines(lines)
+            
+            self.logger.info(f"Updated {key} in active config file: {config_path}")
+        
+        except Exception as e:
+            self.logger.error(f"Error updating config file: {str(e)}")
 
     def create_pourPoint(self):
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
@@ -544,7 +636,10 @@ class ObservedDataProcessor:
                     self._process_usgs_data()
 
             elif self.data_provider == 'WSC':
-                self._process_wsc_data()
+                if self.config.get('DOWNLOAD_USGS_DATA') == True:
+                    self._download_and_process_wsc_data()
+                else:
+                    self._process_wsc_data()
             elif self.data_provider == 'VI':
                 self._process_vi_data()
             else:
@@ -552,6 +647,257 @@ class ObservedDataProcessor:
                 raise ValueError(f"Unsupported streamflow data provider: {self.data_provider}")
         except Exception as e:
             self.logger.error(f'Issue in streamflow data preprocessing: {e}')
+
+    def _download_and_process_wsc_data(self):
+        """
+        Process Water Survey of Canada (WSC) streamflow data by fetching it directly from the WSC API
+        using the Features class to interact with Environment Canada's Datamart API.
+        
+        This function fetches discharge data for the specified WSC station,
+        processes it, and resamples it to the configured time step.
+        """
+        import io
+        import copy
+        from datetime import datetime, timedelta
+        import pandas as pd
+        
+        try:
+            # Try to import the Features class - your colleague's script suggests this is available in your environment
+            from datamart_api import Features
+        except ImportError:
+            self.logger.error("Could not import Features class. Make sure the datamart_api is installed.")
+            raise ImportError("Could not import Features class. Make sure the datamart_api is installed.")
+        
+        self.logger.info("Processing WSC streamflow data directly from API")
+        
+        # Get configuration parameters
+        station_id = self.config.get('STATION_ID')
+        stations = [station_id]  # Create a list with the single station ID
+        
+        # Parse and format the start date properly
+        start_date_raw = self.config.get('EXPERIMENT_TIME_START')
+        try:
+            # Try to parse the date string with various formats
+            for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                try:
+                    parsed_date = datetime.strptime(start_date_raw, fmt)
+                    start_date = parsed_date.strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+            else:
+                # If none of the formats match, use a default format
+                self.logger.warning(f"Could not parse start date: {start_date_raw}. Using first 10 characters as YYYY-MM-DD.")
+                start_date = start_date_raw[:10]
+        except Exception as e:
+            self.logger.warning(f"Error parsing start date: {e}. Using default date format.")
+            start_date = start_date_raw[:10]
+        
+        # Format end date as YYYY-MM-DD
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Log the station and date range
+        self.logger.info(f"Retrieving discharge data for WSC station {station_id}")
+        self.logger.info(f"Time period: {start_date} to {end_date}")
+        
+        # Define API parameters
+        api_url = "https://api.weather.gc.ca/collections"
+        collection = "hydrometric-daily-mean"  # For daily means
+        download_variable = "DISCHARGE"  # For streamflow data
+        datetime_column = "DATE"
+        other_variables = ["DISCHARGE_SYMBOL"]  # Include any data quality flags
+        limit = 10000  # Max number of records to retrieve
+        
+        # Define a temporary output directory for the API call
+        import tempfile
+        temp_dir = tempfile.mkdtemp()
+        
+        try:
+            # Call the retrieve_data_from_api function based on your colleague's script
+            stations_with_data = self._retrieve_data_from_api(
+                stations=stations,
+                collection=collection,
+                download_variable=download_variable,
+                datetime_column=datetime_column,
+                api_url=api_url,
+                output_dir=temp_dir,
+                other_variables=other_variables,
+                time_limits=True,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
+            
+            if not stations_with_data:
+                self.logger.error(f"No discharge data was found for station {station_id}")
+                raise ValueError(f"No discharge data was found for station {station_id}")
+            
+            # Read the CSV file that was created
+            csv_path = Path(temp_dir) / collection / f"{station_id}_{download_variable}.csv"
+            
+            if not csv_path.exists():
+                self.logger.error(f"Expected CSV file not found: {csv_path}")
+                raise FileNotFoundError(f"Expected CSV file not found: {csv_path}")
+            
+            self.logger.info(f"Reading data from {csv_path}")
+            df = pd.read_csv(csv_path, parse_dates=[0], index_col=0)
+            
+            # Verify that we have the DISCHARGE column
+            if download_variable not in df.columns:
+                self.logger.error(f"Expected column {download_variable} not found in the data")
+                self.logger.debug(f"Available columns: {df.columns.tolist()}")
+                raise ValueError(f"Expected column {download_variable} not found in the data")
+            
+            # Create the discharge_cms column (data is already in cubic meters per second)
+            df['discharge_cms'] = df[download_variable]
+            
+            # Drop rows with NaN or suspicious values
+            # Check for flag/symbol column to filter out questionable values
+            if "DISCHARGE_SYMBOL" in df.columns:
+                # Keep only rows with empty symbols or reliable data flags
+                reliable_flags = ["", " ", None, "A", "B", "C"]  # Adjust based on WSC data flag documentation
+                df = df[df["DISCHARGE_SYMBOL"].isin(reliable_flags)]
+            
+            # Drop any remaining rows with NaN discharge values
+            na_count = df['discharge_cms'].isna().sum()
+            if na_count > 0:
+                self.logger.warning(f"Dropping {na_count} rows with non-numeric or NaN discharge values")
+                df = df.dropna(subset=['discharge_cms'])
+            
+            # Call the resampling and saving function
+            self._resample_and_save(df['discharge_cms'])
+            
+            self.logger.info(f"Successfully processed WSC data for station {station_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing WSC data: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+        
+        finally:
+            # Clean up the temporary directory
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                self.logger.warning(f"Could not remove temporary directory {temp_dir}: {e}")
+        
+    def _retrieve_data_from_api(self, stations, collection, download_variable, datetime_column, api_url, output_dir, 
+                            other_variables=[], time_limits=False, start_date=None, end_date=None, limit=10000):
+        """
+        Retrieve data from the Environment Canada Datamart API.
+        
+        This is adapted from the code provided by your colleague.
+        """
+        import copy
+        from pathlib import Path
+        
+        try:
+            # Try to import the Features class
+            from datamart_api import Features
+        except ImportError:
+            self.logger.error("Could not import Features class. Make sure the datamart_api is installed.")
+            raise ImportError("Could not import Features class. Make sure the datamart_api is installed.")
+        
+        # Set the time limits for the data retrieval
+        if time_limits:
+            time_ = f"{start_date}/{end_date}"
+            self.logger.info(f"Retrieving {download_variable} from {collection} for the period {time_}")
+        else:
+            self.logger.info(f"Retrieving {download_variable} from {collection} with no time limits")
+        
+        # Set columns to be saved to the dataframe
+        query_variables = [
+                        "STATION_NUMBER",
+                        "STATION_NAME"
+                        ]
+        
+        # Append additional query variables
+        query_variables.append(datetime_column)
+        query_variables.append(download_variable)
+        query_variables = query_variables + other_variables
+        self.logger.info(f"Query variables: {query_variables}")
+        
+        # Output data frame to csv file
+        collection_output_dir = Path(output_dir) / collection
+        collection_output_dir.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f"Output directory: {collection_output_dir}")
+        
+        # Instantiate features
+        oafeat = Features(api_url)
+        
+        # List of stations with no water level data
+        stations_with_data = copy.copy(stations)
+        stations_without_data = []
+        
+        # Data retrieval and creation of the data frames
+        for station in stations:
+            if time_limits:
+                # Retrieval of water level data
+                hydro_data = oafeat.collection_items(
+                    collection,
+                    limit=limit,
+                    STATION_NUMBER=station,
+                    time=time_,
+                )
+            else:
+                # Retrieval of water level data
+                hydro_data = oafeat.collection_items(
+                    collection,
+                    limit=limit,
+                    STATION_NUMBER=station,
+                )
+            
+            # Creation of a data frame if there is data for the chosen time period
+            if hydro_data["features"]:
+                
+                # Creation of a dictionary in a format compatible with Pandas
+                historical_data_format = [
+                    {
+                        **el["properties"],
+                    }
+                    for el in hydro_data["features"]
+                ]
+                
+                # Creation of the data frame
+                historical_data_df = pd.DataFrame(
+                    historical_data_format,
+                    columns=query_variables,
+                )
+                
+                # Detect and convert data types of columns
+                historical_data_df = historical_data_df.infer_objects(copy=False)
+                
+                # Creating an index with the date in a datetime format
+                historical_data_df[datetime_column] = pd.to_datetime(
+                    historical_data_df[datetime_column]
+                )
+                historical_data_df.set_index([datetime_column], inplace=True, drop=True)
+                
+                output_csv_path = collection_output_dir / f'{station}_{download_variable}.csv'
+                historical_data_df.to_csv(output_csv_path, index=True)
+                self.logger.info(f"{download_variable} from {collection} for station {station} output to {output_csv_path}")
+            
+            # If there is no data for the chosen time period, the station
+            # will be removed from the dataset
+            else:
+                stations_without_data.append(station)
+        
+        # Removing hydrometric stations without water level data from the station list
+        for station in stations_without_data:
+            self.logger.warning(
+                f"Station {station} has no {download_variable} data for the chosen time period."
+            )
+            stations_with_data.remove(station)
+        
+        # Raising an error if no station is left in the list
+        if not stations_with_data:
+            raise ValueError(
+                f"No {download_variable} data was returned from {collection}, please check the query."
+            )
+        
+        return stations_with_data
 
     def _process_vi_data(self):
         self.logger.info("Processing VI (Iceland) streamflow data")

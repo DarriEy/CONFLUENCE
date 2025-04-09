@@ -124,7 +124,7 @@ class CONFLUENCE:
             (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv1").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data1").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
 
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input1").exists()),
@@ -166,9 +166,7 @@ class CONFLUENCE:
 
     @get_function_logger
     def create_pourPoint(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, pour point not required")
-            return None
+
                     
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
             self.logger.info("Using user-provided pour point shapefile")
@@ -185,9 +183,6 @@ class CONFLUENCE:
 
     @get_function_logger
     def acquire_attributes(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, attribute data not required")
-            return None
 
         # Create attribute directories
         dem_dir = self.project_dir / 'attributes' / 'elevation' / 'dem'
@@ -338,7 +333,7 @@ class CONFLUENCE:
 
     @get_function_logger
     def acquire_forcings(self):
-        if self.config.get('SPATIAL_MODE') == 'Point' & self.config.get('DATA_ACQUIRE') == 'supplied':
+        if self.config.get('SPATIAL_MODE') == 'Point' and self.config.get('DATA_ACQUIRE') == 'supplied':
             self.logger.info("Spatial mode: Point simulations, data supplied")
             return None
         
@@ -365,9 +360,9 @@ class CONFLUENCE:
 
     @get_function_logger
     def model_agnostic_pre_processing(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, data processing not required")
-            return None
+        #if self.config.get('SPATIAL_MODE') == 'Point':
+        #    self.logger.info("Spatial mode: Point simulations, data processing not required")
+        #    return None
         
         # Data directoris
         raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
@@ -397,9 +392,9 @@ class CONFLUENCE:
        
     @get_function_logger
     def process_observed_data(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, data processing not required")
-            return None
+        #if self.config.get('SPATIAL_MODE') == 'Point':
+        #    self.logger.info("Spatial mode: Point simulations, data processing not required")
+        #    return None
         
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
@@ -424,18 +419,20 @@ class CONFLUENCE:
                 self.logger.info(f"Processing model: {model}")
                 
                 if model == 'SUMMA':
-                    if self.config.get('SPATIAL_MODE') == 'Point':
-                        self.logger.info("Initializing SUMMA point preprocessor")
-                        ssp = SummaPreProcessor_point(self.config, self.logger)
-                        ssp.run_preprocessing()
-                    else:
-                        self.logger.info("Initializing SUMMA spatial preprocessor")
-                        ssp = SummaPreProcessor_spatial(self.config, self.logger)
-                        ssp.run_preprocessing()
-                        
+                    #if self.config.get('SPATIAL_MODE') == 'Point':
+                    #    self.logger.info("Initializing SUMMA point preprocessor")
+                    #    ssp = SummaPreProcessor_point(self.config, self.logger)
+                    #    ssp.run_preprocessing()
+                    #else:
+                    self.logger.info("Initializing SUMMA spatial preprocessor")
+                    ssp = SummaPreProcessor_spatial(self.config, self.logger)
+                    ssp.run_preprocessing()
+                    
+                    if self.config.get('SPATIAL_MODE') != 'Point':
                         self.logger.info("Initializing MizuRoute preprocessor")
                         mp = MizuRoutePreProcessor(self.config, self.logger)
                         mp.run_preprocessing()
+
                 elif model == 'GR':
                     gpp = GRPreProcessor(self.config, self.logger)
                     gpp.run_preprocessing()
@@ -471,7 +468,7 @@ class CONFLUENCE:
 
                 try:
                     summa_runner.run_summa()
-                    if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+                    if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' or self.config.get('SPATIAL_MODE') != 'Point':
                         mizuroute_runner.run_mizuroute()
                     self.logger.info("SUMMA/MIZUROUTE model runs completed successfully")
                 except Exception as e:
