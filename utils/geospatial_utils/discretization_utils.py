@@ -178,6 +178,10 @@ class DomainDiscretizer:
         self.logger.info(f"config domain name {self.config.get('DOMAIN_NAME')}")
         if self.config.get('RIVER_BASINS_NAME') == 'default':
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        if self.config.get('DELINEATE_COASTAL_WATERSHEDS') == True:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_with_coastal.shp")
+        if self.config.get('SPATIAL_MODE') == "Point":
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_point.shp")
         else:
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
         
@@ -230,6 +234,8 @@ class DomainDiscretizer:
         gru_shapefile = self.config.get('RIVER_BASINS_NAME')
         if gru_shapefile == 'default':
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        elif self.config.get('DELINEATE_COASTAL_WATERSHEDS') == True:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins__with_coastal.shp")
         else:
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
         dem_name = self.config['DEM_NAME']
@@ -298,6 +304,8 @@ class DomainDiscretizer:
         gru_shapefile = self.config.get('RIVER_BASINS_NAME')
         if gru_shapefile == 'default':
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+        elif self.config.get('DELINEATE_COASTAL_WATERSHEDS') == True:
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins__with_coastal.shp")
         else:
             gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", self.config.get('RIVER_BASINS_NAME'))
 

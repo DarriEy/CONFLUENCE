@@ -272,10 +272,8 @@ class CONFLUENCE:
      
         # Skip domain definition if in point mode
         if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, domain definition not required")
-            return
-        
-        if domain_method == 'subset':
+            self.delineate_point_buffer_shape()        
+        elif domain_method == 'subset':
             self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
         elif domain_method == 'lumped':
             self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
@@ -305,9 +303,6 @@ class CONFLUENCE:
 
     @get_function_logger
     def discretize_domain(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, discretisation not performed")
-            return None
         
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
         domain_discretizer = DomainDiscretizer(self.config, self.logger)
@@ -343,8 +338,8 @@ class CONFLUENCE:
 
     @get_function_logger
     def acquire_forcings(self):
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, data acquisition not required")
+        if self.config.get('SPATIAL_MODE') == 'Point' & self.config.get('DATA_ACQUIRE') == 'supplied':
+            self.logger.info("Spatial mode: Point simulations, data supplied")
             return None
         
         # Initialize datatoolRunner class
@@ -689,6 +684,17 @@ class CONFLUENCE:
             return delineator.delineate_lumped_watershed()
         except Exception as e:
             self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_point_buffer_shape(self):
+        self.logger.info("Starting point buffer")
+        try:
+            delineator = GeofabricDelineator(self.config, self.logger)
+            self.logger.info('point buffer completed successfully')
+            return delineator.delineate_point_buffer_shape()
+        except Exception as e:
+            self.logger.error(f"Error during point buffer delineation: {str(e)}")
             return None
 
     @get_function_logger

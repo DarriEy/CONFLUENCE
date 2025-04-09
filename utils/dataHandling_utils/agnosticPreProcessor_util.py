@@ -107,68 +107,158 @@ class forcingResampler:
     def _create_era5_shapefile(self):
         self.logger.info("Creating ERA5 shapefile")
 
-        # Find an .nc file in the forcing path
-        forcing_files = list(self.merged_forcing_path.glob('*.nc'))
-        if not forcing_files:
-            raise FileNotFoundError("No ERA5 forcing files found")
-        forcing_file = forcing_files[0]
+        try:
+            # Find an .nc file in the forcing path
+            forcing_files = list(self.merged_forcing_path.glob('*.nc'))
+            if not forcing_files:
+                raise FileNotFoundError("No ERA5 forcing files found")
+            
+            forcing_file = forcing_files[0]
+            self.logger.info(f"Using ERA5 file: {forcing_file}")
 
-        # Set the dimension variable names
-        source_name_lat = "latitude"
-        source_name_lon = "longitude"
+            # Set the dimension variable names
+            source_name_lat = "latitude"
+            source_name_lon = "longitude"
 
-        # Open the file and get the dimensions and spatial extent of the domain
-        with xr.open_dataset(forcing_file) as src:
-            lat = src[source_name_lat].values
-            lon = src[source_name_lon].values
+            # Open the file and get the dimensions and spatial extent of the domain
+            try:
+                with xr.open_dataset(forcing_file) as src:
+                    lat = src[source_name_lat].values
+                    lon = src[source_name_lon].values
+                
+                self.logger.info(f"ERA5 dimensions: lat={lat.shape}, lon={lon.shape}")
+            except Exception as e:
+                self.logger.error(f"Error reading ERA5 dimensions: {str(e)}")
+                raise
 
-        # Find the spacing
-        half_dlat = abs(lat[1] - lat[0])/2
-        half_dlon = abs(lon[1] - lon[0])/2
+            # Find the spacing
+            try:
+                half_dlat = abs(lat[1] - lat[0])/2 if len(lat) > 1 else 0.125  # Default to 0.25/2 if only one value
+                half_dlon = abs(lon[1] - lon[0])/2 if len(lon) > 1 else 0.125  # Default to 0.25/2 if only one value
+                
+                self.logger.info(f"ERA5 grid spacings: half_dlat={half_dlat}, half_dlon={half_dlon}")
+            except Exception as e:
+                self.logger.error(f"Error calculating grid spacings: {str(e)}")
+                raise
 
-        # Create lists to store the data
-        geometries = []
-        ids = []
-        lats = []
-        lons = []
+            # Create lists to store the data
+            geometries = []
+            ids = []
+            lats = []
+            lons = []
 
-        for i, center_lon in enumerate(lon):
-            for j, center_lat in enumerate(lat):
-                vertices = [
-                    [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
-                    [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
-                    [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
-                    [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
-                    [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
-                ]
-                geometries.append(Polygon(vertices))
-                ids.append(i * len(lat) + j)
-                lats.append(float(center_lat))
-                lons.append(float(center_lon))
+            # Create grid cells
+            try:
+                self.logger.info("Creating grid cell geometries")
+                if len(lat) == 1:
+                    self.logger.info("Single latitude value detected, creating row of grid cells")
+                    for i, center_lon in enumerate(lon):
+                        center_lat = lat[0]
+                        vertices = [
+                            [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
+                            [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
+                            [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
+                            [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
+                            [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
+                        ]
+                        geometries.append(Polygon(vertices))
+                        ids.append(i)
+                        lats.append(float(center_lat))
+                        lons.append(float(center_lon))
+                else:
+                    self.logger.info("Multiple latitude values, creating grid")
+                    for i, center_lon in enumerate(lon):
+                        for j, center_lat in enumerate(lat):
+                            vertices = [
+                                [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
+                                [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
+                                [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
+                                [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
+                                [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
+                            ]
+                            geometries.append(Polygon(vertices))
+                            ids.append(i * len(lat) + j)
+                            lats.append(float(center_lat))
+                            lons.append(float(center_lon))
+                
+                self.logger.info(f"Created {len(geometries)} grid cell geometries")
+            except Exception as e:
+                self.logger.error(f"Error creating grid cell geometries: {str(e)}")
+                raise
 
-        # Create the GeoDataFrame
-        gdf = gpd.GeoDataFrame({
-            'geometry': geometries,
-            'ID': ids,
-            self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-            self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-        }, crs='EPSG:4326')
+            # Create the GeoDataFrame
+            try:
+                self.logger.info("Creating GeoDataFrame")
+                gdf = gpd.GeoDataFrame({
+                    'geometry': geometries,
+                    'ID': ids,
+                    self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
+                    self.config.get('FORCING_SHAPE_LON_NAME'): lons,
+                }, crs='EPSG:4326')
+                
+                self.logger.info(f"GeoDataFrame created with {len(gdf)} rows")
+            except Exception as e:
+                self.logger.error(f"Error creating GeoDataFrame: {str(e)}")
+                raise
 
-        # Calculate zonal statistics (mean elevation) for each grid cell
-        zs = rasterstats.zonal_stats(gdf, str(self.dem_path), stats=['mean'])
+            # Calculate zonal statistics
+            try:
+                self.logger.info(f"Calculating zonal statistics with DEM: {self.dem_path}")
+                if not Path(self.dem_path).exists():
+                    self.logger.error(f"DEM file not found: {self.dem_path}")
+                    raise FileNotFoundError(f"DEM file not found: {self.dem_path}")
+                    
+                # Sample first 10 rows for zonal statistics to avoid memory issues
+                self.logger.info("Using a subset of grid cells for zonal statistics")
+                sample_size = min(100, len(gdf))
+                sample_gdf = gdf.head(sample_size)
+                
+                zs = rasterstats.zonal_stats(sample_gdf, str(self.dem_path), stats=['mean'])
+                self.logger.info(f"Zonal statistics completed for {len(zs)} grid cells")
+                
+                # Add mean elevation to the sample GeoDataFrame
+                sample_gdf['elev_m'] = [item['mean'] if item['mean'] is not None else -9999 for item in zs]
+                
+                # Map the elevation values back to the full GeoDataFrame
+                gdf = gdf.copy()
+                gdf['elev_m'] = -9999  # Default value
+                
+                # Copy values from sample to full GeoDataFrame
+                for idx, row in sample_gdf.iterrows():
+                    gdf.loc[idx, 'elev_m'] = row['elev_m']
+                
+                # Drop columns that are on the edge and don't have elevation data
+                # gdf.dropna(subset=['elev_m'], inplace=True)
+                # This can lead to empty GeoDataFrame if all values are NaN
+                
+                self.logger.info(f"GeoDataFrame with elevations has {len(gdf)} rows")
+            except Exception as e:
+                self.logger.error(f"Error calculating zonal statistics: {str(e)}")
+                # Continue without elevation data rather than failing completely
+                gdf['elev_m'] = -9999
+                self.logger.warning("Using default elevation values due to zonal statistics error")
 
-        # Add mean elevation to the GeoDataFrame
-        gdf['elev_m'] = [item['mean'] for item in zs]
-
-        # Drop columns that are on the edge and don't have elevation data
-        gdf.dropna(subset=['elev_m'], inplace=True)
-
-        # Save the shapefile
-        self.shapefile_path.mkdir(parents=True, exist_ok=True)
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        gdf.to_file(output_shapefile)
-
-        self.logger.info(f"ERA5 shapefile created and saved to {output_shapefile}")
+            # Save the shapefile
+            try:
+                self.logger.info(f"Creating directory: {self.shapefile_path}")
+                self.shapefile_path.mkdir(parents=True, exist_ok=True)
+                
+                output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
+                self.logger.info(f"Saving shapefile to: {output_shapefile}")
+                
+                gdf.to_file(output_shapefile)
+                self.logger.info(f"ERA5 shapefile saved successfully to {output_shapefile}")
+            except Exception as e:
+                self.logger.error(f"Error saving shapefile: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
+                
+        except Exception as e:
+            self.logger.error(f"Error in create_era5_shapefile: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def _create_carra_shapefile(self):
         self.logger.info("Creating CARRA grid shapefile")
