@@ -54,8 +54,6 @@ or
 
 3. Run the scripts in /jupyter notebooks for a stepwise introduction to CONFLUENCE
 
-For more detailed usage instructions, please refer to the documentation.
-
 ## Contributing
 
 We welcome contributions to CONFLUENCE! Please follow these steps to contribute:
@@ -70,9 +68,4 @@ Please make sure to update tests as appropriate and adhere to the project's codi
 
 ## License
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
-## Contact
-Darri Eythorsson, University of Calgary
-
-darri.eythorsson@ucalgary.ca
 

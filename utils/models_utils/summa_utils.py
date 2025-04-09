@@ -2052,6 +2052,7 @@ class SUMMAPostprocessor:
         
         # Define the path to the SUMMA output file
         summa_output_file = sim_path / f"{experiment_id}_timestep.nc"
+        summa_daily_file = sim_path / f"{experiment_id}_day.nc"
         
         if not summa_output_file.exists():
             # Try alternative naming patterns if the primary pattern isn't found
@@ -2069,6 +2070,21 @@ class SUMMAPostprocessor:
             
             self.logger.info(f"Reading SUMMA output from {summa_output_file}")
             ds = xr.open_dataset(summa_output_file)
+            
+            # Check if daily file exists for SWE
+            daily_ds = None
+            if summa_daily_file.exists():
+                self.logger.info(f"Reading daily SUMMA output from {summa_daily_file}")
+                daily_ds = xr.open_dataset(summa_daily_file)
+            else:
+                # Try alternative naming patterns for daily file
+                daily_files = list(sim_path.glob("*_day.nc"))
+                if daily_files:
+                    summa_daily_file = daily_files[0]
+                    self.logger.info(f"Using alternative daily SUMMA output file: {summa_daily_file}")
+                    daily_ds = xr.open_dataset(summa_daily_file)
+                else:
+                    self.logger.warning(f"No daily SUMMA output file found for SWE data")
             
             # Extract runoff data - prioritize averageRoutedRunoff
             if 'averageRoutedRunoff' in ds:
@@ -2175,7 +2191,102 @@ class SUMMAPostprocessor:
                     plt.close()
                     self.logger.info(f"Created streamflow diagnostic plot at {plot_file}")
                     
-                    # Extract and plot additional variables
+                    # Process and plot SWE from daily file if available
+                    if daily_ds is not None and 'scalarSWE' in daily_ds:
+                        try:
+                            self.logger.info("Extracting scalarSWE from daily output file")
+                            
+                            # Extract SWE data based on dimensions
+                            swe_dims = daily_ds['scalarSWE'].dims
+                            self.logger.info(f"SWE variable has dimensions: {swe_dims}")
+                            
+                            if 'hru' in swe_dims and 'time' in swe_dims:
+                                if daily_ds.dims['hru'] == 1:
+                                    swe_data = daily_ds['scalarSWE'].isel(hru=0).to_dataframe()
+                                else:
+                                    swe_data = daily_ds['scalarSWE'].mean(dim='hru').to_dataframe()
+                            else:
+                                swe_data = daily_ds['scalarSWE'].to_dataframe()
+                            
+                            # Clean up SWE dataframe
+                            if isinstance(swe_data.index, pd.MultiIndex):
+                                swe_data = swe_data.reset_index()
+                                time_col = next((col for col in swe_data.columns if col == 'time'), None)
+                                if time_col:
+                                    swe_data = swe_data.set_index(time_col)
+                            
+                            # Ensure we have the SWE column
+                            if 'scalarSWE' in swe_data.columns:
+                                swe_series = swe_data['scalarSWE']
+                            else:
+                                # Find SWE column if it has a different name
+                                swe_cols = [col for col in swe_data.columns if 'swe' in col.lower()]
+                                if swe_cols:
+                                    swe_series = swe_data[swe_cols[0]]
+                                    swe_series.name = 'scalarSWE'
+                                else:
+                                    raise ValueError("Could not find SWE column in dataframe")
+                            
+                            # Save SWE data to CSV
+                            swe_file = results_dir / f"{experiment_id}_swe_daily.csv"
+                            swe_series.to_csv(swe_file)
+                            self.logger.info(f"SWE data saved to {swe_file}")
+                            
+                            # Plot SWE
+                            plt.figure(figsize=(12, 6))
+                            swe_series.plot()
+                            plt.title(f"SUMMA Point Simulation - Daily SWE - {experiment_id}")
+                            plt.ylabel("SWE (mm)")
+                            plt.xlabel("Date")
+                            plt.grid(True)
+                            swe_plot_file = plots_dir / f"{experiment_id}_swe_daily.png"
+                            plt.savefig(swe_plot_file)
+                            plt.close()
+                            self.logger.info(f"Created SWE plot at {swe_plot_file}")
+                            
+                            # Create combined precipitation and SWE plot if precipitation data is available
+                            if 'pptrate' in ds:
+                                plt.figure(figsize=(12, 8))
+                                
+                                # Create two subplots with shared x-axis
+                                ax1 = plt.subplot(211)
+                                ax2 = plt.subplot(212, sharex=ax1)
+                                
+                                # Extract precipitation data
+                                if 'hru' in ds['pptrate'].dims:
+                                    ppt_data = ds['pptrate'].isel(hru=0).to_dataframe()['pptrate']
+                                else:
+                                    ppt_data = ds['pptrate'].to_dataframe()['pptrate']
+                                
+                                # Resample precipitation to daily for comparison with SWE
+                                ppt_daily = ppt_data.resample('D').sum() * 86400  # Convert from mm/s to mm/day
+                                
+                                # Plot daily precipitation
+                                ax1.bar(ppt_daily.index, ppt_daily.values, width=1, color='blue', alpha=0.7)
+                                ax1.set_ylabel('Precipitation (mm/day)')
+                                ax1.set_title('Daily Precipitation')
+                                ax1.grid(True)
+                                
+                                # Plot SWE
+                                ax2.plot(swe_series.index, swe_series.values, 'r-')
+                                ax2.set_ylabel('SWE (mm)')
+                                ax2.set_title('Snow Water Equivalent (SWE)')
+                                ax2.grid(True)
+                                
+                                plt.tight_layout()
+                                combined_plot_file = plots_dir / f"{experiment_id}_precip_vs_swe.png"
+                                plt.savefig(combined_plot_file)
+                                plt.close()
+                                self.logger.info(f"Created precipitation vs SWE plot at {combined_plot_file}")
+                            
+                        except Exception as e:
+                            self.logger.warning(f"Error processing SWE data: {str(e)}")
+                            import traceback
+                            self.logger.warning(traceback.format_exc())
+                    else:
+                        self.logger.warning("scalarSWE not found in daily output file")
+                    
+                    # Extract and plot additional variables from hourly file
                     # Variables to look for (common in SUMMA outputs)
                     interesting_vars = [
                         # Meteorological inputs
@@ -2275,44 +2386,6 @@ class SUMMAPostprocessor:
                         plt.close()
                         self.logger.info(f"Created water balance variables plot")
                     
-                    # Plot energy balance variables
-                    energy_vars = [v for v in vars_to_plot if v in [
-                        'scalarSenHeatTotal', 'scalarLatHeatTotal', 'scalarNetRadiation'
-                    ]]
-                    
-                    if energy_vars:
-                        fig, axes = plt.subplots(len(energy_vars), 1, figsize=(12, 3*len(energy_vars)), sharex=True)
-                        # Handle case with only 1 variable
-                        if len(energy_vars) == 1:
-                            axes = [axes]
-                        
-                        for i, var in enumerate(energy_vars):
-                            try:
-                                # Extract the data (handle different dimension structures)
-                                if 'hru' in ds[var].dims and 'time' in ds[var].dims:
-                                    var_data = ds[var].isel(hru=0).to_dataframe()[var]
-                                elif 'gru' in ds[var].dims and 'time' in ds[var].dims:
-                                    var_data = ds[var].isel(gru=0).to_dataframe()[var]
-                                else:
-                                    var_data = ds[var].to_dataframe()[var]
-                                
-                                # Plot on the appropriate subplot
-                                var_data.plot(ax=axes[i])
-                                axes[i].set_title(var)
-                                axes[i].grid(True)
-                                
-                                # Save to CSV for reference
-                                var_file = results_dir / f"{experiment_id}_{var}.csv"
-                                var_data.to_csv(var_file)
-                                
-                            except Exception as e:
-                                self.logger.warning(f"Could not plot {var}: {str(e)}")
-                        
-                        plt.tight_layout()
-                        plt.savefig(plots_dir / f"{experiment_id}_energy_balance_variables.png")
-                        plt.close()
-                        self.logger.info(f"Created energy balance variables plot")
-                    
                     # Create a comparison plot of original file variables
                     # Focus on variables that actually exist in the file
                     if 'pptrate' in ds and 'averageRoutedRunoff' in ds:
@@ -2353,8 +2426,10 @@ class SUMMAPostprocessor:
                     import traceback
                     self.logger.warning(traceback.format_exc())
                 
-                # Close the dataset
+                # Close the datasets
                 ds.close()
+                if daily_ds is not None:
+                    daily_ds.close()
                 
                 return output_file
                 
@@ -2363,6 +2438,8 @@ class SUMMAPostprocessor:
                 import traceback
                 self.logger.error(traceback.format_exc())
                 ds.close()
+                if daily_ds is not None:
+                    daily_ds.close()
                 return None
             
         except Exception as e:

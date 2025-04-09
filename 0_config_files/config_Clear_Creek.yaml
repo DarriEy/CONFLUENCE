@@ -141,7 +141,7 @@ INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the sha
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
+HYDROLOGICAL_MODEL: FUSE,GR,SUMMA,FLASH                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH 
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
