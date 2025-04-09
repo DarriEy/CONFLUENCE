@@ -20,42 +20,37 @@ CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Iceland"                                           # Name of experimental domain
-EXPERIMENT_ID: run_1                                           # Name of experiment
+DOMAIN_NAME: "Clear_Creek"                                           # Name of experimental domain
+EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 20                                               # Number of parallel processes allowed, based on your system's capabilities
-FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
-
-# Modelling mode settings
-LARGE_DOMAIN: #
-SINGLE_SITE:  #
-SPATIAL_MODE: # 
+MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
+FORCE_RUN_ALL_STEPS: True                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
-POUR_POINT_COORDS: 64.01/-16.01                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
-BOUNDING_BOX_COORDS: 66.7267923041/-25.4261840479/63.0963829617/-13.009732225              # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max.
+POUR_POINT_COORDS: 39.75304299/-105.2352667                    # Pour point coordinates lat/lon, if default use user provided shapefile. 
+BOUNDING_BOX_COORDS: 39.5/-105/40/-106                           # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
 
 # Pour point shapefile path
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+DOMAIN_DEFINITION_METHOD: delineate                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
-STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
-LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
-CLEANUP_INTERMEDIATE_FILES: False                               # Remove temporary files from delieation
-DELINEATE_BY_POURPOINT: False                                  # Delineate watershed from pour point, if regional delinatation set to False
-DELINEATE_COASTAL_WATERSHEDS: True                             # Delineate coastal watersheds
+STREAM_THRESHOLD: 2500                                         # Threshold flow accumulation for stream vectorisation
+LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
+CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
+DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
+MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
-ELEVATION_BAND_SIZE: 400                                       # Elevation band size in meters
-MIN_HRU_SIZE: 5                                                # Minimum HRU size in km^2
+ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
+MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
@@ -86,14 +81,14 @@ RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slo
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
 OUTPUT_RIVERS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_network/[domain_name]_riverNetwork.shp'
 DEM_PATH: default                                              # If 'default', uses 'root_path/domain_[name]/attributes/elevation/dem/'
-DEM_NAME: default                                 # Name of elevation dem tiff
-SOURCE_GEOFABRIC_BASINS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/cat_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                   # Path to source geofabric basins
-SOURCE_GEOFABRIC_RIVERS_PATH: /project/6079554/data/geospatial-data/MERIT-Basins/MERIT_Hydro_v07_Basins_v01_bugfix1/pfaf_level_02/riv_pfaf_71_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                  # Path to source geofabric rivers
+DEM_NAME: default                                                # Name of elevation dem tiff
+SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/8020000010-basins.gpkg                                   # Path to source geofabric basins
+SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/8020000010-streamnet.gpkg                                  # Path to source geofabric rivers
 TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
 CATCHMENT_PLOT_DIR: default                                    # Directory to output plots of domain catchment
 SOIL_CLASS_PATH: default                                       # Path to soil classification raster. If 'default', uses root_path/domain_[name]/attributes/soilclass
-SOIL_CLASS_NAME: default                                       # Name of soil classification raster
+SOIL_CLASS_NAME: default                                        # Name of soil classification raster
 LAND_CLASS_PATH: default                                       # Path to land classification raster. If 'default', uses root_path/domain_[name]/attributes/landclass      
 LAND_CLASS_NAME: default                                       # Name of land classification raster
 RADIATION_PATH: default                                        # Path to radiation classification raster. If 'default', uses root_path/domain_[name]/attributes/radiation 
@@ -107,16 +102,15 @@ DATATOOL_CACHE: /home/darri.eythorsson                             # Cache direc
 TOOL_ACCOUNT: def-mclark                                   # HPC account for running datatool
 GISTOOL_DATASET_ROOT: /work/comphyd_lab/data/geospatial-data/         # Path to gistool datasets root directory
 GISTOOL_LIB_PATH: /work/comphyd_lab/envs/r-env/                     # Path to gistool libraries
-TOOL_CACHE: /work/comphyd_lab/users/darri/cache                                      # Path to gistool cache directory
-EASYMORE_CACHE: /work/comphyd_lab/users/darri/cache                          # Path to easymore cache directory
+TOOL_CACHE: /home/darri.eythorsson/cache                                      # Path to gistool cache directory
+EASYMORE_CACHE: /home/darri.eythorsson/easymore/                          # Path to easymore cache directory
 EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" #Path to easymore job config
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
 
-
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2018-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -124,7 +118,7 @@ DATA_ACQUIRE: HPC                                              # Where to acquir
 
 # Forcing data settings
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2018"                                     # Forcing start year
+FORCING_START_YEAR: "2008"                                     # Forcing start year
 FORCING_END_YEAR: "2018"                                       # Forcing end year 
 FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
@@ -147,7 +141,7 @@ INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the sha
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, current options: SUMMA, FLASH
+HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
@@ -169,7 +163,7 @@ SUMMA_INSTALL_PATH: default                                    # SUMMA installat
 SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
-SETTINGS_SUMMA_USE_PARALLEL_SUMMA: False                       # Run SUMMA in parallel
+SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
 SETTINGS_SUMMA_MEM: 0                                          # Requested memory for parallel SUMMA run
@@ -203,19 +197,6 @@ EXPERIMENT_OUTPUT_MIZUROUTE: default                           # Path to mizuRou
 EXPERIMENT_LOG_MIZUROUTE: default                              # Path to mizuRoute experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/SUMMA'/SUMMA_logs.
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute/mizuRoute_logs'
 
-#FLASH settings
-FLASH_LOAD: True                                               # Load existing flash model from storage. If false creates and trains new model.
-FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
-FLASH_NUM_LAYERS: 3                                            # Number of active layers
-FLASH_EPOCHS: 300                                              # Number of training epochs
-FLASH_BATCH_SIZE: 64                                           # Training batch size
-FLASH_LEARNING_RATE: 0.001                                     # LSTM learning rate
-FLASH_LEARNING_PATIENCE: 30                                    # LSTM learning patience
-FLASH_LOOKBACK: 700                                            # Lookback timesteps
-FLASH_DROPOUT: 0.2                                             # LSTM Dropout ratio
-FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularization
-FLASH_USE_ATTENTION: True                                      # Use attention
-
 # Summaflow settings
 SUMMAFLOW: spatial                                             # SUMMA setup paradigm, options: spatial or stochastic
 UNIFY_SOIL: false                                              # Merge small soil areas
@@ -236,6 +217,43 @@ GEOFABRIC_MAPPING:
       in_units: 'm'
       out_units: 'm'
 
+# FUSE settings
+SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
+SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
+FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
+FUSE_EXE: fuse.exe                                             # Name of FUSE executable
+FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+EXPERIMENT_OUTPUT_FUSE: default                                # Directory for FUSE experiment output
+
+# GR settings
+SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
+SETTINGS_GR_CONTROL: default                                   # Path to GR control file
+GR_INSTALL_PATH: default                                       # Path to GR installation, if default uses self.data_dir / installs / GR
+GR_EXE: GR.r                                                   # Name of GR executable script
+GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
+
+#FLASH settings
+FLASH_LOAD: False                                               # Load existing flash model from storage. If false creates and trains new model.
+FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
+FLASH_NUM_LAYERS: 3                                            # Number of active layers
+FLASH_EPOCHS: 300                                              # Number of training epochs
+FLASH_BATCH_SIZE: 64                                           # Training batch size
+FLASH_LEARNING_RATE: 0.001                                     # LSTM learning rate
+FLASH_LEARNING_PATIENCE: 30                                    # LSTM learning patience
+FLASH_LOOKBACK: 700                                            # Lookback timesteps
+FLASH_DROPOUT: 0.2                                             # LSTM Dropout ratio
+FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularization
+FLASH_USE_ATTENTION: True                                      # Use attention
+FLASH_USE_SNOW: False                                          # Use snow data
+
+# HYPE settings
+SETTINGS_HYPE_PATH: default                                    # Path to HYPE run settings, if default self.data_dir / settings / HYPE
+SETTINGS_HYPE_CONTROL_FILE: info.txt                       # Name of HYPE file manager
+HYPE_INSTALL_PATH: default                                     # HYPE installation path, if default, self.code_dir / installs / hype / bin
+HYPE_EXE: hype                                                 # Name of HYPE executable
+
+# MESH settings
+
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
 SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
@@ -245,22 +263,24 @@ SIMULATIONS_PATH: default                                      # Path to streamf
 OBSERVATIONS_PATH: default                                     # Path to observed streamflow data for evaluation. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # Observation data paths
-STREAMFLOW_DATA_PROVIDER: WSC                                  # Provider of streamflow data, current options: USGS, WSC, VI  
+STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, current options: USGS, WSC, VI  
+DOWNLOAD_USGS_DATA: True
+STATION_ID: 06719505
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
-STREAMFLOW_RAW_NAME: Discharge.Working@09AH001.20110101_corrected.csv           # Name of streamflow raw data file
+STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 ### ============================================= 6. Optimisation settings: ===============================================================
-
 # Optimization settings general
-CALIBRATION_PERIOD: 2018-01-01, 2018-06-30                     # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2018-07-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
+CALIBRATION_PERIOD: 2012-01-01, 2014-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2014-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
+SPINUP_PERIOD: 2011-01-01, 2011-12-31
 OPTMIZATION_ALOGORITHM: NSGA-II                                # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
 MOO_OPTIMIZATION_METRICS: KGE,NSE                              # Optimisation metrics to use in multi objective optimisation
 NUMBER_OF_OBJECTIVES: 2                                        # Number of objectives for multi objective algorithms
 POPULATION_SIZE: 100                                           # Population size for genetic algorithms
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
+NUMBER_OF_ITERATIONS: 10000                                    # Number of iterations for calibration 
 NUMBER_OF_GENERATIONS: 10                                      # Number of generations for genetic algorithms
 SWRMSIZE: 10                                                   # Swarm size for swarm based algorithms
 NGSIZE: 10                                                     # Next Generation size
@@ -301,12 +321,20 @@ DECISION_OPTIONS:                                              # Select which SU
   snowIncept: 
     - lightSnow
     - stickySnow
-  windPrfile: 
-    - logBelowCanopy
-    - exponential
   compaction: 
     - consettl
     - anderson
+  snowLayers:
+    - CLM_2010
+    - jrdn1991 
+  alb_method:
+    - conDecay
+    - varDecay
+  thCondSnow:
+    - tyen1965 
+    - melr1977 
+    - jrdn1991 
+    - smnv2000 
 
 # Optimisation paths and filenames
 OSTRICH_PATH: default                                          # Path to ostrich executable, if default, uses self.data_dir / installs / ostrich

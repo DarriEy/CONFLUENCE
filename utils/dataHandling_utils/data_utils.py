@@ -538,7 +538,11 @@ class ObservedDataProcessor:
     def process_streamflow_data(self):
         try:
             if self.data_provider == 'USGS':
-                self._process_usgs_data()
+                if self.config.get('DOWNLOAD_USGS_DATA') == True:
+                    self._download_and_process_usgs_data()
+                else:
+                    self._process_usgs_data()
+
             elif self.data_provider == 'WSC':
                 self._process_wsc_data()
             elif self.data_provider == 'VI':
@@ -567,6 +571,159 @@ class ObservedDataProcessor:
         #reliable_data = vi_data[vi_data['qc_flag'] <= 100]
 
         self._resample_and_save(vi_data['discharge_cms'])
+
+    def _download_and_process_usgs_data(self):
+        """
+        Process USGS streamflow data by fetching it directly from USGS API.
+        
+        This function fetches discharge data for the specified USGS station,
+        converts it from cubic feet per second (cfs) to cubic meters per second (cms),
+        and resamples it to the configured time step.
+        """
+        import requests
+        import io
+        from datetime import datetime
+
+        self.logger.info("Processing USGS streamflow data directly from API")
+        
+        # Get configuration parameters
+        station_id = self.config.get('STATION_ID')
+        
+        # Parse and format the start date properly
+        start_date_raw = self.config.get('EXPERIMENT_TIME_START')
+        try:
+            # Try to parse the date string with various formats
+            for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                try:
+                    parsed_date = datetime.strptime(start_date_raw, fmt)
+                    start_date = parsed_date.strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+            else:
+                # If none of the formats match, use a default format
+                self.logger.warning(f"Could not parse start date: {start_date_raw}. Using first 10 characters as YYYY-MM-DD.")
+                start_date = start_date_raw[:10]
+        except Exception as e:
+            self.logger.warning(f"Error parsing start date: {e}. Using default date format.")
+            start_date = start_date_raw[:10]
+        
+        # Format end date as YYYY-MM-DD
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        parameter_cd = "00060"  # Discharge parameter code (cubic feet per second)
+        
+        # Conversion factor from cubic feet per second (cfs) to cubic meters per second (cms)
+        CFS_TO_CMS = 0.0283168
+        
+        self.logger.info(f"Retrieving discharge data for station {station_id}")
+        self.logger.info(f"Time period: {start_date} to {end_date}")
+        self.logger.info(f"Converting from cfs to cms using factor: {CFS_TO_CMS}")
+        
+        # Construct the URL for tab-delimited data - ensure no spaces in the URL
+        url = f"https://waterservices.usgs.gov/nwis/iv/?site={station_id}&format=rdb&parameterCd={parameter_cd}&startDT={start_date}&endDT={end_date}"
+        
+        # Log the formatted dates
+        self.logger.info(f"Using formatted start date: {start_date}")
+        self.logger.info(f"Using formatted end date: {end_date}")
+        
+        try:
+            self.logger.info(f"Fetching data from: {url}")
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            
+            # The RDB format has comment lines starting with #
+            lines = response.text.split('\n')
+            
+            # Find the header line (it's after the comments and has field names)
+            header_line = None
+            for i, line in enumerate(lines):
+                if not line.startswith('#') and '\t' in line:
+                    header_line = i
+                    break
+            
+            if header_line is None:
+                self.logger.error("Could not find header line in the response")
+                return
+            
+            # Skip the header line and the line after (which contains format info)
+            data_start = header_line + 2
+            
+            # Create a data string with just the header and data rows
+            data_str = '\n'.join([lines[header_line]] + lines[data_start:])
+            
+            # Parse the tab-delimited data
+            df = pd.read_csv(io.StringIO(data_str), sep='\t', comment='#')
+            
+            # Find the discharge column (usually contains the parameter code)
+            discharge_cols = [col for col in df.columns if parameter_cd in col]
+            datetime_col = None
+            
+            # Find the datetime column (usually named 'datetime')
+            datetime_candidates = ['datetime', 'date_time', 'dateTime']
+            for col in df.columns:
+                if col.lower() in [c.lower() for c in datetime_candidates]:
+                    datetime_col = col
+                    break
+            
+            if not discharge_cols:
+                self.logger.error(f"Could not find column with parameter code {parameter_cd}")
+                # Try to guess based on typical column names
+                value_cols = [col for col in df.columns if 'value' in col.lower()]
+                if value_cols:
+                    discharge_cols = [value_cols[0]]
+                    self.logger.info(f"Using column {discharge_cols[0]} as discharge values")
+                else:
+                    raise ValueError(f"Could not identify discharge column in USGS data")
+            
+            if not datetime_col:
+                self.logger.error("Could not find datetime column")
+                # Try to guess based on column data
+                for col in df.columns:
+                    if df[col].dtype == 'object' and df[col].str.contains('-').any():
+                        datetime_col = col
+                        self.logger.info(f"Using column {datetime_col} as datetime")
+                        break
+                if not datetime_col:
+                    raise ValueError("Could not identify datetime column in USGS data")
+            
+            discharge_col = discharge_cols[0]
+            self.logger.info(f"Using discharge column: {discharge_col}")
+            self.logger.info(f"Using datetime column: {datetime_col}")
+            
+            # Keep only the necessary columns
+            df_clean = df[[datetime_col, discharge_col]].copy()
+            
+            # Convert datetime column to datetime type
+            df_clean[datetime_col] = pd.to_datetime(df_clean[datetime_col])
+            
+            # Convert discharge values to numeric, forcing errors to NaN
+            df_clean[discharge_col] = pd.to_numeric(df_clean[discharge_col], errors='coerce')
+            
+            # Drop rows with NaN discharge values
+            na_count = df_clean[discharge_col].isna().sum()
+            if na_count > 0:
+                self.logger.warning(f"Dropping {na_count} rows with non-numeric discharge values")
+                df_clean = df_clean.dropna(subset=[discharge_col])
+            
+            # Create a new column with the discharge in cubic meters per second (cms)
+            df_clean['discharge_cms'] = df_clean[discharge_col] * CFS_TO_CMS
+            
+            # Set datetime as index
+            df_clean.set_index(datetime_col, inplace=True)
+            
+            # Call the resampling and saving function
+            self._resample_and_save(df_clean['discharge_cms'])
+            
+            self.logger.info(f"Successfully processed USGS data for station {station_id}")
+            
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error fetching data from USGS API: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error processing USGS data: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def _process_usgs_data(self):
         self.logger.info("Processing USGS streamflow data")

@@ -115,7 +115,7 @@ class CONFLUENCE:
             # Geospatial domain definition and analysis
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
             (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
-            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
+            (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp1").exists()),
             (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
             (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
@@ -281,6 +281,9 @@ class CONFLUENCE:
             self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
         elif domain_method == 'delineate':
             self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+            if self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
+                self.delineate_coastal(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+
         elif self.config.get('SPATIAL_MODE') == 'Point':
             self.logger.info("Spatial mode: Point simulations, delineation not required")
             return None
@@ -697,6 +700,16 @@ class CONFLUENCE:
             return delineator.delineate_geofabric()
         except Exception as e:
             self.logger.error(f"Error during geofabric delineation: {str(e)}")
+            return None
+
+    @get_function_logger
+    def delineate_coastal(self):
+        self.logger.info("Starting geofabric delineation")
+        try:
+            delineator = GeofabricDelineator(self.config, self.logger)
+            return delineator.delineate_coastal()
+        except Exception as e:
+            self.logger.error(f"Error during coastal delineation: {str(e)}")
             return None
 
     def run_parallel_optimization(self):        
