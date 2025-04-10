@@ -28,7 +28,7 @@ from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type
 
 # Model specific utilities
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
-from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point # type: ignore
+from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point, LargeSampleEmulator # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
@@ -130,6 +130,9 @@ class CONFLUENCE:
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input1").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
+
+            # --- Emulation and Optimization Steps ---
+            (self.run_large_sample_emulation_setup, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
 
             # Result analysis and optimisation
@@ -548,6 +551,24 @@ class CONFLUENCE:
 
             elif model == 'FLASH':
                 pass
+
+    @get_function_logger
+    def run_large_sample_emulation_setup(self):
+        """Runs the setup step for large sample emulation."""
+        self.logger.info("Starting large sample emulation setup")
+        try:
+            # Check if SUMMA is one of the models, as this emulator is currently SUMMA-specific
+            if 'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','):
+                result_path = self.emulator.run_emulation_setup()
+                if result_path:
+                    self.logger.info(f"Large sample emulation setup completed. Trial parameters generated at: {result_path}")
+                else:
+                    self.logger.info("Large sample emulation setup skipped (no parameters specified or error occurred).")
+            else:
+                self.logger.info("Skipping large sample emulation setup as SUMMA is not in the selected models.")
+        except Exception as e:
+            self.logger.error(f"Error during large sample emulation setup: {str(e)}")
+            raise
 
     @get_function_logger  
     def run_benchmarking(self):
