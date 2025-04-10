@@ -577,10 +577,17 @@ class CONFLUENCE:
             emulator_output = emulator.run_emulation_setup()
             
             if not emulator_output:
-                self.logger.warning("Large sample emulation completed but no trial parameter file was generated.")
+                self.logger.warning("Large sample emulation completed but no parameter file was generated.")
                 return None
                 
             self.logger.info(f"Large sample emulation completed successfully. Output: {emulator_output}")
+            
+            # Analyze the parameter space
+            if self.config.get('EMULATION_ANALYZE_PARAMETERS', True):
+                self.logger.info("Analyzing parameter space")
+                param_analysis_dir = emulator.analyze_parameter_space(emulator_output)
+                if param_analysis_dir:
+                    self.logger.info(f"Parameter space analysis completed. Results saved to: {param_analysis_dir}")
             
             # Check if we should run the ensemble simulations
             run_ensemble = self.config.get('EMULATION_RUN_ENSEMBLE', False)
@@ -592,7 +599,7 @@ class CONFLUENCE:
                 self.logger.info(f"Ensemble simulations completed with {success_count} successes out of {len(ensemble_results)}")
                 
                 # Analyze ensemble results if we had successful runs
-                if success_count > 0:
+                if success_count > 0 and self.config.get('EMULATION_ANALYZE_ENSEMBLE', True):
                     self.logger.info("Starting ensemble results analysis")
                     analysis_dir = emulator.analyze_ensemble_results()
                     if analysis_dir:

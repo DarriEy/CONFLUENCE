@@ -392,7 +392,13 @@ OPTIMIZATION_RESULTS_FILE: default                             # Path to optimiz
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
 
 # Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: True                               # Whether to run large sample emulation (default: false)
+RUN_LARGE_SAMPLE_EMULATION: true                               # Whether to run large sample emulation (default: false)
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
+EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
+EMULATION_RUN_ENSEMBLE: true                                  # Automatically run ensemble simulations after setup
+EMULATION_PARALLEL_ENSEMBLE: true                             # Run ensemble simulations in parallel (requires MPI)
+EMULATION_MAX_PARALLEL_JOBS: 10                                # Maximum number of parallel jobs when running ensemble
+EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
+EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations

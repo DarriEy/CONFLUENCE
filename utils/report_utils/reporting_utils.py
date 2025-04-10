@@ -12,7 +12,7 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap # type: ig
 import traceback
 import rasterio # type: ignore
 from matplotlib import gridspec
-#from matplotlib_scalebar.scalebar import ScaleBar # type: ignore
+from matplotlib_scalebar.scalebar import ScaleBar # type: ignore
 from matplotlib.lines import Line2D # type: ignore
 from matplotlib.patches import Patch # type: ignore
 

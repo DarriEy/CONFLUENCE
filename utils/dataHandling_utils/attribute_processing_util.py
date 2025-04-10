@@ -216,67 +216,98 @@ class attributeProcessor:
 
     def process_attributes(self) -> pd.DataFrame:
         """
-        Process all available catchment attributes from multiple datasets.
+        Process  catchment attributes from  available data sources,
+        creating an integrated dataset of hydrologically relevant basin characteristics.
+        
+        Returns:
+            pd.DataFrame: Complete dataframe of catchment attributes
         """
+        self.logger.info("Starting comprehensive attribute processing")
+        
         try:
-            # Dictionary to store all results
+            # Initialize results dictionary
             all_results = {}
             
-            # Process elevation attributes
-            self.logger.info("Processing elevation attributes...")
-            dem_results = self._process_elevation_attributes()
-            all_results.update(dem_results)
+            # Process base elevation attributes (DEM, slope, aspect)
+            self.logger.info("Processing elevation attributes")
+            elevation_results = self._process_elevation_attributes()
+            all_results.update(elevation_results)
             
-            # Process land cover attributes
-            self.logger.info("Processing land cover attributes...")
-            landcover_results = self._process_landcover_attributes()
-            all_results.update(landcover_results)
-            
-            # Process soil attributes
-            self.logger.info("Processing soil attributes...")
+            # Process soil properties
+            self.logger.info("Processing soil attributes")
             soil_results = self._process_soil_attributes()
             all_results.update(soil_results)
             
-            # Process forest height attributes
-            #self.logger.info("Processing forest height attributes...")
-            #forest_results = self._process_forest_height_attributes()
-            #all_results.update(forest_results)
-
+            # Process geological attributes
+            self.logger.info("Processing geological attributes")
+            geo_results = self._process_geological_attributes()
+            all_results.update(geo_results)
+            
+            # Enhance geological attributes with derived hydraulic properties
+            geo_enhanced = self.enhance_hydrogeological_attributes(geo_results)
+            all_results.update(geo_enhanced)
+            
+            # Process land cover attributes
+            self.logger.info("Processing land cover attributes")
+            lc_results = self._process_landcover_attributes()
+            all_results.update(lc_results)
+            
+            # Process vegetation attributes (LAI, forest height)
+            self.logger.info("Processing vegetation attributes")
+            veg_results = self._process_forest_height()
+            all_results.update(veg_results)
+            
+            # Process composite land cover metrics
+            self.logger.info("Processing composite land cover metrics")
+            self.results = all_results  # Temporarily set results for composite metrics calculation
+            composite_lc = self.calculate_composite_landcover_metrics()
+            all_results.update(composite_lc)
+            
             # Process climate attributes
-            self.logger.info("Processing climate attributes...")
+            self.logger.info("Processing climate attributes")
             climate_results = self._process_climate_attributes()
             all_results.update(climate_results)
-
-            # Process geological attributes
-            self.logger.info("Processing geological attributes...")
-            geological_results = self._process_geological_attributes()
-            all_results.update(geological_results)
+            
+            # Process advanced seasonality metrics
+            self.logger.info("Processing seasonality metrics")
+            seasonality_results = self.calculate_seasonality_metrics()
+            all_results.update(seasonality_results)
             
             # Process hydrological attributes
-            self.logger.info("Processing hydrological attributes...")
-            hydrological_results = self._process_hydrological_attributes()
-            all_results.update(hydrological_results)
+            self.logger.info("Processing hydrological attributes")
+            hydro_results = self._process_hydrological_attributes()
+            all_results.update(hydro_results)
             
-            # Process vegetation attributes
-            self.logger.info("Processing land cover and vegetation attributes...")
-            vegetation_results = self._process_landcover_vegetation_attributes()
-            all_results.update(vegetation_results)
+            # Process enhanced river network analysis
+            self.logger.info("Processing enhanced river network")
+            river_results = self.enhance_river_network_analysis()
+            all_results.update(river_results)
             
-            # Process irrigation attributes
-            self.logger.info("Processing irrigation attributes...")
-            irrigation_results = self._process_irrigation_attributes()
-            all_results.update(irrigation_results)
+            # Process baseflow attributes
+            self.logger.info("Processing baseflow attributes")
+            baseflow_results = self.calculate_baseflow_attributes()
+            all_results.update(baseflow_results)
             
-            # Create a structured DataFrame
+            # Process streamflow signatures
+            self.logger.info("Processing streamflow signatures")
+            signature_results = self.calculate_streamflow_signatures()
+            all_results.update(signature_results)
+            
+            # Process water balance
+            self.logger.info("Processing water balance")
+            wb_results = self.calculate_water_balance()
+            all_results.update(wb_results)
+            
+            # Create final dataframe
             is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
             
             if is_lumped:
-                # For lumped catchments, create a single row
+                # For lumped catchment, create a single row
                 df = pd.DataFrame([all_results])
                 df['basin_id'] = self.domain_name
                 df = df.set_index('basin_id')
             else:
-                # For distributed catchments, create multi-level DataFrame with HRUs
+                # For distributed catchment, create multi-level DataFrame with HRUs
                 catchment = gpd.read_file(self.catchment_path)
                 hru_id_field = self.config.get('CATCHMENT_SHP_HRUID', 'HRU_ID')
                 hru_ids = catchment[hru_id_field].values
@@ -301,32 +332,43 @@ class attributeProcessor:
                 df['basin_id'] = self.domain_name
                 df = df.set_index(['basin_id', 'hru_id'])
             
-            # Save to different formats
+            # Save the comprehensive attributes to different formats
             output_dir = self.project_dir / 'attributes'
             
-            # Use generic attribute file names
-            csv_file = output_dir / f"{self.domain_name}_attributes.csv"
+            # Use comprehensive prefix to distinguish from basic attribute files
+            csv_file = output_dir / f"{self.domain_name}_comprehensive_attributes.csv"
             df.to_csv(csv_file)
             
             # Save as Parquet
             try:
-                parquet_file = output_dir / f"{self.domain_name}_attributes.parquet"
+                parquet_file = output_dir / f"{self.domain_name}_comprehensive_attributes.parquet"
                 df.to_parquet(parquet_file)
-                self.logger.info(f"Attributes saved as Parquet: {parquet_file}")
+                self.logger.info(f"Comprehensive attributes saved as Parquet: {parquet_file}")
             except ImportError:
                 self.logger.warning("pyarrow not installed, skipping Parquet output")
             
             # Save as pickle
-            pickle_file = output_dir / f"{self.domain_name}_attributes.pkl"
+            pickle_file = output_dir / f"{self.domain_name}_comprehensive_attributes.pkl"
             df.to_pickle(pickle_file)
             
-            self.logger.info(f"Attributes saved to {csv_file}")
+            self.logger.info(f"Comprehensive attributes saved to {csv_file}")
             
             return df
             
         except Exception as e:
-            self.logger.error(f"Error processing attributes: {str(e)}")
-            raise
+            self.logger.error(f"Error in comprehensive attribute processing: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+            # Try to return whatever we processed so far
+            if 'all_results' in locals() and all_results:
+                try:
+                    return pd.DataFrame([all_results])
+                except:
+                    pass
+            
+            # Return empty DataFrame as fallback
+            return pd.DataFrame()
 
 
     def _process_geological_attributes(self) -> Dict[str, Any]:
@@ -1106,6 +1148,990 @@ class attributeProcessor:
         results.update(river_results)
         
         return results
+
+    def calculate_seasonality_metrics(self) -> Dict[str, Any]:
+        """
+        Calculate advanced seasonality metrics including sine curve fitting.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of seasonality metrics
+        """
+        results = {}
+        
+        # Load temperature and precipitation data
+        temp_path = self.project_dir / "forcing" / "basin_averaged_data" / f"{self.config['DOMAIN_NAME']}_temperature.csv"
+        precip_path = self.project_dir / "forcing" / "basin_averaged_data" / f"{self.config['DOMAIN_NAME']}_precipitation.csv"
+        
+        if not temp_path.exists() or not precip_path.exists():
+            self.logger.warning("Temperature or precipitation data not found for seasonality calculation")
+            return results
+        
+        try:
+            import pandas as pd
+            import numpy as np
+            from scipy.optimize import curve_fit
+            
+            # Define sine fitting functions
+            def sine_function_temp(x, mean, delta, phase, period=1):
+                return mean + delta * np.sin(2*np.pi*(x-phase)/period)
+            
+            def sine_function_prec(x, mean, delta, phase, period=1):
+                result = mean * (1 + delta * np.sin(2*np.pi*(x-phase)/period))
+                return np.where(result < 0, 0, result)
+            
+            # Read data
+            temp_df = pd.read_csv(temp_path, parse_dates=['date'])
+            precip_df = pd.read_csv(precip_path, parse_dates=['date'])
+            
+            # Resample to daily if needed
+            temp_daily = temp_df.set_index('date').resample('D').mean()
+            precip_daily = precip_df.set_index('date').resample('D').mean()
+            
+            # Ensure same time period
+            common_idx = temp_daily.index.intersection(precip_daily.index)
+            temp_daily = temp_daily.loc[common_idx]
+            precip_daily = precip_daily.loc[common_idx]
+            
+            # Calculate day of year as fraction of year for x-axis
+            day_of_year = np.array([(d.dayofyear - 1) / 365 for d in temp_daily.index])
+            
+            # Fit temperature sine curve
+            temp_values = temp_daily['temperature'].values
+            try:
+                t_mean = float(np.mean(temp_values))
+                t_delta = float(np.max(temp_values) - np.min(temp_values))
+                t_phase = 0.5  # Initial guess for phase
+                t_initial_guess = [t_mean, t_delta, t_phase]
+                t_pars, _ = curve_fit(sine_function_temp, day_of_year, temp_values, p0=t_initial_guess)
+                
+                results["climate.temperature_mean"] = t_pars[0]
+                results["climate.temperature_amplitude"] = t_pars[1]
+                results["climate.temperature_phase"] = t_pars[2]
+            except Exception as e:
+                self.logger.warning(f"Error fitting temperature sine curve: {str(e)}")
+            
+            # Fit precipitation sine curve
+            precip_values = precip_daily['precipitation'].values
+            try:
+                p_mean = float(np.mean(precip_values))
+                p_delta = float(np.max(precip_values) - np.min(precip_values)) / p_mean if p_mean > 0 else 0
+                p_phase = 0.5  # Initial guess for phase
+                p_initial_guess = [p_mean, p_delta, p_phase]
+                p_pars, _ = curve_fit(sine_function_prec, day_of_year, precip_values, p0=p_initial_guess)
+                
+                results["climate.precipitation_mean"] = p_pars[0]
+                results["climate.precipitation_amplitude"] = p_pars[1]
+                results["climate.precipitation_phase"] = p_pars[2]
+                
+                # Calculate Woods (2009) seasonality index
+                if hasattr(t_pars, '__len__') and hasattr(p_pars, '__len__') and len(t_pars) >= 3 and len(p_pars) >= 3:
+                    seasonality = p_pars[1] * np.sign(t_pars[1]) * np.cos(2*np.pi*(p_pars[2]-t_pars[2])/1)
+                    results["climate.seasonality_index"] = seasonality
+            except Exception as e:
+                self.logger.warning(f"Error fitting precipitation sine curve: {str(e)}")
+            
+            # Calculate additional seasonality metrics
+            
+            # Walsh & Lawler (1981) seasonality index for precipitation
+            try:
+                # Resample to monthly
+                monthly_precip = precip_df.set_index('date').resample('M').sum()
+                
+                # Group by month and calculate multi-year average for each month
+                monthly_avg = monthly_precip.groupby(monthly_precip.index.month).mean()
+                
+                if len(monthly_avg) == 12:
+                    annual_sum = monthly_avg.sum().iloc[0]
+                    monthly_diff = np.abs(monthly_avg.values - annual_sum/12)
+                    walsh_index = np.sum(monthly_diff) / annual_sum
+                    
+                    results["climate.precipitation_walsh_seasonality"] = walsh_index
+                    
+                    # Interpret the Walsh & Lawler index
+                    if walsh_index < 0.19:
+                        results["climate.seasonality_regime"] = "very_equable"
+                    elif walsh_index < 0.40:
+                        results["climate.seasonality_regime"] = "equable_but_with_a_definite_wetter_season"
+                    elif walsh_index < 0.60:
+                        results["climate.seasonality_regime"] = "rather_seasonal"
+                    elif walsh_index < 0.80:
+                        results["climate.seasonality_regime"] = "seasonal"
+                    elif walsh_index < 0.99:
+                        results["climate.seasonality_regime"] = "markedly_seasonal_with_a_long_drier_season"
+                    elif walsh_index < 1.19:
+                        results["climate.seasonality_regime"] = "most_rain_in_3_months_or_less"
+                    else:
+                        results["climate.seasonality_regime"] = "extreme_seasonality"
+            except Exception as e:
+                self.logger.warning(f"Error calculating Walsh & Lawler seasonality index: {str(e)}")
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating seasonality metrics: {str(e)}")
+            return results
+
+    def calculate_water_balance(self) -> Dict[str, Any]:
+        """
+        Calculate water balance components and hydrological indices.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of water balance metrics
+        """
+        results = {}
+        
+        # Look for required data
+        precip_path = self.project_dir / "forcing" / "basin_averaged_data" / f"{self.config['DOMAIN_NAME']}_precipitation.csv"
+        pet_path = self.project_dir / "forcing" / "basin_averaged_data" / f"{self.config['DOMAIN_NAME']}_pet.csv"
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        
+        if not precip_path.exists() or not streamflow_path.exists():
+            self.logger.warning("Cannot calculate water balance: missing precipitation or streamflow data")
+            return results
+        
+        try:
+            import pandas as pd
+            import numpy as np
+            
+            # Read data
+            precip_df = pd.read_csv(precip_path, parse_dates=['date'])
+            streamflow_df = pd.read_csv(streamflow_path, parse_dates=['date'])
+            
+            # Read PET if available, otherwise use None
+            if pet_path.exists():
+                pet_df = pd.read_csv(pet_path, parse_dates=['date'])
+            else:
+                pet_df = None
+            
+            # Set index and align data
+            precip_df.set_index('date', inplace=True)
+            streamflow_df.set_index('date', inplace=True)
+            if pet_df is not None:
+                pet_df.set_index('date', inplace=True)
+            
+            # Define common time period
+            common_period = precip_df.index.intersection(streamflow_df.index)
+            if pet_df is not None:
+                common_period = common_period.intersection(pet_df.index)
+            
+            if len(common_period) == 0:
+                self.logger.warning("No common time period between precipitation and streamflow data")
+                return results
+            
+            # Subset data to common period
+            precip = precip_df.loc[common_period, 'precipitation'].copy()
+            streamflow = streamflow_df.loc[common_period, 'flow'].copy()
+            if pet_df is not None:
+                pet = pet_df.loc[common_period, 'pet'].copy()
+            else:
+                pet = None
+            
+            # Calculate water balance components
+            
+            # 1. Runoff ratio (Q/P)
+            annual_precip = precip.resample('YS').sum()
+            annual_streamflow = streamflow.resample('YS').sum()
+            
+            # Align years
+            common_years = annual_precip.index.intersection(annual_streamflow.index)
+            
+            if len(common_years) > 0:
+                annual_runoff_ratio = annual_streamflow.loc[common_years] / annual_precip.loc[common_years]
+                results["hydrology.annual_runoff_ratio_mean"] = annual_runoff_ratio.mean()
+                results["hydrology.annual_runoff_ratio_std"] = annual_runoff_ratio.std()
+                results["hydrology.annual_runoff_ratio_cv"] = annual_runoff_ratio.std() / annual_runoff_ratio.mean() if annual_runoff_ratio.mean() > 0 else np.nan
+            
+            # 2. Estimate actual evapotranspiration (AET) from water balance
+            # AET = P - Q - dS/dt (ignoring storage changes)
+            annual_aet_estimate = annual_precip.loc[common_years] - annual_streamflow.loc[common_years]
+            results["hydrology.annual_aet_estimate_mean"] = annual_aet_estimate.mean()
+            results["hydrology.annual_aet_estimate_std"] = annual_aet_estimate.std()
+            
+            # 3. Aridity index and Budyko analysis
+            if pet_df is not None:
+                annual_pet = pet.resample('YS').sum()
+                common_years_pet = common_years.intersection(annual_pet.index)
+                
+                if len(common_years_pet) > 0:
+                    # Aridity index (PET/P)
+                    aridity_index = annual_pet.loc[common_years_pet] / annual_precip.loc[common_years_pet]
+                    results["hydrology.aridity_index_mean"] = aridity_index.mean()
+                    results["hydrology.aridity_index_std"] = aridity_index.std()
+                    
+                    # Evaporative index (AET/P)
+                    evaporative_index = annual_aet_estimate.loc[common_years_pet] / annual_precip.loc[common_years_pet]
+                    results["hydrology.evaporative_index_mean"] = evaporative_index.mean()
+                    
+                    # Calculate Budyko curve parameters (Fu equation: ET/P = 1 + PET/P - [1 + (PET/P)^w]^(1/w))
+                    # We'll use optimization to find the w parameter
+                    
+                    from scipy.optimize import minimize
+                    
+                    def fu_equation(w, pet_p):
+                        return 1 + pet_p - (1 + pet_p**w)**(1/w)
+                    
+                    def objective(w, pet_p, et_p):
+                        predicted = fu_equation(w, pet_p)
+                        return np.mean((predicted - et_p)**2)
+                    
+                    # Filter out invalid values
+                    valid = (aridity_index > 0) & (evaporative_index > 0) & (~np.isnan(aridity_index)) & (~np.isnan(evaporative_index))
+                    
+                    if valid.any():
+                        pet_p_values = aridity_index[valid].values
+                        et_p_values = evaporative_index[valid].values
+                        
+                        # Find optimal w parameter
+                        result = minimize(objective, 2.0, args=(pet_p_values, et_p_values))
+                        w_parameter = result.x[0]
+                        
+                        results["hydrology.budyko_parameter_w"] = w_parameter
+                        
+                        # Calculate Budyko-predicted ET/P
+                        budyko_predicted = fu_equation(w_parameter, aridity_index.mean())
+                        results["hydrology.budyko_predicted_et_ratio"] = budyko_predicted
+                        
+                        # Calculate residual (actual - predicted)
+                        results["hydrology.budyko_residual"] = evaporative_index.mean() - budyko_predicted
+            
+            # 4. Flow duration curve metrics
+            flow_sorted = np.sort(streamflow.dropna().values)[::-1]  # sort in descending order
+            if len(flow_sorted) > 0:
+                total_flow = np.sum(flow_sorted)
+                
+                # Calculate normalized flow duration curve
+                n = len(flow_sorted)
+                exceedance_prob = np.arange(1, n+1) / (n+1)  # exceedance probability
+                
+                # Calculate common FDC metrics
+                q1 = np.interp(0.01, exceedance_prob, flow_sorted)
+                q5 = np.interp(0.05, exceedance_prob, flow_sorted)
+                q10 = np.interp(0.1, exceedance_prob, flow_sorted)
+                q50 = np.interp(0.5, exceedance_prob, flow_sorted)
+                q85 = np.interp(0.85, exceedance_prob, flow_sorted)
+                q95 = np.interp(0.95, exceedance_prob, flow_sorted)
+                q99 = np.interp(0.99, exceedance_prob, flow_sorted)
+                
+                results["hydrology.fdc_q1"] = q1
+                results["hydrology.fdc_q5"] = q5
+                results["hydrology.fdc_q10"] = q10
+                results["hydrology.fdc_q50"] = q50
+                results["hydrology.fdc_q85"] = q85
+                results["hydrology.fdc_q95"] = q95
+                results["hydrology.fdc_q99"] = q99
+                
+                # Calculate high flow (Q10/Q50) and low flow (Q50/Q90) indices
+                results["hydrology.high_flow_index"] = q10 / q50 if q50 > 0 else np.nan
+                results["hydrology.low_flow_index"] = q50 / q95 if q95 > 0 else np.nan
+                
+                # Calculate flow variability indices
+                results["hydrology.flow_duration_index"] = (q10 - q95) / q50 if q50 > 0 else np.nan
+                
+                # Baseflow index (Q90/Q50)
+                results["hydrology.baseflow_index_fdc"] = q95 / q50 if q50 > 0 else np.nan
+            
+            # 5. Flow seasonality and timing
+            monthly_flow = streamflow.resample('M').sum()
+            monthly_precip = precip.resample('M').sum()
+            
+            # Calculate monthly flow contribution
+            annual_flow_by_month = monthly_flow.groupby(monthly_flow.index.month).mean()
+            annual_flow_total = annual_flow_by_month.sum()
+            
+            if annual_flow_total > 0:
+                monthly_flow_fraction = annual_flow_by_month / annual_flow_total
+                
+                # Find month with maximum flow
+                max_flow_month = monthly_flow_fraction.idxmax()
+                results["hydrology.peak_flow_month"] = max_flow_month
+                
+                # Calculate seasonality indices
+                
+                # Colwell's predictability index components
+                # M = seasonality, C = contingency, P = predictability = M + C
+                # Ranges from 0 (unpredictable) to 1 (perfectly predictable)
+                
+                # Use normalized monthly values for calculations
+                monthly_flow_norm = monthly_flow / monthly_flow.mean() if monthly_flow.mean() > 0 else monthly_flow
+                
+                # Seasonality index (Walsh & Lawler)
+                if len(monthly_flow_fraction) == 12:
+                    monthly_diff = np.abs(monthly_flow_fraction - 1/12)
+                    seasonality_index = np.sum(monthly_diff) * 0.5  # Scale to 0-1
+                    results["hydrology.flow_seasonality_index"] = seasonality_index
+                
+                # Calculate monthly runoff ratios
+                monthly_precip_avg = monthly_precip.groupby(monthly_precip.index.month).mean()
+                monthly_flow_avg = monthly_flow.groupby(monthly_flow.index.month).mean()
+                
+                # Calculate monthly runoff ratios
+                common_months = monthly_flow_avg.index.intersection(monthly_precip_avg.index)
+                
+                if len(common_months) > 0:
+                    monthly_runoff_ratio = monthly_flow_avg.loc[common_months] / monthly_precip_avg.loc[common_months]
+                    
+                    # Store min, max, and range of monthly runoff ratios
+                    results["hydrology.monthly_runoff_ratio_min"] = monthly_runoff_ratio.min()
+                    results["hydrology.monthly_runoff_ratio_max"] = monthly_runoff_ratio.max()
+                    results["hydrology.monthly_runoff_ratio_range"] = monthly_runoff_ratio.max() - monthly_runoff_ratio.min()
+                    
+                    # Find month with maximum and minimum runoff ratio
+                    results["hydrology.max_runoff_ratio_month"] = monthly_runoff_ratio.idxmax()
+                    results["hydrology.min_runoff_ratio_month"] = monthly_runoff_ratio.idxmin()
+                    
+                    # Calculate correlation between monthly precipitation and runoff
+                    corr = np.corrcoef(monthly_precip_avg.loc[common_months], monthly_flow_avg.loc[common_months])[0, 1]
+                    results["hydrology.precip_flow_correlation"] = corr
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating water balance: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return results
+
+
+    def calculate_composite_landcover_metrics(self) -> Dict[str, Any]:
+        """
+        Calculate composite land cover metrics combining multiple land cover datasets
+        and extracting ecologically meaningful indicators.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of composite land cover metrics
+        """
+        results = {}
+        
+        # Collect existing land cover results from individual datasets
+        lc_datasets = {
+            "glclu2019": "landcover.forest_fraction",
+            "modis": "landcover.evergreen_needleleaf_fraction",
+            "esa": "landcover.forest_broadleaf_evergreen_fraction"
+        }
+        
+        # Define ecological groupings that span datasets
+        ecological_groups = {
+            "forest": ["forest", "tree", "woodland", "evergreen", "deciduous", "needleleaf", "broadleaf"],
+            "grassland": ["grass", "savanna", "rangeland", "pasture"],
+            "wetland": ["wetland", "marsh", "bog", "fen", "swamp"],
+            "cropland": ["crop", "agriculture", "cultivated"],
+            "urban": ["urban", "built", "city", "development"],
+            "water": ["water", "lake", "river", "reservoir"],
+            "barren": ["barren", "desert", "rock", "sand"]
+        }
+        
+        try:
+            # Collect all landcover attributes from results
+            all_attributes = [key for key in self.results.keys() if key.startswith("landcover.")]
+            
+            # Group by datasets
+            datasets_found = {}
+            for attr in all_attributes:
+                # Extract dataset name from the attribute
+                parts = attr.split(".")
+                if len(parts) > 1:
+                    attribute = parts[1]
+                    # Try to identify which dataset this comes from
+                    for dataset_name, marker in lc_datasets.items():
+                        if marker in attr:
+                            if dataset_name not in datasets_found:
+                                datasets_found[dataset_name] = []
+                            datasets_found[dataset_name].append(attr)
+            
+            # If we found at least one dataset, calculate composite metrics
+            if datasets_found:
+                # First, create ecological groupings for each dataset
+                dataset_eco_groups = {}
+                
+                for dataset, attributes in datasets_found.items():
+                    dataset_eco_groups[dataset] = {group: [] for group in ecological_groups}
+                    
+                    # Assign attributes to ecological groups
+                    for attr in attributes:
+                        for group, keywords in ecological_groups.items():
+                            if any(keyword in attr.lower() for keyword in keywords):
+                                dataset_eco_groups[dataset][group].append(attr)
+                
+                # Calculate composite metrics for each ecological group
+                for group, keywords in ecological_groups.items():
+                    # Collect values across datasets
+                    group_values = []
+                    
+                    for dataset, eco_groups in dataset_eco_groups.items():
+                        if eco_groups[group]:
+                            # Get average value for this group in this dataset
+                            group_attrs = eco_groups[group]
+                            attr_values = [self.results.get(attr, 0) for attr in group_attrs]
+                            if attr_values:
+                                group_values.append(np.mean(attr_values))
+                    
+                    # Calculate composite metric if we have values
+                    if group_values:
+                        results[f"landcover.composite_{group}_fraction"] = np.mean(group_values)
+                
+                # Calculate landscape diversity from composite fractions
+                # Shannon diversity index
+                fractions = [v for k, v in results.items() if k.startswith("landcover.composite_") and k.endswith("_fraction")]
+                if fractions:
+                    # Normalize fractions to sum to 1
+                    total = sum(fractions)
+                    if total > 0:
+                        normalized = [f/total for f in fractions]
+                        shannon_index = -sum(p * np.log(p) for p in normalized if p > 0)
+                        results["landcover.composite_shannon_diversity"] = shannon_index
+                        
+                        # Simpson diversity index (1-D)
+                        simpson_index = 1 - sum(p**2 for p in normalized)
+                        results["landcover.composite_simpson_diversity"] = simpson_index
+                
+                # Calculate anthropogenic influence
+                if "landcover.composite_urban_fraction" in results and "landcover.composite_cropland_fraction" in results:
+                    anthropogenic = results["landcover.composite_urban_fraction"] + results["landcover.composite_cropland_fraction"]
+                    results["landcover.anthropogenic_influence"] = anthropogenic
+                
+                # Calculate natural vegetation cover
+                if "landcover.composite_forest_fraction" in results and "landcover.composite_grassland_fraction" in results and "landcover.composite_wetland_fraction" in results:
+                    natural = results["landcover.composite_forest_fraction"] + results["landcover.composite_grassland_fraction"] + results["landcover.composite_wetland_fraction"]
+                    results["landcover.natural_vegetation_cover"] = natural
+            
+            # Analyze vegetation dynamics if we have LAI data
+            lai_months = [key for key in self.results.keys() if key.startswith("vegetation.lai_month")]
+            if lai_months:
+                # Extract monthly values
+                monthly_lai = {}
+                for key in lai_months:
+                    if "_mean" in key:
+                        # Extract month number
+                        try:
+                            month = int(key.split("month")[1][:2])
+                            monthly_lai[month] = self.results[key]
+                        except (ValueError, IndexError):
+                            pass
+                
+                if len(monthly_lai) >= 6:  # Need at least half the year
+                    # Sort by month
+                    months = sorted(monthly_lai.keys())
+                    lai_values = [monthly_lai[m] for m in months]
+                    
+                    # Calculate seasonal amplitude
+                    lai_min = min(lai_values)
+                    lai_max = max(lai_values)
+                    results["vegetation.seasonal_lai_amplitude"] = lai_max - lai_min
+                    
+                    # Calculate growing season characteristics
+                    if lai_min < lai_max:
+                        # Define growing season threshold (e.g., 50% of range above minimum)
+                        threshold = lai_min + 0.5 * (lai_max - lai_min)
+                        
+                        # Find months above threshold
+                        growing_months = [m for m in months if monthly_lai[m] >= threshold]
+                        
+                        if growing_months:
+                            results["vegetation.growing_season_length_months"] = len(growing_months)
+                            results["vegetation.growing_season_start_month"] = min(growing_months)
+                            results["vegetation.growing_season_end_month"] = max(growing_months)
+            
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error calculating composite land cover metrics: {str(e)}")
+            return results
+
+    def enhance_river_network_analysis(self) -> Dict[str, Any]:
+        """
+        Enhanced analysis of river network including stream order, drainage density,
+        and river morphology metrics.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of enhanced river network attributes
+        """
+        results = {}
+        
+        # Get path to river network shapefile
+        river_dir = self.project_dir / 'shapefiles' / 'river_network'
+        river_files = list(river_dir.glob("*.shp"))
+        
+        if not river_files:
+            self.logger.warning("No river network shapefile found")
+            return results
+        
+        river_file = river_files[0]
+        
+        try:
+            import geopandas as gpd
+            import numpy as np
+            from scipy.stats import skew, kurtosis
+            
+            # Read river network and catchment shapefiles
+            river_network = gpd.read_file(river_file)
+            catchment = gpd.read_file(self.catchment_path)
+            
+            # Ensure CRS match
+            if river_network.crs != catchment.crs:
+                river_network = river_network.to_crs(catchment.crs)
+            
+            # Calculate catchment area in km²
+            equal_area_crs = 'ESRI:102008'  # North America Albers Equal Area Conic
+            catchment_area_km2 = catchment.to_crs(equal_area_crs).area.sum() / 10**6
+            
+            # Basic river network statistics
+            results["hydrology.stream_segment_count"] = len(river_network)
+            
+            # Calculate total stream length
+            if 'Length' in river_network.columns:
+                length_column = 'Length'
+            elif 'length' in river_network.columns:
+                length_column = 'length'
+            elif any(col.lower() == 'length' for col in river_network.columns):
+                length_column = next(col for col in river_network.columns if col.lower() == 'length')
+            else:
+                # Calculate length using geometry
+                river_network_equal_area = river_network.to_crs(equal_area_crs)
+                river_network_equal_area['length_m'] = river_network_equal_area.geometry.length
+                length_column = 'length_m'
+            
+            # Total stream length in km
+            total_length_km = river_network[length_column].sum() / 1000 if length_column != 'length_m' else river_network[length_column].sum() / 1000
+            results["hydrology.stream_total_length_km"] = total_length_km
+            
+            # Drainage density (km/km²)
+            results["hydrology.drainage_density"] = total_length_km / catchment_area_km2
+            
+            # Stream order statistics if available
+            stream_order_column = None
+            for possible_column in ['str_order', 'order', 'strahler', 'STRAHLER']:
+                if possible_column in river_network.columns:
+                    stream_order_column = possible_column
+                    break
+            
+            if stream_order_column:
+                stream_orders = river_network[stream_order_column].astype(float)
+                results["hydrology.stream_order_min"] = stream_orders.min()
+                results["hydrology.stream_order_max"] = stream_orders.max()
+                results["hydrology.stream_order_mean"] = stream_orders.mean()
+                
+                # Stream order frequency and length by order
+                for order in range(1, int(stream_orders.max()) + 1):
+                    order_segments = river_network[river_network[stream_order_column] == order]
+                    if not order_segments.empty:
+                        # Number of segments for this order
+                        results[f"hydrology.stream_order_{order}_count"] = len(order_segments)
+                        
+                        # Length for this order in km
+                        order_length_km = order_segments[length_column].sum() / 1000 if length_column != 'length_m' else order_segments[length_column].sum() / 1000
+                        results[f"hydrology.stream_order_{order}_length_km"] = order_length_km
+                        
+                        # Percentage of total length
+                        if total_length_km > 0:
+                            results[f"hydrology.stream_order_{order}_percent"] = (order_length_km / total_length_km) * 100
+                
+                # Calculate bifurcation ratio (ratio of number of streams of a given order to number of streams of next higher order)
+                for order in range(1, int(stream_orders.max())):
+                    count_current = len(river_network[river_network[stream_order_column] == order])
+                    count_next = len(river_network[river_network[stream_order_column] == order + 1])
+                    
+                    if count_next > 0:
+                        bifurcation_ratio = count_current / count_next
+                        results[f"hydrology.bifurcation_ratio_order_{order}_{order+1}"] = bifurcation_ratio
+                
+                # Average bifurcation ratio across all orders
+                bifurcation_ratios = []
+                for order in range(1, int(stream_orders.max())):
+                    count_current = len(river_network[river_network[stream_order_column] == order])
+                    count_next = len(river_network[river_network[stream_order_column] == order + 1])
+                    
+                    if count_next > 0:
+                        bifurcation_ratios.append(count_current / count_next)
+                
+                if bifurcation_ratios:
+                    results["hydrology.mean_bifurcation_ratio"] = np.mean(bifurcation_ratios)
+            
+            # Slope statistics if available
+            slope_column = None
+            for possible_column in ['slope', 'SLOPE', 'Slope']:
+                if possible_column in river_network.columns:
+                    slope_column = possible_column
+                    break
+            
+            if slope_column:
+                slopes = river_network[slope_column].astype(float)
+                results["hydrology.stream_slope_min"] = slopes.min()
+                results["hydrology.stream_slope_max"] = slopes.max()
+                results["hydrology.stream_slope_mean"] = slopes.mean()
+                results["hydrology.stream_slope_median"] = slopes.median()
+                results["hydrology.stream_slope_std"] = slopes.std()
+            
+            # Calculate sinuosity if we have both actual length and straight-line distance
+            sinuosity_column = None
+            for possible_column in ['sinuosity', 'SINUOSITY', 'Sinuosity']:
+                if possible_column in river_network.columns:
+                    sinuosity_column = possible_column
+                    break
+            
+            if sinuosity_column:
+                sinuosity = river_network[sinuosity_column].astype(float)
+                results["hydrology.stream_sinuosity_min"] = sinuosity.min()
+                results["hydrology.stream_sinuosity_max"] = sinuosity.max()
+                results["hydrology.stream_sinuosity_mean"] = sinuosity.mean()
+                results["hydrology.stream_sinuosity_median"] = sinuosity.median()
+            else:
+                # Try to calculate sinuosity using geometry
+                try:
+                    # Create a new column with the straight-line distance between endpoints
+                    def calculate_sinuosity(geometry):
+                        try:
+                            coords = list(geometry.coords)
+                            if len(coords) >= 2:
+                                from shapely.geometry import LineString
+                                straight_line = LineString([coords[0], coords[-1]])
+                                return geometry.length / straight_line.length
+                            return 1.0
+                        except:
+                            return 1.0
+                    
+                    river_network['calc_sinuosity'] = river_network.geometry.apply(calculate_sinuosity)
+                    
+                    results["hydrology.stream_sinuosity_min"] = river_network['calc_sinuosity'].min()
+                    results["hydrology.stream_sinuosity_max"] = river_network['calc_sinuosity'].max()
+                    results["hydrology.stream_sinuosity_mean"] = river_network['calc_sinuosity'].mean()
+                    results["hydrology.stream_sinuosity_median"] = river_network['calc_sinuosity'].median()
+                except Exception as e:
+                    self.logger.warning(f"Could not calculate sinuosity: {str(e)}")
+            
+            # Calculate headwater density
+            headwater_column = None
+            if stream_order_column:
+                # Headwaters are typically first-order streams
+                headwaters = river_network[river_network[stream_order_column] == 1]
+                results["hydrology.headwater_count"] = len(headwaters)
+                results["hydrology.headwater_density_per_km2"] = len(headwaters) / catchment_area_km2
+            
+            # If we have a pour point, calculate:
+            # 1. Distance to farthest headwater (longest flow path)
+            # 2. Main stem length
+            # 3. Basin elongation ratio
+            pour_point_file = self.project_dir / 'shapefiles' / 'pour_point' / f"{self.domain_name}_pourPoint.shp"
+            
+            if pour_point_file.exists():
+                pour_point = gpd.read_file(pour_point_file)
+                
+                # Ensure CRS match
+                if pour_point.crs != river_network.crs:
+                    pour_point = pour_point.to_crs(river_network.crs)
+                
+                # Try to find the main stem by tracing upstream from the pour point
+                # This would require river network connectivity information
+                # Placeholder for the logic - depends on how your river network topology is structured
+                
+                # Estimate basin shape metrics
+                # Basin length is approximately the longest flow path
+                if "hydrology.longest_flowpath_km" in results:
+                    basin_length = results["hydrology.longest_flowpath_km"]
+                else:
+                    # Estimate basin length using catchment geometry
+                    # Calculate longest intra-polygon distance as rough approximation
+                    from shapely.geometry import MultiPoint
+                    hull = catchment.unary_union.convex_hull
+                    if hasattr(hull, 'exterior'):
+                        points = list(hull.exterior.coords)
+                        if len(points) > 1:
+                            # Find approximate longest axis through convex hull
+                            point_combinations = [(points[i], points[j]) 
+                                                for i in range(len(points)) 
+                                                for j in range(i+1, len(points))]
+                            distances = [np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2) 
+                                        for p1, p2 in point_combinations]
+                            basin_length = max(distances) / 1000  # convert to km
+                            results["hydrology.basin_length_km"] = basin_length
+                
+                # Calculate basin shape metrics
+                if "hydrology.basin_length_km" in results and catchment_area_km2 > 0:
+                    # Basin elongation ratio (Schumm, 1956)
+                    # Re = diameter of circle with same area as basin / basin length
+                    diameter_equivalent_circle = 2 * np.sqrt(catchment_area_km2 / np.pi)
+                    elongation_ratio = diameter_equivalent_circle / results["hydrology.basin_length_km"]
+                    results["hydrology.basin_elongation_ratio"] = elongation_ratio
+                    
+                    # Basin form factor (Horton, 1932)
+                    # Form factor = Area / (Basin length)²
+                    form_factor = catchment_area_km2 / (results["hydrology.basin_length_km"]**2)
+                    results["hydrology.basin_form_factor"] = form_factor
+                    
+                    # Basin circularity ratio
+                    # Circularity = 4πA / P² where A is area and P is perimeter
+                    perimeter_km = catchment.to_crs(equal_area_crs).geometry.length.sum() / 1000
+                    circularity_ratio = (4 * np.pi * catchment_area_km2) / (perimeter_km**2)
+                    results["hydrology.basin_circularity_ratio"] = circularity_ratio
+            
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error in enhanced river network analysis: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return results
+
+    def enhance_hydrogeological_attributes(self, current_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enhance existing geological attributes with derived hydraulic properties.
+        
+        Args:
+            current_results: Current geological attributes
+            
+        Returns:
+            Dict[str, Any]: Enhanced geological attributes
+        """
+        results = dict(current_results)  # Create a copy to avoid modifying the original
+        
+        try:
+            # Check if we have log permeability values
+            if "geology.log_permeability_mean" in results:
+                log_k = results["geology.log_permeability_mean"]
+                
+                # Convert log permeability to hydraulic conductivity in m/s
+                # K [m/s] = 10^(log_k) * (rho*g/mu) where rho*g/mu ≈ 10^7 for water
+                hydraulic_conductivity = 10**(log_k) * (10**7)
+                results["geology.hydraulic_conductivity_m_per_s"] = hydraulic_conductivity
+                
+                # Convert to more common units (cm/hr, m/day)
+                results["geology.hydraulic_conductivity_cm_per_hr"] = hydraulic_conductivity * 3600 * 100
+                results["geology.hydraulic_conductivity_m_per_day"] = hydraulic_conductivity * 86400
+                
+                # Calculate transmissivity assuming typical aquifer thickness values
+                # Shallow aquifer (10m)
+                results["geology.transmissivity_shallow_m2_per_day"] = hydraulic_conductivity * 10 * 86400
+                
+                # Deep aquifer (100m)
+                results["geology.transmissivity_deep_m2_per_day"] = hydraulic_conductivity * 100 * 86400
+                
+                # Calculate hydraulic diffusivity if we have porosity data
+                if "geology.porosity_mean" in results:
+                    porosity = results["geology.porosity_mean"]
+                    if porosity > 0:
+                        specific_storage = 1e-6  # Typical value for confined aquifer (1/m)
+                        storativity = specific_storage * 100  # For 100m thick aquifer
+                        
+                        # Calculate specific yield (typically 0.1-0.3 of porosity)
+                        specific_yield = 0.2 * porosity
+                        results["geology.specific_yield"] = specific_yield
+                        
+                        # Hydraulic diffusivity (m²/s)
+                        diffusivity = hydraulic_conductivity / storativity
+                        results["geology.hydraulic_diffusivity_m2_per_s"] = diffusivity
+                        
+                        # Groundwater response time (days) for 1km travel distance
+                        if diffusivity > 0:
+                            response_time = (1000**2) / (diffusivity * 86400)  # days
+                            results["geology.groundwater_response_time_days"] = response_time
+            
+            # Derive aquifer properties from soil depth if available
+            if "soil.regolith_thickness_mean" in results or "soil.sedimentary_thickness_mean" in results:
+                # Use available thickness data or default to a typical value
+                regolith_thickness = results.get("soil.regolith_thickness_mean", 0)
+                sedimentary_thickness = results.get("soil.sedimentary_thickness_mean", 0)
+                
+                # Estimate total aquifer thickness
+                aquifer_thickness = max(regolith_thickness, sedimentary_thickness)
+                if aquifer_thickness == 0:
+                    aquifer_thickness = 50  # Default value if no data available
+                
+                results["geology.estimated_aquifer_thickness_m"] = aquifer_thickness
+                
+                # If we have hydraulic conductivity, calculate transmissivity
+                if "geology.hydraulic_conductivity_m_per_s" in results:
+                    transmissivity = results["geology.hydraulic_conductivity_m_per_s"] * aquifer_thickness
+                    results["geology.transmissivity_m2_per_s"] = transmissivity
+            
+            # Extract bedrock depth information from soil data if available
+            if "soil.regolith_thickness_mean" in results:
+                results["geology.bedrock_depth_m"] = results["soil.regolith_thickness_mean"]
+            
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error enhancing hydrogeological attributes: {str(e)}")
+            return current_results  # Return the original results if there was an error
+
+    def calculate_streamflow_signatures(self) -> Dict[str, Any]:
+        """
+        Calculate comprehensive streamflow signatures including durations, timing, and distributions.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of streamflow signature attributes
+        """
+        results = {}
+        
+        # Load streamflow data
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        
+        if not streamflow_path.exists():
+            self.logger.warning(f"Streamflow data not found: {streamflow_path}")
+            return results
+        
+        try:
+            import pandas as pd
+            import numpy as np
+            from scipy.stats import skew, kurtosis
+            
+            # Read streamflow data
+            streamflow_df = pd.read_csv(streamflow_path, parse_dates=['date'])
+            streamflow_df.set_index('date', inplace=True)
+            
+            # Calculate water year
+            streamflow_df['water_year'] = streamflow_df.index.year.where(
+                streamflow_df.index.month < 10, 
+                streamflow_df.index.year + 1
+            )
+            
+            # Basic statistics
+            results["hydrology.daily_discharge_mean"] = streamflow_df['flow'].mean()
+            results["hydrology.daily_discharge_std"] = streamflow_df['flow'].std()
+            
+            # Calculate flow percentiles
+            for percentile in [1, 5, 10, 25, 50, 75, 90, 95, 99]:
+                results[f"hydrology.q{percentile}"] = np.percentile(streamflow_df['flow'].dropna(), percentile)
+            
+            # Calculate flow duration curve slope
+            flow_sorted = np.sort(streamflow_df['flow'].dropna().values)
+            if len(flow_sorted) > 0:
+                # Replace zeros with a small value to enable log calculation
+                flow_sorted[flow_sorted == 0] = 0.001 * results["hydrology.daily_discharge_mean"]
+                
+                log_flow = np.log(flow_sorted)
+                q33_index = int(0.33 * len(log_flow))
+                q66_index = int(0.66 * len(log_flow))
+                
+                if q66_index > q33_index:
+                    fdc_slope = (log_flow[q66_index] - log_flow[q33_index]) / (0.66 - 0.33)
+                    results["hydrology.fdc_slope"] = fdc_slope
+            
+            # Calculate high flow and low flow durations
+            mean_flow = streamflow_df['flow'].mean()
+            median_flow = streamflow_df['flow'].median()
+            
+            # High flow condition (Q > 9 * median)
+            high_flow_threshold = 9 * median_flow
+            high_flow = streamflow_df['flow'] > high_flow_threshold
+            
+            # Low flow condition (Q < 0.2 * mean)
+            low_flow_threshold = 0.2 * mean_flow
+            low_flow = streamflow_df['flow'] < low_flow_threshold
+            
+            # No flow condition
+            no_flow = streamflow_df['flow'] <= 0
+            
+            # Calculate durations
+            for condition, name in [(high_flow, 'high_flow'), (low_flow, 'low_flow'), (no_flow, 'no_flow')]:
+                # Find durations of consecutive True values
+                transitions = np.diff(np.concatenate([[False], condition, [False]]).astype(int))
+                starts = np.where(transitions == 1)[0]
+                ends = np.where(transitions == -1)[0]
+                durations = ends - starts
+                
+                if len(durations) > 0:
+                    results[f"hydrology.{name}_duration_mean"] = durations.mean()
+                    results[f"hydrology.{name}_duration_median"] = np.median(durations)
+                    results[f"hydrology.{name}_duration_max"] = durations.max()
+                    results[f"hydrology.{name}_count_per_year"] = len(durations) / streamflow_df['water_year'].nunique()
+                    results[f"hydrology.{name}_duration_skew"] = skew(durations) if len(durations) > 2 else np.nan
+                    results[f"hydrology.{name}_duration_kurtosis"] = kurtosis(durations) if len(durations) > 2 else np.nan
+            
+            # Calculate half-flow date
+            # Group by water year and find the date when 50% of annual flow occurs
+            half_flow_dates = []
+            
+            for year, year_data in streamflow_df.groupby('water_year'):
+                if year_data['flow'].sum() > 0:  # Avoid years with no flow
+                    # Calculate cumulative flow for the year
+                    year_data = year_data.sort_index()  # Ensure chronological order
+                    year_data['cum_flow'] = year_data['flow'].cumsum()
+                    year_data['frac_flow'] = year_data['cum_flow'] / year_data['flow'].sum()
+                    
+                    # Find the first date when fractional flow exceeds 0.5
+                    half_flow_idx = year_data['frac_flow'].gt(0.5).idxmax() if any(year_data['frac_flow'] > 0.5) else None
+                    
+                    if half_flow_idx:
+                        half_flow_dates.append(half_flow_idx.dayofyear)
+            
+            if half_flow_dates:
+                results["hydrology.half_flow_day_mean"] = np.mean(half_flow_dates)
+                results["hydrology.half_flow_day_std"] = np.std(half_flow_dates)
+            
+            # Calculate runoff ratio if precipitation data is available
+            precip_path = self.project_dir / "forcing" / "basin_averaged_data" / f"{self.config['DOMAIN_NAME']}_precipitation.csv"
+            
+            if precip_path.exists():
+                precip_df = pd.read_csv(precip_path, parse_dates=['date'])
+                precip_df.set_index('date', inplace=True)
+                
+                # Ensure same time period for both datasets
+                common_period = streamflow_df.index.intersection(precip_df.index)
+                if len(common_period) > 0:
+                    streamflow_subset = streamflow_df.loc[common_period]
+                    precip_subset = precip_df.loc[common_period]
+                    
+                    # Calculate runoff ratio (Q/P)
+                    total_flow = streamflow_subset['flow'].sum()
+                    total_precip = precip_subset['precipitation'].sum()
+                    
+                    if total_precip > 0:
+                        runoff_ratio = total_flow / total_precip
+                        results["hydrology.runoff_ratio"] = runoff_ratio
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating streamflow signatures: {str(e)}")
+            return results
+
+    def calculate_baseflow_attributes(self) -> Dict[str, Any]:
+        """
+        Process baseflow separation and calculate baseflow index using the Eckhardt method.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of baseflow attributes
+        """
+        results = {}
+        
+        # Load streamflow data
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        
+        if not streamflow_path.exists():
+            self.logger.warning(f"Streamflow data not found: {streamflow_path}")
+            return results
+        
+        try:
+            # Read streamflow data
+            import pandas as pd
+            import baseflow
+            
+            # Load streamflow data with pandas
+            streamflow_df = pd.read_csv(streamflow_path, parse_dates=['date'])
+            
+            # Apply baseflow separation using the Eckhardt method
+            rec = baseflow.separation(streamflow_df, method='Eckhardt')
+            
+            # Calculate baseflow index (BFI)
+            bfi = rec['Eckhardt']['q_bf'].mean() / rec['Eckhardt']['q_obs'].mean()
+            
+            results["hydrology.baseflow_index"] = bfi
+            results["hydrology.baseflow_recession_constant"] = baseflow.calculate_recession_constant(streamflow_df)
+            
+            # Calculate seasonal baseflow indices
+            seasons = {'winter': [12, 1, 2], 'spring': [3, 4, 5], 
+                    'summer': [6, 7, 8], 'autumn': [9, 10, 11]}
+            
+            for season_name, months in seasons.items():
+                seasonal_df = rec['Eckhardt'][rec['Eckhardt'].index.month.isin(months)]
+                if not seasonal_df.empty:
+                    seasonal_bfi = seasonal_df['q_bf'].mean() / seasonal_df['q_obs'].mean()
+                    results[f"hydrology.baseflow_index_{season_name}"] = seasonal_bfi
+            
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error calculating baseflow attributes: {str(e)}")
+            return results
 
     def _process_lakes_data(self, hydrolakes_path: Path) -> Dict[str, Any]:
         """

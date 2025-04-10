@@ -83,8 +83,12 @@ class LargeSampleEmulator:
             basin_bounds = self._parse_param_info(self.basin_param_info_path, self.basin_params_to_emulate)
 
             if not local_bounds and not basin_bounds:
-                 self.logger.warning("No parameters specified or found for emulation. Skipping trial parameter file generation.")
-                 return None # Indicate nothing was generated
+                self.logger.warning("No parameters specified or found for emulation. Skipping trial parameter file generation.")
+                return None # Indicate nothing was generated
+
+            # Store all parameter sets in a consolidated file
+            consolidated_file = self.store_parameter_sets(local_bounds, basin_bounds)
+            self.logger.info(f"All parameter sets stored in consolidated file: {consolidated_file}")
 
             # Generate the summary file with all parameter sets
             self.generate_parameter_summary(local_bounds, basin_bounds)
@@ -95,7 +99,7 @@ class LargeSampleEmulator:
                 self.logger.info(f"Successfully created {self.num_samples} ensemble run directories in {self.ensemble_dir}")
             
             self.logger.info(f"Large sample emulation setup completed successfully")
-            return self.summary_file_path
+            return consolidated_file
 
         except FileNotFoundError as e:
             self.logger.error(f"Required file not found during emulation setup: {e}")
@@ -103,6 +107,228 @@ class LargeSampleEmulator:
         except Exception as e:
             self.logger.error(f"Error during large sample emulation setup: {str(e)}")
             raise
+
+    @get_function_logger
+    def analyze_parameter_space(self, consolidated_file_path=None):
+        """
+        Analyze the parameter space of the ensemble simulations.
+        
+        Creates visualizations and statistics for the parameter space coverage,
+        including correlation analysis, parameter distributions, and coverage metrics.
+        
+        Args:
+            consolidated_file_path (Path, optional): Path to the consolidated parameter file.
+                If None, uses the default path.
+        
+        Returns:
+            Path: Path to the analysis results directory
+        """
+        self.logger.info("Starting parameter space analysis")
+        
+        try:
+            import pandas as pd
+            import numpy as np
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            from scipy import stats
+            
+            # Set default path if not provided
+            if consolidated_file_path is None:
+                consolidated_file_path = self.project_dir / "emulation" / f"parameter_sets_{self.experiment_id}.nc"
+            
+            if not consolidated_file_path.exists():
+                self.logger.error(f"Consolidated parameter file not found: {consolidated_file_path}")
+                return None
+            
+            # Create analysis directory
+            analysis_dir = self.emulator_output_dir / "parameter_analysis"
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Read the parameter file
+            with nc4.Dataset(consolidated_file_path, 'r') as nc_file:
+                # Get dimensions
+                num_runs = len(nc_file.dimensions['run'])
+                num_hru = len(nc_file.dimensions['hru'])
+                
+                # Get parameter names (excluding dimensions and special variables)
+                param_names = [var for var in nc_file.variables if var not in ['hruId', 'runIndex']]
+                
+                # Extract parameter values
+                param_data = {}
+                param_types = {}
+                param_bounds = {}
+                
+                for param in param_names:
+                    var = nc_file.variables[param]
+                    # Get mean parameter value for each run (averaging across HRUs)
+                    param_data[param] = np.mean(var[:], axis=1)  # Shape: [num_runs]
+                    
+                    # Get parameter type and bounds if available
+                    if hasattr(var, 'parameter_type'):
+                        param_types[param] = var.parameter_type
+                    else:
+                        param_types[param] = "unknown"
+                    
+                    if hasattr(var, 'min_value') and hasattr(var, 'max_value'):
+                        param_bounds[param] = (var.min_value, var.max_value)
+                    else:
+                        param_bounds[param] = (np.min(param_data[param]), np.max(param_data[param]))
+            
+            # Create a DataFrame for easier analysis
+            df = pd.DataFrame(param_data)
+            
+            # Save parameter data to CSV
+            df.to_csv(analysis_dir / "parameter_values.csv")
+            
+            # Calculate basic statistics
+            stats_df = pd.DataFrame({
+                'Mean': df.mean(),
+                'Std Dev': df.std(),
+                'Min': df.min(),
+                'Max': df.max(),
+                'Median': df.median(),
+                'Range': df.max() - df.min()
+            })
+            
+            # Add parameter types and normalized range
+            stats_df['Type'] = pd.Series(param_types)
+            stats_df['NormalizedRange'] = stats_df['Range'] / (
+                pd.Series({p: bounds[1] - bounds[0] for p, bounds in param_bounds.items()})
+            )
+            
+            # Save statistics
+            stats_df.to_csv(analysis_dir / "parameter_statistics.csv")
+            
+            # Create correlation matrix
+            corr_matrix = df.corr()
+            
+            # Plot correlation heatmap
+            plt.figure(figsize=(12, 10))
+            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, fmt='.2f')
+            plt.title('Parameter Correlation Matrix')
+            plt.tight_layout()
+            plt.savefig(analysis_dir / "parameter_correlation_matrix.png", dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # Plot parameter distributions
+            if len(param_names) <= 20:  # Only create individual plots if parameters are not too many
+                for param in param_names:
+                    plt.figure(figsize=(10, 6))
+                    
+                    # Plot histogram
+                    sns.histplot(df[param], kde=True)
+                    
+                    # Add bounds if available
+                    if param in param_bounds:
+                        min_val, max_val = param_bounds[param]
+                        plt.axvline(x=min_val, color='r', linestyle='--', label=f'Min: {min_val:.4f}')
+                        plt.axvline(x=max_val, color='g', linestyle='--', label=f'Max: {max_val:.4f}')
+                    
+                    # Add statistics
+                    mean_val = df[param].mean()
+                    std_val = df[param].std()
+                    plt.axvline(x=mean_val, color='k', linestyle='-', label=f'Mean: {mean_val:.4f}')
+                    
+                    # Add title and labels
+                    plt.title(f'Distribution of {param} ({param_types.get(param, "unknown")})')
+                    plt.xlabel('Parameter Value')
+                    plt.ylabel('Frequency')
+                    plt.legend()
+                    plt.grid(True, alpha=0.3)
+                    
+                    # Save plot
+                    plt.savefig(analysis_dir / f"param_dist_{param}.png", dpi=300, bbox_inches='tight')
+                    plt.close()
+            
+            # Create pairplot for parameter pairs (limit to most important parameters if there are many)
+            if len(param_names) <= 10:
+                # Create pairplot for all parameters
+                plt.figure(figsize=(15, 15))
+                sns.pairplot(df, diag_kind='kde')
+                plt.suptitle('Parameter Pairwise Relationships', y=1.02)
+                plt.savefig(analysis_dir / "parameter_pairplot.png", dpi=300, bbox_inches='tight')
+                plt.close()
+            else:
+                # Select top parameters based on range utilization
+                top_params = stats_df.sort_values('NormalizedRange', ascending=False).head(8).index.tolist()
+                
+                plt.figure(figsize=(15, 15))
+                sns.pairplot(df[top_params], diag_kind='kde')
+                plt.suptitle('Parameter Pairwise Relationships (Top 8 Parameters)', y=1.02)
+                plt.savefig(analysis_dir / "parameter_pairplot_top.png", dpi=300, bbox_inches='tight')
+                plt.close()
+            
+            # Calculate parameter space coverage metrics
+            coverage_metrics = {
+                'Sampling Method': self.sampling_method,
+                'Number of Samples': num_runs,
+                'Number of Parameters': len(param_names),
+                'Average Range Utilization': stats_df['NormalizedRange'].mean(),
+                'Min Range Utilization': stats_df['NormalizedRange'].min(),
+                'Max Range Utilization': stats_df['NormalizedRange'].max(),
+                'Average Correlation': np.abs(corr_matrix.values[np.triu_indices_from(corr_matrix.values, k=1)]).mean(),
+                'Max Correlation': np.max(np.abs(corr_matrix.values[np.triu_indices_from(corr_matrix.values, k=1)]))
+            }
+            
+            # Save coverage metrics
+            with open(analysis_dir / "parameter_coverage_metrics.txt", 'w') as f:
+                f.write("Parameter Space Coverage Metrics\n")
+                f.write("================================\n\n")
+                for metric, value in coverage_metrics.items():
+                    f.write(f"{metric}: {value}\n")
+            
+            # Create summary report
+            with open(analysis_dir / "parameter_analysis_report.txt", 'w') as f:
+                f.write(f"Parameter Space Analysis Report\n")
+                f.write(f"=============================\n\n")
+                f.write(f"Experiment ID: {self.experiment_id}\n")
+                f.write(f"Ensemble Size: {num_runs}\n")
+                f.write(f"Number of Parameters: {len(param_names)}\n")
+                f.write(f"Parameter Types: {sorted(set(param_types.values()))}\n\n")
+                
+                f.write(f"Parameter Space Coverage:\n")
+                for metric, value in coverage_metrics.items():
+                    f.write(f"  {metric}: {value}\n")
+                
+                f.write(f"\nParameters with Highest Range Utilization:\n")
+                top_range = stats_df.sort_values('NormalizedRange', ascending=False).head(5)
+                for param, row in top_range.iterrows():
+                    f.write(f"  {param} ({row['Type']}): {row['NormalizedRange']:.4f}\n")
+                
+                f.write(f"\nParameters with Lowest Range Utilization:\n")
+                bottom_range = stats_df.sort_values('NormalizedRange').head(5)
+                for param, row in bottom_range.iterrows():
+                    f.write(f"  {param} ({row['Type']}): {row['NormalizedRange']:.4f}\n")
+                
+                f.write(f"\nHighest Parameter Correlations:\n")
+                # Get the upper triangle of the correlation matrix
+                upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+                # Find the top absolute correlations
+                top_corr = upper.unstack().dropna().abs().sort_values(ascending=False).head(10)
+                for (param1, param2), corr in top_corr.items():
+                    f.write(f"  {param1} and {param2}: {upper.loc[param1, param2]:.4f}\n")
+                
+                f.write(f"\nFiles Generated:\n")
+                f.write(f"  - parameter_values.csv: Raw parameter values for all runs\n")
+                f.write(f"  - parameter_statistics.csv: Statistical metrics for each parameter\n")
+                f.write(f"  - parameter_correlation_matrix.png: Visualization of parameter correlations\n")
+                f.write(f"  - parameter_pairplot.png: Pairwise relationships between parameters\n")
+                f.write(f"  - parameter_coverage_metrics.txt: Metrics for parameter space coverage\n")
+                
+                f.write(f"\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
+            self.logger.info(f"Parameter space analysis completed. Results saved to {analysis_dir}")
+            return analysis_dir
+            
+        except ImportError as e:
+            self.logger.warning(f"Could not complete parameter space analysis due to missing library: {str(e)}")
+            self.logger.warning("Make sure pandas, numpy, matplotlib, seaborn, and scipy are available.")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error during parameter space analysis: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
 
     def _parse_param_info(self, file_path: Path, param_names: list) -> Dict[str, Dict[str, float]]:
         """Parses min/max bounds from SUMMA parameter info files."""
@@ -463,13 +689,14 @@ class LargeSampleEmulator:
             self.logger.warning(f"Using uniform sampling as fallback for {param_name}.")
             return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
             
+    
     @get_function_logger
     def run_ensemble_simulations(self):
         """
         Run SUMMA for each ensemble member (each run directory).
         
         This launches multiple SUMMA instances, one for each parameter set.
-        Depending on computational resources, this can be sequential or parallel.
+        Can run in sequential or parallel mode depending on configuration.
         """
         self.logger.info("Starting ensemble simulations")
         
@@ -487,9 +714,26 @@ class LargeSampleEmulator:
         
         summa_exe = summa_path / self.config.get('SUMMA_EXE')
         
-        # Run SUMMA for each ensemble member
+        # Check if we should run in parallel
+        run_parallel = self.config.get('EMULATION_PARALLEL_ENSEMBLE', False)
+        max_parallel_jobs = self.config.get('EMULATION_MAX_PARALLEL_JOBS', 10)
+        
+        # Get all run directories
+        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
+        
+        if run_parallel and len(run_dirs) > 1:
+            # Run in parallel mode
+            return self._run_parallel_ensemble(summa_exe, run_dirs, max_parallel_jobs)
+        else:
+            # Run in sequential mode
+            return self._run_sequential_ensemble(summa_exe, run_dirs)
+
+    def _run_sequential_ensemble(self, summa_exe, run_dirs):
+        """Run ensemble simulations one after another."""
+        self.logger.info(f"Running {len(run_dirs)} ensemble simulations sequentially")
+        
         results = []
-        for run_dir in sorted(self.ensemble_dir.glob("run_*")):
+        for run_dir in run_dirs:
             run_name = run_dir.name
             self.logger.info(f"Running simulation for {run_name}")
             
@@ -499,6 +743,7 @@ class LargeSampleEmulator:
             
             if not filemanager_path.exists():
                 self.logger.warning(f"FileManager not found for {run_name}: {filemanager_path}")
+                results.append((run_name, False, "FileManager not found"))
                 continue
             
             # Ensure output directory exists
@@ -531,6 +776,466 @@ class LargeSampleEmulator:
         
         # Summarize results
         successes = sum(1 for _, success, _ in results if success)
-        self.logger.info(f"Completed {successes} out of {len(results)} ensemble simulations")
+        self.logger.info(f"Completed {successes} out of {len(results)} sequential ensemble simulations")
         
         return results
+
+    def _run_parallel_ensemble(self, summa_exe, run_dirs, max_jobs):
+        """Run ensemble simulations in parallel."""
+        self.logger.info(f"Running {len(run_dirs)} ensemble simulations in parallel (max jobs: {max_jobs})")
+        
+        try:
+            import concurrent.futures
+            import subprocess
+            
+            # Prepare job info for each run
+            jobs = []
+            for run_dir in run_dirs:
+                run_name = run_dir.name
+                
+                # Get fileManager path for this run
+                run_settings_dir = run_dir / "settings" / "SUMMA"
+                filemanager_path = run_settings_dir / os.path.basename(self.filemanager_path)
+                
+                if not filemanager_path.exists():
+                    self.logger.warning(f"FileManager not found for {run_name}: {filemanager_path}")
+                    continue
+                
+                # Ensure output directory exists
+                output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Log directory
+                log_dir = output_dir / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Run SUMMA command
+                command = f"{summa_exe} -m {filemanager_path}"
+                log_file = log_dir / f"{run_name}_summa.log"
+                
+                jobs.append((run_name, command, log_file))
+            
+            # Function to run a single job
+            def run_job(job_info):
+                run_name, command, log_file = job_info
+                try:
+                    with open(log_file, 'w') as f:
+                        process = subprocess.run(command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    return (run_name, True, None)
+                except subprocess.CalledProcessError as e:
+                    self.logger.error(f"Error running SUMMA for {run_name}: {str(e)}")
+                    return (run_name, False, str(e))
+                except Exception as e:
+                    self.logger.error(f"Unexpected error running {run_name}: {str(e)}")
+                    return (run_name, False, str(e))
+            
+            # Run jobs in parallel
+            results = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_jobs) as executor:
+                future_to_job = {executor.submit(run_job, job): job[0] for job in jobs}
+                
+                for future in concurrent.futures.as_completed(future_to_job):
+                    job_name = future_to_job[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        if result[1]:  # If success
+                            self.logger.info(f"Successfully completed simulation for {job_name}")
+                        else:
+                            self.logger.warning(f"Failed simulation for {job_name}: {result[2]}")
+                    except Exception as e:
+                        self.logger.error(f"Exception processing result for {job_name}: {str(e)}")
+                        results.append((job_name, False, str(e)))
+            
+            # Summarize results
+            successes = sum(1 for _, success, _ in results if success)
+            self.logger.info(f"Completed {successes} out of {len(results)} parallel ensemble simulations")
+            
+            return results
+            
+        except ImportError:
+            self.logger.warning("concurrent.futures module not available. Falling back to sequential execution.")
+            return self._run_sequential_ensemble(summa_exe, run_dirs)
+        except Exception as e:
+            self.logger.error(f"Error in parallel ensemble execution: {str(e)}. Falling back to sequential execution.")
+            return self._run_sequential_ensemble(summa_exe, run_dirs)        
+
+    @get_function_logger
+    def store_parameter_sets(self, local_bounds: Dict, basin_bounds: Dict):
+        """
+        Store all generated parameter sets in a consolidated file.
+        
+        This adds a 'run' dimension to the parameter file, allowing all parameter
+        sets to be stored in a single NetCDF file for easier analysis and reference.
+        
+        Args:
+            local_bounds: Dictionary of local parameter bounds
+            basin_bounds: Dictionary of basin parameter bounds
+            
+        Returns:
+            Path: Path to the consolidated parameter file
+        """
+        self.logger.info("Storing all parameter sets in a consolidated file")
+        
+        # Define path for the consolidated parameter file
+        consolidated_file_path = self.project_dir / "emulation" / f"parameter_sets_{self.experiment_id}.nc"
+        
+        # Read HRU and GRU information from the attributes file
+        with nc4.Dataset(self.attribute_file_path, 'r') as att_ds:
+            if 'hru' not in att_ds.dimensions:
+                raise ValueError(f"Dimension 'hru' not found in attributes file: {self.attribute_file_path}")
+            num_hru = len(att_ds.dimensions['hru'])
+            hru_ids = att_ds.variables['hruId'][:]
+            hru2gru_ids = att_ds.variables['hru2gruId'][:]
+
+            # Need gruId variable and dimension for basin params
+            if self.basin_params_to_emulate:
+                if 'gru' not in att_ds.dimensions or 'gruId' not in att_ds.variables:
+                    raise ValueError(f"Dimension 'gru' or variable 'gruId' not found in attributes file, needed for basin parameters: {self.attribute_file_path}")
+                num_gru = len(att_ds.dimensions['gru'])
+                gru_ids = att_ds.variables['gruId'][:]
+                # Create a mapping from gru_id to its index in the gru dimension
+                gru_id_to_index = {gid: idx for idx, gid in enumerate(gru_ids)}
+            else:
+                num_gru = 0 # Not needed if no basin params
+        
+        # Generate parameter values for all runs at once
+        all_param_values = {}
+        
+        # For local parameters
+        for param_name, bounds in local_bounds.items():
+            min_val, max_val = bounds['min'], bounds['max']
+            # Shape: [num_samples, num_hru]
+            all_param_values[param_name] = np.array([
+                self._generate_random_values(min_val, max_val, num_hru, param_name)
+                for _ in range(self.num_samples)
+            ])
+        
+        # For basin parameters
+        for param_name, bounds in basin_bounds.items():
+            min_val, max_val = bounds['min'], bounds['max']
+            # First generate values for GRUs
+            gru_values = np.array([
+                self._generate_random_values(min_val, max_val, num_gru, param_name)
+                for _ in range(self.num_samples)
+            ])
+            
+            # Then map to HRUs
+            hru_mapped_values = np.zeros((self.num_samples, num_hru), dtype=np.float64)
+            
+            for sample_idx in range(self.num_samples):
+                for hru_idx in range(num_hru):
+                    hru_gru_id = hru2gru_ids[hru_idx]
+                    gru_index = gru_id_to_index.get(hru_gru_id)
+                    if gru_index is not None:
+                        hru_mapped_values[sample_idx, hru_idx] = gru_values[sample_idx, gru_index]
+                    else:
+                        hru_mapped_values[sample_idx, hru_idx] = 0.0
+            
+            all_param_values[param_name] = hru_mapped_values
+        
+        # Create the consolidated NetCDF file
+        with nc4.Dataset(consolidated_file_path, 'w', format='NETCDF4') as nc_file:
+            # Define dimensions
+            nc_file.createDimension('hru', num_hru)
+            nc_file.createDimension('run', self.num_samples)
+            
+            # Create hruId variable
+            hru_id_var = nc_file.createVariable('hruId', 'i4', ('hru',))
+            hru_id_var[:] = hru_ids
+            hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
+            hru_id_var.units = '-'
+            
+            # Create run index variable
+            run_var = nc_file.createVariable('runIndex', 'i4', ('run',))
+            run_var[:] = np.arange(self.num_samples)
+            run_var.long_name = 'Run/Sample Index'
+            run_var.units = '-'
+            
+            # Add parameter variables with 'run' and 'hru' dimensions
+            for param_name, values in all_param_values.items():
+                param_var = nc_file.createVariable(param_name, 'f8', ('run', 'hru',), fill_value=False)
+                param_var[:] = values
+                
+                # Determine if it's a local or basin parameter
+                is_local = param_name in local_bounds
+                if is_local:
+                    param_var.parameter_type = "local"
+                    if param_name in local_bounds:
+                        param_var.min_value = local_bounds[param_name]['min']
+                        param_var.max_value = local_bounds[param_name]['max']
+                else:
+                    param_var.parameter_type = "basin"
+                    if param_name in basin_bounds:
+                        param_var.min_value = basin_bounds[param_name]['min']
+                        param_var.max_value = basin_bounds[param_name]['max']
+                
+                param_var.long_name = f"Parameter values for {param_name} across all runs"
+                param_var.units = "N/A"
+            
+            # Add global attributes
+            nc_file.description = "Consolidated parameter sets for ensemble simulations"
+            nc_file.history = f"Created on {datetime.now().isoformat()} by CONFLUENCE LargeSampleEmulator"
+            nc_file.confluence_experiment_id = self.experiment_id
+            nc_file.sampling_method = self.sampling_method
+            nc_file.random_seed = self.random_seed
+            nc_file.num_samples = self.num_samples
+        
+        self.logger.info(f"Successfully stored all parameter sets in: {consolidated_file_path}")
+        return consolidated_file_path
+
+
+    @get_function_logger
+    def analyze_ensemble_results(self):
+        """
+        Analyze the results of ensemble simulations.
+        
+        This method:
+        1. Reads output from each ensemble member
+        2. Computes statistics (mean, std dev, min, max, percentiles)
+        3. Creates visualizations
+        4. Generates a summary report
+        
+        Returns:
+            Path: Path to the analysis results directory
+        """
+        self.logger.info("Starting ensemble results analysis")
+        
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from matplotlib.dates import DateFormatter
+        import datetime as dt
+        import os
+        import glob
+        
+        # Create analysis directory
+        analysis_dir = self.emulator_output_dir / "ensemble_analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get all run directories
+        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
+        if not run_dirs:
+            self.logger.error("No ensemble run directories found.")
+            return None
+        
+        # Collect streamflow outputs from all runs
+        streamflow_data = {}
+        run_ids = []
+        
+        for run_dir in run_dirs:
+            run_id = run_dir.name
+            run_ids.append(run_id)
+            
+            # Find SUMMA/MizuRoute output files
+            summa_output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
+            netcdf_files = list(summa_output_dir.glob("*.nc"))
+            
+            if not netcdf_files:
+                self.logger.warning(f"No NetCDF output files found for {run_id}")
+                continue
+            
+            # Try to find streamflow data in the output files
+            streamflow_found = False
+            
+            for nc_file in netcdf_files:
+                try:
+                    with nc4.Dataset(nc_file, 'r') as ds:
+                        # Check for common streamflow variable names
+                        streamflow_vars = ['IRFroutedRunoff', 'averageRoutedRunoff', 'scalarTotalRunoff', 'discharge']
+                        var_name = None
+                        
+                        for sv in streamflow_vars:
+                            if sv in ds.variables:
+                                var_name = sv
+                                break
+                        
+                        if var_name is None:
+                            # Try to find any variable that might be streamflow
+                            for var in ds.variables:
+                                if 'runoff' in var.lower() or 'discharge' in var.lower() or 'flow' in var.lower():
+                                    var_name = var
+                                    break
+                        
+                        if var_name is not None:
+                            # Get time and streamflow data
+                            time_var = ds.variables['time']
+                            streamflow_var = ds.variables[var_name]
+                            
+                            # Convert time to datetime
+                            if hasattr(time_var, 'units'):
+                                time_units = time_var.units
+                                try:
+                                    import netCDF4 as nc4
+                                    dates = nc4.num2date(time_var[:], time_units)
+                                except:
+                                    # If netCDF4 date conversion fails, try a simple approach
+                                    if 'days since' in time_units:
+                                        base_date_str = time_units.split('days since ')[1].split()[0]
+                                        base_date = dt.datetime.strptime(base_date_str, '%Y-%m-%d')
+                                        dates = [base_date + dt.timedelta(days=float(d)) for d in time_var[:]]
+                                    elif 'hours since' in time_units:
+                                        base_date_str = time_units.split('hours since ')[1].split()[0]
+                                        base_date = dt.datetime.strptime(base_date_str, '%Y-%m-%d')
+                                        dates = [base_date + dt.timedelta(hours=float(d)) for d in time_var[:]]
+                                    else:
+                                        # Try to use time values as is (may need additional processing)
+                                        dates = [dt.datetime.fromtimestamp(t) for t in time_var[:]]
+                            else:
+                                # If no time units, use sequential days starting from a default date
+                                dates = [dt.datetime(2000, 1, 1) + dt.timedelta(days=i) for i in range(len(time_var[:]))]
+                            
+                            # Extract streamflow data
+                            if len(streamflow_var.shape) == 1:
+                                # Single time series
+                                flow_data = streamflow_var[:]
+                            elif len(streamflow_var.shape) == 2:
+                                # Multiple locations - use first one (typically for the outlet)
+                                flow_data = streamflow_var[:, 0]
+                            else:
+                                # More complex structure - try to find the appropriate dimension
+                                self.logger.warning(f"Complex variable structure for {var_name} in {nc_file}")
+                                flow_data = streamflow_var[:].flatten()
+                            
+                            # Create DataFrame for this run
+                            df = pd.DataFrame({'DateTime': dates, 'Streamflow': flow_data})
+                            df.set_index('DateTime', inplace=True)
+                            
+                            # Store in dictionary
+                            streamflow_data[run_id] = df
+                            streamflow_found = True
+                            break
+                
+                except Exception as e:
+                    self.logger.warning(f"Error processing {nc_file} for {run_id}: {str(e)}")
+                    continue
+            
+            if not streamflow_found:
+                self.logger.warning(f"No streamflow data found in any output file for {run_id}")
+        
+        # Check if we found any streamflow data
+        if not streamflow_data:
+            self.logger.error("No streamflow data found in any ensemble run.")
+            return None
+        
+        self.logger.info(f"Found streamflow data for {len(streamflow_data)} out of {len(run_dirs)} runs")
+        
+        # Combine all streamflow data into a single DataFrame
+        all_flows = pd.DataFrame()
+        for run_id, df in streamflow_data.items():
+            # Ensure consistent time steps by resampling if needed
+            if all_flows.empty:
+                all_flows = df.copy()
+                all_flows.rename(columns={'Streamflow': run_id}, inplace=True)
+            else:
+                # Resample to match index if needed
+                if not df.index.equals(all_flows.index):
+                    try:
+                        # Try daily resampling first
+                        df_resampled = df.resample('D').mean()
+                        all_flows_resampled = all_flows.resample('D').mean()
+                        common_index = df_resampled.index.intersection(all_flows_resampled.index)
+                        
+                        if not common_index.empty:
+                            # Use the common dates
+                            all_flows = all_flows_resampled.loc[common_index]
+                            df = df_resampled.loc[common_index]
+                        else:
+                            # If no common dates, try interpolation
+                            self.logger.warning(f"No common dates found for {run_id}, trying interpolation")
+                            df = df.reindex(all_flows.index, method='nearest')
+                    except Exception as e:
+                        self.logger.warning(f"Error resampling data for {run_id}: {str(e)}")
+                        continue
+                
+                # Add this run's data
+                all_flows[run_id] = df['Streamflow']
+        
+        # Save the combined flow data
+        all_flows.to_csv(analysis_dir / "all_ensemble_streamflows.csv")
+        
+        # Calculate statistics
+        flow_mean = all_flows.mean(axis=1)
+        flow_std = all_flows.std(axis=1)
+        flow_min = all_flows.min(axis=1)
+        flow_max = all_flows.max(axis=1)
+        flow_median = all_flows.median(axis=1)
+        flow_q05 = all_flows.quantile(0.05, axis=1)
+        flow_q25 = all_flows.quantile(0.25, axis=1)
+        flow_q75 = all_flows.quantile(0.75, axis=1)
+        flow_q95 = all_flows.quantile(0.95, axis=1)
+        
+        # Create a stats DataFrame
+        stats_df = pd.DataFrame({
+            'Mean': flow_mean,
+            'Std Dev': flow_std,
+            'Min': flow_min,
+            'Max': flow_max,
+            'Median': flow_median,
+            'Q05': flow_q05,
+            'Q25': flow_q25,
+            'Q75': flow_q75,
+            'Q95': flow_q95
+        })
+        
+        # Save statistics
+        stats_df.to_csv(analysis_dir / "ensemble_statistics.csv")
+        
+        # Create visualization
+        plt.figure(figsize=(16, 10))
+        
+        # Plot the ensemble range (min to max)
+        plt.fill_between(flow_mean.index, flow_min, flow_max, alpha=0.2, color='lightblue', label='Min-Max Range')
+        
+        # Plot the interquartile range (25th to 75th percentile)
+        plt.fill_between(flow_mean.index, flow_q25, flow_q75, alpha=0.4, color='blue', label='Interquartile Range')
+        
+        # Plot the 90% confidence interval (5th to 95th percentile)
+        plt.fill_between(flow_mean.index, flow_q05, flow_q95, alpha=0.3, color='skyblue', label='90% Confidence Interval')
+        
+        # Plot the mean and median
+        plt.plot(flow_mean.index, flow_mean, 'r-', linewidth=2, label='Mean')
+        plt.plot(flow_median.index, flow_median, 'k--', linewidth=1.5, label='Median')
+        
+        # Add labels and legend
+        plt.xlabel('Date')
+        plt.ylabel('Streamflow')
+        plt.title(f'Ensemble Streamflow Statistics ({len(streamflow_data)} Runs)')
+        plt.legend()
+        plt.grid(True)
+        
+        # Format x-axis dates
+        plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+        plt.gcf().autofmt_xdate()
+        
+        # Save the plot
+        plt.savefig(analysis_dir / "ensemble_streamflow_statistics.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create a summary report
+        with open(analysis_dir / "ensemble_analysis_report.txt", 'w') as f:
+            f.write(f"Ensemble Analysis Report\n")
+            f.write(f"=======================\n\n")
+            f.write(f"Experiment ID: {self.experiment_id}\n")
+            f.write(f"Ensemble Size: {len(run_dirs)}\n")
+            f.write(f"Successful Runs: {len(streamflow_data)}\n\n")
+            
+            f.write(f"Time Period: {all_flows.index.min()} to {all_flows.index.max()}\n")
+            f.write(f"Number of Time Steps: {len(all_flows)}\n\n")
+            
+            f.write(f"Streamflow Statistics (over all runs):\n")
+            f.write(f"  Overall Mean: {flow_mean.mean():.2f}\n")
+            f.write(f"  Overall Median: {flow_median.mean():.2f}\n")
+            f.write(f"  Maximum Value: {flow_max.max():.2f}\n")
+            f.write(f"  Minimum Value: {flow_min.min():.2f}\n")
+            f.write(f"  Average Std Dev: {flow_std.mean():.2f}\n\n")
+            
+            f.write(f"Files Generated:\n")
+            f.write(f"  - all_ensemble_streamflows.csv: Combined streamflow time series for all runs\n")
+            f.write(f"  - ensemble_statistics.csv: Statistical metrics for each time step\n")
+            f.write(f"  - ensemble_streamflow_statistics.png: Visualization of ensemble statistics\n\n")
+            
+            f.write(f"Generated on: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        
+        self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
+        return analysis_dir
