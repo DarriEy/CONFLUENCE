@@ -34,6 +34,8 @@ pip install -r requirements.txt
 3. Clone and compile/install the desired/required binaries
 
 - SUMMA (https://github.com/CH-Earth/summa.git)
+- FUSE (https://github.com/CyrilThebault/fuse)
+- MESH (https://github.com/MESH-Model/MESH-Dev)
 - mizuRoute (https://github.com/ESCOMP/mizuRoute.git)
 - TauDEM (https://github.com/dtarb/TauDEM.git)
 - Ostrich (http://www.civil.uwaterloo.ca/envmodelling/Ostrich.html)
@@ -48,7 +50,7 @@ pip install -r requirements.txt
 1. Set up your project configuration in `config_active.yaml`
 2. Run the main CONFLUENCE script:
 
-python CONFLUENCE.py
+python CONFLUENCE.py --config path/to/your/config_active.yaml
 
 or
 

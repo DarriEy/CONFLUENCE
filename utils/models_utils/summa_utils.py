@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional
 import subprocess
 import math
 import time
+import netCDF4 as nc4 # type: ignore
+import re 
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -2057,7 +2059,7 @@ class SUMMAPostprocessor:
         
         # Read the netCDF file
         try:
-            import xarray as xr
+            import xarray as xr # type: ignore
             
             self.logger.info(f"Reading SUMMA output from {summa_output_file}")
             ds = xr.open_dataset(summa_output_file)
@@ -2168,7 +2170,7 @@ class SUMMAPostprocessor:
                 
                 # Create a diagnostic plot if matplotlib is available
                 try:
-                    import matplotlib.pyplot as plt
+                    import matplotlib.pyplot as plt # type: ignore
                     
                     # Plot the main discharge
                     plt.figure(figsize=(12, 6))
@@ -3255,7 +3257,7 @@ class SummaPreProcessor_point:
         )
         
         # Update global tables using pd.concat instead of append
-        import pandas as pd
+        import pandas as pd # type: ignore
         plumber2_vegTable = pd.concat([plumber2_vegTable, vegTable_site.to_frame().T])
         
         # Use assign for mpTable and then rename
@@ -3372,7 +3374,7 @@ class SummaPreProcessor_point:
         """
         import math
         import calendar
-        import numpy as np
+        import numpy as np # type: ignore
         
         # Find number of years in existing data
         n_data = len(dat.groupby('time.year').count().year)
@@ -3609,8 +3611,8 @@ class SummaPreProcessor_point:
         Returns:
             pd.Series: Updated MP table
         """
-        import numpy as np
-        import pandas as pd
+        import numpy as np # type: ignore
+        import pandas as pd # type: ignore
         
         # Check which hemisphere we're in
         in_SH = False
@@ -4176,3 +4178,192 @@ class SummaPreProcessor_point:
         with open(self.setting_path / 'list_site_outputs.txt', 'w') as f:
             for item in self.output_path_list:
                 f.write(f"{str(item)}\n")
+
+
+class LargeSampleEmulator:
+    """
+    Handles the setup for large sample emulation, primarily by generating
+    spatially varying trial parameter files based on random sampling within
+    defined bounds.
+    """
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        self.config = config
+        self.logger = logger
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.settings_path = self.project_dir / 'settings' / 'SUMMA'
+        self.emulator_output_dir = self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID')
+        self.emulator_output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.local_param_info_path = self.settings_path / 'localParamInfo.txt'
+        self.basin_param_info_path = self.settings_path / 'basinParamInfo.txt'
+        self.attribute_file_path = self.settings_path / self.config.get('SETTINGS_SUMMA_ATTRIBUTES')
+        self.trial_param_output_path = self.emulator_output_dir / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc"
+
+        # Get parameters to vary from config, handle potential None or empty string
+        local_params_str = self.config.get('LOCAL_PARAMS_TO_EMULATE', '')
+        basin_params_str = self.config.get('BASIN_PARAMS_TO_EMULATE', '')
+        self.local_params_to_emulate = [p.strip() for p in local_params_str.split(',') if p.strip()] if local_params_str else []
+        self.basin_params_to_emulate = [p.strip() for p in basin_params_str.split(',') if p.strip()] if basin_params_str else []
+
+        self.logger.info(f"Local parameters to emulate: {self.local_params_to_emulate}")
+        self.logger.info(f"Basin parameters to emulate: {self.basin_params_to_emulate}")
+
+
+    @get_function_logger
+    def run_emulation_setup(self):
+        """Orchestrates the setup for large sample emulation."""
+        self.logger.info("Starting Large Sample Emulation setup")
+        try:
+            local_bounds = self._parse_param_info(self.local_param_info_path, self.local_params_to_emulate)
+            basin_bounds = self._parse_param_info(self.basin_param_info_path, self.basin_params_to_emulate)
+
+            if not local_bounds and not basin_bounds:
+                 self.logger.warning("No parameters specified or found for emulation. Skipping trial parameter file generation.")
+                 return None # Indicate nothing was generated
+
+            self.generate_spatially_varying_trial_params(local_bounds, basin_bounds)
+            self.logger.info(f"Successfully generated emulator trial parameter file: {self.trial_param_output_path}")
+            return self.trial_param_output_path
+
+        except FileNotFoundError as e:
+            self.logger.error(f"Required file not found during emulation setup: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during large sample emulation setup: {str(e)}")
+            raise
+
+    def _parse_param_info(self, file_path: Path, param_names: list) -> Dict[str, Dict[str, float]]:
+        """Parses min/max bounds from SUMMA parameter info files."""
+        bounds = {}
+        if not param_names:
+            return bounds # Return empty if no parameters requested
+
+        self.logger.info(f"Parsing parameter bounds from: {file_path}")
+        if not file_path.exists():
+            raise FileNotFoundError(f"Parameter info file not found: {file_path}")
+
+        found_params = set()
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('!'):
+                        continue
+
+                    # Use regex for more robust parsing, allowing for variable whitespace
+                    match = re.match(r"^\s*(\w+)\s*\|\s*([\d\.\-eE]+)\s*\|\s*([\d\.\-eE]+)\s*\|.*$", line)
+                    if match:
+                        param_name, min_val_str, max_val_str = match.groups()
+                        if param_name in param_names:
+                            try:
+                                min_val = float(min_val_str)
+                                max_val = float(max_val_str)
+                                if min_val >= max_val:
+                                    self.logger.warning(f"Parameter '{param_name}' in {file_path} has min >= max ({min_val} >= {max_val}). Check file.")
+                                bounds[param_name] = {'min': min_val, 'max': max_val}
+                                found_params.add(param_name)
+                                self.logger.debug(f"Found bounds for {param_name}: min={min_val}, max={max_val}")
+                            except ValueError:
+                                self.logger.warning(f"Could not parse bounds for parameter '{param_name}' in line: {line}")
+                    else:
+                         # Log lines that don't match the expected format (excluding comments/empty)
+                         self.logger.debug(f"Skipping non-parameter line or unexpected format in {file_path}: {line}")
+
+
+            # Check if all requested parameters were found
+            missing_params = set(param_names) - found_params
+            if missing_params:
+                self.logger.warning(f"Could not find bounds for the following parameters in {file_path}: {', '.join(missing_params)}")
+
+        except Exception as e:
+            self.logger.error(f"Error reading or parsing {file_path}: {str(e)}")
+            raise
+        return bounds
+
+    @get_function_logger
+    def generate_spatially_varying_trial_params(self, local_bounds: Dict, basin_bounds: Dict):
+        """Generates the trialParamFile.nc with spatially varying parameters."""
+        self.logger.info(f"Generating spatially varying trial parameters file at: {self.trial_param_output_path}")
+
+        if not self.attribute_file_path.exists():
+            raise FileNotFoundError(f"Attribute file not found, needed for HRU/GRU info: {self.attribute_file_path}")
+
+        # Read HRU and GRU information from the attributes file
+        with nc4.Dataset(self.attribute_file_path, 'r') as att_ds:
+            if 'hru' not in att_ds.dimensions:
+                raise ValueError(f"Dimension 'hru' not found in attributes file: {self.attribute_file_path}")
+            num_hru = len(att_ds.dimensions['hru'])
+            hru_ids = att_ds.variables['hruId'][:]
+            hru2gru_ids = att_ds.variables['hru2gruId'][:]
+
+            # Need gruId variable and dimension for basin params
+            if self.basin_params_to_emulate:
+                 if 'gru' not in att_ds.dimensions or 'gruId' not in att_ds.variables:
+                      raise ValueError(f"Dimension 'gru' or variable 'gruId' not found in attributes file, needed for basin parameters: {self.attribute_file_path}")
+                 num_gru = len(att_ds.dimensions['gru'])
+                 gru_ids = att_ds.variables['gruId'][:]
+                 # Create a mapping from gru_id to its index in the gru dimension
+                 gru_id_to_index = {gid: idx for idx, gid in enumerate(gru_ids)}
+            else:
+                num_gru = 0 # Not needed if no basin params
+
+
+        self.logger.info(f"Found {num_hru} HRUs and {num_gru} GRUs.")
+
+        # Create the output NetCDF file
+        with nc4.Dataset(self.trial_param_output_path, 'w', format='NETCDF4') as tp_ds:
+            # Define dimensions
+            tp_ds.createDimension('hru', num_hru)
+
+            # --- Create hruId variable (essential for matching) ---
+            hru_id_var = tp_ds.createVariable('hruId', 'i4', ('hru',))
+            hru_id_var[:] = hru_ids
+            hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
+            hru_id_var.units = '-'
+
+            # --- Generate and write Local (HRU-level) parameters ---
+            for param_name, bounds in local_bounds.items():
+                self.logger.debug(f"Generating random values for HRU parameter: {param_name}")
+                min_val, max_val = bounds['min'], bounds['max']
+                # Generate num_hru random values within the bounds
+                random_values = np.random.uniform(min_val, max_val, num_hru).astype(np.float64) # Use float64 for safety
+
+                # Create variable in NetCDF
+                param_var = tp_ds.createVariable(param_name, 'f8', ('hru',), fill_value=False) # Use f8 = float64
+                param_var[:] = random_values
+                # Add attributes if needed (e.g., long_name, units - though often omitted in trialParams)
+                param_var.long_name = f"Trial value for {param_name}"
+                param_var.units = "N/A" # Usually unitless in trialParam, units applied later via tables
+
+            # --- Generate and write Basin (GRU-level) parameters ---
+            for param_name, bounds in basin_bounds.items():
+                self.logger.debug(f"Generating random values for GRU parameter: {param_name}")
+                min_val, max_val = bounds['min'], bounds['max']
+                # Generate num_gru random values (one per GRU)
+                gru_random_values = np.random.uniform(min_val, max_val, num_gru).astype(np.float64)
+
+                # Map GRU values to HRUs
+                hru_mapped_values = np.zeros(num_hru, dtype=np.float64)
+                for i in range(num_hru):
+                    hru_gru_id = hru2gru_ids[i] # Get the GRU ID for this HRU
+                    gru_index = gru_id_to_index.get(hru_gru_id) # Find the index corresponding to this GRU ID
+                    if gru_index is not None:
+                        hru_mapped_values[i] = gru_random_values[gru_index]
+                    else:
+                        self.logger.warning(f"Could not find index for GRU ID {hru_gru_id} associated with HRU {hru_ids[i]}. Setting parameter {param_name} to 0 for this HRU.")
+                        hru_mapped_values[i] = 0.0 # Or handle as an error, or use default?
+
+                # Create variable in NetCDF (dimension is still 'hru')
+                param_var = tp_ds.createVariable(param_name, 'f8', ('hru',), fill_value=False)
+                param_var[:] = hru_mapped_values
+                param_var.long_name = f"Trial value for {param_name} (GRU-based)"
+                param_var.units = "N/A"
+
+            # Add global attributes if desired
+            tp_ds.description = "SUMMA Trial Parameter file with spatially varying values for large sample emulation"
+            tp_ds.history = f"Created on {datetime.now().isoformat()} by CONFLUENCE LargeSampleEmulator"
+            tp_ds.confluence_experiment_id = self.config.get('EXPERIMENT_ID')
+
+        self.logger.info(f"Finished writing emulator trial parameter file: {self.trial_param_output_path}")
