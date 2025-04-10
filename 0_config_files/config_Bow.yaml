@@ -209,14 +209,14 @@ SUMMA_INSTALL_PATH: default                                    # SUMMA installat
 SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
-SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
+SETTINGS_SUMMA_USE_PARALLEL_SUMMA: true                       # Run SUMMA in parallel
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
 SETTINGS_SUMMA_MEM: 0                                          # Requested memory for parallel SUMMA run
 SETTINGS_SUMMA_GRU_COUNT: 118                                  # Number of GRUs in SUMMA shapefile
 SETTINGS_SUMMA_GRU_PER_JOB: 10                                 # Number of GRUs per job
 SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
-SETTINGS_SUMMA_PARALLEL_EXE: summa_actors.exe                  # Name of parallel SUMMA binary
+SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA binary
 
 # Mizuroute settings
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".

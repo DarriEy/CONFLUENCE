@@ -875,7 +875,6 @@ class SummaPreProcessor_spatial:
 
         # Process each forcing file
         for file in forcing_files:
-            self.logger.info(f"Processing {file}")
             #try: 
             output_file = self.forcing_summa_path / file
             #if output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS') != True :
@@ -883,14 +882,8 @@ class SummaPreProcessor_spatial:
             #å    continue
 
             with xr.open_dataset(self.forcing_basin_path / file) as dat:
-                # Temperature lapse rates
-                self.logger.info(f"Current data: {dat}")
-                self.logger.info(f"lapse values: {dat['hruId'].values}")
-                self.logger.info(f"lapse values: {lapse_values['lapse_values'].loc[dat['hruId'].values]}")
-
                 lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
                 addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
-                self.logger.info(f"to add: {addThis}")
 
                 # Apply datastep
                 dat['data_step'] = self.data_step
@@ -1807,7 +1800,6 @@ class SummaPreProcessor_spatial:
                         self.logger.warning(f'Index and mode soil class do not match at hru_id {attribute_hru}')
                         tmp_sc = -999
                     
-                    self.logger.info(f"Replacing soil class {att['soilTypeIndex'][idx]} with {tmp_sc} at HRU {attribute_hru}")
                     att['soilTypeIndex'][idx] = tmp_sc
 
     def insert_land_class(self, attribute_file):
@@ -1866,7 +1858,6 @@ class SummaPreProcessor_spatial:
                         else:
                             is_water += 1  # HRU is exclusively water
                     
-                    self.logger.info(f"Replacing land class {att['vegTypeIndex'][idx]} with {tmp_lc} at HRU {attribute_hru}")
                     att['vegTypeIndex'][idx] = tmp_lc
 
                 self.logger.info(f"{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.")

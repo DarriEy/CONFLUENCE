@@ -117,11 +117,11 @@ class CONFLUENCE:
             (self.acquire_attributes, lambda: (self.project_dir / "attributes" / "elevation" / "dem" / f"domain_{self.domain_name}_elv.tif").exists()),
             (self.define_domain, lambda: (self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()),
             (self.plot_domain, lambda: (self.project_dir / "plots" / "domain" / 'domain_map.png').exists()),
-            (self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
+            #(self.discretize_domain, lambda: (self.project_dir / "shapefiles" / "catchment" / f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()),
             (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
             
             # Model agnostic data pre- processing
-            (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv1").exists()),
+            (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
