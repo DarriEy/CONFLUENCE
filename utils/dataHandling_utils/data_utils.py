@@ -637,7 +637,7 @@ class ObservedDataProcessor:
 
             elif self.data_provider == 'WSC':
                 if self.config.get('DOWNLOAD_USGS_DATA') == True:
-                    self._download_and_process_wsc_data()
+                    self._extract_and_process_hydat_data()
                 else:
                     self._process_wsc_data()
             elif self.data_provider == 'VI':
@@ -648,22 +648,28 @@ class ObservedDataProcessor:
         except Exception as e:
             self.logger.error(f'Issue in streamflow data preprocessing: {e}')
 
-    def _download_and_process_wsc_data(self):
+    def _extract_and_process_hydat_data(self):
         """
-        Process Water Survey of Canada (WSC) streamflow data by fetching it directly from current WSC endpoints.
+        Process Water Survey of Canada (WSC) streamflow data by fetching it directly from the HYDAT SQLite database.
         
         This function fetches discharge data for the specified WSC station,
         processes it, and resamples it to the configured time step.
         """
-        import requests
-        import io
+        import sqlite3
         import pandas as pd
         from datetime import datetime, timedelta
+        from pathlib import Path
         
-        self.logger.info("Processing WSC streamflow data directly from API")
+        self.logger.info("Processing WSC streamflow data from HYDAT database")
         
         # Get configuration parameters
         station_id = self.config.get('STATION_ID')
+        hydat_path = self.config.get('HYDAT_PATH')
+        
+        # Check if HYDAT_PATH exists
+        if not hydat_path or not Path(hydat_path).exists():
+            self.logger.error(f"HYDAT database not found at: {hydat_path}")
+            raise FileNotFoundError(f"HYDAT database not found at: {hydat_path}")
         
         # Parse and format the start date properly
         start_date_raw = self.config.get('EXPERIMENT_TIME_START')
@@ -684,303 +690,146 @@ class ObservedDataProcessor:
             self.logger.warning(f"Error parsing start date: {e}. Using default date format.")
             start_date = start_date_raw[:10]
         
-        # Format end date as YYYY-MM-DD
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        # Parse the date components for SQL queries
+        try:
+            start_year = int(start_date.split('-')[0])
+            end_year = datetime.now().year
+            self.logger.info(f"Querying data from year {start_year} to {end_year}")
+        except Exception as e:
+            self.logger.warning(f"Error parsing date components: {e}. Using default range.")
+            start_year = 1900
+            end_year = datetime.now().year
         
         # Log the station and date range
-        self.logger.info(f"Retrieving discharge data for WSC station {station_id}")
-        self.logger.info(f"Time period: {start_date} to {end_date}")
+        self.logger.info(f"Retrieving discharge data for WSC station {station_id} from HYDAT database")
+        self.logger.info(f"Database path: {hydat_path}")
+        self.logger.info(f"Time period: {start_year} to {end_year}")
         
-        # Current URL patterns for WSC data
-        # Format without periods, e.g., 05BB001 -> 05bb001
-        station_id_lower = station_id.lower()
-        
-        # Define provinces with their codes
-        provinces = {
-            "AB": "alberta",
-            "BC": "british-columbia",
-            "MB": "manitoba",
-            "NB": "new-brunswick",
-            "NL": "newfoundland-and-labrador",
-            "NS": "nova-scotia",
-            "NT": "northwest-territories",
-            "NU": "nunavut",
-            "ON": "ontario",
-            "PE": "prince-edward-island",
-            "QC": "quebec",
-            "SK": "saskatchewan",
-            "YT": "yukon"
-        }
-        
-        # Determine the province from the station ID
-        # WSC station IDs are structured where first two digits indicate the province
-        province_code = station_id[:2]
-        province_map = {
-            "01": "NL", "02": "NS", "03": "NB", "04": "QC", "05": "QC",
-            "06": "ON", "07": "ON", "08": "MB", "09": "SK", "10": "SK",
-            "11": "AB", "12": "BC", "13": "YT", "14": "NT", "15": "NU"
-        }
-        
-        province = None
-        if province_code in province_map:
-            province = provinces.get(province_map[province_code])
-        
-        if province is None:
-            self.logger.warning(f"Could not determine province from station ID {station_id}. Will try all provinces.")
-        else:
-            self.logger.info(f"Determined province as {province} based on station ID {station_id}")
-        
-        # URLs to try - organized by priority
-        urls_to_try = []
-        
-        # 1. Current Water Office real-time data - try specific province if available
-        if province:
-            urls_to_try.append(f"https://wateroffice.ec.gc.ca/services/real_time_data/csv/inline?stations={station_id}&parameters=47")
-            urls_to_try.append(f"https://wateroffice.ec.gc.ca/report/real_time_e.html?stn={station_id}")
-        
-        # 2. Historical data - try both CSV and HTML
-        urls_to_try.append(f"https://wateroffice.ec.gc.ca/report/historical_e.html?stn={station_id}")
-        urls_to_try.append(f"https://wateroffice.ec.gc.ca/services/historical/inline?stations={station_id}&parameters=47&start_date={start_date}&end_date={end_date}")
-        
-        # 3. Add HYDAT links (National Water Data Archive)
-        urls_to_try.append(f"https://wateroffice.ec.gc.ca/report/data_e.html?type=h2oArc&stn={station_id}")
-        
-        # 4. Try directly with the WSC Data Mart endpoints
-        urls_to_try.append(f"https://dd.weather.gc.ca/hydrometric/csv/daily/{province}/{station_id}_daily_mean.csv" if province else None)
-        urls_to_try.append(f"https://dd.weather.gc.ca/hydrometric/csv/daily/all/{station_id}_daily_mean.csv")
-        
-        # Filter out None values
-        urls_to_try = [url for url in urls_to_try if url]
-        
-        # Try each URL until we get a successful response
-        df = None
-        response = None
-        successful_url = None
-        html_content = False
-        
-        for url in urls_to_try:
-            self.logger.info(f"Trying to fetch data from: {url}")
-            try:
-                response = requests.get(url, timeout=30)
-                self.logger.info(f"Response status code: {response.status_code}")
-                
-                if response.status_code == 200:
-                    # Check if response is HTML
-                    if response.text.strip().lower().startswith("<!doctype html>") or "<html" in response.text.lower():
-                        self.logger.warning(f"Response from {url} is HTML, not CSV data")
-                        html_content = True
-                        continue
-                    
-                    # Check if we got valid data
-                    if len(response.text) > 100:  # Arbitrary minimal content length
-                        self.logger.info(f"Successfully retrieved data from {url}")
-                        successful_url = url
-                        break
-                    else:
-                        self.logger.warning(f"Response from {url} appears too short: {len(response.text)} bytes")
-                else:
-                    self.logger.warning(f"Failed to retrieve data from {url}: Status code {response.status_code}")
-            except Exception as e:
-                self.logger.warning(f"Error fetching data from {url}: {e}")
-        
-        # If we couldn't get data from direct URLs, try using a manual download approach
-        if not successful_url and not html_content:
-            self.logger.warning("Trying alternative approach - using the WSC data download form")
+        try:
+            # Connect to the SQLite database
+            conn = sqlite3.connect(hydat_path)
             
-            # For now, we'll direct the user to manually download the data
-            self.logger.error(
-                "Could not automatically retrieve WSC data. Please manually download data from "
-                f"https://wateroffice.ec.gc.ca/report/historical_e.html?stn={station_id} and "
-                f"place it in {self.streamflow_raw_path}/{self.streamflow_raw_name}"
-            )
-            raise ValueError(
-                f"Could not retrieve WSC data for station {station_id}. "
-                "Please download data manually and specify the path in the configuration."
-            )
-        
-        # Handle HTML response (provide instructions)
-        if html_content and not successful_url:
-            self.logger.error(
-                "Received HTML instead of data. WSC now requires interactive steps to download data. "
-                f"Please manually download data from https://wateroffice.ec.gc.ca/search/historical_e.html "
-                f"for station {station_id} and place it in {self.streamflow_raw_path}/{self.streamflow_raw_name}"
-            )
-            raise ValueError(
-                f"WSC data for station {station_id} requires manual download. "
-                "Please follow the instructions in the log."
-            )
-        
-        # If we have a successful URL and response, process the data
-        if successful_url and response:
-            try:
-                data_str = response.text
+            # First, check if the station exists in the database
+            station_query = "SELECT * FROM STATIONS WHERE STATION_NUMBER = ?"
+            station_df = pd.read_sql_query(station_query, conn, params=(station_id,))
+            
+            if station_df.empty:
+                self.logger.error(f"Station {station_id} not found in HYDAT database")
+                raise ValueError(f"Station {station_id} not found in HYDAT database")
+            
+            self.logger.info(f"Found station {station_id} in HYDAT database")
+            if 'STATION_NAME' in station_df.columns:
+                self.logger.info(f"Station name: {station_df['STATION_NAME'].iloc[0]}")
+            
+            # Query for daily discharge data
+            # HYDAT stores discharge data in DLY_FLOWS table
+            # The column names are like FLOW1, FLOW2, ... FLOW31 for each day of the month
+            query = """
+            SELECT * FROM DLY_FLOWS 
+            WHERE STATION_NUMBER = ? 
+            AND YEAR >= ? AND YEAR <= ?
+            ORDER BY YEAR, MONTH
+            """
+            
+            self.logger.info(f"Executing SQL query for daily flows...")
+            dly_flow_df = pd.read_sql_query(query, conn, params=(station_id, start_year, end_year))
+            
+            if dly_flow_df.empty:
+                self.logger.error(f"No flow data found for station {station_id} in the specified date range")
+                raise ValueError(f"No flow data found for station {station_id} in the specified date range")
+            
+            self.logger.info(f"Retrieved {len(dly_flow_df)} monthly records from HYDAT")
+            
+            # Now we need to reshape the data from the HYDAT format to a time series
+            # HYDAT stores each month as a row, with columns FLOW1, FLOW2, ... FLOW31
+            
+            # Create an empty list to store the time series data
+            time_series_data = []
+            
+            # Process each row (each row is a month of data)
+            for _, row in dly_flow_df.iterrows():
+                year = row['YEAR']
+                month = row['MONTH']
                 
-                # Save the raw data for reference
-                raw_data_path = self.streamflow_raw_path / f"{station_id}_raw_data.csv"
-                raw_data_path.parent.mkdir(parents=True, exist_ok=True)
+                # Days in the month (accounting for leap years)
+                days_in_month = 31  # Default max
+                if month == 2:  # February
+                    if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):  # Leap year
+                        days_in_month = 29
+                    else:
+                        days_in_month = 28
+                elif month in [4, 6, 9, 11]:  # April, June, September, November
+                    days_in_month = 30
                 
-                with open(raw_data_path, 'w') as f:
-                    f.write(data_str)
-                
-                self.logger.info(f"Saved raw data to {raw_data_path}")
-                
-                # Try to parse the CSV data
-                try:
-                    # First try with default pandas CSV parsing
-                    df = pd.read_csv(io.StringIO(data_str))
-                    
-                    # Check if we actually got data or just headers
-                    if len(df) <= 1:
-                        raise ValueError("No data rows found")
-                    
-                except Exception as first_error:
-                    self.logger.warning(f"Initial parsing failed: {first_error}")
-                    
-                    # Try alternative parsing approaches
-                    try:
-                        # Try to detect the format by looking at the first few lines
-                        lines = data_str.splitlines()
-                        self.logger.debug(f"First few lines of data: {lines[:3]}")
+                # Extract flow values for each day and create a date
+                for day in range(1, days_in_month + 1):
+                    flow_col = f'FLOW{day}'
+                    if flow_col in row and not pd.isna(row[flow_col]):
+                        date = f"{year}-{month:02d}-{day:02d}"
+                        flow = row[flow_col]
                         
-                        # Check if there are headers or comments
-                        if lines and any(line.startswith('#') for line in lines[:10]):
-                            # Skip comment lines
-                            skip_rows = 0
-                            for line in lines:
-                                if line.startswith('#'):
-                                    skip_rows += 1
-                                else:
-                                    break
-                            
-                            self.logger.info(f"Skipping {skip_rows} comment rows")
-                            df = pd.read_csv(io.StringIO(data_str), skiprows=skip_rows)
-                        else:
-                            # Try with different delimiters
-                            for sep in [',', ';', '\t', '|']:
-                                try:
-                                    df = pd.read_csv(io.StringIO(data_str), sep=sep)
-                                    if len(df.columns) > 1:  # If we got multiple columns, it worked
-                                        self.logger.info(f"Successfully parsed with delimiter: '{sep}'")
-                                        break
-                                except:
-                                    continue
-                    
-                    except Exception as second_error:
-                        self.logger.error(f"All parsing attempts failed: {second_error}")
-                        raise ValueError(f"Could not parse data from {successful_url}")
-                
-                # Display column info for debugging
-                self.logger.info(f"Columns in the data: {df.columns.tolist()}")
-                
-                # Try to identify the date and discharge columns
-                date_col = None
-                discharge_col = None
-                
-                # Common patterns for date columns
-                date_patterns = ['date', 'time', 'datetime', 'day']
-                # Common patterns for discharge columns
-                discharge_patterns = ['flow', 'discharge', 'value', 'mean', 'q', 'debit']
-                
-                # Find date column
-                for col in df.columns:
-                    if any(pattern in str(col).lower() for pattern in date_patterns):
-                        date_col = col
-                        break
-                
-                # If no date column found, use the first column if it looks like a date
-                if date_col is None and len(df.columns) > 0:
-                    # Try to convert the first column to datetime
-                    try:
-                        pd.to_datetime(df.iloc[:, 0])
-                        date_col = df.columns[0]
-                        self.logger.info(f"Using first column as date column: {date_col}")
-                    except:
-                        pass
-                
-                # Find discharge column
-                for col in df.columns:
-                    if any(pattern in str(col).lower() for pattern in discharge_patterns):
-                        discharge_col = col
-                        break
-                
-                # If no discharge column found, try to identify a numeric column that's not the date
-                if discharge_col is None:
-                    for col in df.columns:
-                        if col != date_col:
-                            try:
-                                # Try to convert a sample to float
-                                sample = df[col].iloc[:10].astype(float)
-                                if not sample.isna().all():
-                                    discharge_col = col
-                                    self.logger.info(f"Using column {col} as discharge column based on numeric content")
-                                    break
-                            except:
-                                continue
-                
-                if date_col is None or discharge_col is None:
-                    self.logger.error(f"Could not identify date and discharge columns in data")
-                    self.logger.debug(f"Available columns: {df.columns.tolist()}")
-                    raise ValueError("Could not identify date and discharge columns in WSC data")
-                
-                self.logger.info(f"Using date column: {date_col}")
-                self.logger.info(f"Using discharge column: {discharge_col}")
-                
-                # Convert date column to datetime if it's not already
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                
-                # Drop rows with invalid dates
-                invalid_dates = df[date_col].isna().sum()
-                if invalid_dates > 0:
-                    self.logger.warning(f"Dropping {invalid_dates} rows with invalid dates")
-                    df = df.dropna(subset=[date_col])
-                
-                # Convert discharge values to numeric
-                df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
-                
-                # Drop rows with NaN discharge values
-                na_count = df[discharge_col].isna().sum()
-                if na_count > 0:
-                    self.logger.warning(f"Dropping {na_count} rows with non-numeric discharge values")
-                    df = df.dropna(subset=[discharge_col])
-                
-                # Set the date column as index
-                df.set_index(date_col, inplace=True)
-                
-                # Create the discharge_cms column (WSC data is already in m³/s)
-                df['discharge_cms'] = df[discharge_col]
-                
-                # Filter the data to our date range
-                try:
-                    start_datetime = pd.to_datetime(start_date)
-                    # Add one day to end_date to include that day in the result
-                    end_datetime = pd.to_datetime(end_date) + timedelta(days=1)
-                    df = df[(df.index >= start_datetime) & (df.index <= end_datetime)]
-                    self.logger.info(f"Filtered data to date range: {start_date} to {end_date}")
-                    self.logger.info(f"Records after date filtering: {len(df)}")
-                except Exception as e:
-                    self.logger.warning(f"Error filtering by date range: {e}")
-                
-                # Check if we have data
-                if df.empty:
-                    self.logger.error("No data available after filtering")
-                    raise ValueError("No data available for the specified date range")
-                
-                self.logger.info(f"Total records after processing: {len(df)}")
-                
-                # Call the resampling and saving function
-                self._resample_and_save(df['discharge_cms'])
-                
-                self.logger.info(f"Successfully processed WSC data for station {station_id}")
-                
-            except Exception as e:
-                self.logger.error(f"Error processing WSC data: {e}")
-                import traceback
-                self.logger.error(traceback.format_exc())
-                raise
-        else:
-            self.logger.error("Could not retrieve WSC data from any of the tried URLs")
-            raise ValueError("Could not retrieve WSC data. Please check the station ID or try again later.")
-
+                        # Check for data flags - HYDAT has flags for data quality
+                        symbol_col = f'SYMBOL{day}'
+                        symbol = row.get(symbol_col, '')
+                        
+                        # Skip values with certain flags if needed
+                        # E.g., 'E' for Estimate, 'A' for Partial Day, etc.
+                        # Uncomment if you want to filter based on symbols
+                        # if symbol in ['B', 'D', 'E']:
+                        #     continue
+                        
+                        time_series_data.append({'date': date, 'flow': flow, 'symbol': symbol})
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(time_series_data)
+            
+            if df.empty:
+                self.logger.error("No valid flow data found after processing")
+                raise ValueError("No valid flow data found after processing")
+            
+            # Convert date to datetime
+            df['date'] = pd.to_datetime(df['date'])
+            
+            # Set date as index
+            df.set_index('date', inplace=True)
+            
+            # Sort index to ensure chronological order
+            df.sort_index(inplace=True)
+            
+            # Filter to the exact date range we want
+            start_datetime = pd.to_datetime(start_date)
+            end_datetime = pd.to_datetime(datetime.now().strftime("%Y-%m-%d"))
+            df = df[(df.index >= start_datetime) & (df.index <= end_datetime)]
+            
+            # Check if we have data after filtering
+            if df.empty:
+                self.logger.error("No data available after filtering to the specified date range")
+                raise ValueError("No data available for the specified date range")
+            
+            self.logger.info(f"Processed {len(df)} daily flow records")
+            
+            # Create the discharge_cms column (HYDAT data is in m³/s)
+            df['discharge_cms'] = df['flow']
+            
+            # Basic statistics for logging
+            self.logger.info(f"Date range: {df.index.min()} to {df.index.max()}")
+            self.logger.info(f"Min flow: {df['discharge_cms'].min()} m³/s")
+            self.logger.info(f"Max flow: {df['discharge_cms'].max()} m³/s")
+            self.logger.info(f"Mean flow: {df['discharge_cms'].mean()} m³/s")
+            
+            # Call the resampling and saving function
+            self._resample_and_save(df['discharge_cms'])
+            
+            self.logger.info(f"Successfully processed WSC data for station {station_id}")
+            
+            conn.close()
+            
+        except Exception as e:
+            self.logger.error(f"Error processing WSC data from HYDAT: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+        
     def _process_vi_data(self):
         self.logger.info("Processing VI (Iceland) streamflow data")
         vi_data = pd.read_csv(self.streamflow_raw_path / self.streamflow_raw_name, 

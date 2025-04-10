@@ -110,11 +110,9 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 # Geospatial attributes for ML emulator
 
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True
+PROCESS_CHARACTERISTIC_ATTRIBUTES: False
 # Enable/disable attribute processing
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True                           # Whether to process catchment attributes
-
+  
 # Processing parameters
 CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
 
