@@ -28,7 +28,7 @@ from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type
 
 # Model specific utilities
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
-from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point, LargeSampleEmulator # type: ignore
+from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
@@ -557,7 +557,7 @@ class CONFLUENCE:
     def run_large_sample_emulation(self):
         """
         Run large sample emulation to generate spatially varying trial parameters.
-        This creates parameter sets for ensemble modeling or sensitivity analysis.
+        Creates parameter sets for ensemble modeling, runs simulations, and analyzes results.
         """
         self.logger.info("Starting large sample emulation")
         
@@ -567,7 +567,7 @@ class CONFLUENCE:
             return None
         
         try:
-            # Create the emulator instance
+            # Import the emulator
             from utils.emulation_utils.large_sample_emulator import LargeSampleEmulator
             
             # Initialize the emulator
@@ -576,40 +576,31 @@ class CONFLUENCE:
             # Run the emulation setup
             emulator_output = emulator.run_emulation_setup()
             
-            if emulator_output:
-                self.logger.info(f"Large sample emulation completed successfully. Output: {emulator_output}")
-                # If the emulation was successful and we have SUMMA as a model, we can update the trial param file
-                if 'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','):
-                    # Get the path to settings
-                    settings_path = self._get_default_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA/')
-                    # Create a symlink or copy the file to the trialParams.nc location
-                    trial_params_path = settings_path / self.config.get('SETTINGS_SUMMA_TRIALPARAMS', 'trialParams.nc')
-                    
-                    # Check if it's a relative path
-                    if not trial_params_path.is_absolute():
-                        trial_params_path = settings_path / trial_params_path
-                    
-                    # If trial params file already exists, create a backup
-                    if trial_params_path.exists():
-                        backup_path = trial_params_path.with_suffix('.nc.bak')
-                        trial_params_path.rename(backup_path)
-                        self.logger.info(f"Created backup of existing trial parameters at: {backup_path}")
-                    
-                    # Create a symlink to the emulator output
-                    try:
-                        # Try using os.symlink
-                        os.symlink(emulator_output, trial_params_path)
-                        self.logger.info(f"Created symlink from {emulator_output} to {trial_params_path}")
-                    except (OSError, NotImplementedError):
-                        # If symlink fails (e.g., on Windows), use a file copy
-                        import shutil
-                        shutil.copy2(emulator_output, trial_params_path)
-                        self.logger.info(f"Created copy of emulator output at {trial_params_path}")
-                
-                return emulator_output
-            else:
+            if not emulator_output:
                 self.logger.warning("Large sample emulation completed but no trial parameter file was generated.")
                 return None
+                
+            self.logger.info(f"Large sample emulation completed successfully. Output: {emulator_output}")
+            
+            # Check if we should run the ensemble simulations
+            run_ensemble = self.config.get('EMULATION_RUN_ENSEMBLE', False)
+            
+            if run_ensemble:
+                self.logger.info("Starting ensemble simulations")
+                ensemble_results = emulator.run_ensemble_simulations()
+                success_count = sum(1 for _, success, _ in ensemble_results if success)
+                self.logger.info(f"Ensemble simulations completed with {success_count} successes out of {len(ensemble_results)}")
+                
+                # Analyze ensemble results if we had successful runs
+                if success_count > 0:
+                    self.logger.info("Starting ensemble results analysis")
+                    analysis_dir = emulator.analyze_ensemble_results()
+                    if analysis_dir:
+                        self.logger.info(f"Ensemble analysis completed. Results saved to: {analysis_dir}")
+                    else:
+                        self.logger.warning("Ensemble analysis did not produce results.")
+            
+            return emulator_output
                 
         except ImportError as e:
             self.logger.error(f"Could not import LargeSampleEmulator: {str(e)}. Ensure the module exists in utils/emulation_utils/")
