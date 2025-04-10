@@ -4,6 +4,8 @@ pandas>=1.2.0
 scipy>=1.6.0
 xarray>=0.16.0
 pint_xarray>=0.4
+pyarrow
+
 
 # Machine learning and data science libraries
 torch>=2.4.1

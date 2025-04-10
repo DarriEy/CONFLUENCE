@@ -216,7 +216,7 @@ class attributeProcessor:
 
     def process_attributes(self) -> pd.DataFrame:
         """
-        Process DEM derivatives, land cover, soil, and forest height attributes.
+        Process all available catchment attributes from multiple datasets.
         """
         try:
             # Dictionary to store all results
@@ -241,6 +241,31 @@ class attributeProcessor:
             self.logger.info("Processing forest height attributes...")
             forest_results = self._process_forest_height_attributes()
             all_results.update(forest_results)
+
+            # Process climate attributes
+            self.logger.info("Processing climate attributes...")
+            climate_results = self._process_climate_attributes()
+            all_results.update(climate_results)
+
+            # Process geological attributes
+            self.logger.info("Processing geological attributes...")
+            #geological_results = self._process_geological_attributes()
+            #all_results.update(geological_results)
+            
+            # Process hydrological attributes
+            self.logger.info("Processing hydrological attributes...")
+            hydrological_results = self._process_hydrological_attributes()
+            all_results.update(hydrological_results)
+            
+            # Process vegetation attributes
+            self.logger.info("Processing vegetation attributes...")
+            vegetation_results = self._process_vegetation_attributes()
+            all_results.update(vegetation_results)
+            
+            # Process irrigation attributes
+            self.logger.info("Processing irrigation attributes...")
+            irrigation_results = self._process_irrigation_attributes()
+            all_results.update(irrigation_results)
             
             # Create a structured DataFrame
             is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
@@ -302,6 +327,881 @@ class attributeProcessor:
         except Exception as e:
             self.logger.error(f"Error processing attributes: {str(e)}")
             raise
+
+    def _process_geological_attributes(self) -> Dict[str, Any]:
+        """
+        Process geological data including rock types and aquifer properties.
+        
+        Sources:
+        - geologic_map: Rock types and lithology
+        - glhymps: Groundwater permeability and porosity
+        """
+        results = {}
+        
+        # Find and check paths for geological data
+        geologic_map_path = self._get_data_path('ATTRIBUTES_GEOLOGIC_MAP_PATH', 'geologic_map')
+        glhymps_path = self._get_data_path('ATTRIBUTES_GLHYMPS_PATH', 'glhymps')
+        
+        self.logger.info(f"Geologic map path: {geologic_map_path}")
+        self.logger.info(f"GLHYMPS path: {glhymps_path}")
+        
+        # Process geological map data (lithology)
+        geo_results = self._process_lithology_data(geologic_map_path)
+        results.update(geo_results)
+        
+        # Process groundwater properties
+        glhymps_results = self._process_glhymps_data(glhymps_path)
+        results.update(glhymps_results)
+        
+        return results
+
+    def _process_lithology_data(self, geologic_map_path: Path) -> Dict[str, Any]:
+        """
+        Process lithology data from geological map shapefiles.
+        
+        Args:
+            geologic_map_path: Path to geological map data
+            
+        Returns:
+            Dictionary of lithology attributes
+        """
+        results = {}
+        
+        # Look for the geology shapefile directory
+        shapefile_dir = geologic_map_path / "GMNA_SHAPES"
+        if not shapefile_dir.exists():
+            self.logger.warning(f"Geology shapefile directory not found at {shapefile_dir}")
+            return results
+        
+        # Check for geologic units shapefile
+        geologic_units_file = shapefile_dir / "Geologic_units.shp"
+        if not geologic_units_file.exists():
+            self.logger.warning(f"Geologic units shapefile not found: {geologic_units_file}")
+            return results
+        
+        self.logger.info(f"Processing lithology data from: {geologic_units_file}")
+        
+        try:
+            # Read the geologic units shapefile using geopandas
+            geology = gpd.read_file(geologic_units_file, engine="fiona")
+
+            # Identify invalid geometries (optional, for debugging)
+            invalid_geoms = geology[~geology.is_valid]
+            if not invalid_geoms.empty:
+                self.logger.warning("Found invalid geometries; attempting to repair them.")
+
+            # Repair invalid geometries using buffer(0)
+            geology['geometry'] = geology['geometry'].apply(lambda geom: geom.buffer(0) if not geom.is_valid else geom)
+
+            
+            # Read the catchment shapefile
+            catchment = gpd.read_file(self.catchment_path)
+            
+            # Ensure both have the same CRS
+            if geology.crs != catchment.crs:
+                geology = geology.to_crs(catchment.crs)
+            
+            # Intersect geologic units with catchment to get area of each unit within catchment
+            is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
+            
+            if is_lumped:
+                # For lumped catchment, intersect with entire catchment
+                intersect = gpd.overlay(geology, catchment, how='intersection')
+                
+                # Calculate area in square meters
+                intersect['area'] = intersect.geometry.area
+                
+                # Get total area
+                total_area = intersect['area'].sum()
+                
+                if total_area > 0:
+                    # Group by lithology type and calculate percentage
+                    if 'LITHOLOGY' in intersect.columns:
+                        lith_column = 'LITHOLOGY'
+                    elif 'LITH' in intersect.columns:
+                        lith_column = 'LITH'
+                    elif 'ROCKTYPE' in intersect.columns:
+                        lith_column = 'ROCKTYPE'
+                    elif 'ROCKTYPE1' in intersect.columns:
+                        lith_column = 'ROCKTYPE1'
+                    elif 'UNIT_NAME' in intersect.columns:
+                        lith_column = 'UNIT_NAME'
+                    elif 'TYPE' in intersect.columns:
+                        lith_column = 'TYPE'
+                    else:
+                        # If we can't find a lithology column, use the first column with string data
+                        string_columns = [col for col in intersect.columns 
+                                        if intersect[col].dtype == 'object' and col != 'geometry']
+                        lith_column = string_columns[0] if string_columns else None
+                    
+                    # Calculate percentage for each lithology type
+                    if lith_column:
+                        lith_areas = intersect.groupby(lith_column)['area'].sum()
+
+                        # Check if lith_areas is empty
+                        if lith_areas.empty:
+                            self.logger.warning("No lithology areas found after intersection. Skipping dominant lithology calculation.")
+                        else:
+                            dominant_lith = lith_areas.idxmax()
+                            clean_dominant = self._clean_attribute_name(dominant_lith)
+                            results["geology.dominant_lithology"] = dominant_lith
+                            results["geology.dominant_lithology_clean"] = clean_dominant
+                            results["geology.dominant_lithology_fraction"] = lith_areas[dominant_lith] / total_area
+
+                        
+                        # Convert to fractions
+                        lith_fractions = lith_areas / total_area
+                        
+                        # Add to results
+                        for lith_type, fraction in lith_fractions.items():
+                            # Clean up the lithology name for use as an attribute name
+                            clean_lith = self._clean_attribute_name(lith_type)
+                            results[f"geology.{clean_lith}_fraction"] = fraction
+                        
+                        # Find dominant lithology
+                        dominant_lith = lith_areas.idxmax()
+                        clean_dominant = self._clean_attribute_name(dominant_lith)
+                        results["geology.dominant_lithology"] = dominant_lith
+                        results["geology.dominant_lithology_clean"] = clean_dominant
+                        results["geology.dominant_lithology_fraction"] = lith_fractions[dominant_lith]
+                        
+                        # Calculate lithological diversity (Shannon entropy)
+                        shannon_entropy = 0
+                        for lith_type, fraction in lith_fractions.items():
+                            if fraction > 0:
+                                shannon_entropy -= fraction * np.log(fraction)
+                        
+                        results["geology.lithology_diversity"] = shannon_entropy
+                        
+                        # Get age information if available
+                        age_column = None
+                        for col in ['AGE', 'ERA', 'PERIOD', 'EPOCH', 'FORMATION']:
+                            if col in intersect.columns:
+                                age_column = col
+                                break
+                        
+                        if age_column:
+                            # Calculate percentage for each age
+                            age_areas = intersect.groupby(age_column)['area'].sum()
+                            age_fractions = age_areas / total_area
+                            
+                            # Add to results
+                            for age, fraction in age_fractions.items():
+                                if age and str(age).strip():  # Check if age is not empty
+                                    clean_age = self._clean_attribute_name(str(age))
+                                    results[f"geology.age_{clean_age}_fraction"] = fraction
+                            
+                            # Find dominant age
+                            dominant_age = age_areas.idxmax()
+                            if dominant_age and str(dominant_age).strip():
+                                results["geology.dominant_age"] = str(dominant_age)
+                                results["geology.dominant_age_fraction"] = age_fractions[dominant_age]
+            else:
+                # For distributed catchment, process each HRU
+                hru_id_field = self.config.get('CATCHMENT_SHP_HRUID', 'HRU_ID')
+                
+                for i, hru in catchment.iterrows():
+                    hru_id = hru[hru_id_field]
+                    prefix = f"HRU_{hru_id}_"
+                    
+                    # Create a GeoDataFrame with just this HRU
+                    hru_gdf = gpd.GeoDataFrame([hru], geometry='geometry', crs=catchment.crs)
+                    
+                    # Intersect with geology
+                    intersect = gpd.overlay(geology, hru_gdf, how='intersection')
+                    
+                    # Calculate area
+                    intersect['area'] = intersect.geometry.area
+                    total_area = intersect['area'].sum()
+                    
+                    if total_area > 0:
+                        # Identify lithology column
+                        if 'LITHOLOGY' in intersect.columns:
+                            lith_column = 'LITHOLOGY'
+                        elif 'LITH' in intersect.columns:
+                            lith_column = 'LITH'
+                        elif 'ROCKTYPE' in intersect.columns:
+                            lith_column = 'ROCKTYPE'
+                        elif 'ROCKTYPE1' in intersect.columns:
+                            lith_column = 'ROCKTYPE1'
+                        elif 'UNIT_NAME' in intersect.columns:
+                            lith_column = 'UNIT_NAME'
+                        elif 'TYPE' in intersect.columns:
+                            lith_column = 'TYPE'
+                        else:
+                            # If we can't find a lithology column, use the first column with string data
+                            string_columns = [col for col in intersect.columns 
+                                            if intersect[col].dtype == 'object' and col != 'geometry']
+                            lith_column = string_columns[0] if string_columns else None
+                        
+                        if lith_column:
+                            # Calculate percentage for each lithology type
+                            lith_areas = intersect.groupby(lith_column)['area'].sum()
+                            lith_fractions = lith_areas / total_area
+                            
+                            # Add to results
+                            for lith_type, fraction in lith_fractions.items():
+                                clean_lith = self._clean_attribute_name(lith_type)
+                                results[f"{prefix}geology.{clean_lith}_fraction"] = fraction
+                            
+                            # Find dominant lithology
+                            dominant_lith = lith_areas.idxmax()
+                            clean_dominant = self._clean_attribute_name(dominant_lith)
+                            results[f"{prefix}geology.dominant_lithology"] = dominant_lith
+                            results[f"{prefix}geology.dominant_lithology_clean"] = clean_dominant
+                            results[f"{prefix}geology.dominant_lithology_fraction"] = lith_fractions[dominant_lith]
+                            
+                            # Calculate lithological diversity
+                            shannon_entropy = 0
+                            for lith_type, fraction in lith_fractions.items():
+                                if fraction > 0:
+                                    shannon_entropy -= fraction * np.log(fraction)
+                            
+                            results[f"{prefix}geology.lithology_diversity"] = shannon_entropy
+                            
+                            # Get age information if available
+                            age_column = None
+                            for col in ['AGE', 'ERA', 'PERIOD', 'EPOCH', 'FORMATION']:
+                                if col in intersect.columns:
+                                    age_column = col
+                                    break
+                            
+                            if age_column:
+                                # Calculate percentage for each age
+                                age_areas = intersect.groupby(age_column)['area'].sum()
+                                age_fractions = age_areas / total_area
+                                
+                                # Add to results
+                                for age, fraction in age_fractions.items():
+                                    if age and str(age).strip():  # Check if age is not empty
+                                        clean_age = self._clean_attribute_name(str(age))
+                                        results[f"{prefix}geology.age_{clean_age}_fraction"] = fraction
+                                
+                                # Find dominant age
+                                dominant_age = age_areas.idxmax()
+                                if dominant_age and str(dominant_age).strip():
+                                    results[f"{prefix}geology.dominant_age"] = str(dominant_age)
+                                    results[f"{prefix}geology.dominant_age_fraction"] = age_fractions[dominant_age]
+        
+        except Exception as e:
+            self.logger.error(f"Error processing lithology data: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+        
+        return results
+
+    def _clean_attribute_name(self, name: str) -> str:
+        """
+        Clean up a string to be usable as an attribute name.
+        
+        Args:
+            name: Original string
+            
+        Returns:
+            String usable as an attribute name
+        """
+        if not name:
+            return "unknown"
+        
+        # Convert to string and strip whitespace
+        name_str = str(name).strip()
+        if not name_str:
+            return "unknown"
+        
+        # Replace spaces and special characters
+        cleaned = name_str.lower()
+        cleaned = cleaned.replace(' ', '_')
+        cleaned = cleaned.replace('-', '_')
+        cleaned = cleaned.replace('.', '_')
+        cleaned = cleaned.replace('(', '')
+        cleaned = cleaned.replace(')', '')
+        cleaned = cleaned.replace(',', '')
+        cleaned = cleaned.replace('/', '_')
+        cleaned = cleaned.replace('\\', '_')
+        cleaned = cleaned.replace('&', 'and')
+        cleaned = cleaned.replace('%', 'percent')
+        
+        # Remove any remaining non-alphanumeric characters
+        cleaned = ''.join(c for c in cleaned if c.isalnum() or c == '_')
+        
+        # Ensure it doesn't start with a number
+        if cleaned and cleaned[0].isdigit():
+            cleaned = 'x' + cleaned
+        
+        # Limit length
+        if len(cleaned) > 50:
+            cleaned = cleaned[:50]
+        
+        # Handle empty result
+        if not cleaned:
+            return "unknown"
+        
+        return cleaned
+
+    def _process_glhymps_data(self, glhymps_path: Path) -> Dict[str, Any]:
+        """
+        Process GLHYMPS groundwater permeability and porosity data.
+        
+        Args:
+            glhymps_path: Path to GLHYMPS data
+            
+        Returns:
+            Dictionary of groundwater attributes
+        """
+        results = {}
+        
+        # Check if GLHYMPS data is in vector format
+        glhymps_shp = glhymps_path / 'raw' / "glhymps.shp"
+        
+        if glhymps_shp.exists():
+            self.logger.info(f"Processing GLHYMPS data from shapefile: {glhymps_shp}")
+            
+            try:
+                # Read the GLHYMPS shapefile
+                glhymps = gpd.read_file(glhymps_shp)
+                
+                # Read the catchment shapefile
+                catchment = gpd.read_file(self.catchment_path)
+                
+                # Ensure both have the same CRS
+                if glhymps.crs != catchment.crs:
+                    glhymps = glhymps.to_crs(catchment.crs)
+                
+                # Look for permeability and porosity columns
+                perm_cols = [col for col in glhymps.columns if 'PERM' in col.upper()]
+                por_cols = [col for col in glhymps.columns if 'PORO' in col.upper()]
+                
+                perm_col = perm_cols[0] if perm_cols else None
+                por_col = por_cols[0] if por_cols else None
+                
+                if perm_col or por_col:
+                    # Intersect GLHYMPS with catchment
+                    is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
+                    
+                    if is_lumped:
+                        # For lumped catchment
+                        intersect = gpd.overlay(glhymps, catchment, how='intersection')
+                        
+                        # Calculate area in square meters
+                        intersect['area'] = intersect.geometry.area
+                        total_area = intersect['area'].sum()
+                        
+                        if total_area > 0:
+                            # Process permeability
+                            if perm_col:
+                                # Calculate area-weighted average permeability
+                                weighted_perm = (intersect[perm_col] * intersect['area']).sum() / total_area
+                                results["geology.permeability_mean"] = weighted_perm
+                                
+                                # Calculate hydraulic conductivity (if perm is in log10 m^2)
+                                if weighted_perm < 0:  # Likely in log10 units
+                                    perm_m2 = 10**weighted_perm
+                                    hyd_cond = perm_m2 * 1000 * 9.81 / 0.001  # Convert to m/s
+                                    results["geology.hydraulic_conductivity"] = hyd_cond
+                            
+                            # Process porosity
+                            if por_col:
+                                # Calculate area-weighted average porosity
+                                weighted_por = (intersect[por_col] * intersect['area']).sum() / total_area
+                                results["geology.porosity_mean"] = weighted_por
+                            
+                            # Calculate transmissivity if we have hydraulic conductivity
+                            if "geology.hydraulic_conductivity" in results:
+                                # Assume aquifer thickness of 100 m
+                                results["geology.transmissivity"] = results["geology.hydraulic_conductivity"] * 100
+                    else:
+                        # For distributed catchment
+                        hru_id_field = self.config.get('CATCHMENT_SHP_HRUID', 'HRU_ID')
+                        
+                        for i, hru in catchment.iterrows():
+                            hru_id = hru[hru_id_field]
+                            prefix = f"HRU_{hru_id}_"
+                            
+                            # Create a GeoDataFrame with just this HRU
+                            hru_gdf = gpd.GeoDataFrame([hru], geometry='geometry', crs=catchment.crs)
+                            
+                            # Intersect with GLHYMPS
+                            intersect = gpd.overlay(glhymps, hru_gdf, how='intersection')
+                            
+                            # Calculate area
+                            intersect['area'] = intersect.geometry.area
+                            total_area = intersect['area'].sum()
+                            
+                            if total_area > 0:
+                                # Process permeability
+                                if perm_col:
+                                    # Calculate area-weighted average permeability
+                                    weighted_perm = (intersect[perm_col] * intersect['area']).sum() / total_area
+                                    results[f"{prefix}geology.permeability_mean"] = weighted_perm
+                                    
+                                    # Calculate hydraulic conductivity
+                                    if weighted_perm < 0:  # Likely in log10 units
+                                        perm_m2 = 10**weighted_perm
+                                        hyd_cond = perm_m2 * 1000 * 9.81 / 0.001  # Convert to m/s
+                                        results[f"{prefix}geology.hydraulic_conductivity"] = hyd_cond
+                                
+                                # Process porosity
+                                if por_col:
+                                    # Calculate area-weighted average porosity
+                                    weighted_por = (intersect[por_col] * intersect['area']).sum() / total_area
+                                    results[f"{prefix}geology.porosity_mean"] = weighted_por
+                                
+                                # Calculate transmissivity
+                                hyd_cond_key = f"{prefix}geology.hydraulic_conductivity"
+                                if hyd_cond_key in results:
+                                    results[f"{prefix}geology.transmissivity"] = results[hyd_cond_key] * 100
+            
+            except Exception as e:
+                self.logger.error(f"Error processing GLHYMPS shapefile: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+        else:
+            self.logger.warning(f"GLHYMPS shapefile not found at {glhymps_shp}")
+            # Look for any other GLHYMPS shapefiles
+            glhymps_files = list(glhymps_path.glob("*.shp"))
+            if glhymps_files:
+                self.logger.info(f"Found alternative GLHYMPS shapefile: {glhymps_files[0]}")
+                # You could process this file instead
+        
+        return results
+
+    def _process_hydrological_attributes(self) -> Dict[str, Any]:
+        """
+        Process hydrological data including lakes and rivers.
+        
+        Sources:
+        - hydrolakes: Lake polygons to determine lake area, count, coverage and density.
+        - merit_basins: River vectors to calculate total river length and river density.
+        
+        Returns:
+            Dictionary of hydrological attributes.
+        """
+        results = {}
+        
+        try:
+            # ---------------------------
+            # Process Hydrolakes
+            # ---------------------------
+            lakes_path = self._get_data_path('ATTRIBUTES_HYDROLAKES_PATH', 'hydrolakes')
+            # Assume lake data are stored in a "raw" subfolder
+            lakes_shp = lakes_path / "raw" / "HydroLAKES_polys_v10_NorthAmerica.shp"
+            
+            if lakes_shp.exists():
+                self.logger.info(f"Processing Hydrolakes from: {lakes_shp}")
+                lakes = gpd.read_file(lakes_shp)
+                catchment = gpd.read_file(self.catchment_path)
+                
+                # Ensure both layers share the same CRS.
+                if lakes.crs != catchment.crs:
+                    lakes = lakes.to_crs(catchment.crs)
+                
+                # Intersect lake polygons with catchment
+                lakes_intersect = gpd.overlay(lakes, catchment, how="intersection")
+                if not lakes_intersect.empty:
+                    # Calculate area for each intersected lake feature.
+                    lakes_intersect['area'] = lakes_intersect.geometry.area
+                    total_lake_area = lakes_intersect['area'].sum()
+                    catchment_area = catchment.geometry.area.sum()
+                    lake_count = len(lakes_intersect)
+                    
+                    results["hydro.lakes_total_area"] = total_lake_area
+                    results["hydro.lakes_count"] = lake_count
+                    results["hydro.lakes_coverage_fraction"] = total_lake_area / catchment_area if catchment_area > 0 else np.nan
+                    
+                    # Compute catchment area in km2 for lake density calculation
+                    catchment_area_km2 = catchment_area / 1e6
+                    results["hydro.lakes_density"] = lake_count / catchment_area_km2 if catchment_area_km2 > 0 else np.nan
+                    results["hydro.lakes_avg_size"] = total_lake_area / lake_count if lake_count > 0 else np.nan
+                else:
+                    self.logger.warning("No hydrolake features intersect the catchment.")
+            else:
+                self.logger.warning(f"Hydrolakes shapefile not found at: {lakes_shp}")
+            
+            # ---------------------------
+            # Process Rivers from Merit Basins
+            # ---------------------------
+            merit_path = self._get_data_path('ATTRIBUTES_MERIT_BASINS_PATH', 'merit_basins')
+            # Navigate into the rivers subfolder within the MERIT Hydro shapes directory.
+            rivers_dir = merit_path / "MERIT_Hydro_modified_North_America_shapes" / "rivers"
+            river_shps = list(rivers_dir.glob("*.shp"))
+            
+            if river_shps:
+                river_shp = river_shps[0]
+                self.logger.info(f"Processing rivers from: {river_shp}")
+                rivers = gpd.read_file(river_shp)
+                catchment = gpd.read_file(self.catchment_path)
+                
+                # Ensure the rivers are in the same CRS as the catchment.
+                if rivers.crs != catchment.crs:
+                    rivers = rivers.to_crs(catchment.crs)
+                
+                # Intersect the river features with the catchment.
+                rivers_intersect = gpd.overlay(rivers, catchment, how="intersection")
+                if not rivers_intersect.empty:
+                    # Calculate the length of each river segment (assuming the CRS is in meters)
+                    rivers_intersect['length'] = rivers_intersect.geometry.length
+                    total_river_length = rivers_intersect['length'].sum()
+                    # Convert total river length to kilometers.
+                    total_river_length_km = total_river_length / 1000.0
+                    results["hydro.rivers_total_length_km"] = total_river_length_km
+                    
+                    # Use the catchment area already computed (if not, compute it here again)
+                    catchment_area = catchment.geometry.area.sum()
+                    catchment_area_km2 = catchment_area / 1e6
+                    results["hydro.rivers_density"] = total_river_length_km / catchment_area_km2 if catchment_area_km2 > 0 else np.nan
+                else:
+                    self.logger.warning("No river features intersect the catchment.")
+            else:
+                self.logger.warning(f"No river shapefile found in directory: {rivers_dir}")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing hydrological attributes: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+        
+        return results
+
+
+    def _process_climate_attributes(self) -> Dict[str, Any]:
+        """
+        Process climate data including temperature, precipitation,
+        and related derived indices using WorldClim datasets.
+        
+        Expected structure in the WorldClim data directory (e.g., from _get_data_path):
+        - raw/tavg/      : monthly average temperature rasters
+        - raw/tmin/      : monthly minimum temperature rasters
+        - raw/tmax/      : monthly maximum temperature rasters
+        - raw/prec/      : monthly precipitation rasters
+        - derived/pet/   : monthly PET (potential evapotranspiration) rasters
+        
+        For temperature variables, the annual aggregate is the mean of the monthly means,
+        whereas for precipitation and PET the annual total is computed.
+        
+        Also computes an aridity index defined as: (annual PET) / (annual Precipitation).
+        
+        Returns:
+            Dictionary of computed climate attributes.
+        """
+        results = {}
+        
+        # Get the WorldClim path using config.
+        wc_path = self._get_data_path('ATTRIBUTES_WORLDCLIM_PATH', 'worldclim')
+        self.logger.info(f"WorldClim path: {wc_path}")
+        
+        # Decide whether to process the catchment as lumped or distributed.
+        is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
+        catchment_shape = str(self.catchment_path)
+        
+        # Helper to process a set of monthly files for a given variable.
+        # folder_relative: relative path under the WorldClim folder (e.g., "raw/tavg")
+        # variable: a short string identifier (e.g., "tavg", "prec", "pet")
+        # For temperature variables we aggregate by averaging (and take min, max over months, etc.),
+        # For accumulative variables (precipitation, PET) we can also sum.
+        def process_monthly_rasters(variable: str, folder_relative: str, sum_values: bool = False) -> Dict[str, Any]:
+            var_results = {}
+            folder = wc_path / folder_relative
+            self.logger.info(f"Processing {variable} data from folder: {folder}")
+            # List and sort files (assuming file names include _01.tif, _02.tif, etc.)
+            raster_files = sorted(folder.glob("*.tif"))
+            if not raster_files:
+                self.logger.warning(f"No raster files found in {folder} for variable {variable}")
+                return var_results
+            
+            monthly_means = []
+            monthly_mins = []
+            monthly_maxs = []
+            monthly_stds = []
+            monthly_sums = []
+            
+            for i, rf in enumerate(raster_files, start=1):
+                zs = zonal_stats(
+                    catchment_shape,
+                    str(rf),
+                    stats=['min', 'mean', 'max', 'std', 'sum'],
+                    all_touched=True
+                )
+                # Here we assume a lumped catchment so we look at zs[0].
+                # (For distributed, you might want to loop over HRUs.)
+                if zs and len(zs) > 0:
+                    stat = zs[0]
+                    monthly_means.append(stat.get('mean', np.nan))
+                    monthly_mins.append(stat.get('min', np.nan))
+                    monthly_maxs.append(stat.get('max', np.nan))
+                    monthly_stds.append(stat.get('std', np.nan))
+                    monthly_sums.append(stat.get('sum', np.nan))
+                else:
+                    monthly_means.append(np.nan)
+                    monthly_mins.append(np.nan)
+                    monthly_maxs.append(np.nan)
+                    monthly_stds.append(np.nan)
+                    monthly_sums.append(np.nan)
+                # Save individual monthly statistics for each file.
+                month_str = f"{i:02d}"
+                var_results[f"{variable}_month_{month_str}_mean"] = monthly_means[-1]
+                var_results[f"{variable}_month_{month_str}_min"] = monthly_mins[-1]
+                var_results[f"{variable}_month_{month_str}_max"] = monthly_maxs[-1]
+                var_results[f"{variable}_month_{month_str}_std"] = monthly_stds[-1]
+                var_results[f"{variable}_month_{month_str}_sum"] = monthly_sums[-1]
+            
+            # Aggregate across months.
+            # For temperature, we take the mean over months as annual average;
+            # also record the overall min, max, and variability (std) of the monthly means.
+            if monthly_means:
+                annual_avg = np.nanmean(monthly_means)
+                annual_min = np.nanmin(monthly_mins)
+                annual_max = np.nanmax(monthly_maxs)
+                annual_std = np.nanstd(monthly_means)
+            else:
+                annual_avg = annual_min = annual_max = annual_std = np.nan
+            
+            # For accumulative data (precipitation and PET) sum the monthly totals.
+            if sum_values:
+                annual_total = np.nansum(monthly_sums)
+            else:
+                annual_total = np.nan
+            
+            var_results[f"{variable}_annual_avg"] = annual_avg
+            var_results[f"{variable}_annual_min"] = annual_min
+            var_results[f"{variable}_annual_max"] = annual_max
+            var_results[f"{variable}_annual_std"] = annual_std
+            if sum_values:
+                var_results[f"{variable}_annual_total"] = annual_total
+            
+            return var_results
+
+        # Process temperature (average) from raw/tavg.
+        tavg_results = process_monthly_rasters("tavg", "raw/tavg", sum_values=False)
+        results.update(tavg_results)
+
+        # Process temperature minimum and maximum.
+        tmin_results = process_monthly_rasters("tmin", "raw/tmin", sum_values=False)
+        tmax_results = process_monthly_rasters("tmax", "raw/tmax", sum_values=False)
+        results.update(tmin_results)
+        results.update(tmax_results)
+
+        # Process precipitation from raw/prec.
+        # For precipitation it makes more sense to sum the monthly values to get an annual total.
+        prec_results = process_monthly_rasters("prec", "raw/prec", sum_values=True)
+        results.update(prec_results)
+
+        # Process PET from derived/pet (if available).
+        pet_folder = wc_path / "derived" / "pet"
+        if pet_folder.exists():
+            pet_results = process_monthly_rasters("pet", "derived/pet", sum_values=True)
+            results.update(pet_results)
+        else:
+            self.logger.warning("PET data folder not found in derived data.")
+
+        # Compute derived indices.
+        # Example: Aridity index = (annual PET) / (annual Precipitation)
+        if ("pet_annual_total" in results and "prec_annual_total" in results and 
+            results["prec_annual_total"] not in (None, 0, np.nan)):
+            results["aridity_index"] = results["pet_annual_total"] / results["prec_annual_total"]
+        else:
+            results["aridity_index"] = np.nan
+
+        # Mean annual temperature based on tavg.
+        results["mean_annual_temperature"] = results.get("tavg_annual_avg", np.nan)
+
+        # You can add additional derived metrics here as needed.
+        
+        return results
+
+
+    def _process_vegetation_attributes(self) -> Dict[str, Any]:
+        """
+        Process vegetation data using LAI datasets.
+        
+        This function extracts monthly LAI statistics from the LAI
+        dataset (assumed to be stored as monthly average composites)
+        and computes aggregated vegetation attributes for the catchment.
+        
+        Returns:
+            Dictionary with vegetation attributes such as:
+            - vegetation.lai_mean: Overall mean LAI (averaged over all months)
+            - vegetation.lai_min: Minimum monthly LAI (across the period)
+            - vegetation.lai_max: Maximum monthly LAI (across the period)
+            - vegetation.lai_std: Average of the monthly LAI standard deviations
+            - vegetation.lai_amplitude: Difference between max and min monthly means
+            - vegetation.lai_cv: Coefficient of variation (std/mean) of monthly means
+            - vegetation.lai_monthly_means: List of monthly mean LAI values
+        """
+        results = {}
+        try:
+            # Get the base LAI data directory using the helper function.
+            lai_base = self._get_data_path("ATTRIBUTES_LAI_PATH", "lai")
+            
+            # Define the target subdirectory for the monthly averaged LAI data.
+            # You could change this to "monthly_lai_no_water_mask" if preferred.
+            target_dir = lai_base / "monthly_average_2013_2023" / "monthly_lai_with_water_mask"
+            if not target_dir.exists():
+                self.logger.warning(f"LAI target directory not found: {target_dir}")
+                return results
+
+            # List all TIF files from the target directory and sort them
+            lai_files = sorted(target_dir.glob("*.tif"))
+            if not lai_files:
+                self.logger.warning(f"No LAI raster files found in {target_dir}")
+                return results
+
+            self.logger.info(f"Processing vegetation LAI attributes from {len(lai_files)} files in {target_dir}")
+
+            # Lists to store zonal statistics for each monthly composite
+            monthly_means = []
+            monthly_mins = []
+            monthly_maxs = []
+            monthly_stds = []
+
+            # Process each LAI file (assumes a lumped catchment)
+            for lai_file in lai_files:
+                self.logger.info(f"Processing LAI file: {lai_file}")
+                # Calculate zonal statistics over the catchment (self.catchment_path)
+                stats = zonal_stats(
+                    str(self.catchment_path),
+                    str(lai_file),
+                    stats=["mean", "min", "max", "std"],
+                    all_touched=True
+                )
+                if stats and len(stats) > 0:
+                    stat = stats[0]  # For a lumped catchment, use the first (and only) result
+                    # Append the statistics if they are valid
+                    if stat.get("mean") is not None:
+                        monthly_means.append(stat["mean"])
+                    if stat.get("min") is not None:
+                        monthly_mins.append(stat["min"])
+                    if stat.get("max") is not None:
+                        monthly_maxs.append(stat["max"])
+                    if stat.get("std") is not None:
+                        monthly_stds.append(stat["std"])
+
+            # If we have computed monthly statistics, aggregate them to produce overall vegetation attributes.
+            if monthly_means:
+                overall_mean = np.mean(monthly_means)
+                overall_std = np.std(monthly_means)
+                amplitude = np.max(monthly_means) - np.min(monthly_means)
+                cv = overall_std / overall_mean if overall_mean != 0 else np.nan
+
+                results["vegetation.lai_mean"] = float(overall_mean)
+                results["vegetation.lai_mean_std"] = float(overall_std)
+                results["vegetation.lai_amplitude"] = float(amplitude)
+                results["vegetation.lai_cv"] = float(cv)
+                # Also, record the min and max values across months
+                results["vegetation.lai_min"] = float(np.min(monthly_mins)) if monthly_mins else None
+                results["vegetation.lai_max"] = float(np.max(monthly_maxs)) if monthly_maxs else None
+                # And average the per-month standard deviations
+                results["vegetation.lai_std"] = float(np.mean(monthly_stds)) if monthly_stds else None
+                
+                # Optionally, store the individual monthly mean values (this may help with further analysis)
+                results["vegetation.lai_monthly_means"] = monthly_means
+
+        except Exception as e:
+            self.logger.error(f"Error processing vegetation LAI attributes: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+
+        return results
+
+
+    def _process_irrigation_attributes(self) -> Dict[str, Any]:
+        """
+        Process irrigation data from LGRIP30 dataset (global irrigation patterns).
+        
+        This function uses the LGRIP30 agriculture raster (lgrip30_agriculture.tif)
+        to compute the fraction of the catchment that is irrigated. It assumes that
+        the raster is a classification where a pixel value of 1 indicates irrigated
+        areas (and other values—for example, 0—represent non-irrigated areas).
+        
+        Returns:
+            Dictionary with irrigation attributes, including:
+            - irrigation.agriculture_fraction: Fraction of the catchment area that is irrigated.
+            - irrigation.agriculture_area: Total irrigated area in square meters.
+        """
+        results = {}
+        try:
+            # Get the LGRIP30 data directory (e.g., /work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/lgrip30)
+            lgrip_path = self._get_data_path('ATTRIBUTES_LGRIP_PATH', 'lgrip30')
+            # Construct the expected path to the agriculture raster in the raw subfolder.
+            agri_file = lgrip_path / "raw" / "lgrip30_agriculture.tif"
+            
+            if not agri_file.exists():
+                self.logger.warning(f"Irrigation raster not found at: {agri_file}")
+                return results
+            
+            self.logger.info(f"Processing irrigation data from: {agri_file}")
+            
+            # Use zonal_stats to get categorical counts over the catchment.
+            # We assume that the catchment is stored in self.catchment_path.
+            zstats = zonal_stats(
+                str(self.catchment_path),
+                str(agri_file),
+                categorical=True,
+                all_touched=True
+            )
+            
+            if not zstats or len(zstats) == 0:
+                self.logger.warning("Zonal statistics for irrigation returned an empty result.")
+                return results
+            
+            # Assuming a lumped catchment (single polygon), get the first result.
+            cat_stats = zstats[0]
+            total_pixels = sum(cat_stats.values())
+            
+            # In this example we assume value 1 in the raster represents irrigated area.
+            irrigated_pixels = cat_stats.get(1, 0)
+            fraction = irrigated_pixels / total_pixels if total_pixels > 0 else np.nan
+            results["irrigation.agriculture_fraction"] = fraction
+            
+            # To compute the total irrigated area (in m²), determine the area of one pixel.
+            with rasterio.open(str(agri_file)) as src:
+                transform = src.transform
+                # Typically, transform.a is the pixel width and transform.e is the pixel height.
+                # Use the absolute values to compute area.
+                pixel_area = abs(transform.a * transform.e)
+            
+            irrigated_area = irrigated_pixels * pixel_area
+            results["irrigation.agriculture_area"] = irrigated_area
+            
+        except Exception as e:
+            self.logger.error(f"Error processing irrigation attributes: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+        
+        return results
+
+
+    def _get_data_path(self, config_key: str, default_subfolder: str) -> Path:
+        """
+        Get the path to a data source, checking multiple possible locations.
+        
+        Args:
+            config_key: Configuration key to check for a specified path
+            default_subfolder: Default subfolder to use within attribute data directories
+            
+        Returns:
+            Path to the data source
+        """
+        # Check if path is explicitly specified in config
+        path = self.config.get(config_key)
+        
+        if path and path != 'default':
+            return Path(path)
+        
+        # Check the attribute data directory from config
+        attr_data_dir = self.config.get('ATTRIBUTES_DATA_DIR')
+        if attr_data_dir and attr_data_dir != 'default':
+            attr_path = Path(attr_data_dir) / default_subfolder
+            if attr_path.exists():
+                return attr_path
+        
+        # Check the specific North America data directory
+        na_path = Path("/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial") / default_subfolder
+        if na_path.exists():
+            return na_path
+        
+        # Fall back to project data directory
+        proj_path = self.data_dir / 'geospatial-data' / default_subfolder
+        return proj_path
+
 
     def _process_forest_height_attributes(self) -> Dict[str, Any]:
         """
