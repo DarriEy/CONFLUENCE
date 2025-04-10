@@ -12,7 +12,6 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap # type: ig
 import traceback
 import rasterio # type: ignore
 from matplotlib import gridspec
-from matplotlib_scalebar.scalebar import ScaleBar # type: ignore
 from matplotlib.lines import Line2D # type: ignore
 from matplotlib.patches import Patch # type: ignore
 
@@ -808,13 +807,23 @@ class VisualizationReporter:
     def _add_north_arrow(self, ax):
         """Add a north arrow to the map"""
         # Calculate arrow position (upper left corner)
-        arrow_pos = ax.get_xlim()[0] + (ax.get_xlim()[1] - ax.get_xlim()[0]) * 0.05
-        arrow_pos_y = ax.get_ylim()[1] - (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.15
-
+        xmin, xmax = ax.get_xlim()
+        ymin, ymax = ax.get_ylim()
+        
+        # Position in upper left with some padding
+        arrow_x = xmin + (xmax - xmin) * 0.05
+        arrow_y_top = ymax - (ymax - ymin) * 0.05
+        arrow_y_bottom = arrow_y_top - (ymax - ymin) * 0.05
+        
         # Create north arrow
-        ax.annotate('N', xy=(arrow_pos, arrow_pos_y), xytext=(arrow_pos, arrow_pos_y - 50000),
+        ax.annotate('N', 
+                    xy=(arrow_x, arrow_y_top), 
+                    xytext=(arrow_x, arrow_y_bottom),
                     arrowprops=dict(facecolor='black', width=5, headwidth=15),
-                    ha='center', va='center', fontsize=12,
+                    ha='center', 
+                    va='center', 
+                    fontsize=12,
+                    fontweight='bold',
                     bbox=dict(facecolor='white', edgecolor='none', alpha=0.8, pad=5))
 
     def _add_info_box(self, ax, catchment_gdf):
