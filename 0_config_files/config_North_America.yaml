@@ -108,15 +108,12 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 6.1 Attribute Analysis settings: ===============================================================
 
-
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True
 # Enable/disable attribute processing
+PROCESS_CHARACTERISTIC_ATTRIBUTES: True
   
 # Processing parameters
 CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
 
-### Attribute Processing data settings
 # Base paths for attribute data
 ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
 
