@@ -390,3 +390,9 @@ OSTRICH_EXE: OstrichMPI                                        # Name of Ostrich
 OSTRICH_OUTPUT_FILE: ostrich_output.txt                        # Name of Ostrich output file
 OPTIMIZATION_RESULTS_FILE: default                             # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
+
+# Large Sample Emulation settings
+RUN_LARGE_SAMPLE_EMULATION: True                               # Whether to run large sample emulation (default: false)
+EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
+EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
+EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)

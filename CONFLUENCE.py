@@ -38,6 +38,7 @@ from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ign
 # Evaluation utilities
 #from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
+from utils.emulation_utils.large_sample_emulator import LargeSampleEmulator # type: ignore
 
 # Reporting utilities
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
@@ -129,10 +130,10 @@ class CONFLUENCE:
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
 
             # --- Emulation and Optimization Steps ---
-            (self.run_large_sample_emulation_setup, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
+            (self.run_large_sample_emulation, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
 
             # Result analysis and optimisation
@@ -553,22 +554,85 @@ class CONFLUENCE:
                 pass
 
     @get_function_logger
-    def run_large_sample_emulation_setup(self):
-        """Runs the setup step for large sample emulation."""
-        self.logger.info("Starting large sample emulation setup")
+    def run_large_sample_emulation(self):
+        """
+        Run large sample emulation to generate spatially varying trial parameters.
+        This creates parameter sets for ensemble modeling or sensitivity analysis.
+        """
+        self.logger.info("Starting large sample emulation")
+        
+        # Check if emulation is enabled in config (default to False)
+        if not self.config.get('RUN_LARGE_SAMPLE_EMULATION', False):
+            self.logger.info("Large sample emulation disabled in config. Skipping.")
+            return None
+        
         try:
-            # Check if SUMMA is one of the models, as this emulator is currently SUMMA-specific
-            if 'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','):
-                result_path = self.emulator.run_emulation_setup()
-                if result_path:
-                    self.logger.info(f"Large sample emulation setup completed. Trial parameters generated at: {result_path}")
-                else:
-                    self.logger.info("Large sample emulation setup skipped (no parameters specified or error occurred).")
+            # Create the emulator instance
+            from utils.emulation_utils.large_sample_emulator import LargeSampleEmulator
+            
+            # Initialize the emulator
+            emulator = LargeSampleEmulator(self.config, self.logger)
+            
+            # Run the emulation setup
+            emulator_output = emulator.run_emulation_setup()
+            
+            if emulator_output:
+                self.logger.info(f"Large sample emulation completed successfully. Output: {emulator_output}")
+                # If the emulation was successful and we have SUMMA as a model, we can update the trial param file
+                if 'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','):
+                    # Get the path to settings
+                    settings_path = self._get_default_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA/')
+                    # Create a symlink or copy the file to the trialParams.nc location
+                    trial_params_path = settings_path / self.config.get('SETTINGS_SUMMA_TRIALPARAMS', 'trialParams.nc')
+                    
+                    # Check if it's a relative path
+                    if not trial_params_path.is_absolute():
+                        trial_params_path = settings_path / trial_params_path
+                    
+                    # If trial params file already exists, create a backup
+                    if trial_params_path.exists():
+                        backup_path = trial_params_path.with_suffix('.nc.bak')
+                        trial_params_path.rename(backup_path)
+                        self.logger.info(f"Created backup of existing trial parameters at: {backup_path}")
+                    
+                    # Create a symlink to the emulator output
+                    try:
+                        # Try using os.symlink
+                        os.symlink(emulator_output, trial_params_path)
+                        self.logger.info(f"Created symlink from {emulator_output} to {trial_params_path}")
+                    except (OSError, NotImplementedError):
+                        # If symlink fails (e.g., on Windows), use a file copy
+                        import shutil
+                        shutil.copy2(emulator_output, trial_params_path)
+                        self.logger.info(f"Created copy of emulator output at {trial_params_path}")
+                
+                return emulator_output
             else:
-                self.logger.info("Skipping large sample emulation setup as SUMMA is not in the selected models.")
-        except Exception as e:
-            self.logger.error(f"Error during large sample emulation setup: {str(e)}")
+                self.logger.warning("Large sample emulation completed but no trial parameter file was generated.")
+                return None
+                
+        except ImportError as e:
+            self.logger.error(f"Could not import LargeSampleEmulator: {str(e)}. Ensure the module exists in utils/emulation_utils/")
             raise
+        except Exception as e:
+            self.logger.error(f"Error during large sample emulation: {str(e)}")
+            raise
+
+    def _get_default_path(self, config_key: str, default_suffix: str) -> Path:
+        """
+        Get a path from config or use a default based on the project directory.
+
+        Args:
+            config_key (str): The key to look up in the config dictionary.
+            default_suffix (str): The default subpath to use if the config value is 'default'.
+
+        Returns:
+            Path: The resolved path.
+        """
+        path = self.config.get(config_key)
+        if path == 'default':
+            return self.project_dir / default_suffix
+        return Path(path)
 
     @get_function_logger  
     def run_benchmarking(self):
