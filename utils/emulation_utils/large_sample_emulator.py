@@ -689,14 +689,18 @@ class LargeSampleEmulator:
             self.logger.warning(f"Using uniform sampling as fallback for {param_name}.")
             return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
             
-    
+        
     @get_function_logger
     def run_ensemble_simulations(self):
         """
-        Run SUMMA for each ensemble member (each run directory).
+        Run SUMMA and MizuRoute for each ensemble member (each run directory).
         
-        This launches multiple SUMMA instances, one for each parameter set.
-        Can run in sequential or parallel mode depending on configuration.
+        This launches multiple SUMMA instances, one for each parameter set,
+        followed by MizuRoute for streamflow routing, and extracts results
+        to run-specific results directories.
+        
+        Returns:
+            List: Results of the ensemble simulations including success/failure status
         """
         self.logger.info("Starting ensemble simulations")
         
@@ -714,12 +718,12 @@ class LargeSampleEmulator:
         
         summa_exe = summa_path / self.config.get('SUMMA_EXE')
         
+        # Get all run directories
+        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
+        
         # Check if we should run in parallel
         run_parallel = self.config.get('EMULATION_PARALLEL_ENSEMBLE', False)
         max_parallel_jobs = self.config.get('EMULATION_MAX_PARALLEL_JOBS', 10)
-        
-        # Get all run directories
-        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
         
         if run_parallel and len(run_dirs) > 1:
             # Run in parallel mode
@@ -728,9 +732,83 @@ class LargeSampleEmulator:
             # Run in sequential mode
             return self._run_sequential_ensemble(summa_exe, run_dirs)
 
+    def get_results(self):
+        """
+        Generate a summary of the ensemble results.
+        
+        Returns:
+            Dict: A dictionary containing summarized ensemble results
+        """
+        self.logger.info("Gathering ensemble results")
+        
+        # Check if the ensemble directories exist
+        if not self.ensemble_dir.exists() or not any(self.ensemble_dir.glob("run_*")):
+            self.logger.error("Ensemble run directories not found.")
+            return {"error": "No ensemble run directories found"}
+        
+        # Get all run directories
+        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
+        
+        # Count successful runs
+        successful_runs = 0
+        failed_runs = 0
+        
+        for run_dir in run_dirs:
+            # Check if SUMMA output exists
+            summa_output = run_dir / "simulations" / self.experiment_id / "SUMMA" / f"{self.experiment_id}*.nc"
+            summa_success = len(list(run_dir.glob(str(summa_output)))) > 0
+            
+            # Check if MizuRoute output exists
+            mizu_output = run_dir / "simulations" / self.experiment_id / "mizuRoute" / "*.nc"
+            mizu_success = len(list(run_dir.glob(str(mizu_output)))) > 0
+            
+            # Check if extracted results exist
+            results_file = run_dir / "results" / f"{run_dir.name}_streamflow.csv" 
+            results_success = results_file.exists()
+            
+            if results_success or (summa_success and not self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped'):
+                successful_runs += 1
+            else:
+                failed_runs += 1
+        
+        # Get performance metrics if available
+        metrics_file = self.emulator_output_dir / "ensemble_analysis" / "performance_metrics_summary.csv"
+        metrics = None
+        
+        if metrics_file.exists():
+            try:
+                import pandas as pd
+                metrics = pd.read_csv(metrics_file, index_col=0).to_dict()
+            except Exception as e:
+                self.logger.error(f"Error reading performance metrics: {str(e)}")
+        
+        # Create summary
+        summary = {
+            "experiment_id": self.experiment_id,
+            "total_runs": len(run_dirs),
+            "successful_runs": successful_runs,
+            "failed_runs": failed_runs,
+            "parameter_sets_file": str(self.project_dir / "emulation" / f"parameter_sets_{self.experiment_id}.nc"),
+            "analysis_dir": str(self.emulator_output_dir / "ensemble_analysis"),
+            "metrics": metrics,
+            "completion_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        return summary
+
     def _run_sequential_ensemble(self, summa_exe, run_dirs):
-        """Run ensemble simulations one after another."""
+        """Run ensemble simulations one after another, including MizuRoute post-processing."""
         self.logger.info(f"Running {len(run_dirs)} ensemble simulations sequentially")
+        
+        from utils.models_utils.mizuroute_utils import MizuRouteRunner
+        
+        # Get MizuRoute executable path
+        mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
+        if mizu_path == 'default':
+            mizu_path = self.data_dir / 'installs/mizuRoute/route/bin/'
+        else:
+            mizu_path = Path(mizu_path)
+        mizu_exe = mizu_path / self.config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
         
         results = []
         for run_dir in run_dirs:
@@ -750,24 +828,63 @@ class LargeSampleEmulator:
             output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
             output_dir.mkdir(parents=True, exist_ok=True)
             
+            # Results directory
+            results_dir = run_dir / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            
             # Log directory
             log_dir = output_dir / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             
-            # Run SUMMA
-            command = f"{summa_exe} -m {filemanager_path}"
-            log_file = log_dir / f"{run_name}_summa.log"
-            
             try:
-                import subprocess
-                with open(log_file, 'w') as f:
-                    process = subprocess.run(command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                # 1. Run SUMMA
+                self.logger.info(f"Running SUMMA for {run_name}")
+                summa_command = f"{summa_exe} -m {filemanager_path}"
+                summa_log_file = log_dir / f"{run_name}_summa.log"
                 
-                self.logger.info(f"Successfully completed simulation for {run_name}")
+                import subprocess
+                with open(summa_log_file, 'w') as f:
+                    process = subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                
+                self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
+                
+                # 2. Run MizuRoute if configured to do so and SUMMA used a distributed setup
+                run_mizuroute = (self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' and 
+                                'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','))
+                
+                if run_mizuroute:
+                    self.logger.info(f"Running MizuRoute for {run_name}")
+                    
+                    # Set up MizuRoute settings for this run
+                    mizu_settings_dir = run_dir / "settings" / "mizuRoute"
+                    
+                    # Create MizuRoute settings if they don't exist
+                    if not mizu_settings_dir.exists():
+                        self._setup_run_mizuroute_settings(run_dir, run_name)
+                    
+                    # Get control file for MizuRoute
+                    mizu_control_file = mizu_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+                    
+                    if not mizu_control_file.exists():
+                        self.logger.warning(f"MizuRoute control file not found for {run_name}: {mizu_control_file}")
+                        raise FileNotFoundError(f"MizuRoute control file not found: {mizu_control_file}")
+                    
+                    # Run MizuRoute
+                    mizu_command = f"{mizu_exe} {mizu_control_file}"
+                    mizu_log_file = log_dir / f"{run_name}_mizuroute.log"
+                    
+                    with open(mizu_log_file, 'w') as f:
+                        process = subprocess.run(mizu_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    
+                    self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
+                    
+                    # 3. Extract streamflow from MizuRoute output
+                    self._extract_run_streamflow(run_dir, run_name)
+                
                 results.append((run_name, True, None))
                 
             except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error running SUMMA for {run_name}: {str(e)}")
+                self.logger.error(f"Error running simulation for {run_name}: {str(e)}")
                 results.append((run_name, False, str(e)))
                 
             except Exception as e:
@@ -780,8 +897,193 @@ class LargeSampleEmulator:
         
         return results
 
+    def _setup_run_mizuroute_settings(self, run_dir, run_name):
+        """
+        Setup MizuRoute settings for a specific run.
+        
+        This method copies the base MizuRoute settings to the run directory
+        and modifies them as needed for the specific run.
+        """
+        self.logger.info(f"Setting up MizuRoute for {run_name}")
+        
+        # Source MizuRoute settings directory
+        source_mizu_dir = self.project_dir / "settings" / "mizuRoute"
+        
+        if not source_mizu_dir.exists():
+            self.logger.error(f"Source MizuRoute settings directory not found: {source_mizu_dir}")
+            raise FileNotFoundError(f"Source MizuRoute settings directory not found: {source_mizu_dir}")
+        
+        # Destination MizuRoute settings directory
+        dest_mizu_dir = run_dir / "settings" / "mizuRoute"
+        dest_mizu_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy all files from source to destination
+        import shutil
+        for file in os.listdir(source_mizu_dir):
+            source_file = source_mizu_dir / file
+            if source_file.is_file():
+                shutil.copy2(source_file, dest_mizu_dir / file)
+        
+        # Modify the control file for this run
+        self._update_mizuroute_control_file(dest_mizu_dir, run_dir, run_name)
+        
+        self.logger.info(f"MizuRoute settings setup completed for {run_name}")
+
+    def _update_mizuroute_control_file(self, mizu_settings_dir, run_dir, run_name):
+        """
+        Update the MizuRoute control file for a specific run.
+        
+        Args:
+            mizu_settings_dir: Path to MizuRoute settings directory
+            run_dir: Path to the run directory
+            run_name: Name of the run (e.g., 'run_0001')
+        """
+        control_file_path = mizu_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+        
+        if not control_file_path.exists():
+            self.logger.error(f"MizuRoute control file not found: {control_file_path}")
+            raise FileNotFoundError(f"MizuRoute control file not found: {control_file_path}")
+        
+        # Read the original control file
+        with open(control_file_path, 'r') as f:
+            control_lines = f.readlines()
+        
+        # Modify paths in the control file
+        modified_lines = []
+        for line in control_lines:
+            # Update input directory to point to this run's SUMMA output
+            if '<input_dir>' in line:
+                summa_output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA" / ""
+                modified_line = f"<input_dir>             {summa_output_dir}/    ! Folder that contains runoff data from SUMMA \n"
+                modified_lines.append(modified_line)
+            # Update output directory to point to this run's MizuRoute output
+            elif '<output_dir>' in line:
+                mizuroute_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute" / ""
+                mizuroute_output_dir.mkdir(parents=True, exist_ok=True)
+                modified_line = f"<output_dir>            {mizuroute_output_dir}/    ! Folder that will contain mizuRoute simulations \n"
+                modified_lines.append(modified_line)
+            # Update case name to include run identifier
+            elif '<case_name>' in line:
+                case_parts = line.split()
+                if len(case_parts) >= 2:
+                    original_case = case_parts[1]
+                    new_case = f"{original_case}_{run_name}"
+                    modified_line = f"<case_name>             {new_case}    ! Simulation case name with run identifier \n"
+                    modified_lines.append(modified_line)
+                else:
+                    modified_lines.append(line)  # Keep unchanged if format unexpected
+            # Update input file name if needed (to match SUMMA output naming)
+            elif '<fname_qsim>' in line and "_run" not in line:
+                file_parts = line.split()
+                if len(file_parts) >= 2:
+                    original_file = file_parts[1]
+                    # Extract the base name without extension
+                    base_name = os.path.splitext(original_file)[0]
+                    # Update to include run identifier that matches SUMMA output file naming
+                    new_file = f"{base_name}_{run_name.replace('run_', 'run')}.nc"
+                    modified_line = f"<fname_qsim>            {new_file}    ! netCDF name for HM_HRU runoff \n"
+                    modified_lines.append(modified_line)
+                else:
+                    modified_lines.append(line)
+            else:
+                modified_lines.append(line)  # Keep other lines unchanged
+        
+        # Write the modified control file
+        with open(control_file_path, 'w') as f:
+            f.writelines(modified_lines)
+        
+        self.logger.info(f"Updated MizuRoute control file for {run_name}")
+
+    def _extract_run_streamflow(self, run_dir, run_name):
+        """
+        Extract streamflow results from MizuRoute output for a specific run.
+        
+        Args:
+            run_dir: Path to the run directory
+            run_name: Name of the run (e.g., 'run_0001')
+        """
+        self.logger.info(f"Extracting streamflow results for {run_name}")
+        
+        import pandas as pd
+        import xarray as xr
+        import glob
+        
+        # Find MizuRoute output files
+        mizuroute_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute"
+        output_files = list(glob.glob(str(mizuroute_output_dir / "*.nc")))
+        
+        if not output_files:
+            self.logger.warning(f"No MizuRoute output files found for {run_name}")
+            return
+        
+        # Create results directory
+        results_dir = run_dir / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Target reach ID
+        sim_reach_id = self.config.get('SIM_REACH_ID')
+        
+        # Process each output file
+        all_streamflow = []
+        
+        for output_file in output_files:
+            try:
+                # Open the NetCDF file
+                with xr.open_dataset(output_file) as ds:
+                    # Check if the reach ID exists
+                    if 'reachID' in ds.variables:
+                        # Find index for the specified reach ID
+                        reach_indices = (ds['reachID'].values == int(sim_reach_id)).nonzero()[0]
+                        
+                        if len(reach_indices) > 0:
+                            # Get the index
+                            reach_index = reach_indices[0]
+                            
+                            # Extract the time series for this reach
+                            # Look for common streamflow variable names
+                            for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
+                                if var_name in ds.variables:
+                                    streamflow = ds[var_name].isel(seg=reach_index).to_dataframe()
+                                    
+                                    # Reset index to use time as a column
+                                    streamflow = streamflow.reset_index()
+                                    
+                                    # Rename columns for clarity
+                                    streamflow = streamflow.rename(columns={var_name: 'streamflow'})
+                                    
+                                    all_streamflow.append(streamflow)
+                                    break
+                            
+                            self.logger.info(f"Extracted streamflow for reach ID {sim_reach_id} from {os.path.basename(output_file)}")
+                        else:
+                            self.logger.warning(f"Reach ID {sim_reach_id} not found in {os.path.basename(output_file)}")
+                    else:
+                        self.logger.warning(f"No reachID variable found in {os.path.basename(output_file)}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error processing {os.path.basename(output_file)}: {str(e)}")
+        
+        # Combine all streamflow data
+        if all_streamflow:
+            combined_streamflow = pd.concat(all_streamflow)
+            combined_streamflow = combined_streamflow.sort_values('time')
+            
+            # Remove duplicates if any
+            combined_streamflow = combined_streamflow.drop_duplicates(subset='time')
+            
+            # Save to CSV
+            output_csv = results_dir / f"{run_name}_streamflow.csv"
+            combined_streamflow.to_csv(output_csv, index=False)
+            
+            self.logger.info(f"Saved combined streamflow results to {output_csv}")
+            
+            return output_csv
+        else:
+            self.logger.warning(f"No streamflow data found for {run_name}")
+            return None
+
     def _run_parallel_ensemble(self, summa_exe, run_dirs, max_jobs):
-        """Run ensemble simulations in parallel."""
+        """Run ensemble simulations in parallel, including MizuRoute post-processing."""
         self.logger.info(f"Running {len(run_dirs)} ensemble simulations in parallel (max jobs: {max_jobs})")
         
         try:
@@ -805,26 +1107,94 @@ class LargeSampleEmulator:
                 output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 
+                # Results directory
+                results_dir = run_dir / "results"
+                results_dir.mkdir(parents=True, exist_ok=True)
+                
                 # Log directory
                 log_dir = output_dir / "logs"
                 log_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Run SUMMA command
-                command = f"{summa_exe} -m {filemanager_path}"
-                log_file = log_dir / f"{run_name}_summa.log"
+                # Setup MizuRoute for this run
+                mizu_settings_dir = run_dir / "settings" / "mizuRoute"
+                if not mizu_settings_dir.exists():
+                    try:
+                        self._setup_run_mizuroute_settings(run_dir, run_name)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to set up MizuRoute for {run_name}: {str(e)}")
+                        continue
                 
-                jobs.append((run_name, command, log_file))
+                # Get MizuRoute executable path and control file
+                mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
+                if mizu_path == 'default':
+                    mizu_path = self.data_dir / 'installs/mizuRoute/route/bin/'
+                else:
+                    mizu_path = Path(mizu_path)
+                mizu_exe = mizu_path / self.config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
+                mizu_control_file = mizu_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+                
+                # Check if MizuRoute should be run
+                run_mizuroute = (self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' and 
+                            'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','))
+                
+                # SUMMA command
+                summa_command = f"{summa_exe} -m {filemanager_path}"
+                summa_log_file = log_dir / f"{run_name}_summa.log"
+                
+                # MizuRoute command
+                if run_mizuroute and mizu_control_file.exists():
+                    mizu_command = f"{mizu_exe} {mizu_control_file}"
+                    mizu_log_file = log_dir / f"{run_name}_mizuroute.log"
+                else:
+                    mizu_command = None
+                    mizu_log_file = None
+                
+                # Add to jobs list
+                job_info = {
+                    'run_name': run_name,
+                    'run_dir': run_dir,
+                    'summa_command': summa_command,
+                    'summa_log_file': summa_log_file,
+                    'mizu_command': mizu_command,
+                    'mizu_log_file': mizu_log_file,
+                    'run_mizuroute': run_mizuroute
+                }
+                jobs.append(job_info)
             
             # Function to run a single job
             def run_job(job_info):
-                run_name, command, log_file = job_info
+                run_name = job_info['run_name']
+                run_dir = job_info['run_dir']
+                
                 try:
-                    with open(log_file, 'w') as f:
-                        process = subprocess.run(command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    # 1. Run SUMMA
+                    self.logger.info(f"Running SUMMA for {run_name}")
+                    with open(job_info['summa_log_file'], 'w') as f:
+                        process = subprocess.run(job_info['summa_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    
+                    self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
+                    
+                    # 2. Run MizuRoute if configured
+                    if job_info['run_mizuroute'] and job_info['mizu_command']:
+                        self.logger.info(f"Running MizuRoute for {run_name}")
+                        with open(job_info['mizu_log_file'], 'w') as f:
+                            process = subprocess.run(job_info['mizu_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                        
+                        self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
+                        
+                        # 3. Extract streamflow from MizuRoute output
+                        output_csv = self._extract_run_streamflow(run_dir, run_name)
+                        if output_csv:
+                            self.logger.info(f"Streamflow extraction successful for {run_name}")
+                        else:
+                            self.logger.warning(f"No streamflow data extracted for {run_name}")
+                    
                     return (run_name, True, None)
+                    
                 except subprocess.CalledProcessError as e:
-                    self.logger.error(f"Error running SUMMA for {run_name}: {str(e)}")
+                    self.logger.error(f"Command failed for {run_name}: {str(e)}")
                     return (run_name, False, str(e))
+                
                 except Exception as e:
                     self.logger.error(f"Unexpected error running {run_name}: {str(e)}")
                     return (run_name, False, str(e))
@@ -832,7 +1202,7 @@ class LargeSampleEmulator:
             # Run jobs in parallel
             results = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_jobs) as executor:
-                future_to_job = {executor.submit(run_job, job): job[0] for job in jobs}
+                future_to_job = {executor.submit(run_job, job): job['run_name'] for job in jobs}
                 
                 for future in concurrent.futures.as_completed(future_to_job):
                     job_name = future_to_job[future]
@@ -856,9 +1226,10 @@ class LargeSampleEmulator:
         except ImportError:
             self.logger.warning("concurrent.futures module not available. Falling back to sequential execution.")
             return self._run_sequential_ensemble(summa_exe, run_dirs)
+        
         except Exception as e:
             self.logger.error(f"Error in parallel ensemble execution: {str(e)}. Falling back to sequential execution.")
-            return self._run_sequential_ensemble(summa_exe, run_dirs)        
+            return self._run_sequential_ensemble(summa_exe, run_dirs)      
 
     @get_function_logger
     def store_parameter_sets(self, local_bounds: Dict, basin_bounds: Dict):
@@ -984,14 +1355,13 @@ class LargeSampleEmulator:
         self.logger.info(f"Successfully stored all parameter sets in: {consolidated_file_path}")
         return consolidated_file_path
 
-
     @get_function_logger
     def analyze_ensemble_results(self):
         """
-        Analyze the results of ensemble simulations.
+        Analyze the results of ensemble simulations, focusing on streamflow.
         
         This method:
-        1. Reads output from each ensemble member
+        1. Reads streamflow output from each ensemble member
         2. Computes statistics (mean, std dev, min, max, percentiles)
         3. Creates visualizations
         4. Generates a summary report
@@ -1027,91 +1397,47 @@ class LargeSampleEmulator:
             run_id = run_dir.name
             run_ids.append(run_id)
             
-            # Find SUMMA/MizuRoute output files
-            summa_output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
-            netcdf_files = list(summa_output_dir.glob("*.nc"))
+            # Look for streamflow CSV file in results directory
+            results_dir = run_dir / "results"
+            csv_files = list(results_dir.glob(f"{run_id}_streamflow.csv"))
             
-            if not netcdf_files:
-                self.logger.warning(f"No NetCDF output files found for {run_id}")
-                continue
-            
-            # Try to find streamflow data in the output files
-            streamflow_found = False
-            
-            for nc_file in netcdf_files:
+            if csv_files:
+                # Use the CSV file if it exists
                 try:
-                    with nc4.Dataset(nc_file, 'r') as ds:
-                        # Check for common streamflow variable names
-                        streamflow_vars = ['IRFroutedRunoff', 'averageRoutedRunoff', 'scalarTotalRunoff', 'discharge']
-                        var_name = None
-                        
-                        for sv in streamflow_vars:
-                            if sv in ds.variables:
-                                var_name = sv
-                                break
-                        
-                        if var_name is None:
-                            # Try to find any variable that might be streamflow
-                            for var in ds.variables:
-                                if 'runoff' in var.lower() or 'discharge' in var.lower() or 'flow' in var.lower():
-                                    var_name = var
-                                    break
-                        
-                        if var_name is not None:
-                            # Get time and streamflow data
-                            time_var = ds.variables['time']
-                            streamflow_var = ds.variables[var_name]
-                            
-                            # Convert time to datetime
-                            if hasattr(time_var, 'units'):
-                                time_units = time_var.units
-                                try:
-                                    import netCDF4 as nc4
-                                    dates = nc4.num2date(time_var[:], time_units)
-                                except:
-                                    # If netCDF4 date conversion fails, try a simple approach
-                                    if 'days since' in time_units:
-                                        base_date_str = time_units.split('days since ')[1].split()[0]
-                                        base_date = dt.datetime.strptime(base_date_str, '%Y-%m-%d')
-                                        dates = [base_date + dt.timedelta(days=float(d)) for d in time_var[:]]
-                                    elif 'hours since' in time_units:
-                                        base_date_str = time_units.split('hours since ')[1].split()[0]
-                                        base_date = dt.datetime.strptime(base_date_str, '%Y-%m-%d')
-                                        dates = [base_date + dt.timedelta(hours=float(d)) for d in time_var[:]]
-                                    else:
-                                        # Try to use time values as is (may need additional processing)
-                                        dates = [dt.datetime.fromtimestamp(t) for t in time_var[:]]
-                            else:
-                                # If no time units, use sequential days starting from a default date
-                                dates = [dt.datetime(2000, 1, 1) + dt.timedelta(days=i) for i in range(len(time_var[:]))]
-                            
-                            # Extract streamflow data
-                            if len(streamflow_var.shape) == 1:
-                                # Single time series
-                                flow_data = streamflow_var[:]
-                            elif len(streamflow_var.shape) == 2:
-                                # Multiple locations - use first one (typically for the outlet)
-                                flow_data = streamflow_var[:, 0]
-                            else:
-                                # More complex structure - try to find the appropriate dimension
-                                self.logger.warning(f"Complex variable structure for {var_name} in {nc_file}")
-                                flow_data = streamflow_var[:].flatten()
-                            
-                            # Create DataFrame for this run
-                            df = pd.DataFrame({'DateTime': dates, 'Streamflow': flow_data})
-                            df.set_index('DateTime', inplace=True)
-                            
-                            # Store in dictionary
-                            streamflow_data[run_id] = df
-                            streamflow_found = True
-                            break
-                
+                    df = pd.read_csv(csv_files[0])
+                    # Ensure DateTime column is properly formatted
+                    df['DateTime'] = pd.to_datetime(df['time'])
+                    df.set_index('DateTime', inplace=True)
+                    
+                    # Store in dictionary
+                    streamflow_data[run_id] = df[['streamflow']]
+                    self.logger.info(f"Loaded streamflow data from CSV for {run_id}")
                 except Exception as e:
-                    self.logger.warning(f"Error processing {nc_file} for {run_id}: {str(e)}")
-                    continue
-            
-            if not streamflow_found:
-                self.logger.warning(f"No streamflow data found in any output file for {run_id}")
+                    self.logger.warning(f"Error reading streamflow CSV for {run_id}: {str(e)}")
+            else:
+                # If CSV not found, try to find NetCDF files from MizuRoute
+                try:
+                    # Find SUMMA/MizuRoute output files
+                    mizu_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute"
+                    netcdf_files = list(mizu_output_dir.glob("*.nc"))
+                    
+                    if not netcdf_files:
+                        self.logger.warning(f"No MizuRoute output files found for {run_id}")
+                        continue
+                    
+                    # Try to extract streamflow from the NetCDF files
+                    output_csv = self._extract_run_streamflow(run_dir, run_id)
+                    if output_csv:
+                        # Load the newly created CSV
+                        df = pd.read_csv(output_csv)
+                        df['DateTime'] = pd.to_datetime(df['time'])
+                        df.set_index('DateTime', inplace=True)
+                        streamflow_data[run_id] = df[['streamflow']]
+                        self.logger.info(f"Extracted and loaded streamflow data for {run_id}")
+                    else:
+                        self.logger.warning(f"Failed to extract streamflow data for {run_id}")
+                except Exception as e:
+                    self.logger.warning(f"Error processing MizuRoute output for {run_id}: {str(e)}")
         
         # Check if we found any streamflow data
         if not streamflow_data:
@@ -1126,7 +1452,7 @@ class LargeSampleEmulator:
             # Ensure consistent time steps by resampling if needed
             if all_flows.empty:
                 all_flows = df.copy()
-                all_flows.rename(columns={'Streamflow': run_id}, inplace=True)
+                all_flows.rename(columns={'streamflow': run_id}, inplace=True)
             else:
                 # Resample to match index if needed
                 if not df.index.equals(all_flows.index):
@@ -1149,7 +1475,7 @@ class LargeSampleEmulator:
                         continue
                 
                 # Add this run's data
-                all_flows[run_id] = df['Streamflow']
+                all_flows[run_id] = df['streamflow']
         
         # Save the combined flow data
         all_flows.to_csv(analysis_dir / "all_ensemble_streamflows.csv")
@@ -1181,6 +1507,60 @@ class LargeSampleEmulator:
         # Save statistics
         stats_df.to_csv(analysis_dir / "ensemble_statistics.csv")
         
+        # Load observed streamflow data if available
+        observed_data = None
+        try:
+            obs_path = self.config.get('OBSERVATIONS_PATH')
+            if obs_path == 'default':
+                obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+            else:
+                obs_path = Path(obs_path)
+                
+            if obs_path.exists():
+                obs_df = pd.read_csv(obs_path)
+                # Convert date column to datetime and set as index
+                date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
+                if date_col:
+                    obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+                    obs_df.set_index('DateTime', inplace=True)
+                    
+                    # Find streamflow column
+                    flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
+                    
+                    if flow_col:
+                        observed_data = obs_df[[flow_col]].copy()
+                        observed_data.rename(columns={flow_col: 'Observed'}, inplace=True)
+                        
+                        # Resample observed data to match ensemble data if needed
+                        if not observed_data.index.equals(all_flows.index):
+                            # Get common time period
+                            start_date = max(observed_data.index.min(), all_flows.index.min())
+                            end_date = min(observed_data.index.max(), all_flows.index.max())
+                            
+                            # Filter to common period
+                            observed_data = observed_data.loc[start_date:end_date]
+                            stats_df = stats_df.loc[start_date:end_date]
+                            
+                            # Resample if needed
+                            if not observed_data.index.equals(stats_df.index):
+                                freq = pd.infer_freq(stats_df.index)
+                                if freq:
+                                    observed_data = observed_data.resample(freq).mean()
+                                else:
+                                    observed_data = observed_data.reindex(stats_df.index, method='nearest')
+                        
+                        # Save observed data
+                        observed_data.to_csv(analysis_dir / "observed_streamflow.csv")
+                        self.logger.info(f"Loaded observed streamflow data from {obs_path}")
+                    else:
+                        self.logger.warning(f"Could not identify streamflow column in observed data")
+                else:
+                    self.logger.warning(f"Could not identify date column in observed data")
+            else:
+                self.logger.info(f"Observed streamflow file not found at {obs_path}")
+        except Exception as e:
+            self.logger.warning(f"Error loading observed streamflow data: {str(e)}")
+        
         # Create visualization
         plt.figure(figsize=(16, 10))
         
@@ -1197,9 +1577,13 @@ class LargeSampleEmulator:
         plt.plot(flow_mean.index, flow_mean, 'r-', linewidth=2, label='Mean')
         plt.plot(flow_median.index, flow_median, 'k--', linewidth=1.5, label='Median')
         
+        # Plot observed data if available
+        if observed_data is not None:
+            plt.plot(observed_data.index, observed_data['Observed'], 'go-', linewidth=1.5, label='Observed')
+        
         # Add labels and legend
         plt.xlabel('Date')
-        plt.ylabel('Streamflow')
+        plt.ylabel('Streamflow (m³/s)')
         plt.title(f'Ensemble Streamflow Statistics ({len(streamflow_data)} Runs)')
         plt.legend()
         plt.grid(True)
@@ -1211,6 +1595,138 @@ class LargeSampleEmulator:
         # Save the plot
         plt.savefig(analysis_dir / "ensemble_streamflow_statistics.png", dpi=300, bbox_inches='tight')
         plt.close()
+        
+        # Create a streamflow duration curve plot
+        plt.figure(figsize=(12, 8))
+        
+        # Calculate flow duration curves for all runs
+        for run_id in all_flows.columns:
+            # Sort flows in descending order
+            flows = all_flows[run_id].sort_values(ascending=False)
+            # Calculate exceedance probability
+            exceedance = np.arange(1., len(flows) + 1) / len(flows)
+            # Plot with low opacity
+            plt.plot(exceedance, flows, 'b-', alpha=0.1)
+        
+        # Plot statistics
+        # Sort values
+        mean_sorted = flow_mean.sort_values(ascending=False)
+        median_sorted = flow_median.sort_values(ascending=False)
+        q05_sorted = flow_q05.sort_values(ascending=False)
+        q95_sorted = flow_q95.sort_values(ascending=False)
+        
+        # Calculate exceedance
+        exceedance = np.arange(1., len(mean_sorted) + 1) / len(mean_sorted)
+        
+        # Plot statistics
+        plt.plot(exceedance, mean_sorted, 'r-', linewidth=2, label='Mean')
+        plt.plot(exceedance, median_sorted, 'k--', linewidth=1.5, label='Median')
+        plt.fill_between(exceedance, q05_sorted, q95_sorted, alpha=0.3, color='skyblue', label='90% Confidence Interval')
+        
+        # Plot observed data if available
+        if observed_data is not None:
+            obs_sorted = observed_data['Observed'].sort_values(ascending=False)
+            obs_exceedance = np.arange(1., len(obs_sorted) + 1) / len(obs_sorted)
+            plt.plot(obs_exceedance, obs_sorted, 'go-', linewidth=1.5, label='Observed')
+        
+        # Add labels and legend
+        plt.xlabel('Exceedance Probability')
+        plt.ylabel('Streamflow (m³/s)')
+        plt.title('Flow Duration Curves')
+        plt.legend()
+        plt.grid(True)
+        
+        # Use logarithmic scale for y-axis to better visualize low flows
+        plt.yscale('log')
+        
+        # Save the plot
+        plt.savefig(analysis_dir / "flow_duration_curves.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Calculate performance metrics if observed data is available
+        if observed_data is not None:
+            # Resample data to ensure alignment
+            common_index = stats_df.index.intersection(observed_data.index)
+            if len(common_index) > 0:
+                stats_df_aligned = stats_df.loc[common_index]
+                observed_aligned = observed_data.loc[common_index]
+                
+                # Calculate metrics for each run
+                metrics = {}
+                for run_id in all_flows.columns:
+                    run_data = all_flows[run_id].loc[common_index]
+                    
+                    # Nash-Sutcliffe Efficiency (NSE)
+                    numerator = np.sum((observed_aligned['Observed'] - run_data) ** 2)
+                    denominator = np.sum((observed_aligned['Observed'] - observed_aligned['Observed'].mean()) ** 2)
+                    nse = 1 - (numerator / denominator)
+                    
+                    # Root Mean Square Error (RMSE)
+                    rmse = np.sqrt(np.mean((observed_aligned['Observed'] - run_data) ** 2))
+                    
+                    # Percent Bias (PBIAS)
+                    pbias = 100 * np.sum(run_data - observed_aligned['Observed']) / np.sum(observed_aligned['Observed'])
+                    
+                    # Kling-Gupta Efficiency (KGE)
+                    r = np.corrcoef(run_data, observed_aligned['Observed'])[0, 1]
+                    alpha = run_data.std() / observed_aligned['Observed'].std()
+                    beta = run_data.mean() / observed_aligned['Observed'].mean()
+                    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+                    
+                    metrics[run_id] = {
+                        'NSE': nse,
+                        'RMSE': rmse,
+                        'PBIAS': pbias,
+                        'KGE': kge
+                    }
+                
+                # Convert to DataFrame and save
+                metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
+                metrics_df.to_csv(analysis_dir / "performance_metrics.csv")
+                
+                # Calculate ensemble mean performance
+                ensemble_metrics = {
+                    'NSE': 1 - (np.sum((observed_aligned['Observed'] - flow_mean.loc[common_index]) ** 2) / 
+                            np.sum((observed_aligned['Observed'] - observed_aligned['Observed'].mean()) ** 2)),
+                    'RMSE': np.sqrt(np.mean((observed_aligned['Observed'] - flow_mean.loc[common_index]) ** 2)),
+                    'PBIAS': 100 * np.sum(flow_mean.loc[common_index] - observed_aligned['Observed']) / np.sum(observed_aligned['Observed']),
+                }
+                
+                # KGE for ensemble mean
+                r = np.corrcoef(flow_mean.loc[common_index], observed_aligned['Observed'])[0, 1]
+                alpha = flow_mean.loc[common_index].std() / observed_aligned['Observed'].std()
+                beta = flow_mean.loc[common_index].mean() / observed_aligned['Observed'].mean()
+                ensemble_metrics['KGE'] = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+                
+                # Summary statistics of metrics
+                metrics_summary = {
+                    'Mean': metrics_df.mean(),
+                    'Median': metrics_df.median(),
+                    'Min': metrics_df.min(),
+                    'Max': metrics_df.max(),
+                    'Std Dev': metrics_df.std(),
+                    'Ensemble': pd.Series(ensemble_metrics)
+                }
+                
+                # Create summary DataFrame and save
+                metrics_summary_df = pd.DataFrame(metrics_summary)
+                metrics_summary_df.to_csv(analysis_dir / "performance_metrics_summary.csv")
+                
+                # Create plot of metric distributions
+                fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+                axes = axes.flatten()
+                
+                for i, metric in enumerate(['NSE', 'KGE', 'RMSE', 'PBIAS']):
+                    axes[i].hist(metrics_df[metric], bins=20)
+                    axes[i].axvline(metrics_df[metric].mean(), color='r', linestyle='-', label='Mean')
+                    axes[i].axvline(ensemble_metrics[metric], color='g', linestyle='--', label='Ensemble')
+                    axes[i].set_title(f'{metric} Distribution')
+                    axes[i].legend()
+                    axes[i].grid(True)
+                
+                plt.tight_layout()
+                plt.savefig(analysis_dir / "performance_metrics_distribution.png", dpi=300, bbox_inches='tight')
+                plt.close()
         
         # Create a summary report
         with open(analysis_dir / "ensemble_analysis_report.txt", 'w') as f:
@@ -1224,18 +1740,38 @@ class LargeSampleEmulator:
             f.write(f"Number of Time Steps: {len(all_flows)}\n\n")
             
             f.write(f"Streamflow Statistics (over all runs):\n")
-            f.write(f"  Overall Mean: {flow_mean.mean():.2f}\n")
-            f.write(f"  Overall Median: {flow_median.mean():.2f}\n")
-            f.write(f"  Maximum Value: {flow_max.max():.2f}\n")
-            f.write(f"  Minimum Value: {flow_min.min():.2f}\n")
-            f.write(f"  Average Std Dev: {flow_std.mean():.2f}\n\n")
+            f.write(f"  Overall Mean: {flow_mean.mean():.2f} m³/s\n")
+            f.write(f"  Overall Median: {flow_median.mean():.2f} m³/s\n")
+            f.write(f"  Maximum Value: {flow_max.max():.2f} m³/s\n")
+            f.write(f"  Minimum Value: {flow_min.min():.2f} m³/s\n")
+            f.write(f"  Average Std Dev: {flow_std.mean():.2f} m³/s\n\n")
+            
+            if observed_data is not None:
+                f.write(f"Performance Evaluation (vs. Observed):\n")
+                if 'metrics_summary_df' in locals():
+                    f.write(f"  Ensemble Mean NSE: {ensemble_metrics['NSE']:.4f}\n")
+                    f.write(f"  Ensemble Mean KGE: {ensemble_metrics['KGE']:.4f}\n")
+                    f.write(f"  Ensemble Mean RMSE: {ensemble_metrics['RMSE']:.4f} m³/s\n")
+                    f.write(f"  Ensemble Mean PBIAS: {ensemble_metrics['PBIAS']:.4f}%\n\n")
+                    
+                    f.write(f"  Best NSE: {metrics_df['NSE'].max():.4f} (Run: {metrics_df['NSE'].idxmax()})\n")
+                    f.write(f"  Best KGE: {metrics_df['KGE'].max():.4f} (Run: {metrics_df['KGE'].idxmax()})\n")
+                    f.write(f"  Best RMSE: {metrics_df['RMSE'].min():.4f} m³/s (Run: {metrics_df['RMSE'].idxmin()})\n")
+                    f.write(f"  Best PBIAS: {metrics_df['PBIAS'].abs().min():.4f}% (Run: {metrics_df['PBIAS'].abs().idxmin()})\n\n")
             
             f.write(f"Files Generated:\n")
             f.write(f"  - all_ensemble_streamflows.csv: Combined streamflow time series for all runs\n")
             f.write(f"  - ensemble_statistics.csv: Statistical metrics for each time step\n")
-            f.write(f"  - ensemble_streamflow_statistics.png: Visualization of ensemble statistics\n\n")
+            f.write(f"  - ensemble_streamflow_statistics.png: Visualization of ensemble statistics\n")
+            f.write(f"  - flow_duration_curves.png: Flow duration curves for all ensemble members\n")
             
-            f.write(f"Generated on: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            if observed_data is not None:
+                f.write(f"  - observed_streamflow.csv: Observed streamflow data\n")
+                f.write(f"  - performance_metrics.csv: Performance metrics for each ensemble member\n")
+                f.write(f"  - performance_metrics_summary.csv: Summary of performance metrics\n")
+                f.write(f"  - performance_metrics_distribution.png: Distributions of performance metrics\n")
+            
+            f.write(f"\nGenerated on: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         
         self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
         return analysis_dir

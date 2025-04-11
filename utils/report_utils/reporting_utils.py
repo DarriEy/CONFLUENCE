@@ -727,8 +727,6 @@ class VisualizationReporter:
                 zorder=4
             )
 
-            # Add cartographic elements
-            self._add_scale_bar(ax)
             self._add_north_arrow(ax)
 
             # Add title
@@ -784,25 +782,6 @@ class VisualizationReporter:
                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=10),
                 fontsize=10,
                 verticalalignment='bottom')
-
-    def _add_scale_bar(self, ax):
-        """Add a scale bar to the map"""
-
-        # Create scale bar (automatically determines appropriate length)
-        scalebar = ScaleBar(
-            1, 
-            "m",
-            length_fraction=0.25,
-            location='lower right',
-            pad=1,
-            border_pad=1,
-            sep=5,
-            frameon=True,
-            color='black',
-            box_color='white',
-            box_alpha=0.8
-        )
-        ax.add_artist(scalebar)
 
     def _add_north_arrow(self, ax):
         """Add a north arrow to the map"""
@@ -1140,8 +1119,6 @@ class VisualizationReporter:
                 zorder=4
             )
 
-            # Add scale bar
-            self._add_scale_bar(ax)
 
             # Add north arrow
             self._add_north_arrow(ax)
@@ -1430,8 +1407,6 @@ class VisualizationReporter:
                     ax1.set_title(f'Spatial Distribution of Mean {var_name}', fontsize=12)
                     ax1.set_axis_off()
                     
-                    # Add scale bar and north arrow
-                    self._add_scale_bar(ax1)
                     self._add_north_arrow(ax1)
                     
                     # Plot time series using chunked computation
@@ -1488,8 +1463,6 @@ class VisualizationReporter:
                     ax1.set_title(f'Spatial Distribution of Mean {var_name}', fontsize=12)
                     ax1.set_axis_off()
                     
-                    # Add scale bar and north arrow
-                    self._add_scale_bar(ax1)
                     self._add_north_arrow(ax1)
                 
                     
