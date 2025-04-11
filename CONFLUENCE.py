@@ -32,7 +32,7 @@ from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, Summ
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
-#from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
+from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
 #from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
 
 # Evaluation utilities
@@ -122,7 +122,6 @@ class CONFLUENCE:
             (self.plot_discretised_domain, lambda: (self.project_dir / "plots" / "discretization" / f"domain_discretization_{self.config['DOMAIN_DISCRETIZATION']}.png").exists()),
             
             # Model agnostic data pre- processing
-            (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
             (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
@@ -133,6 +132,7 @@ class CONFLUENCE:
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
 
             # --- Emulation and Optimization Steps ---
+            (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
             (self.run_large_sample_emulation, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
 

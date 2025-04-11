@@ -2650,6 +2650,10 @@ class SummaRunner:
         summa_log_path = self._get_config_path('EXPERIMENT_LOG_SUMMA', f"simulations/{experiment_id}/SUMMA/SUMMA_logs/")
         summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
 
+        # Create output and log directories if they don't exist
+        summa_log_path.mkdir(parents=True, exist_ok=True)
+        summa_out_path.mkdir(parents=True, exist_ok=True)
+
         # Get and validate GRU count
         total_grus = self.config.get('SETTINGS_SUMMA_GRU_COUNT')
         if total_grus == 'default':
@@ -2660,9 +2664,21 @@ class SummaRunner:
             subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / subbasins_name
             
             # Read shapefile and count unique GRU_IDs
-            gdf = gpd.read_file(subbasins_shapefile)
-            total_grus = len(gdf['GRU_ID'].unique())
-            self.logger.info(f"Counted {total_grus} unique GRUs from shapefile")
+            try:
+                import geopandas as gpd
+                gdf = gpd.read_file(subbasins_shapefile)
+                total_grus = len(gdf[self.config.get('CATCHMENT_SHP_GRUID')].unique())
+                self.logger.info(f"Counted {total_grus} unique GRUs from shapefile")
+            except Exception as e:
+                self.logger.warning(f"Error counting GRUs from shapefile: {str(e)}. Using default value of 10.")
+                total_grus = 10
+        else:
+            # Convert to int if it's a string
+            try:
+                total_grus = int(total_grus)
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid GRU count '{total_grus}'. Using default value of 10.")
+                total_grus = 10
 
         # Get and validate GRUs per job
         grus_per_job = self.config.get('SETTINGS_SUMMA_GRU_PER_JOB')
@@ -2674,9 +2690,16 @@ class SummaRunner:
             else:
                 grus_per_job = 1
                 self.logger.info("Setting default of 1 GRU per job")
+        else:
+            # Convert to int if it's a string
+            try:
+                grus_per_job = int(grus_per_job)
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid GRUs per job '{grus_per_job}'. Using default value of 1.")
+                grus_per_job = 1
 
-        # Calculate number of array jobs needed
-        n_array_jobs = -(-total_grus // grus_per_job)  # Ceiling division
+        # Calculate number of array jobs needed (minimum 1)
+        n_array_jobs = max(1, -(-total_grus // grus_per_job))  # Ceiling division
         
         # Create SLURM script
         slurm_script = self._create_slurm_script(
@@ -2695,52 +2718,134 @@ class SummaRunner:
         script_path = self.project_dir / 'run_summa_parallel.sh'
         with open(script_path, 'w') as f:
             f.write(slurm_script)
-        script_path.chmod(0o755)  # Make executable
+        
+        # Make script executable
+        import os
+        os.chmod(script_path, 0o755)
         
         # Submit job
-        
         try:
+            import subprocess
+            import shutil
             
+            # Check if sbatch exists in the path
+            if not shutil.which("sbatch"):
+                self.logger.error("SLURM 'sbatch' command not found. Is SLURM installed on this system?")
+                raise RuntimeError("SLURM 'sbatch' command not found")
+            
+            # Log the full command being executed
             cmd = f"sbatch {script_path}"
-            result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
-            job_id = result.stdout.strip().split()[-1]
+            self.logger.info(f"Executing command: {cmd}")
+            
+            # Run the command
+            process = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+            job_id = process.stdout.strip().split()[-1]
             self.logger.info(f"Submitted SLURM array job with ID: {job_id}")
             
             # Backup settings if required
             if self.config.get('EXPERIMENT_BACKUP_SETTINGS') == 'yes':
                 backup_path = summa_out_path / "run_settings"
                 self._backup_settings(settings_path, backup_path)
+            
+            # Check if we should monitor the job
+            monitor_job = self.config.get('MONITOR_SLURM_JOB', True)
+            if monitor_job:
+                import time
                 
-            # Wait for SLURM job to complete
-            while True:
-                result = subprocess.run(f"squeue -j {job_id}", shell=True, capture_output=True, text=True)
-                if result.stdout.count('\n') <= 1:  # Only header line remains
-                    break
-                time.sleep(60)  # Check every minute
+                self.logger.info(f"Monitoring SLURM job {job_id}")
+                
+                # Wait for SLURM job to complete
+                wait_time = 0
+                max_wait_time = 3600  # 1 hour
+                check_interval = 60  # 1 minute
+                
+                while wait_time < max_wait_time:
+                    try:
+                        result = subprocess.run(f"squeue -j {job_id}", shell=True, capture_output=True, text=True)
+                        
+                        # If result only contains header, job is no longer in queue
+                        if result.stdout.count('\n') <= 1:
+                            self.logger.info(f"Job {job_id} no longer in queue, checking status")
+                            
+                            # Check if job completed successfully
+                            sacct_cmd = f"sacct -j {job_id} -o State -n | head -1"
+                            state_result = subprocess.run(sacct_cmd, shell=True, capture_output=True, text=True)
+                            state = state_result.stdout.strip()
+                            
+                            if "COMPLETED" in state:
+                                self.logger.info(f"Job {job_id} completed successfully")
+                                break
+                            elif "FAILED" in state or "CANCELLED" in state or "TIMEOUT" in state:
+                                self.logger.error(f"Job {job_id} ended with status: {state}")
+                                raise RuntimeError(f"SLURM job {job_id} failed with status: {state}")
+                            else:
+                                self.logger.warning(f"Job {job_id} has unknown status: {state}")
+                                break
+                        else:
+                            pending_count = result.stdout.count("PENDING")
+                            running_count = result.stdout.count("RUNNING")
+                            self.logger.info(f"Job {job_id} status: {running_count} running, {pending_count} pending")
+                    except subprocess.SubprocessError as e:
+                        self.logger.warning(f"Error checking job status: {str(e)}")
+                    
+                    # Wait before checking again
+                    time.sleep(check_interval)
+                    wait_time += check_interval
+                
+                if wait_time >= max_wait_time:
+                    self.logger.warning(f"Maximum wait time exceeded for job {job_id}. Continuing without waiting for completion.")
             
-            self.logger.info("SUMMA parallel run completed, starting output merge")
-            
+            self.logger.info("SUMMA parallel run completed or continuing in background")
             return self.merge_parallel_outputs()
             
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error executing sbatch command: {str(e)}")
+            self.logger.error(f"Command output: {e.stdout}")
+            self.logger.error(f"Command error: {e.stderr}")
+            raise RuntimeError(f"Failed to submit SLURM job. Error: {str(e)}")
         except Exception as e:
             self.logger.error(f"Error in parallel SUMMA workflow: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
                             filemanager: str, summa_log_path: Path, summa_out_path: Path,
                             total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
+        """
+        Create a SLURM batch script for running SUMMA in parallel.
         
+        Args:
+            summa_path (Path): Path to SUMMA executable directory
+            summa_exe (str): Name of SUMMA executable
+            settings_path (Path): Path to SUMMA settings directory
+            filemanager (str): Name of SUMMA file manager
+            summa_log_path (Path): Path for SUMMA log files
+            summa_out_path (Path): Path for SUMMA output files
+            total_grus (int): Total number of GRUs to process
+            grus_per_job (int): Number of GRUs to process per job
+            n_array_jobs (int): Number of array jobs (0-based maximum index)
+            
+        Returns:
+            str: Content of the SLURM batch script
+        """
+                
+        # Create the script
         script = f"""#!/bin/bash
-#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK')}
-#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT')}
-#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM')}
-#SBATCH --constraint=broadwell
-#SBATCH --exclusive
-#SBATCH --nodes=1
-#SBATCH --job-name=Summa-Parallel
+#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK', 1)}
+#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT', '01:00:00')}
+#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM', '4G')}
+#SBATCH --job-name=Summa-{self.config.get('DOMAIN_NAME')}
 #SBATCH --output={summa_log_path}/summa_%A_%a.out
 #SBATCH --error={summa_log_path}/summa_%A_%a.err
 #SBATCH --array=0-{n_array_jobs}
+
+# Print job info for debugging
+echo "Starting SUMMA parallel job at $(date)"
+echo "Running on host: $(hostname)"
+echo "Current directory: $(pwd)"
+echo "SLURM Job ID: $SLURM_JOB_ID"
+echo "SLURM Array Task ID: $SLURM_ARRAY_TASK_ID"
 
 # Create required directories
 mkdir -p {summa_out_path}
@@ -2756,6 +2861,18 @@ if [ $gru_end -gt {total_grus} ]; then
 fi
 
 echo "Processing GRUs $gru_start to $gru_end"
+
+# Check if SUMMA executable exists
+if [ ! -f "{summa_path}/{summa_exe}" ]; then
+    echo "ERROR: SUMMA executable not found at {summa_path}/{summa_exe}"
+    exit 1
+fi
+
+# Check if filemanager exists
+if [ ! -f "{settings_path}/{filemanager}" ]; then
+    echo "ERROR: File manager not found at {settings_path}/{filemanager}"
+    exit 1
+fi
 
 # Process each GRU in the range
 for gru in $(seq $gru_start $gru_end); do
@@ -2773,7 +2890,7 @@ for gru in $(seq $gru_start $gru_end); do
     echo "Completed GRU $gru"
 done
 
-echo "Completed all GRUs for this job"
+echo "Completed all GRUs for this job at $(date)"
 """
         return script
 

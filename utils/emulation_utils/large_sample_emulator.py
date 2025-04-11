@@ -962,6 +962,13 @@ class LargeSampleEmulator:
                 mizuroute_output_dir.mkdir(parents=True, exist_ok=True)
                 modified_line = f"<output_dir>            {mizuroute_output_dir}/    ! Folder that will contain mizuRoute simulations \n"
                 modified_lines.append(modified_line)
+            # Update output directory to point to this run's MizuRoute ancilliary data
+            elif '<ancil_dir>' in line:
+                mizuroute_settings_dir = run_dir / "settings" / "mizuRoute" / ""
+                mizuroute_settings_dir.mkdir(parents=True, exist_ok=True)
+                modified_line = f"<output_dir>            {mizuroute_output_dir}/    ! Folder that will contain mizuRoute simulations \n"
+                modified_lines.append(modified_line)
+
             # Update case name to include run identifier
             elif '<case_name>' in line:
                 case_parts = line.split()
