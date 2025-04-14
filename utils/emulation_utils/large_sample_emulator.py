@@ -1082,16 +1082,16 @@ class LargeSampleEmulator:
         # Modify paths in the control file
         modified_lines = []
         for line in control_lines:
-            # Update ancil_dir to point to this run's mizuRoute settings directory
-            if '<ancil_dir>' in line:
-                modified_line = f"<ancil_dir>             {mizu_settings_dir}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n"
-                modified_lines.append(modified_line)
             # Update input directory to point to this run's SUMMA output
-            elif '<input_dir>' in line:
+            if '<input_dir>' in line:
                 summa_output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA" / ""
                 summa_output_dir.mkdir(parents=True, exist_ok=True)
                 modified_line = f"<input_dir>             {summa_output_dir}/    ! Folder that contains runoff data from SUMMA \n"
                 modified_lines.append(modified_line)
+            # Update ancil_dir to point to this run's mizuRoute settings directory
+            elif '<ancil_dir>' in line:
+                modified_line = f"<ancil_dir>             {mizu_settings_dir}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n"
+                modified_lines.append(modified_line)            
             # Update output directory to point to this run's MizuRoute output
             elif '<output_dir>' in line:
                 mizuroute_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute" / ""

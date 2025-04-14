@@ -16,7 +16,7 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/global_SA"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/fluxnet"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
