@@ -24,7 +24,7 @@ DOMAIN_NAME: "North_America"                                           # Name of
 EXPERIMENT_ID: run_1                                           # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 40                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 12                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geopsatial settings: =================================================================

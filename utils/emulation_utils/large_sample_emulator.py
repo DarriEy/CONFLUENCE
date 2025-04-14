@@ -836,66 +836,197 @@ class LargeSampleEmulator:
             log_dir = output_dir / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             
-            try:
-                # 1. Run SUMMA
-                self.logger.info(f"Running SUMMA for {run_name}")
-                summa_command = f"{summa_exe} -m {filemanager_path}"
-                summa_log_file = log_dir / f"{run_name}_summa.log"
+            # Create a debugging log for this run
+            debug_log_path = results_dir / f"{run_name}_debug.log"
+            with open(debug_log_path, 'w') as debug_log:
+                debug_log.write(f"Debug log for {run_name}\n")
+                debug_log.write(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                debug_log.write(f"SUMMA executable: {summa_exe}\n")
+                debug_log.write(f"SUMMA fileManager: {filemanager_path}\n")
                 
-                import subprocess
-                with open(summa_log_file, 'w') as f:
-                    process = subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                try:
+                    # 1. Run SUMMA
+                    self.logger.info(f"Running SUMMA for {run_name}")
+                    debug_log.write("\n--- Running SUMMA ---\n")
+                    summa_command = f"{summa_exe} -m {filemanager_path}"
+                    debug_log.write(f"SUMMA command: {summa_command}\n")
+                    
+                    summa_log_file = log_dir / f"{run_name}_summa.log"
+                    debug_log.write(f"SUMMA log file: {summa_log_file}\n")
+                    
+                    import subprocess
+                    with open(summa_log_file, 'w') as f:
+                        process = subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    
+                    self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
+                    debug_log.write("SUMMA simulation completed successfully\n")
+                    
+                    # Check if SUMMA output files were created
+                    summa_output_files = list(output_dir.glob(f"{self.experiment_id}*.nc"))
+                    debug_log.write(f"SUMMA output files found: {len(summa_output_files)}\n")
+                    for file in summa_output_files:
+                        debug_log.write(f"  - {file.name}\n")
+                    
+                    # 2. Run MizuRoute if configured to do so and SUMMA used a distributed setup
+                    run_mizuroute = (self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' and 
+                                    'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','))
+                    
+                    debug_log.write(f"\nRun MizuRoute? {run_mizuroute}\n")
+                    debug_log.write(f"Domain definition method: {self.config.get('DOMAIN_DEFINITION_METHOD')}\n")
+                    debug_log.write(f"Hydrological model: {self.config.get('HYDROLOGICAL_MODEL', '')}\n")
+                    
+                    if run_mizuroute:
+                        self.logger.info(f"Running MizuRoute for {run_name}")
+                        debug_log.write("\n--- Running MizuRoute ---\n")
+                        
+                        # Set up MizuRoute settings for this run
+                        mizu_settings_dir = run_dir / "settings" / "mizuRoute"
+                        debug_log.write(f"MizuRoute settings directory: {mizu_settings_dir}\n")
+                        
+                        # Create MizuRoute settings if they don't exist
+                        if not mizu_settings_dir.exists():
+                            debug_log.write("Creating MizuRoute settings...\n")
+                            self._setup_run_mizuroute_settings(run_dir, run_name)
+                            debug_log.write("MizuRoute settings created\n")
+                        
+                        # Get control file for MizuRoute
+                        mizu_control_file = mizu_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+                        debug_log.write(f"MizuRoute control file: {mizu_control_file}\n")
+                        
+                        if not mizu_control_file.exists():
+                            error_msg = f"MizuRoute control file not found: {mizu_control_file}"
+                            self.logger.warning(error_msg)
+                            debug_log.write(f"ERROR: {error_msg}\n")
+                            # Create empty streamflow file
+                            self._create_empty_streamflow_file(run_dir, run_name)
+                            results.append((run_name, False, error_msg))
+                            continue
+                        
+                        # Write contents of control file for debugging
+                        debug_log.write("\nMizuRoute control file contents:\n")
+                        with open(mizu_control_file, 'r') as f:
+                            debug_log.write(f.read())
+                        debug_log.write("\n")
+                        
+                        # Check if SUMMA timestep file exists and log details
+                        mizu_input_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
+                        timestep_file = mizu_input_dir / f"{self.experiment_id}_timestep.nc"
+                        debug_log.write(f"Looking for SUMMA timestep file at: {timestep_file}\n")
+                        
+                        if timestep_file.exists():
+                            debug_log.write(f"SUMMA timestep file found: {timestep_file}\n")
+                            # Try to get basic info about the file
+                            try:
+                                import xarray as xr
+                                with xr.open_dataset(timestep_file) as ds:
+                                    debug_log.write(f"Timestep file dimensions: {dict(ds.dims)}\n")
+                                    debug_log.write(f"Timestep file variables: {list(ds.variables)}\n")
+                                    if 'time' in ds.dims:
+                                        debug_log.write(f"Time dimension size: {ds.dims['time']}\n")
+                                        debug_log.write(f"First time: {ds.time.values[0]}\n")
+                                        debug_log.write(f"Last time: {ds.time.values[-1]}\n")
+                            except Exception as e:
+                                debug_log.write(f"Error examining timestep file: {str(e)}\n")
+                        else:
+                            error_msg = f"SUMMA timestep file not found: {timestep_file}"
+                            debug_log.write(f"ERROR: {error_msg}\n")
+                            # Create empty streamflow file
+                            self._create_empty_streamflow_file(run_dir, run_name)
+                            results.append((run_name, False, error_msg))
+                            continue
+                        
+                        # Run MizuRoute
+                        mizu_command = f"{mizu_exe} {mizu_control_file}"
+                        debug_log.write(f"MizuRoute command: {mizu_command}\n")
+                        
+                        mizu_log_file = log_dir / f"{run_name}_mizuroute.log"
+                        debug_log.write(f"MizuRoute log file: {mizu_log_file}\n")
+                        
+                        try:
+                            with open(mizu_log_file, 'w') as f:
+                                process = subprocess.run(mizu_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                            
+                            self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
+                            debug_log.write("MizuRoute simulation completed successfully\n")
+                            
+                            # Check if MizuRoute output files were created
+                            mizu_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute"
+                            mizu_output_files = list(mizu_output_dir.glob("*.nc"))
+                            debug_log.write(f"MizuRoute output files found: {len(mizu_output_files)}\n")
+                            for file in mizu_output_files:
+                                debug_log.write(f"  - {file.name}\n")
+                        
+                        except subprocess.CalledProcessError as e:
+                            error_msg = f"MizuRoute execution failed: {str(e)}"
+                            self.logger.error(error_msg)
+                            debug_log.write(f"ERROR: {error_msg}\n")
+                            # Continue with extracting any partial results
+                            debug_log.write("Attempting to extract any available results despite MizuRoute failure\n")
+                        
+                        # 3. Extract streamflow from MizuRoute output
+                        debug_log.write("\n--- Extracting streamflow ---\n")
+                        output_csv = self._extract_run_streamflow(run_dir, run_name)
+                        
+                        if output_csv and output_csv.exists():
+                            debug_log.write(f"Streamflow extraction successful: {output_csv}\n")
+                            # Check if the file has actual data
+                            try:
+                                import pandas as pd
+                                df = pd.read_csv(output_csv)
+                                if len(df) > 0:
+                                    debug_log.write(f"Streamflow file contains {len(df)} rows of data\n")
+                                else:
+                                    debug_log.write("WARNING: Streamflow file is empty\n")
+                            except Exception as e:
+                                debug_log.write(f"Error checking streamflow file: {str(e)}\n")
+                        else:
+                            debug_log.write("Streamflow extraction failed or produced no file\n")
+                    
+                    # Record success regardless of MizuRoute (we consider run successful if SUMMA completes)
+                    results.append((run_name, True, None))
+                    
+                except subprocess.CalledProcessError as e:
+                    error_msg = f"Error running simulation: {str(e)}"
+                    self.logger.error(error_msg)
+                    debug_log.write(f"ERROR: {error_msg}\n")
+                    results.append((run_name, False, error_msg))
+                    
+                except Exception as e:
+                    error_msg = f"Unexpected error: {str(e)}"
+                    self.logger.error(error_msg)
+                    debug_log.write(f"ERROR: {error_msg}\n")
+                    import traceback
+                    tb = traceback.format_exc()
+                    debug_log.write(f"Traceback:\n{tb}\n")
+                    results.append((run_name, False, error_msg))
                 
-                self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
-                
-                # 2. Run MizuRoute if configured to do so and SUMMA used a distributed setup
-                run_mizuroute = (self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' and 
-                                'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','))
-                
-                if run_mizuroute:
-                    self.logger.info(f"Running MizuRoute for {run_name}")
-                    
-                    # Set up MizuRoute settings for this run
-                    mizu_settings_dir = run_dir / "settings" / "mizuRoute"
-                    
-                    # Create MizuRoute settings if they don't exist
-                    if not mizu_settings_dir.exists():
-                        self._setup_run_mizuroute_settings(run_dir, run_name)
-                    
-                    # Get control file for MizuRoute
-                    mizu_control_file = mizu_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
-                    
-                    if not mizu_control_file.exists():
-                        self.logger.warning(f"MizuRoute control file not found for {run_name}: {mizu_control_file}")
-                        raise FileNotFoundError(f"MizuRoute control file not found: {mizu_control_file}")
-                    
-                    # Run MizuRoute
-                    mizu_command = f"{mizu_exe} {mizu_control_file}"
-                    mizu_log_file = log_dir / f"{run_name}_mizuroute.log"
-                    
-                    with open(mizu_log_file, 'w') as f:
-                        process = subprocess.run(mizu_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
-                    
-                    self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
-                    
-                    # 3. Extract streamflow from MizuRoute output
-                    self._extract_run_streamflow(run_dir, run_name)
-                
-                results.append((run_name, True, None))
-                
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error running simulation for {run_name}: {str(e)}")
-                results.append((run_name, False, str(e)))
-                
-            except Exception as e:
-                self.logger.error(f"Unexpected error running {run_name}: {str(e)}")
-                results.append((run_name, False, str(e)))
+                finally:
+                    # Record completion time
+                    debug_log.write(f"\nCompleted at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    # Create streamflow file if it doesn't exist yet
+                    if not (run_dir / "results" / f"{run_name}_streamflow.csv").exists():
+                        self._create_empty_streamflow_file(run_dir, run_name)
         
         # Summarize results
         successes = sum(1 for _, success, _ in results if success)
         self.logger.info(f"Completed {successes} out of {len(results)} sequential ensemble simulations")
         
         return results
+
+    def _create_empty_streamflow_file(self, run_dir, run_name):
+        """Create an empty streamflow file to ensure existence for later analysis"""
+        import pandas as pd
+        
+        results_dir = run_dir / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create an empty streamflow file with appropriate columns
+        empty_df = pd.DataFrame(columns=['time', 'streamflow'])
+        output_csv = results_dir / f"{run_name}_streamflow.csv"
+        empty_df.to_csv(output_csv, index=False)
+        
+        self.logger.warning(f"Created empty streamflow file at {output_csv}")
+        return output_csv
 
     def _setup_run_mizuroute_settings(self, run_dir, run_name):
         """
@@ -951,9 +1082,14 @@ class LargeSampleEmulator:
         # Modify paths in the control file
         modified_lines = []
         for line in control_lines:
+            # Update ancil_dir to point to this run's mizuRoute settings directory
+            if '<ancil_dir>' in line:
+                modified_line = f"<ancil_dir>             {mizu_settings_dir}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n"
+                modified_lines.append(modified_line)
             # Update input directory to point to this run's SUMMA output
-            if '<input_dir>' in line:
+            elif '<input_dir>' in line:
                 summa_output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA" / ""
+                summa_output_dir.mkdir(parents=True, exist_ok=True)
                 modified_line = f"<input_dir>             {summa_output_dir}/    ! Folder that contains runoff data from SUMMA \n"
                 modified_lines.append(modified_line)
             # Update output directory to point to this run's MizuRoute output
@@ -962,36 +1098,51 @@ class LargeSampleEmulator:
                 mizuroute_output_dir.mkdir(parents=True, exist_ok=True)
                 modified_line = f"<output_dir>            {mizuroute_output_dir}/    ! Folder that will contain mizuRoute simulations \n"
                 modified_lines.append(modified_line)
-            # Update output directory to point to this run's MizuRoute ancilliary data
-            elif '<ancil_dir>' in line:
-                mizuroute_settings_dir = run_dir / "settings" / "mizuRoute" / ""
-                mizuroute_settings_dir.mkdir(parents=True, exist_ok=True)
-                modified_line = f"<output_dir>            {mizuroute_output_dir}/    ! Folder that will contain mizuRoute simulations \n"
-                modified_lines.append(modified_line)
-
             # Update case name to include run identifier
             elif '<case_name>' in line:
-                case_parts = line.split()
-                if len(case_parts) >= 2:
-                    original_case = case_parts[1]
-                    new_case = f"{original_case}_{run_name}"
-                    modified_line = f"<case_name>             {new_case}    ! Simulation case name with run identifier \n"
-                    modified_lines.append(modified_line)
-                else:
-                    modified_lines.append(line)  # Keep unchanged if format unexpected
-            # Update input file name if needed (to match SUMMA output naming)
-            elif '<fname_qsim>' in line and "_run" not in line:
-                file_parts = line.split()
-                if len(file_parts) >= 2:
-                    original_file = file_parts[1]
-                    # Extract the base name without extension
-                    base_name = os.path.splitext(original_file)[0]
-                    # Update to include run identifier that matches SUMMA output file naming
-                    new_file = f"{base_name}_{run_name.replace('run_', 'run')}.nc"
-                    modified_line = f"<fname_qsim>            {new_file}    ! netCDF name for HM_HRU runoff \n"
-                    modified_lines.append(modified_line)
-                else:
-                    modified_lines.append(line)
+                # Extract the experiment ID from the config
+                experiment_id = self.config.get('EXPERIMENT_ID')
+                # Create a new case name with run identifier
+                new_case = f"{experiment_id}_{run_name}"
+                modified_line = f"<case_name>             {new_case}    ! Simulation case name with run identifier \n"
+                modified_lines.append(modified_line)
+            # Update input file name to match SUMMA output naming
+            elif '<fname_qsim>' in line:
+                # The SUMMA output file will be named like: experiment_id_timestep.nc
+                # We need to keep this naming convention
+                experiment_id = self.config.get('EXPERIMENT_ID')
+                modified_line = f"<fname_qsim>            {experiment_id}_timestep.nc    ! netCDF name for HM_HRU runoff \n"
+                modified_lines.append(modified_line)
+            # Keep simulation start time as is from the main configuration
+            elif '<sim_start>' in line:
+                sim_start = self.config.get('EXPERIMENT_TIME_START')
+                # Ensure proper formatting
+                if ' ' not in sim_start:
+                    sim_start = f"{sim_start} 00:00"
+                modified_line = f"<sim_start>             {sim_start}    ! Time of simulation start. format: yyyy-mm-dd hh:mm:ss \n"
+                modified_lines.append(modified_line)
+            # Keep simulation end time as is from the main configuration
+            elif '<sim_end>' in line:
+                sim_end = self.config.get('EXPERIMENT_TIME_END')
+                # Ensure proper formatting
+                if ' ' not in sim_end:
+                    sim_end = f"{sim_end} 23:59"
+                modified_line = f"<sim_end>               {sim_end}    ! Time of simulation end. format: yyyy-mm-dd hh:mm:ss \n"
+                modified_lines.append(modified_line)
+            # Set calendar to standard for compatibility
+            elif '<calendar>' in line:
+                modified_line = f"<calendar>              standard    ! Calendar of the nc file \n"
+                modified_lines.append(modified_line)
+            # Ensure routing variable is set correctly
+            elif '<vname_qsim>' in line:
+                routing_var = self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+                modified_line = f"<vname_qsim>            {routing_var}    ! Variable name for HM_HRU runoff \n"
+                modified_lines.append(modified_line)
+            # Set time steps consistently
+            elif '<dt_qsim>' in line:
+                time_step = self.config.get('SETTINGS_MIZU_ROUTING_DT', '3600')
+                modified_line = f"<dt_qsim>               {time_step}    ! Time interval of input runoff in seconds \n"
+                modified_lines.append(modified_line)
             else:
                 modified_lines.append(line)  # Keep other lines unchanged
         
@@ -1016,12 +1167,26 @@ class LargeSampleEmulator:
         import glob
         
         # Find MizuRoute output files
-        mizuroute_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute"
-        output_files = list(glob.glob(str(mizuroute_output_dir / "*.nc")))
+        experiment_id = self.experiment_id
+        mizuroute_output_dir = run_dir / "simulations" / experiment_id / "mizuRoute"
+        
+        # Try different pattern matching to find output files
+        output_files = []
+        patterns = [
+            f"{experiment_id}_{run_name}*.nc",  # Try with run name in filename
+            f"{experiment_id}*.nc",             # Try just experiment ID
+            "*.nc"                              # Try any netCDF file as last resort
+        ]
+        
+        for pattern in patterns:
+            output_files = list(mizuroute_output_dir.glob(pattern))
+            if output_files:
+                self.logger.info(f"Found MizuRoute output files with pattern: {pattern}")
+                break
         
         if not output_files:
             self.logger.warning(f"No MizuRoute output files found for {run_name}")
-            return
+            return None
         
         # Create results directory
         results_dir = run_dir / "results"
@@ -1059,6 +1224,7 @@ class LargeSampleEmulator:
                                     streamflow = streamflow.rename(columns={var_name: 'streamflow'})
                                     
                                     all_streamflow.append(streamflow)
+                                    self.logger.info(f"Extracted streamflow from variable {var_name}")
                                     break
                             
                             self.logger.info(f"Extracted streamflow for reach ID {sim_reach_id} from {os.path.basename(output_file)}")
@@ -1087,8 +1253,16 @@ class LargeSampleEmulator:
             return output_csv
         else:
             self.logger.warning(f"No streamflow data found for {run_name}")
-            return None
-
+            
+            # Create an empty streamflow file with appropriate columns
+            # This ensures we have a file even when mizuRoute fails
+            empty_df = pd.DataFrame(columns=['time', 'streamflow'])
+            output_csv = results_dir / f"{run_name}_streamflow.csv"
+            empty_df.to_csv(output_csv, index=False)
+            
+            self.logger.warning(f"Created empty streamflow file at {output_csv}")
+            return output_csv
+        
     def _run_parallel_ensemble(self, summa_exe, run_dirs, max_jobs):
         """Run ensemble simulations in parallel, including MizuRoute post-processing."""
         self.logger.info(f"Running {len(run_dirs)} ensemble simulations in parallel (max jobs: {max_jobs})")
@@ -1129,7 +1303,6 @@ class LargeSampleEmulator:
                         self._setup_run_mizuroute_settings(run_dir, run_name)
                     except Exception as e:
                         self.logger.warning(f"Failed to set up MizuRoute for {run_name}: {str(e)}")
-                        continue
                 
                 # Get MizuRoute executable path and control file
                 mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
@@ -1142,19 +1315,23 @@ class LargeSampleEmulator:
                 
                 # Check if MizuRoute should be run
                 run_mizuroute = (self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped' and 
-                            'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(','))
+                            'SUMMA' in self.config.get('HYDROLOGICAL_MODEL', '').split(',') and
+                            mizu_control_file.exists())
                 
                 # SUMMA command
                 summa_command = f"{summa_exe} -m {filemanager_path}"
                 summa_log_file = log_dir / f"{run_name}_summa.log"
                 
                 # MizuRoute command
-                if run_mizuroute and mizu_control_file.exists():
+                if run_mizuroute:
                     mizu_command = f"{mizu_exe} {mizu_control_file}"
                     mizu_log_file = log_dir / f"{run_name}_mizuroute.log"
                 else:
                     mizu_command = None
                     mizu_log_file = None
+                
+                # Debug log file
+                debug_log_file = results_dir / f"{run_name}_debug.log"
                 
                 # Add to jobs list
                 job_info = {
@@ -1164,7 +1341,9 @@ class LargeSampleEmulator:
                     'summa_log_file': summa_log_file,
                     'mizu_command': mizu_command,
                     'mizu_log_file': mizu_log_file,
-                    'run_mizuroute': run_mizuroute
+                    'run_mizuroute': run_mizuroute,
+                    'debug_log_file': debug_log_file,
+                    'filemanager_path': filemanager_path
                 }
                 jobs.append(job_info)
             
@@ -1173,38 +1352,105 @@ class LargeSampleEmulator:
                 run_name = job_info['run_name']
                 run_dir = job_info['run_dir']
                 
-                try:
-                    # 1. Run SUMMA
-                    self.logger.info(f"Running SUMMA for {run_name}")
-                    with open(job_info['summa_log_file'], 'w') as f:
-                        process = subprocess.run(job_info['summa_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                # Initialize debug log
+                with open(job_info['debug_log_file'], 'w') as debug_log:
+                    debug_log.write(f"Debug log for {run_name}\n")
+                    debug_log.write(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    debug_log.write(f"SUMMA executable: {summa_exe}\n")
+                    debug_log.write(f"SUMMA fileManager: {job_info['filemanager_path']}\n")
                     
-                    self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
-                    
-                    # 2. Run MizuRoute if configured
-                    if job_info['run_mizuroute'] and job_info['mizu_command']:
-                        self.logger.info(f"Running MizuRoute for {run_name}")
-                        with open(job_info['mizu_log_file'], 'w') as f:
-                            process = subprocess.run(job_info['mizu_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                    try:
+                        # 1. Run SUMMA
+                        self.logger.info(f"Running SUMMA for {run_name}")
+                        debug_log.write("\n--- Running SUMMA ---\n")
+                        debug_log.write(f"SUMMA command: {job_info['summa_command']}\n")
                         
-                        self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
+                        with open(job_info['summa_log_file'], 'w') as f:
+                            process = subprocess.run(job_info['summa_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                        
+                        self.logger.info(f"Successfully completed SUMMA simulation for {run_name}")
+                        debug_log.write("SUMMA simulation completed successfully\n")
+                        
+                        # Check if SUMMA output files were created
+                        output_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
+                        summa_output_files = list(output_dir.glob(f"{self.experiment_id}*.nc"))
+                        debug_log.write(f"SUMMA output files found: {len(summa_output_files)}\n")
+                        for file in summa_output_files:
+                            debug_log.write(f"  - {file.name}\n")
+                        
+                        # 2. Run MizuRoute if configured
+                        if job_info['run_mizuroute'] and job_info['mizu_command']:
+                            self.logger.info(f"Running MizuRoute for {run_name}")
+                            debug_log.write("\n--- Running MizuRoute ---\n")
+                            debug_log.write(f"MizuRoute command: {job_info['mizu_command']}\n")
+                            
+                            # Check if SUMMA timestep file exists
+                            timestep_file = output_dir / f"{self.experiment_id}_timestep.nc"
+                            debug_log.write(f"Looking for SUMMA timestep file at: {timestep_file}\n")
+                            
+                            if timestep_file.exists():
+                                debug_log.write(f"SUMMA timestep file found: {timestep_file}\n")
+                                # Try to get basic info about the file
+                                try:
+                                    import xarray as xr
+                                    with xr.open_dataset(timestep_file) as ds:
+                                        debug_log.write(f"Timestep file dimensions: {dict(ds.dims)}\n")
+                                        debug_log.write(f"Timestep file variables: {list(ds.variables)}\n")
+                                        if 'time' in ds.dims:
+                                            debug_log.write(f"Time dimension size: {ds.dims['time']}\n")
+                                            debug_log.write(f"First time: {ds.time.values[0]}\n")
+                                            debug_log.write(f"Last time: {ds.time.values[-1]}\n")
+                                except Exception as e:
+                                    debug_log.write(f"Error examining timestep file: {str(e)}\n")
+                                    
+                                try:
+                                    with open(job_info['mizu_log_file'], 'w') as f:
+                                        process = subprocess.run(job_info['mizu_command'], shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                                    
+                                    self.logger.info(f"Successfully completed MizuRoute simulation for {run_name}")
+                                    debug_log.write("MizuRoute simulation completed successfully\n")
+                                except subprocess.CalledProcessError as e:
+                                    error_msg = f"MizuRoute execution failed: {str(e)}"
+                                    self.logger.error(error_msg)
+                                    debug_log.write(f"ERROR: {error_msg}\n")
+                            else:
+                                error_msg = f"SUMMA timestep file not found: {timestep_file}"
+                                debug_log.write(f"ERROR: {error_msg}\n")
                         
                         # 3. Extract streamflow from MizuRoute output
+                        debug_log.write("\n--- Extracting streamflow ---\n")
                         output_csv = self._extract_run_streamflow(run_dir, run_name)
-                        if output_csv:
-                            self.logger.info(f"Streamflow extraction successful for {run_name}")
+                        
+                        if output_csv and Path(output_csv).exists():
+                            debug_log.write(f"Streamflow extraction successful: {output_csv}\n")
                         else:
-                            self.logger.warning(f"No streamflow data extracted for {run_name}")
+                            debug_log.write("Streamflow extraction failed or produced no file\n")
+                            # Create empty streamflow file
+                            self._create_empty_streamflow_file(run_dir, run_name)
+                        
+                        debug_log.write(f"\nCompleted at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        return (run_name, True, None)
                     
-                    return (run_name, True, None)
+                    except subprocess.CalledProcessError as e:
+                        error_msg = f"Command failed for {run_name}: {str(e)}"
+                        self.logger.error(error_msg)
+                        debug_log.write(f"ERROR: {error_msg}\n")
+                        # Create empty streamflow file
+                        self._create_empty_streamflow_file(run_dir, run_name)
+                        debug_log.write(f"\nCompleted at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        return (run_name, False, str(e))
                     
-                except subprocess.CalledProcessError as e:
-                    self.logger.error(f"Command failed for {run_name}: {str(e)}")
-                    return (run_name, False, str(e))
-                
-                except Exception as e:
-                    self.logger.error(f"Unexpected error running {run_name}: {str(e)}")
-                    return (run_name, False, str(e))
+                    except Exception as e:
+                        error_msg = f"Unexpected error running {run_name}: {str(e)}"
+                        self.logger.error(error_msg)
+                        debug_log.write(f"ERROR: {error_msg}\n")
+                        import traceback
+                        tb = traceback.format_exc()
+                        debug_log.write(f"Traceback:\n{tb}\n")
+                        # Create empty streamflow file
+                        self._create_empty_streamflow_file(run_dir, run_name)
+                        debug_log.write(f"\nCompleted at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        return (run_name, False, str(e))
             
             # Run jobs in parallel
             results = []
@@ -1236,7 +1482,7 @@ class LargeSampleEmulator:
         
         except Exception as e:
             self.logger.error(f"Error in parallel ensemble execution: {str(e)}. Falling back to sequential execution.")
-            return self._run_sequential_ensemble(summa_exe, run_dirs)      
+            return self._run_sequential_ensemble(summa_exe, run_dirs)   
 
     @get_function_logger
     def store_parameter_sets(self, local_bounds: Dict, basin_bounds: Dict):

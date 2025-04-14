@@ -2833,7 +2833,7 @@ class SummaRunner:
         # Create the script
         script = f"""#!/bin/bash
 #SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK', 1)}
-#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT', '01:00:00')}
+#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT', '03:00:00')}
 #SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM', '4G')}
 #SBATCH --job-name=Summa-{self.config.get('DOMAIN_NAME')}
 #SBATCH --output={summa_log_path}/summa_%A_%a.out
@@ -3831,7 +3831,6 @@ class SummaPreProcessor_point:
         vegTable_site.name = idx  # replace the IGBP class name with the new index
         
         # Make a new description (final column)
-# Make a new description (final column)
         igbp_vegType = vegTable_site['MODIFIED_IGBP_MODIS_NOAH']
         igbp_vegType = igbp_vegType.replace("'", "").strip()
         site_description = f"'{site_name}; {igbp_vegType}'"

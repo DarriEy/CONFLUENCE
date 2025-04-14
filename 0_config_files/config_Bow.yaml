@@ -15,6 +15,7 @@
 #E.g. '/home/user/non-default/path'
 
 ### ============================================= 1. Global settings: =====================================================================
+
 # Main paths
 CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
@@ -209,12 +210,12 @@ SUMMA_INSTALL_PATH: default                                    # SUMMA installat
 SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
-SETTINGS_SUMMA_USE_PARALLEL_SUMMA: true                       # Run SUMMA in parallel
+SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
-SETTINGS_SUMMA_MEM: 10                                          # Requested memory for parallel SUMMA run
-SETTINGS_SUMMA_GRU_COUNT: 118                                  # Number of GRUs in SUMMA shapefile
-SETTINGS_SUMMA_GRU_PER_JOB: 10                                 # Number of GRUs per job
+SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
+SETTINGS_SUMMA_GRU_COUNT: 85                                  # Number of GRUs in SUMMA shapefile
+SETTINGS_SUMMA_GRU_PER_JOB: 5                                 # Number of GRUs per job
 SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
 SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA binary
 
@@ -391,14 +392,18 @@ OSTRICH_OUTPUT_FILE: ostrich_output.txt                        # Name of Ostrich
 OPTIMIZATION_RESULTS_FILE: default                             # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
 
+
 # Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: true                               # Whether to run large sample emulation (default: false)
+RUN_LARGE_SAMPLE_EMULATION: true                              # Whether to run large sample emulation (default: false)
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
 EMULATION_RUN_ENSEMBLE: true                                  # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: true                             # Run ensemble simulations in parallel (requires MPI)
-EMULATION_MAX_PARALLEL_JOBS: 10                                # Maximum number of parallel jobs when running ensemble
+EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble simulations in parallel (requires MPI)
+EMULATION_MAX_PARALLEL_JOBS: 20                                # Maximum number of parallel jobs when running ensemble
 EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
 EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
+EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
+EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
+EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs

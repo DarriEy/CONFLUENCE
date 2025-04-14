@@ -759,7 +759,7 @@ class GeofabricDelineator:
                 return None, None
             
             # Define buffer distance (0.01 degrees, approximately 1km at the equator)
-            buffer_dist = 0.01
+            buffer_dist = self.config.get('POINT_BUFFER_DISTANCE')
             
             # Create a square buffer around the point
             min_lon = lon - buffer_dist

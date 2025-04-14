@@ -55,7 +55,7 @@ class gistoolRunner:
             f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
             "--submit-job",
             "--print-geotiff=true",
-            f"--cache={self.tool_cache}",
+            f"--cache={self.tool_cache}_{self.domain_name}",
             f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
         

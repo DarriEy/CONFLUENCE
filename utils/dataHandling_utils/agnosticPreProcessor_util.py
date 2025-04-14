@@ -14,6 +14,11 @@ import pyproj # type: ignore
 import shapefile # type: ignore
 import rasterio # type: ignore
 from rasterstats import zonal_stats # type: ignore
+import multiprocessing as mp
+from functools import partial
+import time
+import warnings
+import uuid
 
 class forcingResampler:
     def __init__(self, config, logger):
@@ -331,116 +336,147 @@ class forcingResampler:
 
     def remap_forcing(self):
         self.logger.info("Starting forcing remapping process")
-        self._create_one_weighted_forcing_file()
-        #self._create_all_weighted_forcing_files()
+        self._create_parallelized_weighted_forcing()
         self.logger.info("Forcing remapping process completed")
 
-    def _create_one_weighted_forcing_file(self):
-        self.logger.info("Creating one weighted forcing file")
-        
-        forcing_path = self.merged_forcing_path
-        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
-        shp_id = self.config.get('CATCHMENT_SHP_HRUID')
-
-        for file in forcing_files:
-            # If the file already exists in the output directory, skip this iteration. Fix the path logic here
-            if os.path.exists(self.project_dir / 'forcing' / 'basin_averaged_data' / f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_{self.config['FORCING_DATASET']}_remapped_{str(file)}"):
-                continue
-            #else:
-
-            # Define the output directory and remapped file name based on your configuration.
+    def _process_forcing_file(self, file, worker_id):
+        """Process a single forcing file for parallel execution"""
+        try:
+            start_time = time.time()
+            self.logger.info(f"Worker {worker_id}: Processing file {file.name}")
+            
+            # Define the output directory and remapped file name based on your configuration
             intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
-            remap_file = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_remapping.nc"
-
+            intersect_path.mkdir(parents=True, exist_ok=True)
+            
+            # Generate a unique temp directory for this process
+            unique_id = str(uuid.uuid4())[:8]
+            temp_dir = self.project_dir / 'forcing' / f'temp_easymore_{unique_id}_{worker_id}'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Setup easymore configuration
             esmr = easymore.Easymore()
-
+            
             esmr.author_name = 'SUMMA public workflow scripts'
             esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
             esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
-
+            
             esmr.source_shp = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
             esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
             esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
-
+            
             esmr.target_shp = self.catchment_path / self.catchment_name
-            esmr.target_shp_ID = shp_id
+            esmr.target_shp_ID = self.config.get('CATCHMENT_SHP_HRUID')
             esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
             esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
-
+            
             var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
             var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
-
+            
             esmr.source_nc = str(file)
             esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
-            esmr.var_lat = var_lat 
+            esmr.var_lat = var_lat
             esmr.var_lon = var_lon
             esmr.var_time = 'time'
-
-            esmr.temp_dir = str(self.project_dir / 'forcing' / 'temp_easymore') + '/'
+            
+            esmr.temp_dir = str(temp_dir) + '/'
             esmr.output_dir = str(self.forcing_basin_path) + '/'
-
+            
             esmr.remapped_dim_id = 'hru'
             esmr.remapped_var_id = 'hruId'
             esmr.format_list = ['f4']
             esmr.fill_value_list = ['-9999']
-
+            
             esmr.save_csv = False
             esmr.remap_csv = ''
             esmr.sort_ID = False
-
-            esmr.nc_remapper()
-
-            # Move files to prescribed locations
+            
+            # Only create the remap file if it doesn't exist yet
             remap_file = f"{esmr.case_name}_remapping.nc"
-            intersect_path.mkdir(parents=True, exist_ok=True)
-            os.rename(os.path.join(esmr.temp_dir, remap_file), intersect_path / remap_file)
-
-            for shp_file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
-                os.rename(shp_file, intersect_path / shp_file.name)
-
-            # Remove temporary directory
-            shutil.rmtree(esmr.temp_dir, ignore_errors=True)
-
-    def _create_all_weighted_forcing_files(self):
-        self.logger.info("Creating all weighted forcing files")
-
-        forcing_path = self.merged_forcing_path
-        var_lat = 'lat' if self.forcing_dataset == 'rdrs' else 'latitude'
-        var_lon = 'lon' if self.forcing_dataset == 'rdrs' else 'longitude'
-
-        esmr = easymore.Easymore()
-
-        esmr.author_name = 'SUMMA public workflow scripts'
-        esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
-        esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
-
-        esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
-        esmr.var_lat = var_lat
-        esmr.var_lon = var_lon
-        esmr.var_time = 'time'
-
-        esmr.temp_dir = ''
-        esmr.output_dir = str(self.forcing_basin_path) + '/'
-
-        esmr.remapped_dim_id = 'hru'
-        esmr.remapped_var_id = 'hruId'
-        esmr.format_list = ['f4']
-        esmr.fill_value_list = ['-9999']
-
-        esmr.save_csv = False
-        esmr.remap_csv = ''# str(self.intersect_path / f"{self.config.get('DOMAIN_NAME')}_{self.config.get('FORCING_DATASET')}_remapping.csv")
-        esmr.sort_ID = False
-        esmr.overwrite_existing_remap = False
-
-        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
-        for file in forcing_files[1:]:
-            try:
-                esmr.source_nc = str(file)
+            if not (intersect_path / remap_file).exists():
+                try:
+                    esmr.nc_remapper()
+                    
+                    # Move the remap file to the intersection path
+                    if os.path.exists(os.path.join(esmr.temp_dir, remap_file)):
+                        os.rename(os.path.join(esmr.temp_dir, remap_file), intersect_path / remap_file)
+                        
+                    # Move the shapefile files
+                    for shp_file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
+                        os.rename(shp_file, intersect_path / shp_file.name)
+                except Exception as e:
+                    self.logger.error(f"Worker {worker_id}: Error in creating remap file: {str(e)}")
+            else:
+                # Use existing remap file
+                esmr.remap_csv = str(intersect_path / remap_file)
                 esmr.nc_remapper()
+            
+            # Clean up temporary directory
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception as e:
-                self.logger.info(f'Issue with file: {file}, Error: {str(e)}')
+                self.logger.warning(f"Worker {worker_id}: Failed to clean up temp dir: {str(e)}")
+                
+            elapsed_time = time.time() - start_time
+            self.logger.info(f"Worker {worker_id}: Processed {file.name} in {elapsed_time:.2f} seconds")
+            return True
+        except Exception as e:
+            self.logger.error(f"Worker {worker_id}: Error processing {file.name}: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
 
-        self.logger.info("All weighted forcing files created")
+    def _create_parallelized_weighted_forcing(self):
+        """Create weighted forcing files in parallel"""
+        self.logger.info("Creating weighted forcing files in parallel")
+        
+        # Create output directories if they don't exist
+        self.forcing_basin_path.mkdir(parents=True, exist_ok=True)
+        
+        # Get list of forcing files
+        forcing_path = self.merged_forcing_path
+        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
+        
+        if not forcing_files:
+            self.logger.warning("No forcing files found to process")
+            return
+        
+        self.logger.info(f"Found {len(forcing_files)} forcing files to process")
+        
+        # Get number of CPUs to use
+        num_cpus = min(int(self.config.get('MPI_PROCESSES', mp.cpu_count())), mp.cpu_count())
+        if num_cpus <= 0:
+            num_cpus = mp.cpu_count()
+        
+        self.logger.info(f"Using {num_cpus} CPUs for parallel processing")
+        
+        # Filter out already processed files
+        remaining_files = []
+        for file in forcing_files:
+            output_file = self.forcing_basin_path / f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_{file.stem}_remapped.nc"
+            if not output_file.exists():
+                remaining_files.append(file)
+        
+        self.logger.info(f"Found {len(remaining_files)} files that need processing")
+        
+        if not remaining_files:
+            self.logger.info("All files have already been processed, nothing to do")
+            return
+        
+        # Process files in parallel using Pool
+        with mp.Pool(processes=num_cpus) as pool:
+            # Create a list of (file, worker_id) tuples to distribute work
+            worker_assignments = [(file, i % num_cpus) for i, file in enumerate(remaining_files)]
+            
+            # Map the processing function to each file with its worker ID
+            results = pool.starmap(
+                self._process_forcing_file, 
+                worker_assignments
+            )
+        
+        # Report results
+        success_count = sum(1 for r in results if r)
+        self.logger.info(f"Processing complete: {success_count} files processed successfully out of {len(remaining_files)}")
 
 class geospatialStatistics:
     def __init__(self, config, logger):

@@ -16,7 +16,7 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/global_SA"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
@@ -27,6 +27,7 @@ EXPERIMENT_ID: run_1                                     # Name of experiment
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 SPATIAL_MODE: Point                                             # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
+POINT_BUFFER_DISTANCE: 0.001                                    # Point buffer distance (0.01 degrees, approximately 1km at the equator)
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
