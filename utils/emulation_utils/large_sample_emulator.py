@@ -1107,11 +1107,13 @@ class LargeSampleEmulator:
                 modified_line = f"<case_name>             {new_case}    ! Simulation case name with run identifier \n"
                 modified_lines.append(modified_line)
             # Update input file name to match SUMMA output naming
+            # Update input file name to match SUMMA output naming
             elif '<fname_qsim>' in line:
-                # The SUMMA output file will be named like: experiment_id_timestep.nc
-                # We need to keep this naming convention
+                # The SUMMA output file will be named like: experiment_id_runID_timestep.nc
+                # We need to match this naming convention
                 experiment_id = self.config.get('EXPERIMENT_ID')
-                modified_line = f"<fname_qsim>            {experiment_id}_timestep.nc    ! netCDF name for HM_HRU runoff \n"
+                run_id_format = run_name.lower()  # Convert to lowercase to match file naming
+                modified_line = f"<fname_qsim>            {experiment_id}_{run_id_format}_timestep.nc    ! netCDF name for HM_HRU runoff \n"
                 modified_lines.append(modified_line)
             # Keep simulation start time as is from the main configuration
             elif '<sim_start>' in line:

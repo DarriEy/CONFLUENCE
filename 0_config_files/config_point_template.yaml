@@ -16,7 +16,7 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/snotel"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/fluxnet"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
@@ -110,7 +110,7 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 1950-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
@@ -343,3 +343,48 @@ OSTRICH_EXE: OstrichMPI                                        # Name of Ostrich
 OSTRICH_OUTPUT_FILE: ostrich_output.txt                        # Name of Ostrich output file
 OPTIMIZATION_RESULTS_FILE: default                             # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
+
+
+### ============================================= 6.1 Attribute Analysis settings: ===============================================================
+
+PROCESS_CHARACTERISTIC_ATTRIBUTES: True
+# Enable/disable attribute processing
+  
+# Processing parameters
+CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
+
+### Attribute Processing data settings
+# Base paths for attribute data
+ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
+
+# Soil attribute data paths
+ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
+ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
+
+# Topographic attribute data paths
+ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
+
+# Land cover attribute data paths
+ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
+ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
+
+# Climate attribute data paths
+ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
+ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
+
+# Geology attribute data paths (new)
+ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
+ATTRIBUTES_GROUNDWATER_PATH: default                          # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
+
+# Hydrology attribute data paths (new)
+ATTRIBUTES_STREAMFLOW_PATH: default                           # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
+HRU_GAUGE_MAPPING: {}                                         # Mapping between HRU IDs and gauge IDs for distributed domains
+
+# Open water attribute data paths (new)
+ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
+ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
+
+# Attribute processing settings
+ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
+ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
+ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files

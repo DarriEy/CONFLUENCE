@@ -55,63 +55,47 @@ class forcingResampler:
         self.logger.info("Forcing data resampling process completed")
 
     def create_shapefile(self):
+        """Create forcing shapefile with check for existing files"""
         self.logger.info(f"Creating {self.forcing_dataset.upper()} shapefile")
-
+        
+        # Check if shapefile already exists
+        self.shapefile_path.mkdir(parents=True, exist_ok=True)
+        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
+        
+        if output_shapefile.exists():
+            try:
+                # Verify the shapefile is valid
+                gdf = gpd.read_file(output_shapefile)
+                expected_columns = [self.config.get('FORCING_SHAPE_LAT_NAME'), 
+                                    self.config.get('FORCING_SHAPE_LON_NAME'), 
+                                    'ID', 'elev_m']
+                
+                if all(col in gdf.columns for col in expected_columns) and len(gdf) > 0:
+                    self.logger.info(f"Forcing shapefile already exists: {output_shapefile}. Skipping creation.")
+                    return output_shapefile
+                else:
+                    self.logger.info(f"Existing forcing shapefile missing expected columns. Recreating.")
+            except Exception as e:
+                self.logger.warning(f"Error checking existing forcing shapefile: {str(e)}. Recreating.")
+        
+        # Create appropriate shapefile based on forcing dataset
         if self.forcing_dataset == 'rdrs':
-            self._create_rdrs_shapefile()
+            return self._create_rdrs_shapefile()
         elif self.forcing_dataset.lower() == 'era5':
-            self._create_era5_shapefile()
+            return self._create_era5_shapefile()
         elif self.forcing_dataset == 'carra':
-            self._create_carra_shapefile()
+            return self._create_carra_shapefile()
         else:
             self.logger.error(f"Unsupported forcing dataset: {self.forcing_dataset}")
             raise ValueError(f"Unsupported forcing dataset: {self.forcing_dataset}")
 
-    def _create_rdrs_shapefile(self):
-        forcing_file = next((f for f in os.listdir(self.merged_forcing_path) if f.endswith('.nc') and f.startswith('RDRS_monthly_')), None)
-        if not forcing_file:
-            self.logger.error("No RDRS monthly file found")
-            return
-
-        with xr.open_dataset(self.merged_forcing_path / forcing_file) as ds:
-            rlat, rlon = ds.rlat.values, ds.rlon.values
-            lat, lon = ds.lat.values, ds.lon.values
-
-        geometries, ids, lats, lons = [], [], [], []
-        for i in range(len(rlat)):
-            for j in range(len(rlon)):
-                rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
-                rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
-                lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
-                            lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
-                            lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
-                lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
-                            lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
-                            lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
-                geometries.append(Polygon(zip(lon_corners, lat_corners)))
-                ids.append(i * len(rlon) + j)
-                lats.append(lat[i,j])
-                lons.append(lon[i,j])
-
-        gdf = gpd.GeoDataFrame({
-            'geometry': geometries,
-            'ID': ids,
-            self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-            self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-        }, crs='EPSG:4326')
-
-        zs = rasterstats.zonal_stats(gdf, str(self.dem_path), stats=['mean'])
-        gdf['elev_m'] = [item['mean'] for item in zs]
-        gdf.dropna(subset=['elev_m'], inplace=True)
-
-        self.shapefile_path.mkdir(parents=True, exist_ok=True)
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        gdf.to_file(output_shapefile)
-        self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
-
     def _create_era5_shapefile(self):
+        """Create ERA5 shapefile with output file checking"""
         self.logger.info("Creating ERA5 shapefile")
-
+        
+        # Define output shapefile path
+        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
+        
         try:
             # Find an .nc file in the forcing path
             forcing_files = list(self.merged_forcing_path.glob('*.nc'))
@@ -213,30 +197,39 @@ class forcingResampler:
                     self.logger.error(f"DEM file not found: {self.dem_path}")
                     raise FileNotFoundError(f"DEM file not found: {self.dem_path}")
                     
-                # Sample first 10 rows for zonal statistics to avoid memory issues
-                self.logger.info("Using a subset of grid cells for zonal statistics")
+                # To avoid memory issues, use a sample-based approach
                 sample_size = min(100, len(gdf))
-                sample_gdf = gdf.head(sample_size)
+                self.logger.info(f"Using sample of {sample_size} grid cells for zonal statistics")
                 
-                zs = rasterstats.zonal_stats(sample_gdf, str(self.dem_path), stats=['mean'])
-                self.logger.info(f"Zonal statistics completed for {len(zs)} grid cells")
+                # Process in batches to avoid memory issues
+                batch_size = 20
+                num_batches = (len(gdf) + batch_size - 1) // batch_size
                 
-                # Add mean elevation to the sample GeoDataFrame
-                sample_gdf['elev_m'] = [item['mean'] if item['mean'] is not None else -9999 for item in zs]
+                # Initialize elevation column with default value
+                gdf['elev_m'] = -9999
                 
-                # Map the elevation values back to the full GeoDataFrame
-                gdf = gdf.copy()
-                gdf['elev_m'] = -9999  # Default value
+                for batch_idx in range(num_batches):
+                    start_idx = batch_idx * batch_size
+                    end_idx = min(start_idx + batch_size, len(gdf))
+                    
+                    self.logger.info(f"Processing elevation batch {batch_idx+1}/{num_batches} ({start_idx} to {end_idx-1})")
+                    
+                    try:
+                        # Get batch of geometries
+                        batch_gdf = gdf.iloc[start_idx:end_idx]
+                        
+                        # Calculate zonal statistics for this batch
+                        zs = rasterstats.zonal_stats(batch_gdf, str(self.dem_path), stats=['mean'])
+                        
+                        # Update elevation values in the main GeoDataFrame
+                        for i, item in enumerate(zs):
+                            idx = start_idx + i
+                            gdf.loc[idx, 'elev_m'] = item['mean'] if item['mean'] is not None else -9999
+                    except Exception as e:
+                        self.logger.warning(f"Error calculating elevations for batch {batch_idx+1}: {str(e)}")
+                        # Continue with next batch
                 
-                # Copy values from sample to full GeoDataFrame
-                for idx, row in sample_gdf.iterrows():
-                    gdf.loc[idx, 'elev_m'] = row['elev_m']
-                
-                # Drop columns that are on the edge and don't have elevation data
-                # gdf.dropna(subset=['elev_m'], inplace=True)
-                # This can lead to empty GeoDataFrame if all values are NaN
-                
-                self.logger.info(f"GeoDataFrame with elevations has {len(gdf)} rows")
+                self.logger.info(f"Elevation calculation complete")
             except Exception as e:
                 self.logger.error(f"Error calculating zonal statistics: {str(e)}")
                 # Continue without elevation data rather than failing completely
@@ -245,14 +238,10 @@ class forcingResampler:
 
             # Save the shapefile
             try:
-                self.logger.info(f"Creating directory: {self.shapefile_path}")
-                self.shapefile_path.mkdir(parents=True, exist_ok=True)
-                
-                output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
                 self.logger.info(f"Saving shapefile to: {output_shapefile}")
-                
                 gdf.to_file(output_shapefile)
                 self.logger.info(f"ERA5 shapefile saved successfully to {output_shapefile}")
+                return output_shapefile
             except Exception as e:
                 self.logger.error(f"Error saving shapefile: {str(e)}")
                 import traceback
@@ -265,84 +254,382 @@ class forcingResampler:
             self.logger.error(traceback.format_exc())
             raise
 
-    def _create_carra_shapefile(self):
-        self.logger.info("Creating CARRA grid shapefile")
-
-        # Find a processed CARRA file
-        carra_files = list(self.merged_forcing_path.glob('*.nc'))
-        if not carra_files:
-            raise FileNotFoundError("No processed CARRA files found")
-        carra_file = carra_files[0]
-
-        # Read CARRA data
-        with xr.open_dataset(carra_file) as ds:
-            lats = ds.latitude.values
-            lons = ds.longitude.values
-
-        # Define CARRA projection
-        carra_proj = pyproj.CRS('+proj=stere +lat_0=90 +lat_ts=90 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +a=6378137 +b=6356752.3142 +units=m +no_defs')
-        wgs84 = pyproj.CRS('EPSG:4326')
-
-        transformer = Transformer.from_crs(carra_proj, wgs84, always_xy=True)
-        transformer_to_carra = Transformer.from_crs(wgs84, carra_proj, always_xy=True)
-
-        # Create shapefile
-        self.shapefile_path.mkdir(parents=True, exist_ok=True)
+    def _create_rdrs_shapefile(self):
+        """Create RDRS shapefile with output file checking"""
+        # Define output shapefile path
         output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
+        
+        try:
+            forcing_file = next((f for f in os.listdir(self.merged_forcing_path) if f.endswith('.nc') and f.startswith('RDRS_monthly_')), None)
+            if not forcing_file:
+                self.logger.error("No RDRS monthly file found")
+                return None
 
-        with shapefile.Writer(str(output_shapefile)) as w:
-            w.autoBalance = 1
-            w.field("ID", 'N')
-            w.field(self.config.get('FORCING_SHAPE_LAT_NAME'), 'F', decimal=6)
-            w.field(self.config.get('FORCING_SHAPE_LON_NAME'), 'F', decimal=6)
+            with xr.open_dataset(self.merged_forcing_path / forcing_file) as ds:
+                rlat, rlon = ds.rlat.values, ds.rlon.values
+                lat, lon = ds.lat.values, ds.lon.values
 
-            for i in range(len(lons)):
-                # Convert lat/lon to CARRA coordinates
-                x, y = transformer_to_carra.transform(lons[i], lats[i])
+            self.logger.info(f"RDRS dimensions: rlat={rlat.shape}, rlon={rlon.shape}")
+            
+            geometries, ids, lats, lons = [], [], [], []
+            
+            # Create grid cells in batches to manage memory
+            batch_size = 100
+            total_cells = len(rlat) * len(rlon)
+            num_batches = (total_cells + batch_size - 1) // batch_size
+            
+            self.logger.info(f"Creating RDRS grid cells in {num_batches} batches")
+            
+            cell_count = 0
+            for i in range(len(rlat)):
+                for j in range(len(rlon)):
+                    rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
+                    rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
+                    lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
+                                lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
+                                lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
+                    lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
+                                lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
+                                lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
+                    geometries.append(Polygon(zip(lon_corners, lat_corners)))
+                    ids.append(i * len(rlon) + j)
+                    lats.append(lat[i,j])
+                    lons.append(lon[i,j])
+                    
+                    cell_count += 1
+                    if cell_count % batch_size == 0 or cell_count == total_cells:
+                        self.logger.info(f"Created {cell_count}/{total_cells} RDRS grid cells")
+
+            # Create GeoDataFrame
+            gdf = gpd.GeoDataFrame({
+                'geometry': geometries,
+                'ID': ids,
+                self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
+                self.config.get('FORCING_SHAPE_LON_NAME'): lons,
+            }, crs='EPSG:4326')
+            
+            # Add elevation data in batches
+            gdf['elev_m'] = -9999  # Default value
+            
+            batch_size = 50
+            num_batches = (len(gdf) + batch_size - 1) // batch_size
+            
+            self.logger.info(f"Calculating elevations in {num_batches} batches")
+            
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(gdf))
                 
-                # Define grid cell (assuming 2.5 km resolution)
-                half_dx = 1250  # meters
-                half_dy = 1250  # meters
+                self.logger.info(f"Processing elevation batch {batch_idx+1}/{num_batches} ({start_idx} to {end_idx-1})")
                 
-                vertices = [
-                    (x - half_dx, y - half_dy),
-                    (x - half_dx, y + half_dy),
-                    (x + half_dx, y + half_dy),
-                    (x + half_dx, y - half_dy),
-                    (x - half_dx, y - half_dy)
-                ]
+                try:
+                    # Get batch of geometries
+                    batch_gdf = gdf.iloc[start_idx:end_idx]
+                    
+                    # Calculate zonal statistics for this batch
+                    zs = rasterstats.zonal_stats(batch_gdf, str(self.dem_path), stats=['mean'])
+                    
+                    # Update elevation values in the main GeoDataFrame
+                    for i, item in enumerate(zs):
+                        idx = start_idx + i
+                        gdf.loc[idx, 'elev_m'] = item['mean'] if item['mean'] is not None else -9999
+                except Exception as e:
+                    self.logger.warning(f"Error calculating elevations for batch {batch_idx+1}: {str(e)}")
+                    # Continue with next batch
+
+            # Remove rows with invalid elevation values if requested
+            if self.config.get('REMOVE_INVALID_ELEVATION_CELLS', False):
+                valid_count = len(gdf)
+                gdf = gdf[gdf['elev_m'] != -9999].copy()
+                removed_count = valid_count - len(gdf)
+                if removed_count > 0:
+                    self.logger.info(f"Removed {removed_count} cells with invalid elevation values")
+
+            # Save the shapefile
+            output_shapefile.parent.mkdir(parents=True, exist_ok=True)
+            gdf.to_file(output_shapefile)
+            self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
+            return output_shapefile
+            
+        except Exception as e:
+            self.logger.error(f"Error in create_rdrs_shapefile: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+
+    def _create_carra_shapefile(self):
+        """Create CARRA shapefile with output file checking"""
+        self.logger.info("Creating CARRA grid shapefile")
+        
+        # Define output shapefile path
+        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
+        
+        try:
+            # Find a processed CARRA file
+            carra_files = list(self.merged_forcing_path.glob('*.nc'))
+            if not carra_files:
+                raise FileNotFoundError("No processed CARRA files found")
+            carra_file = carra_files[0]
+
+            # Read CARRA data
+            with xr.open_dataset(carra_file) as ds:
+                lats = ds.latitude.values
+                lons = ds.longitude.values
+
+            self.logger.info(f"CARRA dimensions: {lats.shape}")
+            
+            # Define CARRA projection
+            carra_proj = pyproj.CRS('+proj=stere +lat_0=90 +lat_ts=90 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +a=6378137 +b=6356752.3142 +units=m +no_defs')
+            wgs84 = pyproj.CRS('EPSG:4326')
+
+            transformer = Transformer.from_crs(carra_proj, wgs84, always_xy=True)
+            transformer_to_carra = Transformer.from_crs(wgs84, carra_proj, always_xy=True)
+
+            # Create geometries in memory first to avoid file I/O in the loop
+            self.logger.info("Creating CARRA grid cell geometries")
+            
+            geometries = []
+            ids = []
+            center_lats = []
+            center_lons = []
+            
+            # Process in batches
+            batch_size = 100
+            total_cells = len(lons)
+            num_batches = (total_cells + batch_size - 1) // batch_size
+            
+            self.logger.info(f"Creating {total_cells} CARRA grid cells in {num_batches} batches")
+            
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(lons))
                 
-                # Convert vertices back to lat/lon
-                lat_lon_vertices = [transformer.transform(vx, vy) for vx, vy in vertices]
+                self.logger.info(f"Processing grid cell batch {batch_idx+1}/{num_batches} ({start_idx} to {end_idx-1})")
                 
-                w.poly([lat_lon_vertices])
-                center_lon, center_lat = transformer.transform(x, y)
-                w.record(i, center_lat, center_lon)
+                for i in range(start_idx, end_idx):
+                    # Convert lat/lon to CARRA coordinates
+                    x, y = transformer_to_carra.transform(lons[i], lats[i])
+                    
+                    # Define grid cell (assuming 2.5 km resolution)
+                    half_dx = 1250  # meters
+                    half_dy = 1250  # meters
+                    
+                    vertices = [
+                        (x - half_dx, y - half_dy),
+                        (x - half_dx, y + half_dy),
+                        (x + half_dx, y + half_dy),
+                        (x + half_dx, y - half_dy),
+                        (x - half_dx, y - half_dy)
+                    ]
+                    
+                    # Convert vertices back to lat/lon
+                    lat_lon_vertices = [transformer.transform(vx, vy) for vx, vy in vertices]
+                    
+                    geometries.append(Polygon(lat_lon_vertices))
+                    ids.append(i)
+                    
+                    center_lon, center_lat = transformer.transform(x, y)
+                    center_lats.append(center_lat)
+                    center_lons.append(center_lon)
+            
+            # Create GeoDataFrame
+            self.logger.info("Creating GeoDataFrame")
+            gdf = gpd.GeoDataFrame({
+                'geometry': geometries,
+                'ID': ids,
+                self.config.get('FORCING_SHAPE_LAT_NAME'): center_lats,
+                self.config.get('FORCING_SHAPE_LON_NAME'): center_lons,
+            }, crs='EPSG:4326')
+            
+            # Add elevation data in batches
+            self.logger.info("Calculating elevation values")
+            gdf['elev_m'] = -9999  # Default value
+            
+            batch_size = 50
+            num_batches = (len(gdf) + batch_size - 1) // batch_size
+            
+            self.logger.info(f"Calculating elevations in {num_batches} batches")
+            
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(gdf))
+                
+                self.logger.info(f"Processing elevation batch {batch_idx+1}/{num_batches} ({start_idx} to {end_idx-1})")
+                
+                try:
+                    # Get batch of geometries
+                    batch_gdf = gdf.iloc[start_idx:end_idx]
+                    
+                    # Calculate zonal statistics for this batch
+                    zs = rasterstats.zonal_stats(batch_gdf, str(self.dem_path), stats=['mean'])
+                    
+                    # Update elevation values in the main GeoDataFrame
+                    for i, item in enumerate(zs):
+                        idx = start_idx + i
+                        gdf.loc[idx, 'elev_m'] = item['mean'] if item['mean'] is not None else -9999
+                except Exception as e:
+                    self.logger.warning(f"Error calculating elevations for batch {batch_idx+1}: {str(e)}")
+                    # Continue with next batch
 
-        # Add elevation data to the shapefile
-        shp = gpd.read_file(output_shapefile)
-        shp = shp.set_crs('EPSG:4326')
-
-        # Calculate zonal statistics (mean elevation) for each grid cell
-        zs = rasterstats.zonal_stats(shp, str(self.dem_path), stats=['mean'])
-
-        # Add mean elevation to the GeoDataFrame
-        shp['elev_m'] = [item['mean'] for item in zs]
-
-        # Save the updated shapefile
-        shp.to_file(output_shapefile)
-
-        self.logger.info(f"CARRA grid shapefile created and saved to {output_shapefile}")
+            # Save the shapefile
+            self.logger.info(f"Saving CARRA shapefile to {output_shapefile}")
+            gdf.to_file(output_shapefile)
+            self.logger.info(f"CARRA grid shapefile created and saved to {output_shapefile}")
+            return output_shapefile
+            
+        except Exception as e:
+            self.logger.error(f"Error in create_carra_shapefile: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def remap_forcing(self):
         self.logger.info("Starting forcing remapping process")
         self._create_parallelized_weighted_forcing()
         self.logger.info("Forcing remapping process completed")
 
+    def _determine_output_filename(self, input_file):
+        """
+        Determine the expected output filename for a given input file.
+        This handles different forcing datasets with their specific naming patterns.
+        
+        Args:
+            input_file (Path): Input forcing file path
+        
+        Returns:
+            Path: Expected output file path
+        """
+        # Extract base information
+        domain_name = self.config['DOMAIN_NAME']
+        forcing_dataset = self.config['FORCING_DATASET']
+        input_stem = input_file.stem
+        
+        # Handle RDRS specific naming pattern
+        if forcing_dataset.lower() == 'rdrs':
+            # For files like "RDRS_monthly_198001.nc", output should be "Canada_RDRS_RDRS_remapped_RDRS_monthly_198001.nc"
+            if input_stem.startswith('RDRS_monthly_'):
+                output_filename = f"{domain_name}_{forcing_dataset}_remapped_{input_stem}.nc"
+            else:
+                # General fallback for other RDRS files
+                output_filename = f"{domain_name}_{forcing_dataset}_remapped_{input_stem}.nc"
+        else:
+            # General pattern for other datasets (ERA5, CARRA, etc.)
+            output_filename = f"{domain_name}_{forcing_dataset}_remapped_{input_stem}.nc"
+        
+        return self.forcing_basin_path / output_filename
+
+    def _create_parallelized_weighted_forcing(self):
+        """Create weighted forcing files in parallel with improved file checking and memory management"""
+        self.logger.info("Creating weighted forcing files in parallel")
+        
+        # Create output directories if they don't exist
+        self.forcing_basin_path.mkdir(parents=True, exist_ok=True)
+        
+        # Get list of forcing files
+        forcing_path = self.merged_forcing_path
+        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
+        
+        if not forcing_files:
+            self.logger.warning("No forcing files found to process")
+            return
+        
+        self.logger.info(f"Found {len(forcing_files)} forcing files to process")
+        
+        # Get number of CPUs to use
+        num_cpus = min(int(self.config.get('MPI_PROCESSES', mp.cpu_count())), mp.cpu_count())
+        if num_cpus <= 0:
+            num_cpus = max(1, mp.cpu_count() // 2)  # Use half available CPUs as default to reduce memory pressure
+        
+        self.logger.info(f"Using {num_cpus} CPUs for parallel processing")
+        
+        # Filter out already processed files with more detailed naming check
+        remaining_files = []
+        already_processed = 0
+        
+        for file in forcing_files:
+            # Determine expected output filename pattern more precisely
+            output_file = self._determine_output_filename(file)
+            
+            if output_file.exists():
+                # Check if file is valid (not corrupted/empty)
+                try:
+                    file_size = output_file.stat().st_size
+                    if file_size > 1000:  # Basic size check to ensure file isn't corrupted
+                        self.logger.debug(f"Skipping already processed file: {file.name} -> {output_file.name}")
+                        already_processed += 1
+                        continue
+                    else:
+                        self.logger.warning(f"Found potentially corrupted output file {output_file} (size: {file_size} bytes). Will reprocess.")
+                except Exception as e:
+                    self.logger.warning(f"Error checking output file {output_file}: {str(e)}. Will reprocess.")
+            
+            remaining_files.append(file)
+        
+        self.logger.info(f"Found {already_processed} already processed files")
+        self.logger.info(f"Found {len(remaining_files)} files that need processing")
+        
+        if not remaining_files:
+            self.logger.info("All files have already been processed, nothing to do")
+            return
+        
+        # Process in smaller batches to avoid memory issues
+        batch_size = min(10, len(remaining_files))  # Process 10 files at a time or fewer if there are fewer files
+        total_batches = (len(remaining_files) + batch_size - 1) // batch_size
+        
+        self.logger.info(f"Processing {total_batches} batches of up to {batch_size} files each")
+        
+        success_count = 0
+        
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(remaining_files))
+            batch_files = remaining_files[start_idx:end_idx]
+            
+            self.logger.info(f"Processing batch {batch_num+1}/{total_batches} with {len(batch_files)} files")
+            
+            # Process files in parallel using Pool
+            with mp.Pool(processes=num_cpus) as pool:
+                # Create a list of (file, worker_id) tuples to distribute work
+                worker_assignments = [(file, i % num_cpus) for i, file in enumerate(batch_files)]
+                
+                # Map the processing function to each file with its worker ID
+                results = pool.starmap(
+                    self._process_forcing_file, 
+                    worker_assignments
+                )
+            
+            # Count successes in this batch
+            batch_success = sum(1 for r in results if r)
+            success_count += batch_success
+            
+            self.logger.info(f"Batch {batch_num+1}/{total_batches} complete: {batch_success}/{len(batch_files)} successful")
+            
+            # Optional: Force garbage collection between batches
+            import gc
+            gc.collect()
+        
+        # Report final results
+        self.logger.info(f"Processing complete: {success_count} files processed successfully out of {len(remaining_files)}")
+        self.logger.info(f"Total files processed or skipped: {success_count + already_processed} out of {len(forcing_files)}")
+
     def _process_forcing_file(self, file, worker_id):
-        """Process a single forcing file for parallel execution"""
+        """Process a single forcing file for parallel execution with robust output checking"""
         try:
             start_time = time.time()
+            
+            # Check output file first before doing any processing
+            output_file = self._determine_output_filename(file)
+            
+            if output_file.exists():
+                try:
+                    file_size = output_file.stat().st_size
+                    if file_size > 1000:  # Basic size check to ensure file isn't corrupted
+                        self.logger.info(f"Worker {worker_id}: Skipping already processed file {file.name}")
+                        return True
+                except Exception:
+                    # If we can't check the file, we'll reprocess it
+                    pass
+            
             self.logger.info(f"Worker {worker_id}: Processing file {file.name}")
             
             # Define the output directory and remapped file name based on your configuration
@@ -417,66 +704,29 @@ class forcingResampler:
             except Exception as e:
                 self.logger.warning(f"Worker {worker_id}: Failed to clean up temp dir: {str(e)}")
                 
-            elapsed_time = time.time() - start_time
-            self.logger.info(f"Worker {worker_id}: Processed {file.name} in {elapsed_time:.2f} seconds")
-            return True
+            # Verify output file exists
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size > 1000:  # Basic size check
+                    elapsed_time = time.time() - start_time
+                    self.logger.info(f"Worker {worker_id}: Successfully processed {file.name} in {elapsed_time:.2f} seconds")
+                    return True
+                else:
+                    self.logger.error(f"Worker {worker_id}: Output file {output_file} exists but may be corrupted (size: {file_size} bytes)")
+                    return False
+            else:
+                self.logger.error(f"Worker {worker_id}: Expected output file {output_file} was not created")
+                # Let's check if the file might exist with a different naming convention
+                possible_files = list(self.forcing_basin_path.glob(f"*{file.stem}*"))
+                if possible_files:
+                    self.logger.info(f"Worker {worker_id}: Found possible matching files: {[f.name for f in possible_files]}")
+                return False
+                
         except Exception as e:
             self.logger.error(f"Worker {worker_id}: Error processing {file.name}: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             return False
-
-    def _create_parallelized_weighted_forcing(self):
-        """Create weighted forcing files in parallel"""
-        self.logger.info("Creating weighted forcing files in parallel")
-        
-        # Create output directories if they don't exist
-        self.forcing_basin_path.mkdir(parents=True, exist_ok=True)
-        
-        # Get list of forcing files
-        forcing_path = self.merged_forcing_path
-        forcing_files = sorted([f for f in forcing_path.glob('*.nc')])
-        
-        if not forcing_files:
-            self.logger.warning("No forcing files found to process")
-            return
-        
-        self.logger.info(f"Found {len(forcing_files)} forcing files to process")
-        
-        # Get number of CPUs to use
-        num_cpus = min(int(self.config.get('MPI_PROCESSES', mp.cpu_count())), mp.cpu_count())
-        if num_cpus <= 0:
-            num_cpus = mp.cpu_count()
-        
-        self.logger.info(f"Using {num_cpus} CPUs for parallel processing")
-        
-        # Filter out already processed files
-        remaining_files = []
-        for file in forcing_files:
-            output_file = self.forcing_basin_path / f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}_{file.stem}_remapped.nc"
-            if not output_file.exists():
-                remaining_files.append(file)
-        
-        self.logger.info(f"Found {len(remaining_files)} files that need processing")
-        
-        if not remaining_files:
-            self.logger.info("All files have already been processed, nothing to do")
-            return
-        
-        # Process files in parallel using Pool
-        with mp.Pool(processes=num_cpus) as pool:
-            # Create a list of (file, worker_id) tuples to distribute work
-            worker_assignments = [(file, i % num_cpus) for i, file in enumerate(remaining_files)]
-            
-            # Map the processing function to each file with its worker ID
-            results = pool.starmap(
-                self._process_forcing_file, 
-                worker_assignments
-            )
-        
-        # Report results
-        success_count = sum(1 for r in results if r)
-        self.logger.info(f"Processing complete: {success_count} files processed successfully out of {len(remaining_files)}")
 
 class geospatialStatistics:
     def __init__(self, config, logger):
@@ -509,113 +759,247 @@ class geospatialStatistics:
             return nodata
 
     def calculate_elevation_stats(self):
+        """Calculate elevation statistics with output file checking"""
+        # Get the output path and check if the file already exists
+        intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
+        intersect_name = self.config.get('INTERSECT_DEM_NAME')
+        output_file = intersect_path / intersect_name
+        
+        # Check if output already exists
+        if output_file.exists():
+            try:
+                # Verify the file is valid
+                gdf = gpd.read_file(output_file)
+                if 'elev_mean' in gdf.columns and len(gdf) > 0:
+                    self.logger.info(f"Elevation statistics file already exists: {output_file}. Skipping calculation.")
+                    return
+                else:
+                    self.logger.info(f"Existing elevation statistics file {output_file} does not contain expected data. Recalculating.")
+            except Exception as e:
+                self.logger.warning(f"Error checking existing elevation statistics file: {str(e)}. Recalculating.")
+        
         self.logger.info("Calculating elevation statistics")
         catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
         nodata_value = self.get_nodata_value(self.dem_path)
 
-        with rasterio.open(self.dem_path) as src:
-            affine = src.transform
-            dem_data = src.read(1)
+        # Open the DEM and calculate statistics
+        try:
+            with rasterio.open(self.dem_path) as src:
+                affine = src.transform
+                dem_data = src.read(1)
 
-        stats = zonal_stats(catchment_gdf, dem_data, affine=affine, stats=['mean'], nodata=nodata_value)
-        result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean_new'})
-        
-        if 'elev_mean' in catchment_gdf.columns:
-            self.logger.info("Updating existing 'elev_mean' column")
-            catchment_gdf['elev_mean'] = result_df['elev_mean_new']
-        else:
-            self.logger.info("Adding new 'elev_mean' column")
-            catchment_gdf['elev_mean'] = result_df['elev_mean_new']
+            stats = zonal_stats(catchment_gdf, dem_data, affine=affine, stats=['mean'], nodata=nodata_value)
+            result_df = pd.DataFrame(stats).rename(columns={'mean': 'elev_mean_new'})
+            
+            if 'elev_mean' in catchment_gdf.columns:
+                self.logger.info("Updating existing 'elev_mean' column")
+                catchment_gdf['elev_mean'] = result_df['elev_mean_new']
+            else:
+                self.logger.info("Adding new 'elev_mean' column")
+                catchment_gdf['elev_mean'] = result_df['elev_mean_new']
 
-        result_df = result_df.drop(columns=['elev_mean_new'])
-
-        intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
-        intersect_name = self.config.get('INTERSECT_DEM_NAME')
-        intersect_path.mkdir(parents=True, exist_ok=True)
-        catchment_gdf.to_file(intersect_path / intersect_name)
-        
-        self.logger.info(f"Elevation statistics saved to {intersect_path / intersect_name}")
+            # Create output directory and save the file
+            intersect_path.mkdir(parents=True, exist_ok=True)
+            catchment_gdf.to_file(output_file)
+            
+            self.logger.info(f"Elevation statistics saved to {output_file}")
+        except Exception as e:
+            self.logger.error(f"Error calculating elevation statistics: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def calculate_soil_stats(self):
+        """Calculate soil statistics with output file checking"""
+        # Get the output path and check if the file already exists
+        intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
+        intersect_name = self.config.get('INTERSECT_SOIL_NAME')
+        output_file = intersect_path / intersect_name
+        
+        # Check if output already exists
+        if output_file.exists():
+            try:
+                # Verify the file is valid
+                gdf = gpd.read_file(output_file)
+                # Check for at least one USGS soil class column
+                usgs_cols = [col for col in gdf.columns if col.startswith('USGS_')]
+                if len(usgs_cols) > 0 and len(gdf) > 0:
+                    self.logger.info(f"Soil statistics file already exists: {output_file}. Skipping calculation.")
+                    return
+                else:
+                    self.logger.info(f"Existing soil statistics file {output_file} does not contain expected data. Recalculating.")
+            except Exception as e:
+                self.logger.warning(f"Error checking existing soil statistics file: {str(e)}. Recalculating.")
+        
         self.logger.info("Calculating soil statistics")
         catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
         soil_name = self.config['SOIL_CLASS_NAME']
         if soil_name == 'default':
             soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
         soil_raster = self.soil_path / soil_name
-        nodata_value = self.get_nodata_value(soil_raster)
+        
+        try:
+            nodata_value = self.get_nodata_value(soil_raster)
 
-        with rasterio.open(soil_raster) as src:
-            affine = src.transform
-            soil_data = src.read(1)
+            with rasterio.open(soil_raster) as src:
+                affine = src.transform
+                soil_data = src.read(1)
 
-        stats = zonal_stats(catchment_gdf, soil_data, affine=affine, stats=['count'], 
+            stats = zonal_stats(catchment_gdf, soil_data, affine=affine, stats=['count'], 
                             categorical=True, nodata=nodata_value)
-        result_df = pd.DataFrame(stats).fillna(0)
+            result_df = pd.DataFrame(stats).fillna(0)
 
-        def rename_column(x):
-            if x == 'count':
-                return x
-            try:
-                return f'USGS_{int(float(x))}'
-            except ValueError:
-                return x
+            def rename_column(x):
+                if x == 'count':
+                    return x
+                try:
+                    return f'USGS_{int(float(x))}'
+                except ValueError:
+                    return x
 
-        result_df = result_df.rename(columns=rename_column)
-        for col in result_df.columns:
-            if col != 'count':
-                result_df[col] = result_df[col].astype(int)
+            result_df = result_df.rename(columns=rename_column)
+            for col in result_df.columns:
+                if col != 'count':
+                    result_df[col] = result_df[col].astype(int)
 
-        catchment_gdf = catchment_gdf.join(result_df)
-        
-        intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
-        intersect_name = self.config.get('INTERSECT_SOIL_NAME')
-        intersect_path.mkdir(parents=True, exist_ok=True)
-        catchment_gdf.to_file(intersect_path / intersect_name)
-        
-        self.logger.info(f"Soil statistics saved to {intersect_path / intersect_name}")
+            catchment_gdf = catchment_gdf.join(result_df)
+            
+            # Create output directory and save the file
+            intersect_path.mkdir(parents=True, exist_ok=True)
+            catchment_gdf.to_file(output_file)
+            
+            self.logger.info(f"Soil statistics saved to {output_file}")
+        except Exception as e:
+            self.logger.error(f"Error calculating soil statistics: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def calculate_land_stats(self):
+        """Calculate land statistics with output file checking"""
+        # Get the output path and check if the file already exists
+        intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
+        intersect_name = self.config.get('INTERSECT_LAND_NAME')
+        output_file = intersect_path / intersect_name
+        
+        # Check if output already exists
+        if output_file.exists():
+            try:
+                # Verify the file is valid
+                gdf = gpd.read_file(output_file)
+                # Check for at least one IGBP land class column
+                igbp_cols = [col for col in gdf.columns if col.startswith('IGBP_')]
+                if len(igbp_cols) > 0 and len(gdf) > 0:
+                    self.logger.info(f"Land statistics file already exists: {output_file}. Skipping calculation.")
+                    return
+                else:
+                    self.logger.info(f"Existing land statistics file {output_file} does not contain expected data. Recalculating.")
+            except Exception as e:
+                self.logger.warning(f"Error checking existing land statistics file: {str(e)}. Recalculating.")
+        
         self.logger.info("Calculating land statistics")
         catchment_gdf = gpd.read_file(self.catchment_path / self.catchment_name)
         land_name = self.config['LAND_CLASS_NAME']
         if land_name == 'default':
             land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"
         land_raster = self.land_path / land_name
-        nodata_value = self.get_nodata_value(land_raster)
+        
+        try:
+            nodata_value = self.get_nodata_value(land_raster)
 
-        with rasterio.open(land_raster) as src:
-            affine = src.transform
-            land_data = src.read(1)
+            with rasterio.open(land_raster) as src:
+                affine = src.transform
+                land_data = src.read(1)
 
-        stats = zonal_stats(catchment_gdf, land_data, affine=affine, stats=['count'], 
+            stats = zonal_stats(catchment_gdf, land_data, affine=affine, stats=['count'], 
                             categorical=True, nodata=nodata_value)
-        result_df = pd.DataFrame(stats).fillna(0)
+            result_df = pd.DataFrame(stats).fillna(0)
 
-        def rename_column(x):
-            if x == 'count':
-                return x
-            try:
-                return f'IGBP_{int(float(x))}'
-            except ValueError:
-                return x
+            def rename_column(x):
+                if x == 'count':
+                    return x
+                try:
+                    return f'IGBP_{int(float(x))}'
+                except ValueError:
+                    return x
 
-        result_df = result_df.rename(columns=rename_column)
-        for col in result_df.columns:
-            if col != 'count':
-                result_df[col] = result_df[col].astype(int)
+            result_df = result_df.rename(columns=rename_column)
+            for col in result_df.columns:
+                if col != 'count':
+                    result_df[col] = result_df[col].astype(int)
 
-        catchment_gdf = catchment_gdf.join(result_df)
-        
-        intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
-        intersect_name = self.config.get('INTERSECT_LAND_NAME')
-        intersect_path.mkdir(parents=True, exist_ok=True)
-        catchment_gdf.to_file(intersect_path / intersect_name)
-        
-        self.logger.info(f"Land statistics saved to {intersect_path / intersect_name}")
+            catchment_gdf = catchment_gdf.join(result_df)
+            
+            # Create output directory and save the file
+            intersect_path.mkdir(parents=True, exist_ok=True)
+            catchment_gdf.to_file(output_file)
+            
+            self.logger.info(f"Land statistics saved to {output_file}")
+        except Exception as e:
+            self.logger.error(f"Error calculating land statistics: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def run_statistics(self):
-        self.calculate_soil_stats()
-        self.calculate_land_stats()
-        self.calculate_elevation_stats()
-        self.logger.info("All geospatial statistics calculated successfully")
+        """Run all geospatial statistics with checks for existing outputs"""
+        self.logger.info("Starting geospatial statistics calculation")
+        
+        # Count how many steps we're skipping
+        skipped = 0
+        total = 3  # Total number of statistics operations
+        
+        # Check soil stats
+        intersect_soil_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
+        intersect_soil_name = self.config.get('INTERSECT_SOIL_NAME')
+        soil_output_file = intersect_soil_path / intersect_soil_name
+        
+        if soil_output_file.exists():
+            try:
+                gdf = gpd.read_file(soil_output_file)
+                usgs_cols = [col for col in gdf.columns if col.startswith('USGS_')]
+                if len(usgs_cols) > 0 and len(gdf) > 0:
+                    self.logger.info(f"Soil statistics already calculated: {soil_output_file}")
+                    skipped += 1
+            except Exception:
+                pass
+        
+        if skipped < 1:
+            self.calculate_soil_stats()
+        
+        # Check land stats
+        intersect_land_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
+        intersect_land_name = self.config.get('INTERSECT_LAND_NAME')
+        land_output_file = intersect_land_path / intersect_land_name
+        
+        if land_output_file.exists():
+            try:
+                gdf = gpd.read_file(land_output_file)
+                igbp_cols = [col for col in gdf.columns if col.startswith('IGBP_')]
+                if len(igbp_cols) > 0 and len(gdf) > 0:
+                    self.logger.info(f"Land statistics already calculated: {land_output_file}")
+                    skipped += 1
+            except Exception:
+                pass
+        
+        if skipped < 2:
+            self.calculate_land_stats()
+        
+        # Check elevation stats
+        intersect_dem_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
+        intersect_dem_name = self.config.get('INTERSECT_DEM_NAME')
+        dem_output_file = intersect_dem_path / intersect_dem_name
+        
+        if dem_output_file.exists():
+            try:
+                gdf = gpd.read_file(dem_output_file)
+                if 'elev_mean' in gdf.columns and len(gdf) > 0:
+                    self.logger.info(f"Elevation statistics already calculated: {dem_output_file}")
+                    skipped += 1
+            except Exception:
+                pass
+        
+        if skipped < 3:
+            self.calculate_elevation_stats()
+        
+        self.logger.info(f"Geospatial statistics completed: {skipped}/{total} steps skipped, {total-skipped}/{total} steps executed")

@@ -268,24 +268,29 @@ class CONFLUENCE:
     @get_function_logger
     def define_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-     
-        # Skip domain definition if in point mode
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self.delineate_point_buffer_shape()        
-        elif domain_method == 'subset':
-            self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'lumped':
-            self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-        elif domain_method == 'delineate':
-            self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
-            if self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                self.delineate_coastal(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
 
-        elif self.config.get('SPATIAL_MODE') == 'Point':
-            self.logger.info("Spatial mode: Point simulations, delineation not required")
-            return None
+        # Skip domain definition if shapefile is provided
+        if self.config.get('RIVER_BASINS_NAME') == 'default':        
+
+            # Skip domain definition if in point mode
+            if self.config.get('SPATIAL_MODE') == 'Point':
+                self.delineate_point_buffer_shape()        
+            elif domain_method == 'subset':
+                self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+            elif domain_method == 'lumped':
+                self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+            elif domain_method == 'delineate':
+                self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+                if self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
+                    self.delineate_coastal(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+
+            elif self.config.get('SPATIAL_MODE') == 'Point':
+                self.logger.info("Spatial mode: Point simulations, delineation not required")
+                return None
+            else:
+                self.logger.error(f"Unknown domain definition method: {domain_method}")
         else:
-            self.logger.error(f"Unknown domain definition method: {domain_method}")
+            self.logger.info('Shapefile provided, skipping domain definition')
 
     @get_function_logger
     def plot_domain(self):
@@ -432,7 +437,7 @@ class CONFLUENCE:
                     ssp = SummaPreProcessor_spatial(self.config, self.logger)
                     ssp.run_preprocessing()
                     
-                    if self.config.get('SPATIAL_MODE') != 'Point':
+                    if self.config.get('SPATIAL_MODE') != 'Point' and self.config.get('SPATIAL_MODE') != 'lumped':
                         self.logger.info("Initializing MizuRoute preprocessor")
                         mp = MizuRoutePreProcessor(self.config, self.logger)
                         mp.run_preprocessing()

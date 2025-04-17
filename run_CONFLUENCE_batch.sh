@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=Bow
+#SBATCH --job-name=North_America
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
-#SBATCH --time=120:00:00
+#SBATCH --time=144:00:00
 #SBATCH --ntasks=20
 #SBATCH --mem-per-cpu=100G
 
@@ -26,6 +26,6 @@ module load r/4.4.1
 source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
 
 # Run the Python script
-python CONFLUENCE.py --config 0_config_files/config_Bow.yaml   
+python CONFLUENCE.py --config 0_config_files/config_North_America.yaml   
 
 echo "CONFLUENCE job complete"

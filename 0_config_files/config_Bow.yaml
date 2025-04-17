@@ -142,7 +142,6 @@ INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the sha
 
 ### ============================================= 6.1 Attribute Analysis settings: ===============================================================
 
-
 PROCESS_CHARACTERISTIC_ATTRIBUTES: True
 # Enable/disable attribute processing
   

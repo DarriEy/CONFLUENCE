@@ -17,7 +17,7 @@
 ### ============================================= 1. Global settings: =====================================================================
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/camels_spat"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
@@ -40,7 +40,7 @@ POUR_POINT_SHP_NAME: default                                   # If 'default', u
 # Domain representation settings
 DOMAIN_DEFINITION_METHOD: delineate                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
-STREAM_THRESHOLD: 2500                                         # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
@@ -48,7 +48,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -66,8 +66,8 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
 RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
-RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_RM_GRUID: COMID                                # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: COMID                              # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
