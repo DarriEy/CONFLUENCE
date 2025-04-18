@@ -124,7 +124,7 @@ class CONFLUENCE:
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data1").exists()),
 
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
@@ -437,7 +437,7 @@ class CONFLUENCE:
                     ssp = SummaPreProcessor_spatial(self.config, self.logger)
                     ssp.run_preprocessing()
                     
-                    if self.config.get('SPATIAL_MODE') != 'Point' and self.config.get('SPATIAL_MODE') != 'lumped':
+                    if self.config.get('SPATIAL_MODE') != 'Point' and self.config.get('SPATIAL_MODE') != 'Lumped':
                         self.logger.info("Initializing MizuRoute preprocessor")
                         mp = MizuRoutePreProcessor(self.config, self.logger)
                         mp.run_preprocessing()

@@ -1808,23 +1808,6 @@ class SummaPreProcessor_spatial:
         """Insert land class data into the attributes file."""
         self.logger.info("Inserting land class into attributes file")
         
-        '''
-        if self.config.get('DATA_ACQUIRE') == 'HPC':
-            gistool_output = self.project_dir / "attributes/land_class"
-            land_stats = pd.read_csv(gistool_output / f"domain_{self.config.get('DOMAIN_NAME')}_stats_NA_NALCMS_landcover_2020_30m.csv")
-
-            with nc4.Dataset(attribute_file, "r+") as att:
-                for idx in range(len(att['hruId'])):
-                    hru_id = att['hruId'][idx]
-                    land_row = land_stats[land_stats[self.hruId] == hru_id]
-                    if not land_row.empty:
-                        land_class = land_row['majority'].values[0]
-                        att['vegTypeIndex'][idx] = land_class
-                        self.logger.info(f"Set land class for HRU {hru_id} to {land_class}")
-                    else:
-                        self.logger.warning(f"No land data found for HRU {hru_id}")
-        '''
-
         if self.config.get('DATA_ACQUIRE') == 'HPC':
             """Insert land class data from supplied intersection file."""
             intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
@@ -1832,7 +1815,14 @@ class SummaPreProcessor_spatial:
             intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
 
             shp = gpd.read_file(intersect_path / intersect_name)
-
+            
+            # Get list of existing IGBP columns
+            igbp_columns = [col for col in shp.columns if col.startswith('IGBP_')]
+            
+            if not igbp_columns:
+                self.logger.warning("No IGBP_* columns found in the shapefile. Cannot determine land classes.")
+                return
+                
             is_water = 0
 
             with nc4.Dataset(attribute_file, "r+") as att:
@@ -1840,23 +1830,66 @@ class SummaPreProcessor_spatial:
                     attribute_hru = att['hruId'][idx]
                     shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
                     
-                    tmp_hist = []
-                    for j in range(1, 18):
-                        col_name = f'IGBP_{j}'
-                        if col_name in shp.columns:
-                            tmp_hist.append(shp[col_name][shp_mask].values[0])
-                        else:
-                            tmp_hist.append(0)
+                    if not any(shp_mask):
+                        self.logger.warning(f"No matching records found for HRU {attribute_hru} in intersection shapefile")
+                        att['vegTypeIndex'][idx] = -999
+                        continue
                     
+                    # Create histogram of land classes
+                    tmp_hist = []
+                    max_igbp_index = 0
+                    
+                    # Find the highest IGBP index
+                    for col in igbp_columns:
+                        try:
+                            index = int(col.split('_')[1])
+                            max_igbp_index = max(max_igbp_index, index)
+                        except (ValueError, IndexError):
+                            continue
+                    
+                    # Initialize histogram with zeros
+                    tmp_hist = [0] * max_igbp_index
+                    
+                    # Fill in values for existing IGBP columns
+                    for col in igbp_columns:
+                        try:
+                            index = int(col.split('_')[1]) - 1  # Convert to 0-based index
+                            if 0 <= index < len(tmp_hist):
+                                if any(shp_mask):
+                                    tmp_hist[index] = shp[col][shp_mask].values[0]
+                        except (ValueError, IndexError):
+                            continue
+                    
+                    if not tmp_hist:
+                        self.logger.warning(f"Could not create land class histogram for HRU {attribute_hru}")
+                        att['vegTypeIndex'][idx] = -999
+                        continue
+                    
+                    # Find the dominant land class
                     tmp_lc = np.argmax(np.asarray(tmp_hist)) + 1
                     
-                    if shp[f'IGBP_{tmp_lc}'][shp_mask].values != tmp_hist[tmp_lc - 1]:
-                        self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
-                        tmp_lc = -999
-                    
-                    if tmp_lc == 17:
-                        if any(val > 0 for val in tmp_hist[0:-1]):  # HRU is mostly water but other land classes are present
-                            tmp_lc = np.argmax(np.asarray(tmp_hist[0:-1])) + 1  # select 2nd-most common class
+                    # Verify our selection is valid
+                    igbp_col = f'IGBP_{tmp_lc}'
+                    if igbp_col in shp.columns:
+                        # Verify value matches what we expect
+                        if any(shp_mask) and shp[igbp_col][shp_mask].values[0] != tmp_hist[tmp_lc - 1]:
+                            self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
+                            tmp_lc = -999
+                    else:
+                        self.logger.warning(f"Selected land class {igbp_col} not found in shapefile for HRU {attribute_hru}")
+                        
+                    # Handle water class (typically IGBP_17)
+                    water_col = 'IGBP_17'
+                    if tmp_lc == 17 and water_col in shp.columns:
+                        # HRU is mostly water, check if other land classes are present
+                        other_hist = tmp_hist.copy()
+                        if len(other_hist) >= 17:
+                            other_hist[16] = 0  # Set water class to 0
+                            
+                        if any(val > 0 for val in other_hist):
+                            # HRU is mostly water but other land classes are present
+                            # select 2nd-most common class
+                            tmp_lc = np.argmax(np.asarray(other_hist)) + 1
                         else:
                             is_water += 1  # HRU is exclusively water
                     

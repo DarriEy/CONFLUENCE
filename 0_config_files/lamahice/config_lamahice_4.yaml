@@ -25,13 +25,12 @@ DOMAIN_NAME: "lamahice_4"
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 1                                                # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
-SPATIAL_MODE: Lumped                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
-POUR_POINT_COORDS: -18.490195566865907/65.0578134189277
+POUR_POINT_COORDS: 65.0578134189277/-18.490195566865907
 BOUNDING_BOX_COORDS: 65.15797747398109/-18.887459742661306/64.75441741748317/-18.361341153796285
 
 # Pour point shapefile path
@@ -39,9 +38,9 @@ POUR_POINT_SHP_PATH: default                                   # If 'default', u
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: lumped
+DOMAIN_DEFINITION_METHOD: delineate
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
-STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 2500                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
@@ -58,26 +57,26 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
 CATCHMENT_SHP_NAME: default                                    # Name of domain catchment shapefile used in data acquisition and modelling 
-CATCHMENT_SHP_LAT: center_lat
-CATCHMENT_SHP_LON: center_lon
-CATCHMENT_SHP_AREA: HRU_area
-CATCHMENT_SHP_HRUID: HRU_ID
-CATCHMENT_SHP_GRUID: GRU_ID
+CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
+CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
+CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
+CATCHMENT_SHP_HRUID: HRU_ID                                    # HRU ID column in riverBasin shapefile
+CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column in riverBasin shapefile
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
-RIVER_BASINS_PATH: "/work/comphyd_lab/data/CONFLUENCE_data/lamahice/domain_lamahice_4/shapefiles/river_basins"
-RIVER_BASINS_NAME: "temp_basin.shp"
-RIVER_BASIN_SHP_RM_GRUID: GRU_ID
-RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
-RIVER_BASIN_SHP_AREA: GRU_area
+RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
+RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
+RIVER_BASIN_SHP_RM_GRUID: GRU_ID                                # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                              # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
-RIVER_NETWORK_SHP_PATH: "/work/comphyd_lab/data/CONFLUENCE_data/lamahice/domain_lamahice_4/shapefiles/river_network"
-RIVER_NETWORK_SHP_NAME: "temp_basin.shp"
-RIVER_NETWORK_SHP_LENGTH: Length
-RIVER_NETWORK_SHP_SEGID: LINKNO
-RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO
-RIVER_NETWORK_SHP_SLOPE: Slope
+RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
+RIVER_NETWORK_SHP_NAME: default                                # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
+RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
+RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
+RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
@@ -111,8 +110,8 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2018-01-01 01:00
-EXPERIMENT_TIME_END: 2020-12-31 23:00
+EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2012-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -304,7 +303,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 1
+SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings

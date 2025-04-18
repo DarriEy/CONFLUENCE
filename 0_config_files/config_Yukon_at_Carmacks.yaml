@@ -20,7 +20,7 @@ CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Yukon_at_Carmacks_RDRS"                                           # Name of experimental domain
+DOMAIN_NAME: "Yukon_at_Carmacks"                                           # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 
 # Computatational settings
@@ -117,10 +117,10 @@ EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experime
 DATA_ACQUIRE: HPC                                              # Where to acquire data from, current options: HPC, supplied
 
 # Forcing data settings
-FORCING_DATASET: "RDRS"                                        # Forcing dataset to use
+FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
 FORCING_START_YEAR: "1985"                                     # Forcing start year
 FORCING_END_YEAR: "2023"                                       # Forcing end year 
-#FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
+FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False

@@ -17,7 +17,7 @@
 ### ============================================= 1. Global settings: =====================================================================
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/lamahice"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/camels"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
@@ -111,8 +111,8 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2012-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 1950-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings

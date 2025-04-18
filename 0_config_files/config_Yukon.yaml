@@ -125,6 +125,7 @@ DATA_ACQUIRE: HPC                                              # Where to acquir
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
 FORCING_START_YEAR: "2018"                                     # Forcing start year
 FORCING_END_YEAR: "2018"                                       # Forcing end year 
+FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd # Forcing dataset variables to use or acquire                                                                    
 #FORCING_VARIABLES: RDRS_v2.1_P_TT_1.5m,RDRS_v2.1_P_P0_SFC,RDRS_v2.1_P_HU_1.5m,RDRS_v2.1_P_UVC_10m,RDRS_v2.1_P_FI_SFC,RDRS_v2.1_P_FB_SFC,RDRS_v2.1_A_PR0_SFC  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.

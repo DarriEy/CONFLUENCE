@@ -251,7 +251,7 @@ class MizuRoutePreProcessor:
 
     def _write_control_file_parameters(self, cf):
         cf.write("!\n! --- NAMELIST FILENAME \n")
-        cf.write(f"<param_nml>             {self.config.get('SETTINGS_MIZU_PARAMETERS')}    ! Spatially constant parameter namelist (should be stored in <ancil_dir>) \n")
+        cf.write(f"<param_nml>             {self.config.get('SETTINGS_MIZU_PARAMETERS')}    ! Spatially constant parameter namelist (should be stored in the ancil_dir) \n")
 
     def _write_control_file_simulation_controls(self, cf):
         self.sim_start = self.config.get('EXPERIMENT_TIME_START')

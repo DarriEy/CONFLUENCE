@@ -76,7 +76,7 @@ RIVER_NETWORK_SHP_NAME: "CAN_10LC003_distributed_river.shp"
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'

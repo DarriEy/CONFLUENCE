@@ -43,6 +43,7 @@ STREAM_THRESHOLD: 2500                                         # Threshold flow 
 LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: False                                   # Delineate watershed from pour point
+DELINEATE_COASTAL_WATERSHEDS: True                             # Delineate coastal watersheds
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
