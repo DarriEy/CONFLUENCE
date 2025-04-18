@@ -133,7 +133,8 @@ class CONFLUENCE:
 
             # --- Emulation and Optimization Steps ---
             (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
-            (self.run_large_sample_emulation, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
+            (self.prepare_emulation_data, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / f"trialParams_emulator_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
+            (self.run_random_forest_emulation, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / "rf_emulation" / "optimized_parameters.csv").exists()),
             (self.run_postprocessing, lambda: (self.project_dir / "results" / "postprocessed.csv").exists()),
 
             # Result analysis and optimisation
@@ -559,7 +560,7 @@ class CONFLUENCE:
                 pass
 
     @get_function_logger
-    def run_large_sample_emulation(self):
+    def prepare_emulation_data(self):
         """
         Run large sample emulation to generate spatially varying trial parameters.
         Creates parameter sets for ensemble modeling, runs simulations, and analyzes results.
@@ -621,6 +622,49 @@ class CONFLUENCE:
             self.logger.error(f"Error during large sample emulation: {str(e)}")
             raise
 
+    @get_function_logger
+    def run_random_forest_emulation(self):
+        """
+        Run random forest emulation to find optimal parameters based on
+        geospatial attributes and performance metrics.
+        """
+        self.logger.info("Starting random forest emulation")
+        
+        # Check if emulation is enabled in config
+        if not self.config.get('RUN_RANDOM_FOREST_EMULATION', False):
+            self.logger.info("Random forest emulation disabled in config. Skipping.")
+            return None
+        
+        try:
+            # Import RandomForestEmulator class
+            from utils.emulation_utils.random_forest_emulator import RandomForestEmulator
+            
+            # Create the emulator
+            emulator = RandomForestEmulator(self.config, self.logger)
+            
+            # Run the emulation workflow
+            results = emulator.run_workflow()
+            
+            if results:
+                self.logger.info(f"Random forest emulation completed successfully.")
+                self.logger.info(f"Optimized parameters saved to: {results['output_dir']}")
+                
+                # Display key metrics
+                self.logger.info(f"Model R² score: {results['model_metrics']['test_score']:.4f}")
+                self.logger.info(f"Predicted {emulator.target_metric}: {results['predicted_score']:.4f}")
+                
+                return results
+            else:
+                self.logger.warning("Random forest emulation did not produce results.")
+                return None
+                
+        except ImportError as e:
+            self.logger.error(f"Could not import RandomForestEmulator: {str(e)}. Ensure the module exists.")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error during random forest emulation: {str(e)}")
+            raise
+        
     def _get_default_path(self, config_key: str, default_suffix: str) -> Path:
         """
         Get a path from config or use a default based on the project directory.

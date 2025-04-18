@@ -25,7 +25,7 @@ DOMAIN_NAME: "Bow_at_Banff"                                           # Name of 
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 20                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geopsatial settings: =================================================================
@@ -398,11 +398,19 @@ EMULATION_NUM_SAMPLES: 100                                     # Number of param
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
-EMULATION_RUN_ENSEMBLE: true                                  # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble simulations in parallel (requires MPI)
+EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
+EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
 EMULATION_MAX_PARALLEL_JOBS: 20                                # Maximum number of parallel jobs when running ensemble
 EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
 EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
 EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs
+
+
+# Add to configuration file
+RUN_RANDOM_FOREST_EMULATION: True
+EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
+EMULATION_RF_N_ESTIMATORS: 100
+EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth
+EMULATION_N_OPTIMIZATION_RUNS: 10

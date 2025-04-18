@@ -2029,3 +2029,4 @@ class LargeSampleEmulator:
         
         self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
         return analysis_dir
+    
