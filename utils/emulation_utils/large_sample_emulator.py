@@ -577,7 +577,7 @@ class LargeSampleEmulator:
                 prefix_parts = line.split("'")
                 if len(prefix_parts) >= 3:
                     original_prefix = prefix_parts[1]
-                    new_prefix = f"{original_prefix}_run{run_idx:04d}"
+                    new_prefix = f"{original_prefix}"#_run{run_idx:04d}"
                     modified_line = line.replace(f"'{original_prefix}'", f"'{new_prefix}'")
                     modified_lines.append(modified_line)
                 else:
@@ -910,7 +910,7 @@ class LargeSampleEmulator:
                         
                         # Check if SUMMA timestep file exists and log details
                         mizu_input_dir = run_dir / "simulations" / self.experiment_id / "SUMMA"
-                        timestep_file = mizu_input_dir / f"{self.experiment_id}_{run_name.replace('_', '')}_timestep.nc"
+                        timestep_file = mizu_input_dir / f"{self.experiment_id}_timestep.nc"
                         debug_log.write(f"Looking for SUMMA timestep file at: {timestep_file}\n")
                         
                         if timestep_file.exists():
@@ -1112,7 +1112,7 @@ class LargeSampleEmulator:
                 # We need to match this naming convention
                 experiment_id = self.config.get('EXPERIMENT_ID')
                 run_id_format = run_name.lower()  # Convert to lowercase to match file naming
-                modified_line = f"<fname_qsim>            {experiment_id}_{run_id_format.replace('_','')}_timestep.nc    ! netCDF name for HM_HRU runoff \n"
+                modified_line = f"<fname_qsim>            {experiment_id}_timestep.nc    ! netCDF name for HM_HRU runoff \n"
                 modified_lines.append(modified_line)
             # Keep simulation start time as is from the main configuration
             elif '<sim_start>' in line:

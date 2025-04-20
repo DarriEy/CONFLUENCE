@@ -4,7 +4,7 @@
 #SBATCH --error=CONFLUENCE_single_%j.err
 #SBATCH --time=144:00:00
 #SBATCH --ntasks=20
-#SBATCH --mem-per-cpu=100G
+#SBATCH --mem-per-cpu=50G
 
 # Load necessary modules (adjust as needed for your HPC environment)
 . /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash

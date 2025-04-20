@@ -616,7 +616,7 @@ class SummaPreProcessor_spatial:
                     elif self.forcing_dataset == 'era5':
                         ds['airtemp'] = ds['airtemp']  # Already in K
                         ds['airpres'] = ds['airpres']  # Already in Pa
-                        ds['pptrate'] = ds['pptrate'] * 1000 / 3600  # Convert from m/hour to mm/s
+                        ds['pptrate'] = ds['pptrate']  
                         ds['windspd'] = np.sqrt(ds['windspd_u']**2 + ds['windspd_v']**2)
                     elif self.forcing_dataset == 'carra':
                         # Add CARRA-specific conversions if needed

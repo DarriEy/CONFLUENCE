@@ -222,7 +222,7 @@ class attributeProcessor:
         Returns:
             pd.DataFrame: Complete dataframe of catchment attributes
         """
-        self.logger.info("Starting comprehensive attribute processing")
+        self.logger.info("Starting attribute processing")
         
         try:
             # Initialize results dictionary
@@ -332,31 +332,31 @@ class attributeProcessor:
                 df['basin_id'] = self.domain_name
                 df = df.set_index(['basin_id', 'hru_id'])
             
-            # Save the comprehensive attributes to different formats
+            # Save the  attributes to different formats
             output_dir = self.project_dir / 'attributes'
             
-            # Use comprehensive prefix to distinguish from basic attribute files
-            csv_file = output_dir / f"{self.domain_name}_comprehensive_attributes.csv"
+            # Use prefix to distinguish from basic attribute files
+            csv_file = output_dir / f"{self.domain_name}_attributes.csv"
             df.to_csv(csv_file)
             
             # Save as Parquet
             try:
-                parquet_file = output_dir / f"{self.domain_name}_comprehensive_attributes.parquet"
+                parquet_file = output_dir / f"{self.domain_name}_attributes.parquet"
                 df.to_parquet(parquet_file)
-                self.logger.info(f"Comprehensive attributes saved as Parquet: {parquet_file}")
+                self.logger.info(f" attributes saved as Parquet: {parquet_file}")
             except ImportError:
                 self.logger.warning("pyarrow not installed, skipping Parquet output")
             
             # Save as pickle
-            pickle_file = output_dir / f"{self.domain_name}_comprehensive_attributes.pkl"
+            pickle_file = output_dir / f"{self.domain_name}_attributes.pkl"
             df.to_pickle(pickle_file)
             
-            self.logger.info(f"Comprehensive attributes saved to {csv_file}")
+            self.logger.info(f" attributes saved to {csv_file}")
             
             return df
             
         except Exception as e:
-            self.logger.error(f"Error in comprehensive attribute processing: {str(e)}")
+            self.logger.error(f"Error in attribute processing: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             
@@ -1954,7 +1954,7 @@ class attributeProcessor:
 
     def calculate_streamflow_signatures(self) -> Dict[str, Any]:
         """
-        Calculate comprehensive streamflow signatures including durations, timing, and distributions.
+        Calculate streamflow signatures including durations, timing, and distributions.
         
         Returns:
             Dict[str, Any]: Dictionary of streamflow signature attributes

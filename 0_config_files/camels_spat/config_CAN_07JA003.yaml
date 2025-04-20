@@ -25,7 +25,7 @@ DOMAIN_NAME: "CAN_07JA003"
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geopsatial settings: =================================================================
@@ -38,7 +38,7 @@ POUR_POINT_SHP_PATH: default                                   # If 'default', u
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: subset
+DOMAIN_DEFINITION_METHOD: delineate
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
@@ -110,8 +110,8 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2012-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 2008-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -303,17 +303,17 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 82038456
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings
 OBSERVATIONS_PATH: default                                     # Path to observed streamflow data for evaluation. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # Observation data paths
-STREAMFLOW_DATA_PROVIDER: WSC                                 # Provider of streamflow data, current options: USGS, WSC, VI  
-DOWNLOAD_USGS_DATA: True
+STREAMFLOW_DATA_PROVIDER: WSC
+DOWNLOAD_USGS_DATA: False
 DOWNLOAD_WSC_DATA: True
-STATION_ID: 05BB001
+STATION_ID: 07JA003
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
 STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
@@ -399,11 +399,19 @@ EMULATION_NUM_SAMPLES: 100                                     # Number of param
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
-EMULATION_RUN_ENSEMBLE: true                                  # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble simulations in parallel (requires MPI)
-EMULATION_MAX_PARALLEL_JOBS: 20                                # Maximum number of parallel jobs when running ensemble
+EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
+EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
+EMULATION_MAX_PARALLEL_JOBS: 100                                # Maximum number of parallel jobs when running ensemble
 EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
 EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
 EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs
+
+
+# Add to configuration file
+RUN_RANDOM_FOREST_EMULATION: True
+EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
+EMULATION_RF_N_ESTIMATORS: 100
+EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth
+EMULATION_N_OPTIMIZATION_RUNS: 10
