@@ -25,7 +25,7 @@ DOMAIN_NAME: "Bow_at_Banff"                                           # Name of 
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 8                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geopsatial settings: =================================================================
@@ -111,7 +111,7 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
 EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2012-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_END: 2011-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -251,19 +251,6 @@ UNIFY_SOIL: false                                              # Merge small soi
 MINIMUM_LAND_FRACTION: 0.01                                    # Minimum land cover classification fraction to include
 NUM_LAND_COVER: 20                                             # Number of land cover classes
 LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-GEOFABRIC_MAPPING:                                             
-    basinID: 
-      in_varname: 'GRU_ID'
-    nextDownID: 
-      in_varname: 'DSLINKO'
-    area: 
-      in_varname: 'HRU_area'
-      in_units: 'm^2'
-      out_units: 'm^2'
-    rivlen: 
-      in_varname: 'Length'
-      in_units: 'm'
-      out_units: 'm'
 
 # FUSE settings
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
@@ -304,7 +291,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 147                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings
