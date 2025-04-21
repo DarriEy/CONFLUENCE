@@ -1,5 +1,5 @@
 """
-Large Sample Emulator for CONFLUENCE with support for multiple ensemble runs.
+Emulator for CONFLUENCE with support for multiple ensemble runs.
 
 This enhanced version creates multiple parameter sets in separate run directories
 for ensemble simulations and sensitivity analysis.

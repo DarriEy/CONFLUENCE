@@ -304,7 +304,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 228                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 147                                              # River reach ID used for streamflow evaluation and optimization
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings

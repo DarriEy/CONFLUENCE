@@ -401,10 +401,8 @@ class CONFLUENCE:
        
     @get_function_logger
     def process_observed_data(self):
-        
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
-
         try:
             observed_data_processor.process_streamflow_data()
             self.logger.info("Observed data processing completed successfully")
