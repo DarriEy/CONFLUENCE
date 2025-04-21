@@ -24,6 +24,7 @@ class forcingResampler:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
+        self.domain_name = self.config['DOMAIN_NAME']
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
         dem_name = self.config['DEM_NAME']
@@ -39,6 +40,7 @@ class forcingResampler:
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
         if self.forcing_dataset == 'rdrs':
+            self.merge_forcings()
             self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_path')
             self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
             
@@ -53,6 +55,153 @@ class forcingResampler:
         self.create_shapefile()
         self.remap_forcing()
         self.logger.info("Forcing data resampling process completed")
+
+    def merge_forcings(self):
+        """
+        Merge RDRS forcing data files into monthly files.
+
+        This method performs the following steps:
+        1. Determine the year range for processing
+        2. Create output directories
+        3. Process each year and month, merging daily files into monthly files
+        4. Apply variable renaming and unit conversions
+        5. Save the merged and processed data to netCDF files
+
+        Raises:
+            FileNotFoundError: If required input files are missing.
+            ValueError: If there are issues with data processing or merging.
+            IOError: If there are issues writing output files.
+        """
+        self.logger.info("Starting to merge RDRS forcing data")
+
+        years = [
+                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
+                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
+                ]
+        years = range(int(years[0])-1, int(years[1]) + 1)
+        
+        file_name_pattern = f"domain_{self.domain_name}_*.nc"
+        
+        self.merged_forcing_path = self.project_dir / 'forcing' / 'merged_path'
+        raw_forcing_path = self.project_dir / 'forcing/raw_data/'
+        self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
+        
+        variable_mapping = {
+            'RDRS_v2.1_P_FI_SFC': 'LWRadAtm',
+            'RDRS_v2.1_P_FB_SFC': 'SWRadAtm',
+            'RDRS_v2.1_A_PR0_SFC': 'pptrate',
+            'RDRS_v2.1_P_P0_SFC': 'airpres',
+            'RDRS_v2.1_P_TT_09944': 'airtemp',
+            'RDRS_v2.1_P_HU_09944': 'spechum',
+            'RDRS_v2.1_P_UVC_09944': 'windspd',
+            'RDRS_v2.1_P_TT_1.5m': 'airtemp',
+            'RDRS_v2.1_P_HU_1.5m': 'spechum',
+            'RDRS_v2.1_P_UVC_10m': 'windspd',
+            'RDRS_v2.1_P_UUC_10m': 'windspd_u',
+            'RDRS_v2.1_P_VVC_10m': 'windspd_v',
+        }
+
+        def process_rdrs_data(ds):
+            existing_vars = {old: new for old, new in variable_mapping.items() if old in ds.variables}
+            ds = ds.rename(existing_vars)
+            
+            if 'airpres' in ds:
+                ds['airpres'] = ds['airpres'] * 100
+                ds['airpres'].attrs.update({'units': 'Pa', 'long_name': 'air pressure', 'standard_name': 'air_pressure'})
+            
+            if 'airtemp' in ds:
+                ds['airtemp'] = ds['airtemp'] + 273.15
+                ds['airtemp'].attrs.update({'units': 'K', 'long_name': 'air temperature', 'standard_name': 'air_temperature'})
+            
+            if 'pptrate' in ds:
+                ds['pptrate'] = ds['pptrate'] / 3600 * 1000
+                ds['pptrate'].attrs.update({'units': 'm s-1', 'long_name': 'precipitation rate', 'standard_name': 'precipitation_rate'})
+            
+            if 'windspd' in ds:
+                ds['windspd'] = ds['windspd'] * 0.514444
+                ds['windspd'].attrs.update({'units': 'm s-1', 'long_name': 'wind speed', 'standard_name': 'wind_speed'})
+            
+            if 'LWRadAtm' in ds:
+                ds['LWRadAtm'].attrs.update({'long_name': 'downward longwave radiation at the surface', 'standard_name': 'surface_downwelling_longwave_flux_in_air'})
+            
+            if 'SWRadAtm' in ds:
+                ds['SWRadAtm'].attrs.update({'long_name': 'downward shortwave radiation at the surface', 'standard_name': 'surface_downwelling_shortwave_flux_in_air'})
+            
+            if 'spechum' in ds:
+                ds['spechum'].attrs.update({'long_name': 'specific humidity', 'standard_name': 'specific_humidity'})
+            
+            return ds
+
+        for year in years:
+            self.logger.info(f"Processing year {year}")
+            year_folder = raw_forcing_path / str(year)
+
+            for month in range(1, 13):
+                self.logger.info(f"Processing {year}-{month:02d}")
+                
+                daily_files = sorted(year_folder.glob(file_name_pattern.replace('*', f'{year}{month:02d}*')))         
+
+                if not daily_files:
+                    self.logger.warning(f"No files found for {year}-{month:02d}")
+                    continue
+                
+                datasets = []
+                for file in daily_files:
+                    try:
+                        ds = xr.open_dataset(file)
+                        datasets.append(ds)
+                    except Exception as e:
+                        self.logger.error(f"Error opening file {file}: {str(e)}")
+
+                if not datasets:
+                    self.logger.warning(f"No valid datasets for {year}-{month:02d}")
+                    continue
+
+                processed_datasets = []
+                for ds in datasets:
+                    try:
+                        processed_ds = process_rdrs_data(ds)
+                        processed_datasets.append(processed_ds)
+                    except Exception as e:
+                        self.logger.error(f"Error processing dataset: {str(e)}")
+
+                if not processed_datasets:
+                    self.logger.warning(f"No processed datasets for {year}-{month:02d}")
+                    continue
+
+                monthly_data = xr.concat(processed_datasets, dim="time")
+                monthly_data = monthly_data.sortby("time")
+
+                start_time = pd.Timestamp(year, month, 1)
+                if month == 12:
+                    end_time = pd.Timestamp(year + 1, 1, 1) - pd.Timedelta(hours=1)
+                else:
+                    end_time = pd.Timestamp(year, month + 1, 1) - pd.Timedelta(hours=1)
+
+                monthly_data = monthly_data.sel(time=slice(start_time, end_time))
+
+                expected_times = pd.date_range(start=start_time, end=end_time, freq='h')
+                monthly_data = monthly_data.reindex(time=expected_times, method='nearest')
+
+                monthly_data['time'].encoding['units'] = 'hours since 1900-01-01'
+                monthly_data['time'].encoding['calendar'] = 'gregorian'
+
+                monthly_data.attrs.update({
+                    'History': f'Created {time.ctime(time.time())}',
+                    'Language': 'Written using Python',
+                    'Reason': 'RDRS data aggregated to monthly files and variables renamed for SUMMA compatibility'
+                })
+
+                for var in monthly_data.data_vars:
+                    monthly_data[var].attrs['missing_value'] = -999
+
+                output_file = self.merged_forcing_path / f"RDRS_monthly_{year}{month:02d}.nc"
+                monthly_data.to_netcdf(output_file)
+
+                for ds in datasets:
+                    ds.close()
+
+        self.logger.info("RDRS forcing data merging completed")
 
     def create_shapefile(self):
         """Create forcing shapefile with check for existing files"""

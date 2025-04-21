@@ -28,7 +28,7 @@ from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type
 
 # Model specific utilities
 from utils.models_utils.mizuroute_utils import MizuRoutePreProcessor, MizuRouteRunner # type: ignore
-from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor_spatial, SummaPreProcessor_point # type: ignore
+from utils.models_utils.summa_utils import SUMMAPostprocessor, SummaRunner, SummaPreProcessor # type: ignore
 from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDecisionAnalyzer, FUSEPostprocessor # type: ignore
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
@@ -37,12 +37,15 @@ from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPost
 
 # Evaluation utilities
 #from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
-from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
-from utils.emulation_utils.large_sample_emulator import LargeSampleEmulator # type: ignore
 
 # Reporting utilities
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
 from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
+
+# Optimisation utilities
+from utils.emulation_utils.random_forest_emulator import RandomForestEmulator # type: ignore
+from utils.emulation_utils.single_sample_emulator import SingleSampleEmulator # type: ignore
+from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
 
 class CONFLUENCE:
 
@@ -124,12 +127,12 @@ class CONFLUENCE:
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data1").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
 
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
 
             # --- Emulation and Optimization Steps ---
             (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
@@ -370,12 +373,8 @@ class CONFLUENCE:
 
     @get_function_logger
     def model_agnostic_pre_processing(self):
-        #if self.config.get('SPATIAL_MODE') == 'Point':
-        #    self.logger.info("Spatial mode: Point simulations, data processing not required")
-        #    return None
         
-        # Data directoris
-        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+        # Data directories
         basin_averaged_data = self.project_dir / 'forcing' / 'basin_averaged_data'
         catchment_intersection_dir = self.project_dir / 'shapefiles' / 'catchment_intersection'
 
@@ -402,9 +401,6 @@ class CONFLUENCE:
        
     @get_function_logger
     def process_observed_data(self):
-        #if self.config.get('SPATIAL_MODE') == 'Point':
-        #    self.logger.info("Spatial mode: Point simulations, data processing not required")
-        #    return None
         
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
@@ -429,13 +425,8 @@ class CONFLUENCE:
                 self.logger.info(f"Processing model: {model}")
                 
                 if model == 'SUMMA':
-                    #if self.config.get('SPATIAL_MODE') == 'Point':
-                    #    self.logger.info("Initializing SUMMA point preprocessor")
-                    #    ssp = SummaPreProcessor_point(self.config, self.logger)
-                    #    ssp.run_preprocessing()
-                    #else:
                     self.logger.info("Initializing SUMMA spatial preprocessor")
-                    ssp = SummaPreProcessor_spatial(self.config, self.logger)
+                    ssp = SummaPreProcessor(self.config, self.logger)
                     ssp.run_preprocessing()
                     
                     if self.config.get('SPATIAL_MODE') != 'Point' and self.config.get('SPATIAL_MODE') != 'Lumped':
@@ -573,11 +564,9 @@ class CONFLUENCE:
             return None
         
         try:
-            # Import the emulator
-            from utils.emulation_utils.large_sample_emulator import LargeSampleEmulator
             
             # Initialize the emulator
-            emulator = LargeSampleEmulator(self.config, self.logger)
+            emulator = SingleSampleEmulator(self.config, self.logger)
             
             # Run the emulation setup
             emulator_output = emulator.run_emulation_setup()
@@ -616,7 +605,7 @@ class CONFLUENCE:
             return emulator_output
                 
         except ImportError as e:
-            self.logger.error(f"Could not import LargeSampleEmulator: {str(e)}. Ensure the module exists in utils/emulation_utils/")
+            self.logger.error(f"Could not import SingleSampleEmulator: {str(e)}. Ensure the module exists in utils/emulation_utils/")
             raise
         except Exception as e:
             self.logger.error(f"Error during large sample emulation: {str(e)}")
@@ -637,7 +626,7 @@ class CONFLUENCE:
         
         try:
             # Import RandomForestEmulator class
-            from utils.emulation_utils.random_forest_emulator import RandomForestEmulator
+
             
             # Create the emulator
             emulator = RandomForestEmulator(self.config, self.logger)

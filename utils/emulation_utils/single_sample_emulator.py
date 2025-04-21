@@ -16,9 +16,9 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from utils.configHandling_utils.logging_utils import get_function_logger # type: ignore
 
-class LargeSampleEmulator:
+class SingleSampleEmulator:
     """
-    Handles the setup for large sample emulation, primarily by generating
+    Handles the setup for single sample emulation, primarily by generating
     spatially varying trial parameter files for ensemble simulations.
     
     This enhanced version supports creating multiple run directories with

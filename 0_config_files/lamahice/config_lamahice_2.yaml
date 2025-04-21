@@ -303,17 +303,17 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 1
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings
 OBSERVATIONS_PATH: default                                     # Path to observed streamflow data for evaluation. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # Observation data paths
-STREAMFLOW_DATA_PROVIDER: WSC                                 # Provider of streamflow data, current options: USGS, WSC, VI  
-DOWNLOAD_USGS_DATA: True
-DOWNLOAD_WSC_DATA: True
-STATION_ID: 05BB001
+STREAMFLOW_DATA_PROVIDER: VI
+DOWNLOAD_USGS_DATA: False
+DOWNLOAD_WSC_DATA: False
+STATION_ID: 2
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
 STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv

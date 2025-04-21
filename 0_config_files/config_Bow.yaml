@@ -121,10 +121,12 @@ DATA_ACQUIRE: HPC                                              # Where to acquir
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
 FORCING_START_YEAR: "2011"                                     # Forcing start year
 FORCING_END_YEAR: "2012"                                       # Forcing end year 
-FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
+FORCING_VARIABLES: default
+#FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
+#FORCING_VARIABLES: RDRS_v2.1_P_TT_1.5m,RDRS_v2.1_P_P0_SFC,RDRS_v2.1_P_HU_1.5m,RDRS_v2.1_P_UVC_10m,RDRS_v2.1_P_FI_SFC,RDRS_v2.1_P_FB_SFC,RDRS_v2.1_A_PR0_SFC  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
-APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
+APPLY_LAPSE_RATE: False                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
