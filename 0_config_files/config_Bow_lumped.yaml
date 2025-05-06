@@ -25,7 +25,7 @@ DOMAIN_NAME: "Bow_at_Banff_lumped"                                           # N
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 100                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 SPATIAL_MODE: Lumped                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
 
@@ -111,8 +111,8 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2012-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 1950-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -400,7 +400,7 @@ EMULATION_SEED: 42                                             # Random seed for
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
 EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
+EMULATION_PARALLEL_ENSEMBLE: false                              # Run ensemble simulations in parallel (requires MPI)
 EMULATION_MAX_PARALLEL_JOBS: 100                                # Maximum number of parallel jobs when running ensemble
 EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
 EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations

@@ -29,6 +29,14 @@ env/
 
 # Config files
 # 0_config_files/
+0_config_files/snotel/
+0_config_files/fluxnet/
+0_config_files/caravan/
+0_config_files/camels/
+0_config_files/lamahice/
+0_config_files/norswe/
+0_config_files/nz/
+0_config_files/camels_spat/
 
 # IDE
 .idea/

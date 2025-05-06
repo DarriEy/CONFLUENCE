@@ -26,6 +26,310 @@ class VisualizationReporter:
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
 
 
+    def plot_lumped_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]], show_calib_eval_periods: bool = False, spinup_percent: float = 10.0):
+        """
+        Create a streamflow comparison visualization for lumped watershed models
+        where the streamflow is directly taken from the SUMMA output as averageRoutedRunoff.
+        
+        Args:
+            model_outputs: List of tuples (model_name, model_file_path)
+            obs_files: List of tuples (observation_name, observation_file_path)
+            show_calib_eval_periods: Whether to show calibration and evaluation period statistics
+            spinup_percent: Percentage of data period to skip at the beginning (default: 10%)
+            
+        Returns:
+            Path to the saved plot
+        """
+        try:
+            plot_folder = self.project_dir / "plots" / "results"
+            plot_folder.mkdir(parents=True, exist_ok=True)
+            plot_filename = plot_folder / 'streamflow_comparison.png'
+
+            # Read observation data
+            obs_data = []
+            for obs_name, obs_file in obs_files:
+                try:
+                    df = pd.read_csv(obs_file, parse_dates=['datetime'])
+                    df['datetime'] = pd.to_datetime(df['datetime'])
+                    df.set_index('datetime', inplace=True)
+                    df = df['discharge_cms'].resample('h').mean()
+                    obs_data.append((obs_name, df))
+                except Exception as e:
+                    self.logger.warning(f"Could not read observation file {obs_file}: {str(e)}")
+                    continue
+
+            if not obs_data:
+                self.logger.error("No observation data could be loaded")
+                return None
+
+            # Read simulation data from SUMMA output (averageRoutedRunoff)
+            sim_data = []
+            for sim_name, sim_file in model_outputs:
+                try:
+                    ds = xr.open_dataset(sim_file)
+                    # Extract the averageRoutedRunoff variable
+                    if 'averageRoutedRunoff' in ds:
+                        runoff_series = ds['averageRoutedRunoff'].to_pandas()
+                        
+                        # Handle different xarray/pandas output formats
+                        if isinstance(runoff_series, pd.DataFrame):
+                            # If it's a DataFrame with gru as columns
+                            if 'gru' in ds['averageRoutedRunoff'].dims:
+                                # If multiple GRUs exist, use the first one for now
+                                runoff_series = runoff_series.iloc[:, 0]
+                            else:
+                                # Other case - take the first column
+                                runoff_series = runoff_series.iloc[:, 0]
+                        
+                        # Get catchment area from the river basin shapefile
+                        basin_shapefile = self.config.get('RIVER_BASINS_NAME')
+                        if basin_shapefile == 'default':
+                            basin_shapefile = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+                        basin_path = self.project_dir / "shapefiles" / "river_basins" / basin_shapefile
+                        
+                        try:
+                            basin_gdf = gpd.read_file(basin_path)
+                            area_col = self.config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+                            # Area is expected to be in m²
+                            area_m2 = basin_gdf[area_col].sum() 
+                            
+                            # Convert from m/s to m³/s (cms) by multiplying by area in m²
+                            runoff_series = runoff_series * area_m2
+                            
+                            self.logger.info(f"Converted runoff from m/s to m³/s using basin area: {area_m2} m²")
+                        except Exception as e:
+                            self.logger.warning(f"Error getting basin area: {str(e)}. Using raw values.")
+                        
+                        sim_data.append((sim_name, runoff_series))
+                    else:
+                        self.logger.error(f"No 'averageRoutedRunoff' variable found in {sim_file}")
+                        continue
+                            
+                except Exception as e:
+                    self.logger.warning(f"Could not read simulation file {sim_file}: {str(e)}")
+                    continue
+
+            if not sim_data:
+                self.logger.error("No simulation data could be loaded")
+                return None
+
+            # Determine time range based on available data
+            start_date = max([data.index.min() for _, data in sim_data + obs_data])
+            end_date = min([data.index.max() for _, data in sim_data + obs_data])
+            
+            # Calculate spinup period duration
+            total_days = (end_date - start_date).days
+            spinup_days = int(total_days * spinup_percent / 100)
+            spinup_end_date = start_date + pd.Timedelta(days=spinup_days)
+            
+            self.logger.info(f"Skipping first {spinup_days} days ({spinup_percent}% of total period) as spinup")
+            self.logger.info(f"Using data from {spinup_end_date} to {end_date}")
+
+            # Filter data to common time range, skipping spinup period
+            sim_data = [(name, data.loc[spinup_end_date:end_date]) for name, data in sim_data]
+            obs_data = [(name, data.loc[spinup_end_date:end_date]) for name, data in obs_data]
+
+            # Create plot
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 16))
+            fig.suptitle("Lumped Watershed Streamflow Comparison", fontsize=16, fontweight='bold')
+
+            # Plot time series
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+            linestyles = ['--', '-.', ':']
+
+            # Plot observations
+            for obs_name, obs in obs_data:
+                ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
+
+            # Plot simulations
+            for i, (sim_name, sim) in enumerate(sim_data):
+                color = colors[i % len(colors)]
+                linestyle = linestyles[i % len(linestyles)]
+                ax1.plot(sim.index, sim, label=f'Simulated ({sim_name})', 
+                        color=color, linestyle=linestyle, linewidth=1.5)
+
+            # Add metrics calculation
+            for i, (sim_name, sim) in enumerate(sim_data):
+                # Align observation and simulation data
+                df_obs = obs_data[0][1]
+                df_sim = sim
+                
+                # Create merged dataframe with common timestamps
+                aligned_data = pd.merge(df_obs, df_sim, 
+                                    left_index=True, right_index=True, how='inner')
+                
+                # Calculate metrics
+                if not aligned_data.empty:
+                    metrics = self.calculate_metrics(aligned_data.iloc[:, 0].values, 
+                                                aligned_data.iloc[:, 1].values)
+                    
+                    # Format metrics text
+                    metric_text = f"{sim_name} Metrics:\n"
+                    metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in metrics.items()])
+                    
+                    # Add text to plot
+                    ax1.text(0.02, 0.98 - 0.15 * i, metric_text,
+                            transform=ax1.transAxes, verticalalignment='top', fontsize=8,
+                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+
+            ax1.set_xlabel('Date', fontsize=12)
+            ax1.set_ylabel('Streamflow (m³/s)', fontsize=12)
+            ax1.set_title(f'Streamflow Comparison (after {spinup_percent}% spinup period)', fontsize=14)
+            ax1.legend(loc='upper right', fontsize=10)
+            ax1.grid(True, linestyle=':', alpha=0.6)
+            ax1.set_facecolor('#f0f0f0')
+
+            # Format x-axis
+            ax1.xaxis.set_major_locator(mdates.YearLocator())
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+            # Plot exceedance frequency
+            try:
+                for obs_name, obs in obs_data:
+                    self.plot_exceedance(ax2, obs.values, f'Observed ({obs_name})', 
+                                    color='black', linewidth=2.5)
+
+                for i, (sim_name, sim) in enumerate(sim_data):
+                    color = colors[i % len(colors)]
+                    linestyle = linestyles[i % len(linestyles)]
+                    self.plot_exceedance(ax2, sim.values, f'Simulated ({sim_name})', 
+                                    color=color, linestyle=linestyle, linewidth=1.5)
+            except Exception as e:
+                self.logger.warning(f'Could not plot exceedance frequency: {str(e)}')
+
+            ax2.set_xlabel('Exceedance Probability', fontsize=12)
+            ax2.set_ylabel('Streamflow (m³/s)', fontsize=12)
+            ax2.set_title('Flow Duration Curve', fontsize=14)
+            ax2.legend(loc='best', fontsize=10)
+            ax2.grid(True, which='both', linestyle=':', alpha=0.6)
+            ax2.set_facecolor('#f0f0f0')
+
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.93)
+
+            # Save the plot
+            plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            return str(plot_filename)
+
+        except Exception as e:
+            self.logger.error(f"Error in plot_lumped_streamflow_simulations_vs_observations: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None
+
+    def visualise_model_output(self):
+        
+        # Plot streamflow comparison
+        self.logger.info('Starting model output visualisation')
+        for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
+            visualizer = VisualizationReporter(self.config, self.logger)
+
+            if model == 'SUMMA':
+                visualizer.plot_summa_outputs(self.config['EXPERIMENT_ID'])
+                
+                # Check if using lumped domain definition
+                if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
+                    # For lumped model, get streamflow from SUMMA's averageRoutedRunoff
+                    self.logger.info("Using lumped model output from SUMMA averageRoutedRunoff")
+                    
+                    # Define model_outputs and obs_files
+                    summa_output_file = str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "SUMMA" / f"{self.config['EXPERIMENT_ID']}_timestep.nc")
+                    model_outputs = [(f"{model}", summa_output_file)]
+                    
+                    obs_files = [
+                        ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                    ]
+                    
+                    try:
+                        # First convert SUMMA output to a format compatible with the visualization function
+                        import xarray as xr
+                        import pandas as pd
+                        import numpy as np
+                        import os
+                        
+                        # Read SUMMA output
+                        ds = xr.open_dataset(summa_output_file)
+                        
+                        # Extract averageRoutedRunoff
+                        runoff = ds['averageRoutedRunoff'].to_pandas()
+                        
+                        # If it's a DataFrame, convert to Series (depends on xarray version)
+                        if isinstance(runoff, pd.DataFrame):
+                            runoff = runoff.iloc[:, 0]
+                            
+                        # Need to get basin area to convert from m/s to m³/s (cms)
+                        basin_name = self.config.get('RIVER_BASINS_NAME', 'default')
+                        if basin_name == 'default':
+                            basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+                        
+                        # Using the helper function for getting the file path
+                        basin_path = self.project_dir / "shapefiles" / "river_basins" / basin_name
+                        if not basin_path.exists() and hasattr(self, '_get_file_path'):
+                            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+                        
+                        import geopandas as gpd
+                        basin_gdf = gpd.read_file(basin_path)
+                        area_col = self.config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+                        area_m2 = basin_gdf[area_col].sum()
+                        
+                        # Convert from m/s to m³/s (cms)
+                        runoff = runoff * area_m2
+                        
+                        # Make a netCDF file that mimics mizuRoute output format
+                        modified_file = str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "SUMMA" / f"{self.config['EXPERIMENT_ID']}_modified_for_viz.nc")
+                        
+                        # Create a new dataset with the expected structure
+                        new_ds = xr.Dataset(
+                            data_vars={
+                                "IRFroutedRunoff": (["time", "seg"], runoff.values[:, np.newaxis]),
+                                "reachID": (["seg"], np.array([1]))
+                            },
+                            coords={
+                                "time": runoff.index,
+                                "seg": np.array([0])
+                            }
+                        )
+                        new_ds.to_netcdf(modified_file)
+                        
+                        # Update model_outputs to use the modified file
+                        model_outputs = [(model, modified_file)]
+                        
+                        # Now call the usual visualization function
+                        plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error preparing lumped SUMMA output for visualization: {str(e)}")
+                        import traceback
+                        self.logger.error(traceback.format_exc())
+                        
+                else:
+                    # For distributed model, use mizuRoute output as usual
+                    visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+                    model_outputs = [
+                        (f"{model}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}*.nc"))
+                    ]
+                    obs_files = [
+                        ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                    ]
+                    plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+            elif model == 'FUSE':
+                model_outputs = [
+                    ("FUSE", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "FUSE" / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"))
+                ]
+                obs_files = [
+                    ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                ]
+                plot_file = visualizer.plot_fuse_streamflow_simulations_vs_observations(model_outputs, obs_files)
+
+            elif model == 'GR':
+                pass
+
+            elif model == 'FLASH':
+                pass
+
+
     def plot_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]], show_calib_eval_periods: bool = False):
         try:
             plot_folder = self.project_dir / "plots" / "results"
@@ -414,7 +718,7 @@ class VisualizationReporter:
         ax.set_xscale('log')
         ax.set_yscale('log')
 
-    def update_sim_reach_id(self):
+    def update_sim_reach_id(self, config_path):
         """
         Update the SIM_REACH_ID in both the config object and YAML file by finding the 
         nearest river segment to the pour point.
@@ -464,7 +768,7 @@ class VisualizationReporter:
             self.config['SIM_REACH_ID'] = reach_id
 
             # Update the YAML config file
-            config_file_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
+            config_file_path = Path(config_path)
             
             if not config_file_path.exists():
                 self.logger.error(f"Config file not found at {config_file_path}")
@@ -490,7 +794,7 @@ class VisualizationReporter:
             with open(config_file_path, 'w') as f:
                 f.writelines(config_lines)
 
-            self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in both config object and file")
+            self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in both config object and file: {config_file_path}")
             return reach_id
 
         except Exception as e:
@@ -504,118 +808,6 @@ class VisualizationReporter:
         else:
             return Path(self.config.get(f'{file_type}'))
     
-    def plot_lumped_streamflow_simulations_vs_observations(self, model_outputs: List[Tuple[str, str]], obs_files: List[Tuple[str, str]]):
-        try:
-            # Read observation data
-            obs_data = []
-            for obs_name, obs_file in obs_files:
-                df = pd.read_csv(obs_file, parse_dates=['datetime'])
-                df.set_index('datetime', inplace=True)
-                df = df['discharge_cms'].resample('h').mean()
-                obs_data.append((obs_name, df))
-
-            # Read simulation data
-            sim_data = []
-            for sim_name, sim_file in model_outputs:
-                ds = xr.open_dataset(sim_file, engine='netcdf4')
-                df = ds['averageRoutedRunoff'].to_dataframe().reset_index()
-                df.set_index('time', inplace=True)
-                sim_data.append((sim_name, df))
-
-            # Determine common time range
-            start_date = max([data.index.min() for _, data in obs_data + sim_data]) + pd.Timedelta(50, unit="d")
-            end_date = min([data.index.max() for _, data in obs_data + sim_data])
-
-            # Filter data to common time range
-            obs_data = [(name, data.loc[start_date:end_date]) for name, data in obs_data]
-            sim_data = [(name, data.loc[start_date:end_date]) for name, data in sim_data]
-
-            # Define calibration and evaluation periods
-            calib_start = pd.Timestamp('2011-01-01')
-            calib_end = pd.Timestamp('2014-12-31')
-            eval_start = pd.Timestamp('2015-01-01')
-            eval_end = pd.Timestamp('2018-12-31')
-
-            # Create plot
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 16))
-            fig.suptitle("Lumped Watershed Streamflow Comparison and Flow Duration Curve", fontsize=16, fontweight='bold')
-
-            # Plot time series
-            for obs_name, obs in obs_data:
-                ax1.plot(obs.index, obs, label=f'Observed ({obs_name})', color='black', linewidth=2.5)
-
-            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-            linestyles = ['--', '-.', ':']
-            for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-                ax1.plot(sim.index, sim['averageRoutedRunoff'], label=f'Simulated ({sim_name})', 
-                         color=color, linestyle=linestyle, linewidth=1.5)
-                
-                # Calculate and display metrics for calibration and evaluation periods
-                calib_metrics = self.calculate_metrics(
-                    obs_data[0][1].loc[calib_start:calib_end].values,
-                    sim.loc[calib_start:calib_end, 'averageRoutedRunoff'].values
-                )
-                eval_metrics = self.calculate_metrics(
-                    obs_data[0][1].loc[eval_start:eval_end].values,
-                    sim.loc[eval_start:eval_end, 'averageRoutedRunoff'].values
-                )
-                
-                metric_text = f"{sim_name} Metrics:\nCalibration (2011-2014):\n"
-                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in calib_metrics.items()])
-                metric_text += "\n\nEvaluation (2015-2018):\n"
-                metric_text += "\n".join([f"{k}: {v:.3f}" for k, v in eval_metrics.items()])
-                
-                # Add semi-transparent background to text
-                ax1.text(0.02, 0.98 - 0.35 * sim_data.index((sim_name, sim)), metric_text,
-                         transform=ax1.transAxes, verticalalignment='top', fontsize=8,
-                         bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
-
-            # Add shaded areas for calibration and evaluation periods
-            ax1.axvspan(calib_start, calib_end, alpha=0.2, color='gray', label='Calibration Period')
-            ax1.axvspan(eval_start, eval_end, alpha=0.2, color='lightblue', label='Evaluation Period')
-
-            ax1.set_xlabel('Date', fontsize=12)
-            ax1.set_ylabel('Streamflow (m³/s)', fontsize=12)
-            ax1.set_title('Lumped Watershed Streamflow Comparison', fontsize=14)
-            ax1.legend(loc='upper right', fontsize=10)
-            ax1.grid(True, linestyle=':', alpha=0.6)
-            ax1.set_facecolor('#f0f0f0')  # Light gray background
-
-            # Format x-axis to show years
-            ax1.xaxis.set_major_locator(mdates.YearLocator())
-            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
-            # Plot exceedance frequency
-            for obs_name, obs in obs_data:
-                self.plot_exceedance(ax2, obs.values, f'Observed ({obs_name})', color='black', linewidth=2.5)
-
-            for (sim_name, sim), color, linestyle in zip(sim_data, colors, linestyles):
-                self.plot_exceedance(ax2, sim['averageRoutedRunoff'].values, f'Simulated ({sim_name})', 
-                                color=color, linestyle=linestyle, linewidth=1.5)
-
-            ax2.set_xlabel('Exceedance Probability', fontsize=12)
-            ax2.set_ylabel('Streamflow (m³/s)', fontsize=12)
-            ax2.set_title('Flow Duration Curve', fontsize=14)
-            ax2.legend(loc='best', fontsize=10)
-            ax2.grid(True, which='both', linestyle=':', alpha=0.6)
-            ax2.set_facecolor('#f0f0f0')  # Light gray background
-
-            plt.tight_layout()
-            plt.subplots_adjust(top=0.93)  # Adjust for main title
-
-            # Save the plot
-            plot_folder = self.project_dir / "plots" / "results"
-            plot_folder.mkdir(parents=True, exist_ok=True)
-            plot_filename = plot_folder / 'lumped_streamflow_comparison.png'
-            plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
-            plt.close()
-
-            return str(plot_filename)
-
-        except Exception as e:
-            self.logger.error(f"Error in plot_lumped_streamflow_simulations_vs_observations: {str(e)}")
-            return None
-        
     def plot_domain(self):
         """
         Creates a map visualization of the delineated domain with a basemap.

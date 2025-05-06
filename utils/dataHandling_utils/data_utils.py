@@ -636,7 +636,7 @@ class ObservedDataProcessor:
                     self._process_usgs_data()
 
             elif self.data_provider == 'WSC':
-                if self.config.get('DOWNLOAD_USGS_DATA') == True:
+                if self.config.get('DOWNLOAD_WSC_DATA') == True:
                     self._extract_and_process_hydat_data()
                 else:
                     self._process_wsc_data()

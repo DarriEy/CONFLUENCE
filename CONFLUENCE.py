@@ -80,6 +80,7 @@ class CONFLUENCE:
         Args:
             config (Config): Configuration object containing optimization settings for the CONFLUENCE system
         """
+        self.config_path = config
         self.config_manager = ConfigManager(config)
         self.config = self.config_manager.config
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
@@ -127,12 +128,12 @@ class CONFLUENCE:
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data1").exists()),
 
             # Modesl specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
             (self.run_models, lambda: (self.project_dir / "simulations" / f"{self.config.get('EXPERIMENT_ID')}" / f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()),
-            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png1").exists()),
+            (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
 
             # --- Emulation and Optimization Steps ---
             (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
@@ -518,21 +519,32 @@ class CONFLUENCE:
         self.logger.info('Starting model output visualisation')
         for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
             visualizer = VisualizationReporter(self.config, self.logger)
-
             if model == 'SUMMA':
                 visualizer.plot_summa_outputs(self.config['EXPERIMENT_ID'])
+                
+                # Define observation files (used for both lumped and distributed cases)
+                obs_files = [
+                    ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                ]
+                
                 if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped':
+                    # For lumped model, use SUMMA output directly
+                    summa_output_file = str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "SUMMA" / f"{self.config['EXPERIMENT_ID']}_timestep.nc")
+                    model_outputs = [
+                        (f"{model}", summa_output_file)
+                    ]
+                    
+                    # Now we have model_outputs and obs_files defined
+                    self.logger.info(f"Using lumped model output from {summa_output_file}")
                     plot_file = visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
                 else:
-                    visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+                    # For distributed model, use MizuRoute output
+                    visualizer.update_sim_reach_id(self.config_path) # Find and update the sim reach id based on the project pour point
                     model_outputs = [
                         (f"{model}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}*.nc"))
                     ]
-                    obs_files = [
-                        ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
-                    ]
                     plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
-
+                    
             elif model == 'FUSE':
                 model_outputs = [
                     ("FUSE", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "FUSE" / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"))
@@ -541,10 +553,10 @@ class CONFLUENCE:
                     ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
                 ]
                 plot_file = visualizer.plot_fuse_streamflow_simulations_vs_observations(model_outputs, obs_files)
-
+                
             elif model == 'GR':
                 pass
-
+                
             elif model == 'FLASH':
                 pass
 

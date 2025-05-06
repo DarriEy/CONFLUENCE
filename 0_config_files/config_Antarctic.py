@@ -20,7 +20,7 @@ CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "North_America"                                           # Name of experimental domain
+DOMAIN_NAME: "Africa"                                           # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 
 # Computatational settings
@@ -30,7 +30,7 @@ FORCE_RUN_ALL_STEPS: False                                     # Run all steps i
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
 POUR_POINT_COORDS: 62.09444/136.27223                     # Pour point coordinates lat/lon, if default use user provided shapefile. 
-BOUNDING_BOX_COORDS: 85/-180/5/-53               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max.
+BOUNDING_BOX_COORDS: 38/-25/-40/60               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max.
 
 # Pour point shapefile path
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
@@ -63,18 +63,18 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
-RIVER_BASINS_NAME: cat_pfaf_7_8_MERIT_Hydro_v07_Basins_v01_bugfix1_hillslopes_pfaf_7_8_clean_fixed.shp                                     # Name of river basin shapefile
+RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
 RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
 RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
-RIVER_NETWORK_SHP_NAME: riv_pfaf_7_8_MERIT_Hydro_v07_Basins_v01_bugfix1.shp                                # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_NAME: default                                # Name of domain river network shapefile 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'

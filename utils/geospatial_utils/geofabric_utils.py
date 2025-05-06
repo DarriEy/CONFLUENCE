@@ -1081,7 +1081,6 @@ class GeofabricDelineator:
         # Fix polygon winding order
         basins['geometry'] = basins['geometry'].apply(lambda geom: self._fix_polygon_winding(geom))
         
-
         basins, rivers = self._process_geofabric(basins, rivers)
 
         # Save files

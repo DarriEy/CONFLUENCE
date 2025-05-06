@@ -16,11 +16,11 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/users/darri/data/CONFLUENCE_data"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Canada_RDRS"                                           # Name of experimental domain
+DOMAIN_NAME: "Canada"                                           # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 
 # Computatational settings
@@ -232,7 +232,7 @@ GEOFABRIC_MAPPING:
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 81018374                                              # River reach ID used for streamflow evaluation and optimization
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings

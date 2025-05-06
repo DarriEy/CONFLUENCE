@@ -53,7 +53,7 @@ class gistoolRunner:
             f"--variable={variables}",
             f"--prefix=domain_{self.domain_name}_",
             f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
-            "--submit-job",
+            #"--submit-job",
             "--print-geotiff=true",
             f"--cache={self.tool_cache}_{self.domain_name}",
             f"--account={self.config['TOOL_ACCOUNT']}"
@@ -65,8 +65,7 @@ class gistoolRunner:
                 f"--end-date={end_date}"
             ])
 
-        print(gistool_command)
-        return gistool_command  # This line ensures the function always returns the command list
+        return gistool_command  
     
     def execute_gistool_command(self, gistool_command):
         

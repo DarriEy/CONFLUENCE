@@ -394,7 +394,7 @@ ITERATION_RESULTS_FILE: default                                # Path to iterati
 
 
 # Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: true                              # Whether to run large sample emulation (default: false)
+RUN_LARGE_SAMPLE_EMULATION: false                              # Whether to run large sample emulation (default: false)
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
@@ -410,7 +410,7 @@ EMULATION_MAX_RETRIES: 3                                       # Maximum number 
 
 
 # Add to configuration file
-RUN_RANDOM_FOREST_EMULATION: True
+RUN_RANDOM_FOREST_EMULATION: false
 EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
 EMULATION_RF_N_ESTIMATORS: 100
 EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth

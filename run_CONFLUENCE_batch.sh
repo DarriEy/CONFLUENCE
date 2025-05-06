@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=Bow
+#SBATCH --job-name=Africa
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
 #SBATCH --time=144:00:00
 #SBATCH --ntasks=20
-#SBATCH --mem-per-cpu=10G
+#SBATCH --mem-per-cpu=150G
 
 # Load necessary modules (adjust as needed for your HPC environment)
 . /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
@@ -25,7 +25,10 @@ module load r/4.4.1
 # Activate your Python environment if necessary
 source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
 
+# Export binary paths to system path
+#export PATH="/work/comphyd_lab/data/CONFLUENCE_data/installs/TauDEM/bin:$PATH"
+
 # Run the Python script
-python CONFLUENCE.py --config 0_config_files/config_Bow.yaml   
+python CONFLUENCE.py --config 0_config_files/config_Africa.yaml   
 
 echo "CONFLUENCE job complete"

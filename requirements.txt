@@ -23,6 +23,7 @@ pvlib>=0.11.1
 cdo
 seaborn
 plotly
+
 <<<<<<< HEAD
 =======
 r2py
@@ -32,6 +33,7 @@ r2py
 netCDF4>=1.5.0
 pysheds>=0.4
 hydrobm>=1.0.0
+git+https://github.com/kasra-keshavarz/meshflow.git
 
 # Visualization
 matplotlib>=3.3.0
