@@ -87,7 +87,7 @@ class RandomForestEmulator:
             raise FileNotFoundError(f"Missing required files: {[desc for _, desc in missing_files]}")
             
         self.logger.info("All required input files found")
-    
+                
     def load_and_prepare_data(self):
         """
         Load and prepare the data for training the random forest model.
@@ -109,33 +109,178 @@ class RandomForestEmulator:
         performance_df = pd.read_csv(self.performance_metrics_path)
         self.logger.info(f"Loaded performance metrics with shape: {performance_df.shape}")
         
-        # Merge the datasets
-        merged_data = self._merge_datasets(attributes_df, parameter_data, performance_df)
-        self.logger.info(f"Merged dataset has shape: {merged_data.shape}")
+        # Print debugging info about the data
+        self.logger.info(f"Parameter data columns: {parameter_data.columns.tolist()}")
+        self.logger.info(f"Performance metrics columns: {performance_df.columns.tolist()}")
         
-        # Check for missing values
+        # Special handling for performance metrics file
+        # If it has an unnamed index column, use it as the index
+        if 'Unnamed: 0' in performance_df.columns:
+            run_ids = performance_df['Unnamed: 0'].tolist()
+            self.logger.info(f"Using 'Unnamed: 0' column as index with values: {run_ids[:5]}...")
+            performance_df = performance_df.set_index('Unnamed: 0')
+        else:
+            performance_df = performance_df.reset_index(drop=True)
+        
+        # Handle the target metric
+        if self.target_metric not in performance_df.columns:
+            available_metrics = [col for col in performance_df.columns 
+                                if col in ['KGE', 'NSE', 'RMSE', 'PBIAS']]
+            if available_metrics:
+                self.target_metric = available_metrics[0]
+                self.logger.warning(f"Target metric not found, using {self.target_metric} instead")
+            else:
+                raise ValueError(f"No valid performance metrics found in {performance_df.columns}")
+        
+        # Filter out NaN values in the target metric
+        valid_metrics = ~performance_df[self.target_metric].isna()
+        self.logger.info(f"Found {valid_metrics.sum()} valid entries for {self.target_metric} out of {len(performance_df)}")
+        
+        if valid_metrics.sum() == 0:
+            raise ValueError(f"No valid data for target metric {self.target_metric}")
+        
+        performance_df = performance_df[valid_metrics]
+        
+        # If we have run IDs in the index, make sure we only use parameters for those runs
+        if isinstance(performance_df.index, pd.Index) and performance_df.index.name is not None:
+            # Extract run numbers (assuming run_XXXX format)
+            if performance_df.index.dtype == 'object' and isinstance(performance_df.index[0], str):
+                # Extract numeric part if index is like "run_0001"
+                run_nums = []
+                for idx in performance_df.index:
+                    if 'run_' in idx:
+                        try:
+                            run_nums.append(int(idx.split('_')[1]))
+                        except (IndexError, ValueError):
+                            run_nums.append(None)
+                    else:
+                        run_nums.append(None)
+                
+                # Filter parameter data to matching runs
+                valid_runs = [i for i, num in enumerate(run_nums) if num is not None and num < len(parameter_data)]
+                if valid_runs:
+                    performance_df = performance_df.iloc[valid_runs]
+                    parameter_data = parameter_data.iloc[[run_nums[i] for i in valid_runs if run_nums[i] is not None]]
+                    self.logger.info(f"Filtered to {len(valid_runs)} matching runs")
+        
+        # Ensure both datasets have the same number of rows
+        min_rows = min(len(parameter_data), len(performance_df))
+        if min_rows == 0:
+            raise ValueError("No matching data between parameters and performance metrics")
+        
+        parameter_data = parameter_data.iloc[:min_rows]
+        performance_df = performance_df.iloc[:min_rows]
+        
+        self.logger.info(f"After alignment: parameter_data shape: {parameter_data.shape}, performance_df shape: {performance_df.shape}")
+        
+        # Merge parameters and performance metrics
+        merged_data = pd.concat([parameter_data.reset_index(drop=True), 
+                                performance_df.reset_index(drop=True)], axis=1)
+        
+        self.logger.info(f"Merged parameter and performance data with shape: {merged_data.shape}")
+        
+        # Add attribute data
+        if len(attributes_df) > 0:
+            # Clean up attribute data - remove problematic columns
+            # First, detect columns with missing or NaN values
+            attr_na_cols = attributes_df.columns[attributes_df.isna().any()].tolist()
+            if attr_na_cols:
+                self.logger.info(f"Dropping attribute columns with NaN values: {attr_na_cols}")
+                attributes_df = attributes_df.drop(columns=attr_na_cols)
+            
+            # For lumped catchment, just use the first row
+            attr_row = attributes_df.iloc[0:1]
+            self.logger.info(f"Using attribute row with shape: {attr_row.shape}")
+            
+            # Create repeated attribute rows
+            attr_data = pd.DataFrame(
+                np.repeat(attr_row.values, len(merged_data), axis=0),
+                columns=attr_row.columns
+            )
+            
+            # Exclude the first column if it's an ID column
+            if attr_data.shape[1] > 1 and attr_data.columns[0].lower() in ['id', 'hru_id', 'gru_id', 'basin_id']:
+                attr_data = attr_data.iloc[:, 1:]
+                
+            # Combine with merged data
+            merged_data = pd.concat([merged_data, attr_data.reset_index(drop=True)], axis=1)
+            self.logger.info(f"After adding attributes, merged data shape: {merged_data.shape}")
+        
+        # Handle missing values 
+        # First, check for columns with ALL missing values - drop these completely
+        na_counts = merged_data.isna().sum()
+        all_na_cols = na_counts[na_counts == len(merged_data)].index.tolist()
+        if all_na_cols:
+            self.logger.warning(f"Dropping columns with all missing values: {all_na_cols}")
+            merged_data = merged_data.drop(columns=all_na_cols)
+        
+        # For remaining missing values, fill numeric columns with means
+        numeric_cols = merged_data.select_dtypes(include=['float64', 'int64']).columns
+        for col in numeric_cols:
+            missing_count = merged_data[col].isna().sum()
+            if missing_count > 0:
+                col_mean = merged_data[col].mean()
+                merged_data[col].fillna(col_mean, inplace=True)
+                self.logger.info(f"Filled {missing_count} missing values in {col} with mean: {col_mean}")
+        
+        # For non-numeric columns with missing values, drop the column if > 50% missing, otherwise fill with mode
+        non_numeric_cols = [col for col in merged_data.columns if col not in numeric_cols]
+        problem_cols = []
+        
+        for col in non_numeric_cols:
+            missing_count = merged_data[col].isna().sum()
+            if missing_count > 0:
+                missing_percent = missing_count / len(merged_data) * 100
+                if missing_percent > 50:
+                    problem_cols.append(col)
+                    self.logger.warning(f"Column {col} has {missing_percent:.1f}% missing values - will be dropped")
+                else:
+                    # Try to get the mode, handle empty mode result
+                    mode_result = merged_data[col].mode()
+                    if not mode_result.empty:
+                        mode_val = mode_result.iloc[0]
+                        merged_data[col].fillna(mode_val, inplace=True)
+                        self.logger.info(f"Filled {missing_count} missing values in {col} with mode: {mode_val}")
+                    else:
+                        problem_cols.append(col)
+                        self.logger.warning(f"Could not find mode for {col} - will be dropped")
+        
+        # Drop problematic columns
+        if problem_cols:
+            self.logger.warning(f"Dropping problematic columns: {problem_cols}")
+            merged_data = merged_data.drop(columns=problem_cols)
+        
+        # Final check for any remaining missing values
         missing_values = merged_data.isnull().sum()
         columns_with_missing = missing_values[missing_values > 0]
         if not columns_with_missing.empty:
-            self.logger.warning(f"Columns with missing values: {columns_with_missing}")
-            self.logger.info("Dropping rows with missing values")
-            merged_data = merged_data.dropna()
-            self.logger.info(f"After dropping missing values, dataset has shape: {merged_data.shape}")
+            self.logger.warning(f"Still have columns with missing values after processing: {columns_with_missing}")
+            # Drop these columns too rather than dropping rows
+            self.logger.warning(f"Dropping columns with remaining missing values")
+            merged_data = merged_data.drop(columns=columns_with_missing.index.tolist())
         
-        # Split into features and target
-        X, y = self._split_features_target(merged_data)
+        # Final check - ensure we have enough data
+        if merged_data.shape[0] < 5:  # Arbitrary minimum for RF model
+            raise ValueError(f"Not enough data for training: only {merged_data.shape[0]} samples after preprocessing")
+        
+        self.logger.info(f"Final data shape after preprocessing: {merged_data.shape}")
+        
+        # Split into features and target, also pass merged_data for categorical encoding
+        X, y, merged_data_full = self._split_features_target(merged_data)
         
         # Save record of which columns are parameters vs attributes
         self.param_cols = [col for col in X.columns if col.startswith('param_')]
         self.attribute_cols = [col for col in X.columns if not col.startswith('param_')]
+        
+        self.logger.info(f"Feature split: {len(self.param_cols)} parameters, {len(self.attribute_cols)} attributes")
         
         # Store parameter mins and maxs for optimization bounds
         for param in self.param_cols:
             self.param_mins[param] = X[param].min()
             self.param_maxs[param] = X[param].max()
         
-        # Scale the features
-        X_scaled, scaler = self._scale_features(X)
+        # Scale the features, passing merged_data for categorical encoding
+        X_scaled, scaler = self._scale_features(X, merged_data_full)
         self.X_scaler = scaler
         
         return X_scaled, y
@@ -166,7 +311,7 @@ class RandomForestEmulator:
         except Exception as e:
             self.logger.error(f"Error loading parameter sets: {str(e)}")
             raise
-    
+        
     def _merge_datasets(self, attributes_df, parameter_data, performance_df):
         """
         Merge attributes, parameters, and performance metrics.
@@ -179,19 +324,9 @@ class RandomForestEmulator:
         Returns:
             Merged DataFrame
         """
-        # Set index for performance metrics if needed
-        if 'run_' in performance_df.index[0]:
-            # Index is already in the right format
-            pass
-        else:
-            # Try to convert the index to match parameter run indices
-            try:
-                performance_df.index = performance_df.index.map(lambda x: int(x.split('_')[-1]) if isinstance(x, str) else x)
-            except:
-                self.logger.warning("Could not parse run indices from performance metrics index")
-        
-        # Merge parameters and performance metrics
-        merged = parameter_data.join(performance_df, how='inner')
+        # Simple concatenation since indices are now aligned
+        merged = pd.concat([parameter_data, performance_df], axis=1)
+        self.logger.info(f"Merged parameters and metrics with shape: {merged.shape}")
         
         # If attributes are per GRU, we need to aggregate them
         if 'hru_id' in attributes_df.columns or 'HRU_ID' in attributes_df.columns:
@@ -203,19 +338,38 @@ class RandomForestEmulator:
             # Aggregate attributes (mean across all HRUs)
             attributes_agg = attributes_df.drop(columns=[hru_id_col]).mean().to_frame().T
             
-            # Now join with the merged data
-            result = pd.concat([merged, attributes_agg.loc[attributes_agg.index.repeat(len(merged))]],
-                              axis=1)
-            result.index = merged.index
+            # Replicate the attributes for each row in merged data
+            attributes_rep = pd.DataFrame(
+                np.repeat(attributes_agg.values, len(merged), axis=0),
+                columns=attributes_agg.columns,
+                index=merged.index
+            )
+            
+            # Combine with merged data
+            result = pd.concat([merged, attributes_rep], axis=1)
         else:
-            # Attributes are already at catchment level
-            attributes_df_indexed = attributes_df.set_index(attributes_df.columns[0])
-            result = pd.concat([merged, attributes_df_indexed.loc[attributes_df_indexed.index.repeat(len(merged))]],
-                              axis=1)
-            result.index = merged.index
+            # Attributes are already at catchment level - use first row
+            if len(attributes_df) > 0:
+                # Take first row of attributes and repeat for all runs
+                attributes_row = attributes_df.iloc[0:1]
+                attributes_rep = pd.DataFrame(
+                    np.repeat(attributes_row.values, len(merged), axis=0),
+                    columns=attributes_row.columns,
+                    index=merged.index
+                )
+                # Drop the first column which is typically the ID
+                if attributes_rep.shape[1] > 1:
+                    attributes_rep = attributes_rep.iloc[:, 1:]
+                
+                # Combine with merged data
+                result = pd.concat([merged, attributes_rep], axis=1)
+            else:
+                self.logger.warning("Empty attributes DataFrame, skipping attributes")
+                result = merged
         
+        self.logger.info(f"Final merged dataset has shape: {result.shape}")
         return result
-    
+        
     def _split_features_target(self, merged_data):
         """
         Split merged data into features (X) and target (y).
@@ -234,16 +388,32 @@ class RandomForestEmulator:
                 self.target_metric = available_metrics[0]
                 self.logger.warning(f"Target metric not found, using {self.target_metric} instead")
             else:
-                raise ValueError(f"Target metric {self.target_metric} not found in data")
+                raise ValueError(f"Target metric {self.target_metric} not found in data and no alternatives available")
         
-        # Select features (parameters and attributes) and target
-        # Parameters start with 'param_', the rest are assumed to be attributes or metrics
+        # Identify features - parameters and attributes
         param_cols = [col for col in merged_data.columns if col.startswith('param_')]
         metric_cols = ['KGE', 'NSE', 'RMSE', 'PBIAS']
         attribute_cols = [col for col in merged_data.columns 
-                         if col not in param_cols + metric_cols]
+                        if col not in param_cols + metric_cols 
+                        and col != 'Unnamed: 0']  # Exclude index column if present
         
-        # Create feature set
+        self.logger.info(f"Feature columns breakdown: {len(param_cols)} parameters, {len(attribute_cols)} attributes")
+        
+        # Now identify which columns are categorical (non-numeric)
+        # We'll need to handle these differently during scaling
+        non_numeric_cols = merged_data[attribute_cols].select_dtypes(exclude=['number']).columns.tolist()
+        if non_numeric_cols:
+            self.logger.info(f"Found {len(non_numeric_cols)} non-numeric attribute columns that will be one-hot encoded")
+            self.logger.debug(f"Non-numeric columns: {non_numeric_cols[:10]}...")
+            
+            # Drop non-numeric columns for now - we'll one-hot encode them in _scale_features
+            # We store them for later use
+            self.non_numeric_cols = non_numeric_cols
+            attribute_cols = [col for col in attribute_cols if col not in non_numeric_cols]
+        else:
+            self.non_numeric_cols = []
+        
+        # Create feature set (parameters + numeric attributes)
         X = merged_data[param_cols + attribute_cols]
         
         # For target, we want to maximize KGE and NSE, but minimize RMSE and PBIAS (absolute value)
@@ -256,26 +426,68 @@ class RandomForestEmulator:
         else:
             y = merged_data[self.target_metric]
         
-        return X, y
-    
-    def _scale_features(self, X):
+        return X, y, merged_data
+
+    def _scale_features(self, X, merged_data=None):
         """
-        Scale features using StandardScaler.
+        Scale features using StandardScaler and handle categorical features.
         
         Args:
-            X: Feature DataFrame
+            X: Feature DataFrame (numeric features only)
+            merged_data: Full merged DataFrame including categorical features
         
         Returns:
             Tuple of (scaled_X, scaler)
         """
-        scaler = StandardScaler()
-        X_scaled = pd.DataFrame(
-            scaler.fit_transform(X),
-            columns=X.columns,
-            index=X.index
-        )
+        from sklearn.preprocessing import StandardScaler, OneHotEncoder
+        from sklearn.compose import ColumnTransformer
+        from sklearn.pipeline import Pipeline
+        import pandas as pd
+        import numpy as np
+        
+        if X.empty or X.shape[0] == 0:
+            raise ValueError("Cannot scale empty feature set")
+        
+        # First, handle the categorical (non-numeric) columns if present
+        if hasattr(self, 'non_numeric_cols') and self.non_numeric_cols and merged_data is not None:
+            self.logger.info(f"One-hot encoding {len(self.non_numeric_cols)} categorical features")
+            
+            # Create a one-hot encoder for categorical columns
+            # We'll use pandas get_dummies for simplicity
+            categorical_data = merged_data[self.non_numeric_cols].fillna('missing')
+            
+            # Convert all columns to string to ensure proper encoding
+            for col in categorical_data.columns:
+                categorical_data[col] = categorical_data[col].astype(str)
+            
+            # One-hot encode
+            one_hot = pd.get_dummies(categorical_data, prefix=self.non_numeric_cols, drop_first=True)
+            self.logger.info(f"One-hot encoding created {one_hot.shape[1]} binary features")
+            
+            # Scale numeric features
+            scaler = StandardScaler()
+            X_scaled_numeric = pd.DataFrame(
+                scaler.fit_transform(X),
+                columns=X.columns,
+                index=X.index
+            )
+            
+            # Combine scaled numeric and one-hot encoded categorical features
+            X_scaled = pd.concat([X_scaled_numeric, one_hot], axis=1)
+            
+            # Remember the one-hot encoded columns for optimization
+            self.one_hot_cols = one_hot.columns.tolist()
+        else:
+            # Just scale numeric features
+            scaler = StandardScaler()
+            X_scaled = pd.DataFrame(
+                scaler.fit_transform(X),
+                columns=X.columns,
+                index=X.index
+            )
+        
         return X_scaled, scaler
-    
+
     def train_random_forest(self, X, y, test_size=0.2):
         """
         Train a random forest model using the prepared data.
@@ -753,7 +965,122 @@ class RandomForestEmulator:
         except Exception as e:
             self.logger.error(f"Error modifying mizuRoute control file: {str(e)}")
             return None
-    
+            
+    def metrics_to_string(self, metrics):
+        """Format metrics dictionary as a string for plot titles."""
+        return f"KGE: {metrics['KGE']:.3f}, NSE: {metrics['NSE']:.3f}, RMSE: {metrics['RMSE']:.3f} m³/s"
+
+    def _get_catchment_area(self):
+        """
+        Get catchment area from basin shapefile.
+        
+        Returns:
+            float: Catchment area in square meters, or None if not found
+        """
+        try:
+            import geopandas as gpd
+            
+            # First try to get the basin shapefile
+            river_basins_path = self.config.get('RIVER_BASINS_PATH')
+            if river_basins_path == 'default':
+                river_basins_path = self.project_dir / "shapefiles" / "river_basins"
+            else:
+                river_basins_path = Path(river_basins_path)
+            
+            river_basins_name = self.config.get('RIVER_BASINS_NAME')
+            if river_basins_name == 'default':
+                river_basins_name = f"{self.config['DOMAIN_NAME']}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
+            
+            basin_shapefile = river_basins_path / river_basins_name
+            
+            # If basin shapefile doesn't exist, try the catchment shapefile
+            if not basin_shapefile.exists():
+                self.logger.warning(f"River basin shapefile not found: {basin_shapefile}")
+                self.logger.info("Trying to use catchment shapefile instead")
+                
+                catchment_path = self.config.get('CATCHMENT_PATH')
+                if catchment_path == 'default':
+                    catchment_path = self.project_dir / "shapefiles" / "catchment"
+                else:
+                    catchment_path = Path(catchment_path)
+                
+                catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+                if catchment_name == 'default':
+                    catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+                    
+                basin_shapefile = catchment_path / catchment_name
+                
+                if not basin_shapefile.exists():
+                    self.logger.warning(f"Catchment shapefile not found: {basin_shapefile}")
+                    return None
+            
+            # Open shapefile
+            #self.logger.info(f"Opening shapefile for area calculation: {basin_shapefile}")
+            gdf = gpd.read_file(basin_shapefile)
+            
+            # Log the available columns
+            #self.logger.info(f"Available columns in shapefile: {gdf.columns.tolist()}")
+            
+            # Try to get area from attributes first
+            area_col = self.config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+            
+            if area_col in gdf.columns:
+                # Sum all basin areas (in case of multiple basins)
+                total_area = gdf[area_col].sum()
+                
+                # Check if the area seems reasonable
+                if total_area <= 0 or total_area > 1e12:  # Suspicious if > 1 million km²
+                    self.logger.warning(f"Area from attribute {area_col} seems unrealistic: {total_area} m². Calculating geometrically.")
+                else:
+                    self.logger.info(f"Found catchment area from attribute: {total_area} m²")
+                    return total_area
+            
+            # If area column not found or value is suspicious, calculate area from geometry
+            self.logger.info("Calculating catchment area from geometry")
+            
+            # Make sure CRS is in a projected system for accurate area calculation
+            if gdf.crs is None:
+                self.logger.warning("Shapefile has no CRS information, assuming WGS84")
+                gdf.crs = "EPSG:4326"
+            
+            # If geographic (lat/lon), reproject to a UTM zone for accurate area calculation
+            if gdf.crs.is_geographic:
+                # Calculate centroid to determine appropriate UTM zone
+                centroid = gdf.dissolve().centroid.iloc[0]
+                lon, lat = centroid.x, centroid.y
+                
+                # Determine UTM zone
+                utm_zone = int(((lon + 180) / 6) % 60) + 1
+                north_south = 'north' if lat >= 0 else 'south'
+                
+                utm_crs = f"+proj=utm +zone={utm_zone} +{north_south} +datum=WGS84 +units=m +no_defs"
+                self.logger.info(f"Reprojecting from {gdf.crs} to UTM zone {utm_zone} ({utm_crs})")
+                
+                # Reproject
+                gdf = gdf.to_crs(utm_crs)
+            
+            # Calculate area in m²
+            gdf['calc_area'] = gdf.geometry.area
+            total_area = gdf['calc_area'].sum()
+            
+            self.logger.info(f"Calculated catchment area from geometry: {total_area} m²")
+            
+            # Double check if area seems reasonable
+            if total_area <= 0:
+                self.logger.error(f"Calculated area is non-positive: {total_area} m²")
+                return None
+            
+            if total_area > 1e12:  # > 1 million km²
+                self.logger.warning(f"Calculated area seems very large: {total_area} m² ({total_area/1e6:.2f} km²). Check units.")
+            
+            return total_area
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating catchment area: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+
     def _evaluate_summa_output(self):
         """
         Evaluate SUMMA and mizuRoute outputs by comparing to observed data.
@@ -796,27 +1123,38 @@ class RandomForestEmulator:
             import matplotlib.pyplot as plt
             from matplotlib.dates import DateFormatter
             
-            # Read observed data
-            obs_df = pd.read_csv(obs_path, parse_dates=['date'])
-            obs_df.set_index('date', inplace=True)
+            # Read observed data - first check column names
+            with open(obs_path, 'r') as f:
+                header_line = f.readline().strip()
             
-            # Find the flow column - typical column names
-            flow_cols = ['flow', 'streamflow', 'discharge', 'q']
-            flow_col = next((col for col in flow_cols if col in obs_df.columns), None)
+            header_cols = header_line.split(',')
+            self.logger.info(f"Observed data columns: {header_cols}")
             
-            if flow_col is None:
-                # If no standard column found, just use the first non-date column
-                flow_col = obs_df.columns[0]
-                self.logger.warning(f"Could not identify flow column, using: {flow_col}")
+            # Identify date column
+            date_col = next((col for col in header_cols if 'date' in col.lower() or 'time' in col.lower() or 'datetime' in col.lower()), None)
+            if not date_col:
+                self.logger.warning(f"No date column found in observed data. Available columns: {header_cols}")
+                return
             
-            # Get the reach ID to extract from simulation
-            sim_reach_id = self.config.get('SIM_REACH_ID')
+            # Identify flow column 
+            flow_col = next((col for col in header_cols if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
+            if not flow_col:
+                self.logger.warning(f"No flow column found in observed data. Available columns: {header_cols}")
+                return
+            
+            # Now read the CSV with known column names
+            obs_df = pd.read_csv(obs_path, parse_dates=[date_col])
+            
+            # Set the date column as index
+            obs_df.set_index(date_col, inplace=True)
+            observed_flow = obs_df[flow_col]
             
             # Extract simulated streamflow
             if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
                 # From mizuRoute output
                 with xr.open_dataset(sim_file) as ds:
                     # Find the index for the reach ID
+                    sim_reach_id = self.config.get('SIM_REACH_ID')
                     if 'reachID' in ds.variables:
                         reach_indices = (ds['reachID'].values == int(sim_reach_id)).nonzero()[0]
                         
@@ -827,7 +1165,7 @@ class RandomForestEmulator:
                             # Try common variable names
                             for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
                                 if var_name in ds.variables:
-                                    sim_flow = ds[var_name].isel(seg=reach_index).to_dataframe()
+                                    sim_flow = ds[var_name].isel(seg=reach_index).to_pandas()
                                     break
                             else:
                                 self.logger.error("Could not find streamflow variable in mizuRoute output")
@@ -842,49 +1180,93 @@ class RandomForestEmulator:
                 # From SUMMA output
                 with xr.open_dataset(sim_file) as ds:
                     # Try to find streamflow variable
+                    streamflow_var = None
                     for var_name in ['outflow', 'basRunoff', 'averageRoutedRunoff', 'totalRunoff']:
                         if var_name in ds.variables:
-                            sim_flow = ds[var_name].to_dataframe()
+                            streamflow_var = var_name
                             break
-                    else:
+                    
+                    if streamflow_var is None:
                         self.logger.error("Could not find streamflow variable in SUMMA output")
                         return
+                    
+                    # Extract the variable
+                    if 'gru' in ds[streamflow_var].dims and ds.dims['gru'] > 1:
+                        # Sum across GRUs if multiple
+                        runoff_series = ds[streamflow_var].sum(dim='gru').to_pandas()
+                    else:
+                        # Single GRU or no gru dimension
+                        runoff_series = ds[streamflow_var].to_pandas()
+                        # Handle case if it's a DataFrame
+                        if isinstance(runoff_series, pd.DataFrame):
+                            runoff_series = runoff_series.iloc[:, 0]
+                    
+                    # Get catchment area to convert from m/s to m³/s
+                    catchment_area = self._get_catchment_area()
+                    if catchment_area is None or catchment_area <= 0:
+                        self.logger.warning("Missing or invalid catchment area. Using default 1.0 km²")
+                        catchment_area = 1.0 * 1e6  # 1 km² in m²
+                    
+                    # Convert from m/s to m³/s
+                    sim_flow = runoff_series * catchment_area
             
-            # Get the time index and streamflow values
-            sim_flow.reset_index(inplace=True)
-            sim_flow.set_index('time', inplace=True)
-            
-            # Get the streamflow column (depends on which variable we found)
-            sim_flow_col = next((col for col in sim_flow.columns if col in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff', 'outflow', 'basRunoff', 'totalRunoff']), sim_flow.columns[0])
-            
-            # Make sure indices are DatetimeIndex
-            if not isinstance(sim_flow.index, pd.DatetimeIndex):
-                self.logger.warning("Converting simulation flow index to DatetimeIndex")
-                sim_flow.index = pd.to_datetime(sim_flow.index)
-            
-            if not isinstance(obs_df.index, pd.DatetimeIndex):
-                self.logger.warning("Converting observed flow index to DatetimeIndex")
-                obs_df.index = pd.to_datetime(obs_df.index)
-            
-            # Align dates
-            common_dates = obs_df.index.intersection(sim_flow.index)
-            
-            if len(common_dates) == 0:
-                self.logger.error("No common dates between observed and simulated flows")
+            # Get the time period where both datasets have data
+            common_idx = obs_df.index.intersection(sim_flow.index)
+            if len(common_idx) == 0:
+                self.logger.error("No common time period between observed and simulated flows")
                 return
             
-            obs_flow = obs_df.loc[common_dates, flow_col]
-            sim_flow = sim_flow.loc[common_dates, sim_flow_col]
+            # Align the datasets
+            obs_aligned = observed_flow.loc[common_idx]
+            sim_aligned = sim_flow.loc[common_idx]
             
             # Calculate performance metrics
-            metrics = self._calculate_streamflow_metrics(obs_flow, sim_flow)
+            metrics = self._calculate_streamflow_metrics(obs_aligned, sim_aligned)
             
             # Save metrics to CSV
             metrics_df = pd.DataFrame([metrics])
-            metrics_df.to_csv(self.emulation_output_dir / "performance_metrics.csv", index=False)
+            metrics_df.to_csv(self.emulation_output_dir / "performance_metrics_rf_optimized.csv", index=False)
             
             # Create visualization
-            self._plot_observed_vs_simulated(obs_flow, sim_flow, metrics)
+            plt.figure(figsize=(16, 10))
+            
+            # Plot time series
+            plt.subplot(2, 1, 1)
+            plt.plot(obs_aligned.index, obs_aligned, 'g-', linewidth=1.5, label='Observed')
+            plt.plot(sim_aligned.index, sim_aligned, 'b-', linewidth=1.5, label='Simulated (RF Optimized)')
+            
+            # Add labels and legend
+            plt.xlabel('Date')
+            plt.ylabel('Streamflow (m³/s)')
+            plt.title(f'RF-Optimized Streamflow Comparison\n{self.metrics_to_string(metrics)}')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # Format x-axis dates
+            plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+            plt.gcf().autofmt_xdate()
+            
+            # Plot scatter
+            plt.subplot(2, 1, 2)
+            plt.scatter(obs_aligned, sim_aligned, alpha=0.5)
+            
+            # Add 1:1 line
+            max_val = max(obs_aligned.max(), sim_aligned.max())
+            min_val = min(obs_aligned.min(), sim_aligned.min())
+            plt.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=1)
+            
+            plt.xlabel('Observed Streamflow (m³/s)')
+            plt.ylabel('Simulated Streamflow (m³/s)')
+            plt.title('Scatter Plot')
+            plt.grid(True, alpha=0.3)
+            
+            # Equal aspect ratio
+            plt.axis('equal')
+            
+            # Save the plot
+            plt.tight_layout()
+            plt.savefig(self.emulation_output_dir / "observed_vs_simulated_rf_optimized.png", dpi=300, bbox_inches='tight')
+            plt.close()
             
             self.logger.info(f"Evaluation complete, results saved to: {self.emulation_output_dir}")
             
@@ -892,7 +1274,7 @@ class RandomForestEmulator:
             self.logger.error(f"Error evaluating model outputs: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
-    
+
     def _calculate_streamflow_metrics(self, observed, simulated):
         """
         Calculate performance metrics for streamflow comparison.

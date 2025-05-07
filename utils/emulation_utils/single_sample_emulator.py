@@ -577,7 +577,7 @@ class SingleSampleEmulator:
                 prefix_parts = line.split("'")
                 if len(prefix_parts) >= 3:
                     original_prefix = prefix_parts[1]
-                    new_prefix = f"{original_prefix}"#_run{run_idx:04d}"
+                    new_prefix = f"{original_prefix}"  # _run{run_idx:04d}
                     modified_line = line.replace(f"'{original_prefix}'", f"'{new_prefix}'")
                     modified_lines.append(modified_line)
                 else:
@@ -587,6 +587,11 @@ class SingleSampleEmulator:
                 output_path = run_dir / "simulations" / self.experiment_id / "SUMMA" / ""
                 output_path_str = str(output_path).replace('\\', '/')  # Ensure forward slashes for SUMMA
                 modified_line = f"outputPath           '{output_path_str}/' ! \n"
+                modified_lines.append(modified_line)
+            elif "settingsPath" in line:
+                # Update settings path to point to the run-specific settings directory
+                settings_path_str = str(run_settings_dir).replace('\\', '/')  # Ensure forward slashes for SUMMA
+                modified_line = f"settingsPath         '{settings_path_str}/'\n"
                 modified_lines.append(modified_line)
             else:
                 modified_lines.append(line)  # Keep other lines unchanged
@@ -614,7 +619,10 @@ class SingleSampleEmulator:
             'TBL_GENPARM.TBL',
             'TBL_MPTABLE.TBL',
             'TBL_SOILPARM.TBL',
-            'TBL_VEGPARM.TBL'
+            'TBL_VEGPARM.TBL',
+            'attributes.nc',
+            'coldState.nc',
+            'forcingFileList.txt'
         ]
         
         # Copy each file if it exists
@@ -1170,7 +1178,7 @@ class SingleSampleEmulator:
         
         import pandas as pd
         import xarray as xr
-        import glob
+        import geopandas as gpd
         import numpy as np
         from pathlib import Path
         
@@ -1184,57 +1192,88 @@ class SingleSampleEmulator:
         # Check if domain is lumped
         is_lumped = self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped'
         
+        # Get catchment area for conversion
+        catchment_area = self._get_catchment_area()
+        if catchment_area is None or catchment_area <= 0:
+            self.logger.warning(f"Invalid catchment area: {catchment_area}, using 1.0 km² as default")
+            catchment_area = 1.0 * 1e6  # Default 1 km² in m²
+        
+        self.logger.info(f"Using catchment area of {catchment_area:.2f} m² for flow conversion")
+        
         if is_lumped:
             # For lumped domains, extract directly from SUMMA output
             experiment_id = self.experiment_id
             summa_output_dir = run_dir / "simulations" / experiment_id / "SUMMA"
-            timestep_file = summa_output_dir / f"{experiment_id}_timestep.nc"
             
-            if not timestep_file.exists():
-                self.logger.warning(f"SUMMA timestep file not found for lumped domain: {timestep_file}")
+            # Look for all possible SUMMA output files
+            timestep_files = list(summa_output_dir.glob(f"{experiment_id}*.nc"))
+            
+            if not timestep_files:
+                self.logger.warning(f"No SUMMA output files found for {run_name} in {summa_output_dir}")
                 return self._create_empty_streamflow_file(run_dir, run_name)
+            
+            # Use the first timestep file found
+            timestep_file = timestep_files[0]
+            self.logger.info(f"Using SUMMA output file: {timestep_file}")
             
             try:
                 # Open the NetCDF file
                 with xr.open_dataset(timestep_file) as ds:
-                    if 'averageRoutedRunoff' in ds.variables:
-                        self.logger.info(f"Found averageRoutedRunoff variable in SUMMA output for lumped domain")
-                        
-                        # Get the catchment area to convert from m/s to m³/s
-                        catchment_area = self._get_catchment_area()
-                        
-                        if catchment_area is None or catchment_area <= 0:
-                            self.logger.warning(f"Invalid catchment area: {catchment_area}, using 1.0 km² as default")
-                            catchment_area = 1.0 * 1e6  # Default 1 km² in m²
-                        
-                        # Extract the data and convert to dataframe
-                        # If there are multiple GRUs, use the first one or sum them
+                    # Log available variables to help diagnose issues
+                    self.logger.info(f"Available variables in SUMMA output: {list(ds.variables.keys())}")
+                    
+                    # Check for averageRoutedRunoff or other possible variables
+                    runoff_var = None
+                    for var_name in ['averageRoutedRunoff', 'outflow', 'basRunoff', 'totalRunoff']:
+                        if var_name in ds.variables:
+                            runoff_var = var_name
+                            break
+                    
+                    if runoff_var is None:
+                        self.logger.warning(f"No suitable runoff variable found in {timestep_file}")
+                        return self._create_empty_streamflow_file(run_dir, run_name)
+                    
+                    self.logger.info(f"Using {runoff_var} variable from SUMMA output")
+                    
+                    # Extract the runoff variable
+                    runoff_data = ds[runoff_var]
+                    
+                    # Log the dimensions of the variable
+                    self.logger.info(f"Dimensions of {runoff_var}: {runoff_data.dims}")
+                    
+                    # Convert to pandas series or dataframe
+                    if 'gru' in runoff_data.dims:
+                        self.logger.info(f"Found 'gru' dimension with size {ds.dims['gru']}")
+                        # If multiple GRUs, sum them up
                         if ds.dims['gru'] > 1:
-                            # Option 1: Sum all GRUs
-                            streamflow_ms = ds['averageRoutedRunoff'].sum(dim='gru').to_dataframe()
-                            self.logger.info(f"Summed streamflow from {ds.dims['gru']} GRUs")
+                            self.logger.info(f"Summing runoff across {ds.dims['gru']} GRUs")
+                            runoff_series = runoff_data.sum(dim='gru').to_pandas()
                         else:
                             # Single GRU case
-                            streamflow_ms = ds['averageRoutedRunoff'].to_dataframe()
-                        
-                        # Reset index to get time as a column
-                        streamflow_ms = streamflow_ms.reset_index()
-                        
-                        # Convert from m/s to m³/s by multiplying by catchment area
-                        streamflow_ms['streamflow'] = streamflow_ms['averageRoutedRunoff'] * catchment_area
-                        
-                        # Keep only necessary columns
-                        streamflow = streamflow_ms[['time', 'streamflow']]
-                        
-                        # Save to CSV
-                        streamflow.to_csv(output_csv, index=False)
-                        self.logger.info(f"Extracted streamflow from SUMMA output for lumped domain, saved to {output_csv}")
-                        return output_csv
+                            runoff_series = runoff_data.to_pandas()
+                            if isinstance(runoff_series, pd.DataFrame):
+                                runoff_series = runoff_series.iloc[:, 0]
                     else:
-                        self.logger.warning(f"averageRoutedRunoff variable not found in SUMMA output for lumped domain")
-                        return self._create_empty_streamflow_file(run_dir, run_name)
+                        # Handle case without a gru dimension
+                        runoff_series = runoff_data.to_pandas()
+                        if isinstance(runoff_series, pd.DataFrame):
+                            runoff_series = runoff_series.iloc[:, 0]
+                    
+                    # Convert from m/s to m³/s by multiplying by catchment area
+                    streamflow = runoff_series * catchment_area
+                    
+                    # Log some statistics to debug
+                    self.logger.info(f"Streamflow statistics: min={streamflow.min():.2f}, max={streamflow.max():.2f}, mean={streamflow.mean():.2f} m³/s")
+                    
+                    # Create dataframe and save to CSV
+                    result_df = pd.DataFrame({'time': streamflow.index, 'streamflow': streamflow.values})
+                    result_df.to_csv(output_csv, index=False)
+                    
+                    self.logger.info(f"Extracted streamflow from SUMMA output for lumped domain, saved to {output_csv}")
+                    return output_csv
+                    
             except Exception as e:
-                self.logger.error(f"Error extracting streamflow from SUMMA output for lumped domain: {str(e)}")
+                self.logger.error(f"Error extracting streamflow from SUMMA output: {str(e)}")
                 import traceback
                 self.logger.error(traceback.format_exc())
                 return self._create_empty_streamflow_file(run_dir, run_name)
@@ -1284,7 +1323,7 @@ class SingleSampleEmulator:
                                 # Look for common streamflow variable names
                                 for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
                                     if var_name in ds.variables:
-                                        streamflow = ds[var_name].isel(seg=reach_index).to_dataframe()
+                                        streamflow = ds[var_name].isel(seg=reach_index).to_pandas()
                                         
                                         # Reset index to use time as a column
                                         streamflow = streamflow.reset_index()
@@ -1333,7 +1372,7 @@ class SingleSampleEmulator:
         try:
             import geopandas as gpd
             
-            # Get river basin shapefile path
+            # First try to get the basin shapefile
             river_basins_path = self.config.get('RIVER_BASINS_PATH')
             if river_basins_path == 'default':
                 river_basins_path = self.project_dir / "shapefiles" / "river_basins"
@@ -1341,40 +1380,95 @@ class SingleSampleEmulator:
                 river_basins_path = Path(river_basins_path)
             
             river_basins_name = self.config.get('RIVER_BASINS_NAME')
-            if river_basins_path == 'default':
+            if river_basins_name == 'default':
                 river_basins_name = f"{self.config['DOMAIN_NAME']}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
-            else:
-                river_basins_name = river_basins_name
-
-            shapefile_path = river_basins_path / river_basins_name
             
-            if not shapefile_path.exists():
-                self.logger.warning(f"River basin shapefile not found: {shapefile_path}")
-                return None
+            basin_shapefile = river_basins_path / river_basins_name
+            
+            # If basin shapefile doesn't exist, try the catchment shapefile
+            if not basin_shapefile.exists():
+                self.logger.warning(f"River basin shapefile not found: {basin_shapefile}")
+                self.logger.info("Trying to use catchment shapefile instead")
+                
+                catchment_path = self.config.get('CATCHMENT_PATH')
+                if catchment_path == 'default':
+                    catchment_path = self.project_dir / "shapefiles" / "catchment"
+                else:
+                    catchment_path = Path(catchment_path)
+                
+                catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+                if catchment_name == 'default':
+                    catchment_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+                    
+                basin_shapefile = catchment_path / catchment_name
+                
+                if not basin_shapefile.exists():
+                    self.logger.warning(f"Catchment shapefile not found: {basin_shapefile}")
+                    return None
             
             # Open shapefile
-            gdf = gpd.read_file(shapefile_path)
+            self.logger.info(f"Opening shapefile for area calculation: {basin_shapefile}")
+            gdf = gpd.read_file(basin_shapefile)
             
-            # Get area column name
+            # Log the available columns
+            self.logger.info(f"Available columns in shapefile: {gdf.columns.tolist()}")
+            
+            # Try to get area from attributes first
             area_col = self.config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
             
-            if area_col not in gdf.columns:
-                self.logger.warning(f"Area column '{area_col}' not found in shapefile. Available columns: {gdf.columns.tolist()}")
-                return None
+            if area_col in gdf.columns:
+                # Sum all basin areas (in case of multiple basins)
+                total_area = gdf[area_col].sum()
+                
+                # Check if the area seems reasonable
+                if total_area <= 0 or total_area > 1e12:  # Suspicious if > 1 million km²
+                    self.logger.warning(f"Area from attribute {area_col} seems unrealistic: {total_area} m². Calculating geometrically.")
+                else:
+                    self.logger.info(f"Found catchment area from attribute: {total_area} m²")
+                    return total_area
             
-            # Sum all basin areas (in case of multiple basins)
-            total_area = gdf[area_col].sum()
+            # If area column not found or value is suspicious, calculate area from geometry
+            self.logger.info("Calculating catchment area from geometry")
             
-            # Check for valid area
+            # Make sure CRS is in a projected system for accurate area calculation
+            if gdf.crs is None:
+                self.logger.warning("Shapefile has no CRS information, assuming WGS84")
+                gdf.crs = "EPSG:4326"
+            
+            # If geographic (lat/lon), reproject to a UTM zone for accurate area calculation
+            if gdf.crs.is_geographic:
+                # Calculate centroid to determine appropriate UTM zone
+                centroid = gdf.dissolve().centroid.iloc[0]
+                lon, lat = centroid.x, centroid.y
+                
+                # Determine UTM zone
+                utm_zone = int(((lon + 180) / 6) % 60) + 1
+                north_south = 'north' if lat >= 0 else 'south'
+                
+                utm_crs = f"+proj=utm +zone={utm_zone} +{north_south} +datum=WGS84 +units=m +no_defs"
+                self.logger.info(f"Reprojecting from {gdf.crs} to UTM zone {utm_zone} ({utm_crs})")
+                
+                # Reproject
+                gdf = gdf.to_crs(utm_crs)
+            
+            # Calculate area in m²
+            gdf['calc_area'] = gdf.geometry.area
+            total_area = gdf['calc_area'].sum()
+            
+            self.logger.info(f"Calculated catchment area from geometry: {total_area} m²")
+            
+            # Double check if area seems reasonable
             if total_area <= 0:
-                self.logger.warning(f"Invalid catchment area: {total_area}")
+                self.logger.error(f"Calculated area is non-positive: {total_area} m²")
                 return None
             
-            self.logger.info(f"Found catchment area: {total_area} m²")
+            if total_area > 1e12:  # > 1 million km²
+                self.logger.warning(f"Calculated area seems very large: {total_area} m² ({total_area/1e6:.2f} km²). Check units.")
+            
             return total_area
             
         except Exception as e:
-            self.logger.error(f"Error getting catchment area: {str(e)}")
+            self.logger.error(f"Error calculating catchment area: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             return None
@@ -1774,9 +1868,9 @@ class SingleSampleEmulator:
         
         This method:
         1. Reads streamflow output from each ensemble member
-        2. Computes statistics (mean, std dev, min, max, percentiles)
-        3. Creates visualizations
-        4. Generates a summary report
+        2. Computes basic performance metrics
+        3. Creates a visualization comparing simulated vs. observed streamflow
+        4. Saves the visualization and metrics to file
         
         Returns:
             Path: Path to the analysis results directory
@@ -1788,403 +1882,201 @@ class SingleSampleEmulator:
         import matplotlib.pyplot as plt
         from matplotlib.dates import DateFormatter
         import datetime as dt
-        import os
-        import glob
         
         # Create analysis directory
         analysis_dir = self.emulator_output_dir / "ensemble_analysis"
         analysis_dir.mkdir(parents=True, exist_ok=True)
         
-        # Get all run directories
-        run_dirs = sorted(self.ensemble_dir.glob("run_*"))
-        if not run_dirs:
-            self.logger.error("No ensemble run directories found.")
+        # Load observed data
+        obs_path = self.config.get('OBSERVATIONS_PATH')
+        if obs_path == 'default':
+            obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        else:
+            obs_path = Path(obs_path)
+            
+        if not obs_path.exists():
+            self.logger.error(f"Observed streamflow file not found: {obs_path}")
             return None
         
-        # Collect streamflow outputs from all runs
-        streamflow_data = {}
-        run_ids = []
-        
-        for run_dir in run_dirs:
-            run_id = run_dir.name
-            run_ids.append(run_id)
+        try:
+            # Load observed data
+            obs_df = pd.read_csv(obs_path)
             
-            # Look for streamflow CSV file in results directory
-            results_dir = run_dir / "results"
-            csv_files = list(results_dir.glob(f"{run_id}_streamflow.csv"))
+            # Identify date and streamflow columns in observed data
+            date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
+            flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
             
-            #if csv_files:
-            #    # Use the CSV file if it exists
-            #    try:
-            #        df = pd.read_csv(csv_files[0])
-            #        # Ensure DateTime column is properly formatted
-            #        df['DateTime'] = pd.to_datetime(df['time'])
-            #        df.set_index('DateTime', inplace=True)
-            #        
-            ##        # Store in dictionary
-            #        streamflow_data[run_id] = df[['streamflow']]
-            #        self.logger.info(f"Loaded streamflow data from CSV for {run_id}")
-            #    except Exception as e:
-            #        self.logger.warning(f"Error reading streamflow CSV for {run_id}: {str(e)}")
-            #else:
-                # If CSV not found, try to find NetCDF files from MizuRoute
-            try:
-                # Find SUMMA/MizuRoute output files
-                mizu_output_dir = run_dir / "simulations" / self.experiment_id / "mizuRoute"
-                netcdf_files = list(mizu_output_dir.glob("*.nc"))
+            if date_col is None or flow_col is None:
+                self.logger.error(f"Could not identify date or flow columns in observed data: {obs_df.columns.tolist()}")
+                return None
+            
+            # Convert date column to datetime and set as index
+            obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+            obs_df.set_index('DateTime', inplace=True)
+            observed_flow = obs_df[flow_col]
+            
+            # Get all run directories
+            run_dirs = sorted(self.ensemble_dir.glob("run_*"))
+            if not run_dirs:
+                self.logger.error("No ensemble run directories found.")
+                return None
+            
+            # Process each run directory to extract results
+            metrics = {}
+            all_flows = pd.DataFrame(index=obs_df.index)
+            all_flows['Observed'] = observed_flow
+            
+            # Print debug info on the first few observed flow values
+            self.logger.debug(f"First 5 observed flow values: {observed_flow.head()}")
+            
+            # Loop through each run directory
+            for run_dir in run_dirs:
+                run_id = run_dir.name
                 
-                if not netcdf_files:
-                    self.logger.warning(f"No MizuRoute output files found for {run_id}")
-                    continue
+                # Look for streamflow output file
+                results_file = run_dir / "results" / f"{run_id}_streamflow.csv"
                 
-                # Try to extract streamflow from the NetCDF files
-                output_csv = self._extract_run_streamflow(run_dir, run_id)
-                if output_csv:
-                    # Load the newly created CSV
-                    df = pd.read_csv(output_csv)
-                    df['DateTime'] = pd.to_datetime(df['time'])
-                    df.set_index('DateTime', inplace=True)
-                    streamflow_data[run_id] = df[['streamflow']]
-                    self.logger.info(f"Extracted and loaded streamflow data for {run_id}")
-                else:
-                    self.logger.warning(f"Failed to extract streamflow data for {run_id}")
-            except Exception as e:
-                self.logger.warning(f"Error processing MizuRoute output for {run_id}: {str(e)}")
-        
-        # Check if we found any streamflow data
-        if not streamflow_data:
-            self.logger.error("No streamflow data found in any ensemble run.")
-            return None
-        
-        self.logger.info(f"Found streamflow data for {len(streamflow_data)} out of {len(run_dirs)} runs")
-        
-        # Combine all streamflow data into a single DataFrame
-        all_flows = pd.DataFrame()
-        for run_id, df in streamflow_data.items():
-            # Ensure consistent time steps by resampling if needed
-            if all_flows.empty:
-                all_flows = df.copy()
-                all_flows.rename(columns={'streamflow': run_id}, inplace=True)
-            else:
-                # Resample to match index if needed
-                if not df.index.equals(all_flows.index):
-                    try:
-                        # Try daily resampling first
-                        df_resampled = df.resample('D').mean()
-                        all_flows_resampled = all_flows.resample('D').mean()
-                        common_index = df_resampled.index.intersection(all_flows_resampled.index)
-                        
-                        if not common_index.empty:
-                            # Use the common dates
-                            all_flows = all_flows_resampled.loc[common_index]
-                            df = df_resampled.loc[common_index]
-                        else:
-                            # If no common dates, try interpolation
-                            self.logger.warning(f"No common dates found for {run_id}, trying interpolation")
-                            df = df.reindex(all_flows.index, method='nearest')
-                    except Exception as e:
-                        self.logger.warning(f"Error resampling data for {run_id}: {str(e)}")
+                if not results_file.exists():
+                    # Try to extract from the source files if results don't exist
+                    results_file = self._extract_run_streamflow(run_dir, run_id)
+                    if not results_file or not Path(results_file).exists():
+                        self.logger.warning(f"No streamflow results found for {run_id}")
                         continue
                 
-                # Add this run's data
-                all_flows[run_id] = df['streamflow']
-        
-        # Save the combined flow data
-        all_flows.to_csv(analysis_dir / "all_ensemble_streamflows.csv")
-        
-        # Calculate statistics
-        flow_mean = all_flows.mean(axis=1)
-        flow_std = all_flows.std(axis=1)
-        flow_min = all_flows.min(axis=1)
-        flow_max = all_flows.max(axis=1)
-        flow_median = all_flows.median(axis=1)
-        flow_q05 = all_flows.quantile(0.05, axis=1)
-        flow_q25 = all_flows.quantile(0.25, axis=1)
-        flow_q75 = all_flows.quantile(0.75, axis=1)
-        flow_q95 = all_flows.quantile(0.95, axis=1)
-        
-        # Create a stats DataFrame
-        stats_df = pd.DataFrame({
-            'Mean': flow_mean,
-            'Std Dev': flow_std,
-            'Min': flow_min,
-            'Max': flow_max,
-            'Median': flow_median,
-            'Q05': flow_q05,
-            'Q25': flow_q25,
-            'Q75': flow_q75,
-            'Q95': flow_q95
-        })
-        
-        # Save statistics
-        stats_df.to_csv(analysis_dir / "ensemble_statistics.csv")
-        
-        # Load observed streamflow data if available
-        observed_data = None
-        try:
-            obs_path = self.config.get('OBSERVATIONS_PATH')
-            if obs_path == 'default':
-                obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
-            else:
-                obs_path = Path(obs_path)
-                
-            if obs_path.exists():
-                obs_df = pd.read_csv(obs_path)
-                # Convert date column to datetime and set as index
-                date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
-                if date_col:
-                    obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
-                    obs_df.set_index('DateTime', inplace=True)
+                # Read the CSV file
+                try:
+                    run_df = pd.read_csv(results_file)
                     
-                    # Find streamflow column
-                    flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
+                    # Check if file has data
+                    if len(run_df) == 0:
+                        self.logger.warning(f"Empty streamflow file for {run_id}")
+                        continue
                     
-                    if flow_col:
-                        observed_data = obs_df[[flow_col]].copy()
-                        observed_data.rename(columns={flow_col: 'Observed'}, inplace=True)
+                    # Get time column
+                    time_col = next((col for col in run_df.columns if 'time' in col.lower() or 'date' in col.lower()), None)
+                    if time_col is None:
+                        self.logger.warning(f"No time column found in {run_id} results")
+                        continue
+                    
+                    # Get flow column
+                    flow_col_sim = next((col for col in run_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'streamflow' in col.lower()), None)
+                    if flow_col_sim is None:
+                        self.logger.warning(f"No flow column found in {run_id} results. Columns: {run_df.columns.tolist()}")
+                        continue
+                    
+                    # Print debug info on first few values
+                    self.logger.debug(f"{run_id} first 5 flow values: {run_df[flow_col_sim].head()}")
+                    self.logger.debug(f"{run_id} flow stats: mean={run_df[flow_col_sim].mean():.4f}, min={run_df[flow_col_sim].min():.4f}, max={run_df[flow_col_sim].max():.4f}")
+                    
+                    # Convert to datetime and set as index
+                    run_df['DateTime'] = pd.to_datetime(run_df[time_col])
+                    run_df.set_index('DateTime', inplace=True)
+                    
+                    # Add to all_flows dataframe for visualization
+                    # Use reindex to align with observed data timepoints
+                    all_flows[run_id] = run_df[flow_col_sim].reindex(all_flows.index, method='nearest')
+                    
+                    # Calculate performance metrics against observed data
+                    # Find common time period
+                    common_idx = obs_df.index.intersection(run_df.index)
+                    if len(common_idx) < 5:  # Need at least a few points for metrics
+                        self.logger.warning(f"Insufficient common time period between {run_id} and observed data")
+                        continue
+                    
+                    # Extract aligned data for metric calculation
+                    obs_aligned = observed_flow.loc[common_idx]
+                    sim_aligned = run_df[flow_col_sim].loc[common_idx]
+                    
+                    # Calculate metrics - just KGE for simplicity
+                    mean_obs = obs_aligned.mean()
+                    
+                    # Correlation coefficient
+                    try:
+                        r = np.corrcoef(sim_aligned, obs_aligned)[0, 1]
+                    except:
+                        r = np.nan
                         
-                        # Resample observed data to match ensemble data if needed
-                        if not observed_data.index.equals(all_flows.index):
-                            # Get common time period
-                            start_date = max(observed_data.index.min(), all_flows.index.min())
-                            end_date = min(observed_data.index.max(), all_flows.index.max())
-                            
-                            # Filter to common period
-                            observed_data = observed_data.loc[start_date:end_date]
-                            stats_df = stats_df.loc[start_date:end_date]
-                            
-                            # Resample if needed
-                            if not observed_data.index.equals(stats_df.index):
-                                freq = pd.infer_freq(stats_df.index)
-                                if freq:
-                                    observed_data = observed_data.resample(freq).mean()
-                                else:
-                                    observed_data = observed_data.reindex(stats_df.index, method='nearest')
-                        
-                        # Save observed data
-                        observed_data.to_csv(analysis_dir / "observed_streamflow.csv")
-                        self.logger.info(f"Loaded observed streamflow data from {obs_path}")
-                    else:
-                        self.logger.warning(f"Could not identify streamflow column in observed data")
-                else:
-                    self.logger.warning(f"Could not identify date column in observed data")
-            else:
-                self.logger.info(f"Observed streamflow file not found at {obs_path}")
-        except Exception as e:
-            self.logger.warning(f"Error loading observed streamflow data: {str(e)}")
-        
-        # Create visualization
-        plt.figure(figsize=(16, 10))
-        
-        # Plot the ensemble range (min to max)
-        plt.fill_between(flow_mean.index, flow_min, flow_max, alpha=0.2, color='lightblue', label='Min-Max Range')
-        
-        # Plot the interquartile range (25th to 75th percentile)
-        plt.fill_between(flow_mean.index, flow_q25, flow_q75, alpha=0.4, color='blue', label='Interquartile Range')
-        
-        # Plot the 90% confidence interval (5th to 95th percentile)
-        plt.fill_between(flow_mean.index, flow_q05, flow_q95, alpha=0.3, color='skyblue', label='90% Confidence Interval')
-        
-        # Plot the mean and median
-        plt.plot(flow_mean.index, flow_mean, 'r-', linewidth=2, label='Mean')
-        plt.plot(flow_median.index, flow_median, 'k--', linewidth=1.5, label='Median')
-        
-        # Plot observed data if available
-        if observed_data is not None:
-            plt.plot(observed_data.index, observed_data['Observed'], 'go-', linewidth=1.5, label='Observed')
-        
-        # Add labels and legend
-        plt.xlabel('Date')
-        plt.ylabel('Streamflow (m³/s)')
-        plt.title(f'Ensemble Streamflow Statistics ({len(streamflow_data)} Runs)')
-        plt.legend()
-        plt.grid(True)
-        
-        # Format x-axis dates
-        plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-        plt.gcf().autofmt_xdate()
-        
-        # Save the plot
-        plt.savefig(analysis_dir / "ensemble_streamflow_statistics.png", dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Create a streamflow duration curve plot
-        plt.figure(figsize=(12, 8))
-        
-        # Calculate flow duration curves for all runs
-        for run_id in all_flows.columns:
-            # Sort flows in descending order
-            flows = all_flows[run_id].sort_values(ascending=False)
-            # Calculate exceedance probability
-            exceedance = np.arange(1., len(flows) + 1) / len(flows)
-            # Plot with low opacity
-            plt.plot(exceedance, flows, 'b-', alpha=0.1)
-        
-        # Plot statistics
-        # Sort values
-        mean_sorted = flow_mean.sort_values(ascending=False)
-        median_sorted = flow_median.sort_values(ascending=False)
-        q05_sorted = flow_q05.sort_values(ascending=False)
-        q95_sorted = flow_q95.sort_values(ascending=False)
-        
-        # Calculate exceedance
-        exceedance = np.arange(1., len(mean_sorted) + 1) / len(mean_sorted)
-        
-        # Plot statistics
-        plt.plot(exceedance, mean_sorted, 'r-', linewidth=2, label='Mean')
-        plt.plot(exceedance, median_sorted, 'k--', linewidth=1.5, label='Median')
-        plt.fill_between(exceedance, q05_sorted, q95_sorted, alpha=0.3, color='skyblue', label='90% Confidence Interval')
-        
-        # Plot observed data if available
-        if observed_data is not None:
-            obs_sorted = observed_data['Observed'].sort_values(ascending=False)
-            obs_exceedance = np.arange(1., len(obs_sorted) + 1) / len(obs_sorted)
-            plt.plot(obs_exceedance, obs_sorted, 'go-', linewidth=1.5, label='Observed')
-        
-        # Add labels and legend
-        plt.xlabel('Exceedance Probability')
-        plt.ylabel('Streamflow (m³/s)')
-        plt.title('Flow Duration Curves')
-        plt.legend()
-        plt.grid(True)
-        
-        # Use logarithmic scale for y-axis to better visualize low flows
-        plt.yscale('log')
-        
-        # Save the plot
-        plt.savefig(analysis_dir / "flow_duration_curves.png", dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Calculate performance metrics if observed data is available
-        if observed_data is not None:
-            # Resample data to ensure alignment
-            common_index = stats_df.index.intersection(observed_data.index)
-            if len(common_index) > 0:
-                stats_df_aligned = stats_df.loc[common_index]
-                observed_aligned = observed_data.loc[common_index]
-                
-                # Calculate metrics for each run
-                metrics = {}
-                for run_id in all_flows.columns:
-                    run_data = all_flows[run_id].loc[common_index]
+                    # Relative variability
+                    alpha = sim_aligned.std() / obs_aligned.std() if obs_aligned.std() != 0 else np.nan
                     
-                    # Nash-Sutcliffe Efficiency (NSE)
-                    numerator = np.sum((observed_aligned['Observed'] - run_data) ** 2)
-                    denominator = np.sum((observed_aligned['Observed'] - observed_aligned['Observed'].mean()) ** 2)
-                    nse = 1 - (numerator / denominator)
+                    # Bias ratio
+                    beta = sim_aligned.mean() / mean_obs if mean_obs != 0 else np.nan
+                    
+                    # KGE
+                    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
                     
                     # Root Mean Square Error (RMSE)
-                    rmse = np.sqrt(np.mean((observed_aligned['Observed'] - run_data) ** 2))
+                    rmse = np.sqrt(((obs_aligned - sim_aligned) ** 2).mean())
+                    
+                    # Nash-Sutcliffe Efficiency (NSE)
+                    numerator = ((obs_aligned - sim_aligned) ** 2).sum()
+                    denominator = ((obs_aligned - mean_obs) ** 2).sum()
+                    nse = 1 - (numerator / denominator) if denominator > 0 else np.nan
                     
                     # Percent Bias (PBIAS)
-                    pbias = 100 * np.sum(run_data - observed_aligned['Observed']) / np.sum(observed_aligned['Observed'])
-                    
-                    # Kling-Gupta Efficiency (KGE)
-                    r = np.corrcoef(run_data, observed_aligned['Observed'])[0, 1]
-                    alpha = run_data.std() / observed_aligned['Observed'].std()
-                    beta = run_data.mean() / observed_aligned['Observed'].mean()
-                    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+                    pbias = 100 * (sim_aligned.sum() - obs_aligned.sum()) / obs_aligned.sum() if obs_aligned.sum() != 0 else np.nan
                     
                     metrics[run_id] = {
+                        'KGE': kge,
                         'NSE': nse,
                         'RMSE': rmse,
-                        'PBIAS': pbias,
-                        'KGE': kge
+                        'PBIAS': pbias
                     }
-                
-                # Convert to DataFrame and save
-                metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
-                metrics_df.to_csv(analysis_dir / "performance_metrics.csv")
-                
-                # Calculate ensemble mean performance
-                ensemble_metrics = {
-                    'NSE': 1 - (np.sum((observed_aligned['Observed'] - flow_mean.loc[common_index]) ** 2) / 
-                            np.sum((observed_aligned['Observed'] - observed_aligned['Observed'].mean()) ** 2)),
-                    'RMSE': np.sqrt(np.mean((observed_aligned['Observed'] - flow_mean.loc[common_index]) ** 2)),
-                    'PBIAS': 100 * np.sum(flow_mean.loc[common_index] - observed_aligned['Observed']) / np.sum(observed_aligned['Observed']),
-                }
-                
-                # KGE for ensemble mean
-                r = np.corrcoef(flow_mean.loc[common_index], observed_aligned['Observed'])[0, 1]
-                alpha = flow_mean.loc[common_index].std() / observed_aligned['Observed'].std()
-                beta = flow_mean.loc[common_index].mean() / observed_aligned['Observed'].mean()
-                ensemble_metrics['KGE'] = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
-                
-                # Summary statistics of metrics
-                metrics_summary = {
-                    'Mean': metrics_df.mean(),
-                    'Median': metrics_df.median(),
-                    'Min': metrics_df.min(),
-                    'Max': metrics_df.max(),
-                    'Std Dev': metrics_df.std(),
-                    'Ensemble': pd.Series(ensemble_metrics)
-                }
-                
-                # Create summary DataFrame and save
-                metrics_summary_df = pd.DataFrame(metrics_summary)
-                metrics_summary_df.to_csv(analysis_dir / "performance_metrics_summary.csv")
-                
-                # Create plot of metric distributions
-                fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-                axes = axes.flatten()
-                
-                for i, metric in enumerate(['NSE', 'KGE', 'RMSE', 'PBIAS']):
-                    axes[i].hist(metrics_df[metric], bins=20)
-                    axes[i].axvline(metrics_df[metric].mean(), color='r', linestyle='-', label='Mean')
-                    axes[i].axvline(ensemble_metrics[metric], color='g', linestyle='--', label='Ensemble')
-                    axes[i].set_title(f'{metric} Distribution')
-                    axes[i].legend()
-                    axes[i].grid(True)
-                
-                plt.tight_layout()
-                plt.savefig(analysis_dir / "performance_metrics_distribution.png", dpi=300, bbox_inches='tight')
-                plt.close()
-        
-        # Create a summary report
-        with open(analysis_dir / "ensemble_analysis_report.txt", 'w') as f:
-            f.write(f"Ensemble Analysis Report\n")
-            f.write(f"=======================\n\n")
-            f.write(f"Experiment ID: {self.experiment_id}\n")
-            f.write(f"Ensemble Size: {len(run_dirs)}\n")
-            f.write(f"Successful Runs: {len(streamflow_data)}\n\n")
-            
-            f.write(f"Time Period: {all_flows.index.min()} to {all_flows.index.max()}\n")
-            f.write(f"Number of Time Steps: {len(all_flows)}\n\n")
-            
-            f.write(f"Streamflow Statistics (over all runs):\n")
-            f.write(f"  Overall Mean: {flow_mean.mean():.2f} m³/s\n")
-            f.write(f"  Overall Median: {flow_median.mean():.2f} m³/s\n")
-            f.write(f"  Maximum Value: {flow_max.max():.2f} m³/s\n")
-            f.write(f"  Minimum Value: {flow_min.min():.2f} m³/s\n")
-            f.write(f"  Average Std Dev: {flow_std.mean():.2f} m³/s\n\n")
-            
-            if observed_data is not None:
-                f.write(f"Performance Evaluation (vs. Observed):\n")
-                if 'metrics_summary_df' in locals():
-                    f.write(f"  Ensemble Mean NSE: {ensemble_metrics['NSE']:.4f}\n")
-                    f.write(f"  Ensemble Mean KGE: {ensemble_metrics['KGE']:.4f}\n")
-                    f.write(f"  Ensemble Mean RMSE: {ensemble_metrics['RMSE']:.4f} m³/s\n")
-                    f.write(f"  Ensemble Mean PBIAS: {ensemble_metrics['PBIAS']:.4f}%\n\n")
                     
-                    f.write(f"  Best NSE: {metrics_df['NSE'].max():.4f} (Run: {metrics_df['NSE'].idxmax()})\n")
-                    f.write(f"  Best KGE: {metrics_df['KGE'].max():.4f} (Run: {metrics_df['KGE'].idxmax()})\n")
-                    f.write(f"  Best RMSE: {metrics_df['RMSE'].min():.4f} m³/s (Run: {metrics_df['RMSE'].idxmin()})\n")
-                    f.write(f"  Best PBIAS: {metrics_df['PBIAS'].abs().min():.4f}% (Run: {metrics_df['PBIAS'].abs().idxmin()})\n\n")
+                    self.logger.info(f"Processed {run_id}: KGE={kge:.4f}, NSE={nse:.4f}, RMSE={rmse:.4f}")
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error processing results for {run_id}: {str(e)}")
+                    import traceback
+                    self.logger.warning(traceback.format_exc())
             
-            f.write(f"Files Generated:\n")
-            f.write(f"  - all_ensemble_streamflows.csv: Combined streamflow time series for all runs\n")
-            f.write(f"  - ensemble_statistics.csv: Statistical metrics for each time step\n")
-            f.write(f"  - ensemble_streamflow_statistics.png: Visualization of ensemble statistics\n")
-            f.write(f"  - flow_duration_curves.png: Flow duration curves for all ensemble members\n")
+            # Check if we found any valid results
+            if len(all_flows.columns) <= 1:  # Only the 'Observed' column
+                self.logger.error("No valid streamflow data found in any ensemble run")
+                return None
             
-            if observed_data is not None:
-                f.write(f"  - observed_streamflow.csv: Observed streamflow data\n")
-                f.write(f"  - performance_metrics.csv: Performance metrics for each ensemble member\n")
-                f.write(f"  - performance_metrics_summary.csv: Summary of performance metrics\n")
-                f.write(f"  - performance_metrics_distribution.png: Distributions of performance metrics\n")
+            # Convert metrics to DataFrame and save
+            metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
+            metrics_df.to_csv(analysis_dir / "performance_metrics.csv")
+            self.logger.info(f"Saved performance metrics for {len(metrics)} runs")
             
-            f.write(f"\nGenerated on: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        
-        self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
-        return analysis_dir
-    
+            # Create main visualization plot
+            plt.figure(figsize=(16, 8))
+            
+            # Plot individual simulations with low opacity
+            for col in all_flows.columns:
+                if col != 'Observed':
+                    plt.plot(all_flows.index, all_flows[col], 'b-', alpha=0.1, linewidth=0.5)
+            
+            # Calculate ensemble mean
+            simulation_cols = [col for col in all_flows.columns if col != 'Observed']
+            if simulation_cols:
+                ensemble_mean = all_flows[simulation_cols].mean(axis=1)
+                plt.plot(all_flows.index, ensemble_mean, 'r-', linewidth=2, label='Ensemble Mean')
+            
+            # Plot observed data
+            plt.plot(all_flows.index, all_flows['Observed'], 'g-', linewidth=2, label='Observed')
+            
+            # Add labels and legend
+            plt.xlabel('Date')
+            plt.ylabel('Streamflow (m³/s)')
+            plt.title(f'Ensemble Streamflow Simulations ({len(metrics)} Runs)')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # Format x-axis dates
+            plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+            plt.gcf().autofmt_xdate()
+            
+            # Save the plot
+            plt.savefig(analysis_dir / "ensemble_streamflow_comparison.png", dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
+            return analysis_dir
+                
+        except Exception as e:
+            self.logger.error(f"Error during ensemble results analysis: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
