@@ -283,7 +283,22 @@ class SummaPreProcessor:
             output_file = self.forcing_summa_path / file
 
             with xr.open_dataset(self.forcing_basin_path / file) as dat:
-
+                # Find which HRU IDs exist in the forcing data but not in the lapse values
+                valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
+                
+                # Log the HRUs that will be removed
+                if not np.all(valid_hru_mask):
+                    missing_hrus = dat['hruId'].values[~valid_hru_mask]
+                    self.logger.warning(f"Removing {len(missing_hrus)} HRU IDs that don't have lapse values")
+                    self.logger.debug(f"Removed HRU IDs: {missing_hrus}")
+                    
+                    # Filter the dataset to only include valid HRUs
+                    dat = dat.sel(hru=valid_hru_mask)
+                    
+                    if len(dat.hru) == 0:
+                        self.logger.error("No valid HRUs remain after filtering. Cannot proceed.")
+                        raise ValueError("No valid HRUs found after filtering out those without lapse values")
+                
                 # Apply datastep
                 dat['data_step'] = self.data_step
                 dat.data_step.attrs['long_name'] = 'data step length in seconds'
@@ -295,8 +310,10 @@ class SummaPreProcessor:
                     dat.pptrate.attrs['long_name'] = 'Mean total precipitation rate'
 
                 if self.config.get('APPLY_LAPSE_RATE') == True:
+                    # Get lapse values for the HRUs
                     lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
-                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), dims=('time', 'hru'))
+                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), 
+                                        dims=('time', 'hru'))
 
                     # Get air temperature attributes
                     tmp_units = dat['airtemp'].units

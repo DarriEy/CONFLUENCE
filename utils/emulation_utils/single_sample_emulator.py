@@ -73,12 +73,14 @@ class SingleSampleEmulator:
         self.logger.info(f"  Random seed: {self.random_seed}")
         self.logger.info(f"  Creating individual run directories: {self.create_individual_runs}")
 
-    @get_function_logger
     def run_emulation_setup(self):
         """Orchestrates the setup for large sample emulation with multiple runs."""
         self.logger.info("Starting Large Sample Emulation setup")
         try:
-            # Parse parameter bounds
+            # STEP 1: Run a preliminary SUMMA simulation to extract current parameter values
+            extracted_params = self.run_parameter_extraction_run()
+            
+            # STEP 2: Parse parameter bounds from parameter info files
             local_bounds = self._parse_param_info(self.local_param_info_path, self.local_params_to_emulate)
             basin_bounds = self._parse_param_info(self.basin_param_info_path, self.basin_params_to_emulate)
 
@@ -86,16 +88,16 @@ class SingleSampleEmulator:
                 self.logger.warning("No parameters specified or found for emulation. Skipping trial parameter file generation.")
                 return None # Indicate nothing was generated
 
-            # Store all parameter sets in a consolidated file
-            consolidated_file = self.store_parameter_sets(local_bounds, basin_bounds)
+            # STEP 3: Store all parameter sets in a consolidated file
+            consolidated_file = self.store_parameter_sets(local_bounds, basin_bounds, extracted_params)
             self.logger.info(f"All parameter sets stored in consolidated file: {consolidated_file}")
 
-            # Generate the summary file with all parameter sets
-            self.generate_parameter_summary(local_bounds, basin_bounds)
+            # STEP 4: Generate the summary file with all parameter sets
+            self.generate_parameter_summary(local_bounds, basin_bounds, extracted_params)
             
-            # Create individual run directories if requested
+            # STEP 5: Create individual run directories if requested
             if self.create_individual_runs:
-                self.create_ensemble_run_directories(local_bounds, basin_bounds)
+                self.create_ensemble_run_directories(local_bounds, basin_bounds, extracted_params)
                 self.logger.info(f"Successfully created {self.num_samples} ensemble run directories in {self.ensemble_dir}")
             
             self.logger.info(f"Large sample emulation setup completed successfully")
@@ -377,9 +379,18 @@ class SingleSampleEmulator:
             raise
         return bounds
 
-    @get_function_logger
-    def generate_parameter_summary(self, local_bounds: Dict, basin_bounds: Dict):
-        """Generates a summary file with all parameter sets."""
+    def generate_parameter_summary(self, local_bounds: Dict, basin_bounds: Dict, extracted_params=None):
+        """
+        Generates a summary file with all parameter sets.
+        
+        Args:
+            local_bounds: Dictionary of local parameter bounds
+            basin_bounds: Dictionary of basin parameter bounds
+            extracted_params: Optional dictionary with parameter names as keys and extracted values as values
+        
+        Returns:
+            Tuple: Path to summary file and dictionary of parameter values
+        """
         self.logger.info(f"Generating parameter summary file at: {self.summary_file_path}")
 
         if not self.attribute_file_path.exists():
@@ -404,29 +415,114 @@ class SingleSampleEmulator:
             else:
                 num_gru = 0 # Not needed if no basin params
 
-
-        # Store parameter values for each sample (run) and each parameter
-        # Dictionary to hold all random values for each parameter across all samples
+        # Dictionary to hold all parameter values across all samples
         all_param_values = {}
         
         # Generate all parameter values for all samples upfront
         for param_name, bounds in local_bounds.items():
             min_val, max_val = bounds['min'], bounds['max']
-            # For each parameter, store values for all HRUs across all samples
+            
+            # Check if we have extracted values for this parameter
+            extracted_values = None
+            if extracted_params is not None and param_name in extracted_params:
+                extracted_values = extracted_params[param_name]
+                
+                # Convert to numpy array if it's not already
+                if not isinstance(extracted_values, np.ndarray):
+                    extracted_values = np.array(extracted_values)
+                
+                # Ensure it's a 1D array to avoid inhomogeneous shape errors
+                extracted_values = np.atleast_1d(extracted_values.flatten())
+                
+                self.logger.info(f"Using extracted values for {param_name} with shape {extracted_values.shape}")
+            
+            # Create an array to hold all parameter values for this parameter
             # Shape: [num_samples, num_hru]
-            all_param_values[param_name] = np.array([
-                self._generate_random_values(min_val, max_val, num_hru, param_name) 
-                for _ in range(self.num_samples)
-            ])
+            param_values = np.zeros((self.num_samples, num_hru), dtype=np.float64)
+            
+            for i in range(self.num_samples):
+                if i == 0 and extracted_values is not None:
+                    # Use extracted values directly for the first sample
+                    if len(extracted_values) != num_hru:
+                        self.logger.warning(f"Extracted values for {param_name} have length {len(extracted_values)}, expected {num_hru}. Will use the values but they may be misaligned.")
+                    
+                    # Ensure we have the right number of values
+                    if len(extracted_values) >= num_hru:
+                        # Use the first num_hru values
+                        param_values[i, :] = extracted_values[:num_hru]
+                    else:
+                        # Repeat the values to fill num_hru
+                        repeats = int(np.ceil(num_hru / len(extracted_values)))
+                        param_values[i, :] = np.tile(extracted_values, repeats)[:num_hru]
+                        
+                    self.logger.info(f"Using extracted values for {param_name} in first sample")
+                else:
+                    # Generate random values for other samples
+                    sample_values = self._generate_random_values(
+                        min_val, max_val, num_hru, param_name, 
+                        extracted_values
+                    )
+                    
+                    # Ensure sample_values is the right shape
+                    if isinstance(sample_values, np.ndarray) and len(sample_values) == num_hru:
+                        param_values[i, :] = sample_values
+                    else:
+                        self.logger.warning(f"Generated values for {param_name} have unexpected shape, using uniform sampling instead")
+                        param_values[i, :] = np.random.uniform(min_val, max_val, num_hru)
+            
+            all_param_values[param_name] = param_values
         
         # Similarly for basin parameters
         for param_name, bounds in basin_bounds.items():
             min_val, max_val = bounds['min'], bounds['max']
+            
+            # Check if we have extracted values for this parameter
+            extracted_values = None
+            if extracted_params is not None and param_name in extracted_params:
+                extracted_values = extracted_params[param_name]
+                
+                # Convert to numpy array if it's not already
+                if not isinstance(extracted_values, np.ndarray):
+                    extracted_values = np.array(extracted_values)
+                
+                # Ensure it's a 1D array
+                extracted_values = np.atleast_1d(extracted_values.flatten())
+                
+                self.logger.info(f"Using extracted values for basin parameter {param_name} with shape {extracted_values.shape}")
+            
             # Generate GRU values for all samples
-            gru_values = np.array([
-                self._generate_random_values(min_val, max_val, num_gru, param_name)
-                for _ in range(self.num_samples)
-            ])
+            # Shape: [num_samples, num_gru]
+            gru_values = np.zeros((self.num_samples, num_gru), dtype=np.float64)
+            
+            for i in range(self.num_samples):
+                if i == 0 and extracted_values is not None:
+                    # Use extracted values directly for the first sample
+                    if len(extracted_values) != num_gru:
+                        self.logger.warning(f"Extracted values for {param_name} have length {len(extracted_values)}, expected {num_gru}. Will use the values but they may be misaligned.")
+                    
+                    # Ensure we have the right number of values
+                    if len(extracted_values) >= num_gru:
+                        # Use the first num_gru values
+                        gru_values[i, :] = extracted_values[:num_gru]
+                    else:
+                        # Repeat the values to fill num_gru
+                        repeats = int(np.ceil(num_gru / len(extracted_values)))
+                        gru_values[i, :] = np.tile(extracted_values, repeats)[:num_gru]
+                        
+                    self.logger.info(f"Using extracted values for {param_name} in first sample")
+                else:
+                    # Generate random values for other samples
+                    sample_values = self._generate_random_values(
+                        min_val, max_val, num_gru, param_name, 
+                        extracted_values
+                    )
+                    
+                    # Ensure sample_values is the right shape
+                    if isinstance(sample_values, np.ndarray) and len(sample_values) == num_gru:
+                        gru_values[i, :] = sample_values
+                    else:
+                        self.logger.warning(f"Generated values for {param_name} have unexpected shape, using uniform sampling instead")
+                        gru_values[i, :] = np.random.uniform(min_val, max_val, num_gru)
             
             # Map GRU values to HRUs for each sample
             # Shape: [num_samples, num_hru]
@@ -473,6 +569,14 @@ class SingleSampleEmulator:
                 is_local = param_name in local_bounds
                 param_var.parameter_type = "local" if is_local else "basin"
                 param_var.units = "N/A"
+                
+                # Add bounds as attributes if available
+                if is_local and param_name in local_bounds:
+                    param_var.min_value = local_bounds[param_name]['min']
+                    param_var.max_value = local_bounds[param_name]['max']
+                elif not is_local and param_name in basin_bounds:
+                    param_var.min_value = basin_bounds[param_name]['min']
+                    param_var.max_value = basin_bounds[param_name]['max']
 
             # Add global attributes
             summary_ds.description = "SUMMA Trial Parameter summary file for multiple ensemble runs"
@@ -481,21 +585,29 @@ class SingleSampleEmulator:
             summary_ds.sampling_method = self.sampling_method
             summary_ds.random_seed = self.random_seed
             summary_ds.num_samples = self.num_samples
+            
+            if extracted_params is not None:
+                summary_ds.using_extracted_parameters = "true"
+                summary_ds.extraction_date = datetime.now().isoformat()
 
         self.logger.info(f"Successfully generated parameter summary file: {self.summary_file_path}")
         return self.summary_file_path, all_param_values
 
-    @get_function_logger
-    def create_ensemble_run_directories(self, local_bounds: Dict, basin_bounds: Dict):
+    def create_ensemble_run_directories(self, local_bounds, basin_bounds, extracted_params=None):
         """
         Creates individual run directories with unique parameter sets.
         
         This allows for running multiple model instances with different parameter sets.
+        
+        Args:
+            local_bounds: Dictionary of local parameter bounds
+            basin_bounds: Dictionary of basin parameter bounds
+            extracted_params: Optional dictionary of extracted parameter values
         """
         self.logger.info(f"Creating {self.num_samples} ensemble run directories in {self.ensemble_dir}")
         
         # First, generate all parameter values using the summary function
-        summary_file, all_param_values = self.generate_parameter_summary(local_bounds, basin_bounds)
+        summary_file, all_param_values = self.generate_parameter_summary(local_bounds, basin_bounds, extracted_params)
         
         # Read HRU information from the attributes file
         with nc4.Dataset(self.attribute_file_path, 'r') as att_ds:
@@ -636,7 +748,7 @@ class SingleSampleEmulator:
                 except Exception as e:
                     self.logger.warning(f"Could not copy {file_name}: {str(e)}")
 
-    def _generate_random_values(self, min_val: float, max_val: float, num_values: int, param_name: str) -> np.ndarray:
+    def _generate_random_values(self, min_val, max_val, num_values, param_name, extracted_values=None):
         """
         Generate random parameter values using the specified sampling method.
         
@@ -645,58 +757,148 @@ class SingleSampleEmulator:
             max_val: Maximum parameter value
             num_values: Number of values to generate
             param_name: Name of parameter (for logging)
-            
+            extracted_values: Optional array of extracted parameter values to use as baseline
+                
         Returns:
             np.ndarray: Array of random values within the specified bounds
         """
         try:
+            # If we have extracted values and this is the first sample, use them directly
+            if extracted_values is not None and len(extracted_values) == num_values:
+                return extracted_values.astype(np.float64)
+            
+            # Determine central tendency for parameter distribution
+            if extracted_values is not None:
+                # Use the median of extracted values if available, but replicate to match num_values
+                if len(extracted_values) == 1 and num_values > 1:
+                    # Single value for all HRUs/GRUs
+                    center_val = extracted_values[0]
+                    center_values = np.full(num_values, center_val)
+                elif len(extracted_values) == num_values:
+                    # Use extracted values directly as centers
+                    center_values = extracted_values
+                else:
+                    # Mismatch in array sizes - use mean of extracted values
+                    center_val = np.mean(extracted_values)
+                    center_values = np.full(num_values, center_val)
+                    self.logger.warning(f"Mismatch in array sizes for {param_name}. Using mean value {center_val} for all elements.")
+            else:
+                # No extracted values - use the midpoint of min/max range
+                center_val = (min_val + max_val) / 2
+                center_values = np.full(num_values, center_val)
+            
+            # Now generate values around these centers
             if self.sampling_method == 'uniform':
-                # Simple uniform random sampling
+                # For uniform, we'll sample within the full min-max range
                 return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
-                
+                    
             elif self.sampling_method == 'lhs':
-                # Latin Hypercube Sampling (if scipy is available)
+                # Latin Hypercube Sampling with parameter-specific center points
                 try:
-                    from scipy.stats import qmc # type: ignore
+                    from scipy.stats import qmc
                     
                     # Create a normalized LHS sampler in [0, 1]
                     sampler = qmc.LatinHypercube(d=1, seed=self.random_seed)
-                    samples = sampler.random(n=num_values)
+                    samples_unit = sampler.random(n=num_values)
                     
-                    # Scale to the parameter range
-                    scaled_samples = qmc.scale(samples, [min_val], [max_val]).flatten()
+                    # Adjust sampling to allow for clustering near the extracted/center values
+                    # For each HRU/GRU, scale sample to match its specific center value
+                    scaled_samples = np.zeros(num_values, dtype=np.float64)
+                    
+                    for i in range(num_values):
+                        # Get the center value for this location
+                        center = center_values[i]
+                        
+                        # Determine which half of the range we're in
+                        if samples_unit[i] < 0.5:
+                            # Sample from min_val to center
+                            sample_range = center - min_val
+                            # Rescale from [0, 0.5] to [0, 1]
+                            unit_sample = samples_unit[i] * 2
+                            # Generate value
+                            scaled_samples[i] = min_val + unit_sample * sample_range
+                        else:
+                            # Sample from center to max_val
+                            sample_range = max_val - center
+                            # Rescale from [0.5, 1] to [0, 1]
+                            unit_sample = (samples_unit[i] - 0.5) * 2
+                            # Generate value
+                            scaled_samples[i] = center + unit_sample * sample_range
+                    
                     return scaled_samples.astype(np.float64)
                     
                 except ImportError:
-                    self.logger.warning(f"Could not import scipy.stats.qmc for Latin Hypercube Sampling. Falling back to uniform sampling for {param_name}.")
-                    return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
+                    self.logger.warning(f"Could not import scipy.stats.qmc for Latin Hypercube Sampling. Falling back to normal sampling for {param_name}.")
+                    # Fall back to normal distribution around center values with bounds
+                    return self._generate_normal_bounded_values(min_val, max_val, center_values, num_values)
                     
             elif self.sampling_method == 'sobol':
-                # Sobol sequence (if scipy is available)
+                # Sobol sequence with parameter-specific center points
                 try:
-                    from scipy.stats import qmc # type: ignore
+                    from scipy.stats import qmc
                     
                     # Create a Sobol sequence generator
                     sampler = qmc.Sobol(d=1, scramble=True, seed=self.random_seed)
-                    samples = sampler.random(n=num_values)
+                    samples_unit = sampler.random(n=num_values)
                     
-                    # Scale to the parameter range
-                    scaled_samples = qmc.scale(samples, [min_val], [max_val]).flatten()
+                    # Adjust sampling to allow for clustering near the extracted/center values
+                    # Similar approach as with LHS
+                    scaled_samples = np.zeros(num_values, dtype=np.float64)
+                    
+                    for i in range(num_values):
+                        center = center_values[i]
+                        
+                        if samples_unit[i] < 0.5:
+                            sample_range = center - min_val
+                            unit_sample = samples_unit[i] * 2
+                            scaled_samples[i] = min_val + unit_sample * sample_range
+                        else:
+                            sample_range = max_val - center
+                            unit_sample = (samples_unit[i] - 0.5) * 2
+                            scaled_samples[i] = center + unit_sample * sample_range
+                    
                     return scaled_samples.astype(np.float64)
                     
                 except ImportError:
-                    self.logger.warning(f"Could not import scipy.stats.qmc for Sobol sequence. Falling back to uniform sampling for {param_name}.")
-                    return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
+                    self.logger.warning(f"Could not import scipy.stats.qmc for Sobol sequence. Falling back to normal sampling for {param_name}.")
+                    # Fall back to normal distribution around center values with bounds
+                    return self._generate_normal_bounded_values(min_val, max_val, center_values, num_values)
             
             else:
-                self.logger.warning(f"Unknown sampling method '{self.sampling_method}'. Falling back to uniform sampling for {param_name}.")
-                return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
+                self.logger.warning(f"Unknown sampling method '{self.sampling_method}'. Falling back to normal sampling for {param_name}.")
+                # Fall back to normal distribution around center values with bounds
+                return self._generate_normal_bounded_values(min_val, max_val, center_values, num_values)
                 
         except Exception as e:
             self.logger.error(f"Error generating random values for {param_name}: {str(e)}")
             self.logger.warning(f"Using uniform sampling as fallback for {param_name}.")
             return np.random.uniform(min_val, max_val, num_values).astype(np.float64)
+
+    def _generate_normal_bounded_values(self, min_val, max_val, center_values, num_values):
+        """
+        Generate values from a normal distribution centered around each value in center_values,
+        but bounded within min_val and max_val.
+        
+        Args:
+            min_val: Minimum parameter value
+            max_val: Maximum parameter value
+            center_values: Array of center values for the distribution
+            num_values: Number of values to generate
             
+        Returns:
+            np.ndarray: Array of bounded normally distributed values
+        """
+        range_size = max_val - min_val
+        # Use 1/6th of range size as standard deviation
+        std_dev = range_size / 6
+        
+        # Generate values from normal distribution
+        values = np.random.normal(center_values, std_dev, size=num_values)
+        
+        # Bound values within min_val and max_val
+        values = np.clip(values, min_val, max_val)
+        
+        return values.astype(np.float64)
         
     @get_function_logger
     def run_ensemble_simulations(self):
@@ -739,6 +941,280 @@ class SingleSampleEmulator:
         else:
             # Run in sequential mode
             return self._run_sequential_ensemble(summa_exe, run_dirs)
+
+    def _create_parameter_output_control(self, settings_dir):
+        """
+        Create a modified outputControl.txt that outputs the calibration parameters.
+        
+        Args:
+            settings_dir: Path to the settings directory for parameter extraction
+        """
+        # Read the original outputControl.txt
+        orig_output_control = self.settings_path / 'outputControl.txt'
+        
+        if not orig_output_control.exists():
+            self.logger.error(f"Original outputControl.txt not found: {orig_output_control}")
+            raise FileNotFoundError(f"Original outputControl.txt not found: {orig_output_control}")
+        
+        # Read the original file content
+        with open(orig_output_control, 'r') as f:
+            lines = f.readlines()
+        
+        # Get all parameters to calibrate
+        all_params = self.local_params_to_emulate + self.basin_params_to_emulate
+        
+        # Create new output control file with the calibration parameters added
+        output_file = settings_dir / 'outputControl.txt'
+        
+        with open(output_file, 'w') as f:
+            # Write the original content
+            for line in lines:
+                f.write(line)
+            
+            # Add section for calibration parameters if not empty
+            if all_params:
+                f.write("\n! -----------------------\n")
+                f.write("!  calibration parameters\n")
+                f.write("! -----------------------\n")
+                
+                # Add each parameter with a timestep of 1 (output at every timestep)
+                for param in all_params:
+                    f.write(f"{param:24} | 1\n")
+        
+        self.logger.info(f"Created modified outputControl.txt with {len(all_params)} calibration parameters")
+        return output_file
+
+    def _create_parameter_file_manager(self, extract_dir, settings_dir):
+        """
+        Create a modified fileManager.txt with a shorter time period.
+        
+        Args:
+            extract_dir: Path to the extraction run directory
+            settings_dir: Path to the settings directory for parameter extraction
+        """
+        # Read the original fileManager.txt
+        orig_file_manager = self.settings_path / 'fileManager.txt'
+        
+        if not orig_file_manager.exists():
+            self.logger.error(f"Original fileManager.txt not found: {orig_file_manager}")
+            raise FileNotFoundError(f"Original fileManager.txt not found: {orig_file_manager}")
+        
+        # Read the original file content
+        with open(orig_file_manager, 'r') as f:
+            lines = f.readlines()
+        
+        # Create simulation directory
+        sim_dir = extract_dir / "simulations" / "param_extract" / "SUMMA"
+        sim_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create new file manager
+        file_manager = settings_dir / 'fileManager.txt'
+        
+        with open(file_manager, 'w') as f:
+            for line in lines:
+                # Modify simulation end time to be short (1 day after start)
+                if 'simStartTime' in line:
+                    start_time_str = line.split("'")[1]
+                    f.write(line)  # Keep the original start time
+                    
+                    # Parse the start time
+                    import datetime
+                    try:
+                        start_parts = start_time_str.split()
+                        start_date = start_parts[0]
+                        
+                        # Use the same start date but run for 1 day only
+                        # This keeps the same start_time which is important for initialization
+                        f.write(f"simEndTime           '{start_date} 23:00'\n")
+                        continue
+                    except Exception as e:
+                        self.logger.warning(f"Error parsing start time '{start_time_str}': {str(e)}")
+                        # If there's an error parsing, keep the original end time
+                elif 'simEndTime' in line:
+                    # Skip the original end time as we've already written our modified one
+                    continue
+                elif 'outFilePrefix' in line:
+                    # Change the output file prefix
+                    f.write("outFilePrefix        'param_extract'\n")
+                elif 'outputPath' in line:
+                    # Change the output path
+                    output_path = str(sim_dir).replace('\\', '/')  # Ensure forward slashes for SUMMA
+                    f.write(f"outputPath           '{output_path}/'\n")
+                elif 'settingsPath' in line:
+                    # Change the settings path
+                    settings_path = str(settings_dir).replace('\\', '/')  # Ensure forward slashes for SUMMA
+                    f.write(f"settingsPath         '{settings_path}/'\n")
+                else:
+                    # Keep all other lines unchanged
+                    f.write(line)
+        
+        self.logger.info(f"Created modified fileManager.txt for parameter extraction")
+        return file_manager
+
+    def _run_parameter_extraction_summa(self, extract_dir):
+        """
+        Run SUMMA for parameter extraction.
+        
+        Args:
+            extract_dir: Path to the extraction run directory
+            
+        Returns:
+            bool: True if the run was successful, False otherwise
+        """
+        self.logger.info("Running SUMMA for parameter extraction")
+        
+        # Get SUMMA executable path
+        summa_path = self.config.get('SUMMA_INSTALL_PATH')
+        if summa_path == 'default':
+            summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+        else:
+            summa_path = Path(summa_path)
+        
+        summa_exe = summa_path / self.config.get('SUMMA_EXE')
+        file_manager = extract_dir / "settings" / "SUMMA" / 'fileManager.txt'
+        
+        if not file_manager.exists():
+            self.logger.error(f"File manager not found: {file_manager}")
+            return False
+        
+        # Create command
+        summa_command = f"{summa_exe} -m {file_manager}"
+        
+        # Create log directory
+        log_dir = extract_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Run SUMMA
+        log_file = log_dir / "param_extract_summa.log"
+        
+        try:
+            import subprocess
+            self.logger.info(f"Running SUMMA command: {summa_command}")
+            
+            with open(log_file, 'w') as f:
+                process = subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+            
+            self.logger.info("SUMMA parameter extraction run completed successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"SUMMA parameter extraction run failed: {str(e)}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error during SUMMA parameter extraction: {str(e)}")
+            return False
+
+    def _extract_parameters_from_results(self, extract_dir):
+        """
+        Extract parameter values from the SUMMA results file.
+        
+        Args:
+            extract_dir: Path to the extraction run directory
+            
+        Returns:
+            dict: Dictionary with parameter names as keys and arrays of values as values
+        """
+        self.logger.info("Extracting parameter values from SUMMA results")
+        
+        # Find the timestep output file
+        sim_dir = extract_dir / "simulations" / "param_extract" / "SUMMA"
+        timestep_files = list(sim_dir.glob("param_extract_timestep.nc"))
+        
+        if not timestep_files:
+            self.logger.error("No timestep output file found from parameter extraction run")
+            return None
+        
+        timestep_file = timestep_files[0]
+        
+        # Get all parameters to extract
+        all_params = self.local_params_to_emulate + self.basin_params_to_emulate
+        
+        try:
+            import xarray as xr
+            
+            # Open the file
+            with xr.open_dataset(timestep_file) as ds:
+                # Check which parameters are actually in the file
+                available_params = [param for param in all_params if param in ds.variables]
+                
+                if not available_params:
+                    self.logger.warning("No calibration parameters found in the output file")
+                    self.logger.debug(f"Available variables: {list(ds.variables.keys())}")
+                    return None
+                
+                self.logger.info(f"Found {len(available_params)} out of {len(all_params)} parameters in output")
+                
+                # Extract the parameter values
+                param_values = {}
+                
+                for param in available_params:
+                    # Extract parameter values - handle different dimensions
+                    var = ds[param]
+                    
+                    # The parameter might be per HRU or per GRU
+                    # We need to identify the right dimension and extract
+                    if 'hru' in var.dims:
+                        # Parameter per HRU
+                        param_values[param] = var.values
+                        self.logger.debug(f"Extracted {param} values for {len(param_values[param])} HRUs")
+                    elif 'gru' in var.dims:
+                        # Parameter per GRU - need to map to HRUs
+                        param_values[param] = var.values
+                        self.logger.debug(f"Extracted {param} values for {len(param_values[param])} GRUs")
+                    else:
+                        # Parameter is scalar or has unexpected dimensions
+                        self.logger.warning(f"Parameter {param} has unexpected dimensions: {var.dims}")
+                        continue
+                
+                self.logger.info(f"Successfully extracted values for {len(param_values)} parameters")
+                return param_values
+                
+        except Exception as e:
+            self.logger.error(f"Error extracting parameters from results: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+
+    def run_parameter_extraction_run(self):
+        """
+        Sets up and runs a preliminary SUMMA simulation to extract parameter values.
+        
+        This will:
+        1. Create a modified outputControl.txt that outputs the calibration parameters
+        2. Set up a short simulation using the existing configuration
+        3. Extract the parameter values from the resulting timestep.nc file
+        4. Return the extracted parameter values
+        
+        Returns:
+            dict: Dictionary with parameter names as keys and arrays of values as values
+        """
+        self.logger.info("Setting up preliminary parameter extraction run")
+        
+        # Create a directory for the parameter extraction run
+        extract_dir = self.emulator_output_dir / "param_extraction"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create settings directory
+        extract_settings_dir = extract_dir / "settings" / "SUMMA"
+        extract_settings_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy settings files
+        self._copy_static_settings_files(extract_settings_dir)
+        
+        # Create modified outputControl.txt with calibration parameters added
+        self._create_parameter_output_control(extract_settings_dir)
+        
+        # Create modified fileManager.txt with shorter time period
+        self._create_parameter_file_manager(extract_dir, extract_settings_dir)
+        
+        # Run SUMMA for the parameter extraction
+        extract_result = self._run_parameter_extraction_summa(extract_dir)
+        
+        # Extract parameters from the result file
+        if extract_result:
+            return self._extract_parameters_from_results(extract_dir)
+        else:
+            self.logger.warning("Parameter extraction run failed, will use default parameter ranges")
+            return None
 
     def get_results(self):
         """
@@ -1243,10 +1719,10 @@ class SingleSampleEmulator:
                     
                     # Convert to pandas series or dataframe
                     if 'gru' in runoff_data.dims:
-                        self.logger.info(f"Found 'gru' dimension with size {ds.dims['gru']}")
+                        self.logger.info(f"Found 'gru' dimension with size {ds.sizes['gru']}")
                         # If multiple GRUs, sum them up
-                        if ds.dims['gru'] > 1:
-                            self.logger.info(f"Summing runoff across {ds.dims['gru']} GRUs")
+                        if ds.sizes['gru'] > 1:
+                            self.logger.info(f"Summing runoff across {ds.sizes['gru']} GRUs")
                             runoff_series = runoff_data.sum(dim='gru').to_pandas()
                         else:
                             # Single GRU case
@@ -1737,18 +2213,15 @@ class SingleSampleEmulator:
             self.logger.error(f"Error in parallel ensemble execution: {str(e)}. Falling back to sequential execution.")
             return self._run_sequential_ensemble(summa_exe, run_dirs)
 
-    @get_function_logger
-    def store_parameter_sets(self, local_bounds: Dict, basin_bounds: Dict):
+    def store_parameter_sets(self, local_bounds, basin_bounds, extracted_params=None):
         """
         Store all generated parameter sets in a consolidated file.
-        
-        This adds a 'run' dimension to the parameter file, allowing all parameter
-        sets to be stored in a single NetCDF file for easier analysis and reference.
         
         Args:
             local_bounds: Dictionary of local parameter bounds
             basin_bounds: Dictionary of basin parameter bounds
-            
+            extracted_params: Optional dictionary of extracted parameter values
+                
         Returns:
             Path: Path to the consolidated parameter file
         """
@@ -1868,8 +2341,8 @@ class SingleSampleEmulator:
         
         This method:
         1. Reads streamflow output from each ensemble member
-        2. Computes basic performance metrics
-        3. Creates a visualization comparing simulated vs. observed streamflow
+        2. Computes basic performance metrics for training and test periods separately
+        3. Creates visualizations comparing simulated vs. observed streamflow
         4. Saves the visualization and metrics to file
         
         Returns:
@@ -1881,6 +2354,7 @@ class SingleSampleEmulator:
         import numpy as np
         import matplotlib.pyplot as plt
         from matplotlib.dates import DateFormatter
+        import matplotlib.gridspec as gridspec
         import datetime as dt
         
         # Create analysis directory
@@ -1915,6 +2389,31 @@ class SingleSampleEmulator:
             obs_df.set_index('DateTime', inplace=True)
             observed_flow = obs_df[flow_col]
             
+            # Define training and testing periods based on config
+            calib_period = self.config.get('CALIBRATION_PERIOD', '')
+            eval_period = self.config.get('EVALUATION_PERIOD', '')
+            
+            if calib_period and ',' in calib_period and eval_period and ',' in eval_period:
+                # Split periods as defined in config
+                calib_start, calib_end = [pd.Timestamp(s.strip()) for s in calib_period.split(',')]
+                eval_start, eval_end = [pd.Timestamp(s.strip()) for s in eval_period.split(',')]
+                
+                calib_mask = (obs_df.index >= calib_start) & (obs_df.index <= calib_end)
+                eval_mask = (obs_df.index >= eval_start) & (obs_df.index <= eval_end)
+                
+                self.logger.info(f"Using calibration period: {calib_start} to {calib_end}")
+                self.logger.info(f"Using evaluation period: {eval_start} to {eval_end}")
+            else:
+                # Create default periods: 60% calibration, 40% evaluation
+                sorted_dates = sorted(obs_df.index)
+                split_idx = int(len(sorted_dates) * 0.6)
+                split_date = sorted_dates[split_idx]
+                
+                calib_mask = obs_df.index <= split_date
+                eval_mask = obs_df.index > split_date
+                
+                self.logger.info(f"Using default period split at {split_date}")
+            
             # Get all run directories
             run_dirs = sorted(self.ensemble_dir.glob("run_*"))
             if not run_dirs:
@@ -1922,7 +2421,8 @@ class SingleSampleEmulator:
                 return None
             
             # Process each run directory to extract results
-            metrics = {}
+            calib_metrics = {}
+            eval_metrics = {}
             all_flows = pd.DataFrame(index=obs_df.index)
             all_flows['Observed'] = observed_flow
             
@@ -1964,10 +2464,6 @@ class SingleSampleEmulator:
                         self.logger.warning(f"No flow column found in {run_id} results. Columns: {run_df.columns.tolist()}")
                         continue
                     
-                    # Print debug info on first few values
-                    self.logger.debug(f"{run_id} first 5 flow values: {run_df[flow_col_sim].head()}")
-                    self.logger.debug(f"{run_id} flow stats: mean={run_df[flow_col_sim].mean():.4f}, min={run_df[flow_col_sim].min():.4f}, max={run_df[flow_col_sim].max():.4f}")
-                    
                     # Convert to datetime and set as index
                     run_df['DateTime'] = pd.to_datetime(run_df[time_col])
                     run_df.set_index('DateTime', inplace=True)
@@ -1976,54 +2472,37 @@ class SingleSampleEmulator:
                     # Use reindex to align with observed data timepoints
                     all_flows[run_id] = run_df[flow_col_sim].reindex(all_flows.index, method='nearest')
                     
-                    # Calculate performance metrics against observed data
-                    # Find common time period
-                    common_idx = obs_df.index.intersection(run_df.index)
-                    if len(common_idx) < 5:  # Need at least a few points for metrics
-                        self.logger.warning(f"Insufficient common time period between {run_id} and observed data")
-                        continue
+                    # Calculate performance metrics for CALIBRATION period
+                    # Find common time period within calibration mask
+                    calib_obs = observed_flow[calib_mask]
+                    common_idx_calib = calib_obs.index.intersection(run_df.index)
                     
-                    # Extract aligned data for metric calculation
-                    obs_aligned = observed_flow.loc[common_idx]
-                    sim_aligned = run_df[flow_col_sim].loc[common_idx]
-                    
-                    # Calculate metrics - just KGE for simplicity
-                    mean_obs = obs_aligned.mean()
-                    
-                    # Correlation coefficient
-                    try:
-                        r = np.corrcoef(sim_aligned, obs_aligned)[0, 1]
-                    except:
-                        r = np.nan
+                    if len(common_idx_calib) > 5:  # Need at least a few points for metrics
+                        # Extract aligned data for metric calculation
+                        obs_calib = observed_flow.loc[common_idx_calib]
+                        sim_calib = run_df[flow_col_sim].loc[common_idx_calib]
                         
-                    # Relative variability
-                    alpha = sim_aligned.std() / obs_aligned.std() if obs_aligned.std() != 0 else np.nan
+                        # Calculate metrics
+                        calib_metrics[run_id] = self._calculate_metrics(obs_calib, sim_calib)
+                        self.logger.info(f"Processed {run_id}: KGE={calib_metrics[run_id]['KGE']:.4f}, NSE={calib_metrics[run_id]['NSE']:.4f}, RMSE={calib_metrics[run_id]['RMSE']:.4f}")
+                    else:
+                        self.logger.warning(f"No common time steps between observed and simulated data for {run_id} in calibration period")
                     
-                    # Bias ratio
-                    beta = sim_aligned.mean() / mean_obs if mean_obs != 0 else np.nan
+                    # Calculate performance metrics for EVALUATION period
+                    # Find common time period within evaluation mask
+                    eval_obs = observed_flow[eval_mask]
+                    common_idx_eval = eval_obs.index.intersection(run_df.index)
                     
-                    # KGE
-                    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
-                    
-                    # Root Mean Square Error (RMSE)
-                    rmse = np.sqrt(((obs_aligned - sim_aligned) ** 2).mean())
-                    
-                    # Nash-Sutcliffe Efficiency (NSE)
-                    numerator = ((obs_aligned - sim_aligned) ** 2).sum()
-                    denominator = ((obs_aligned - mean_obs) ** 2).sum()
-                    nse = 1 - (numerator / denominator) if denominator > 0 else np.nan
-                    
-                    # Percent Bias (PBIAS)
-                    pbias = 100 * (sim_aligned.sum() - obs_aligned.sum()) / obs_aligned.sum() if obs_aligned.sum() != 0 else np.nan
-                    
-                    metrics[run_id] = {
-                        'KGE': kge,
-                        'NSE': nse,
-                        'RMSE': rmse,
-                        'PBIAS': pbias
-                    }
-                    
-                    self.logger.info(f"Processed {run_id}: KGE={kge:.4f}, NSE={nse:.4f}, RMSE={rmse:.4f}")
+                    if len(common_idx_eval) > 5:  # Need at least a few points for metrics
+                        # Extract aligned data for metric calculation
+                        obs_eval = observed_flow.loc[common_idx_eval]
+                        sim_eval = run_df[flow_col_sim].loc[common_idx_eval]
+                        
+                        # Calculate metrics
+                        eval_metrics[run_id] = self._calculate_metrics(obs_eval, sim_eval)
+                        self.logger.debug(f"Evaluation metrics for {run_id}: KGE={eval_metrics[run_id]['KGE']:.4f}, NSE={eval_metrics[run_id]['NSE']:.4f}")
+                    else:
+                        self.logger.warning(f"No common time steps between observed and simulated data for {run_id} in evaluation period")
                     
                 except Exception as e:
                     self.logger.warning(f"Error processing results for {run_id}: {str(e)}")
@@ -2036,41 +2515,42 @@ class SingleSampleEmulator:
                 return None
             
             # Convert metrics to DataFrame and save
-            metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
-            metrics_df.to_csv(analysis_dir / "performance_metrics.csv")
-            self.logger.info(f"Saved performance metrics for {len(metrics)} runs")
+            if calib_metrics:
+                calib_df = pd.DataFrame.from_dict(calib_metrics, orient='index')
+                calib_df['Period'] = 'Calibration'
+                calib_df.to_csv(analysis_dir / "calibration_metrics.csv")
+                self.logger.info(f"Saved calibration metrics for {len(calib_metrics)} runs")
             
-            # Create main visualization plot
-            plt.figure(figsize=(16, 8))
+            if eval_metrics:
+                eval_df = pd.DataFrame.from_dict(eval_metrics, orient='index')
+                eval_df['Period'] = 'Evaluation'
+                eval_df.to_csv(analysis_dir / "evaluation_metrics.csv")
+                self.logger.info(f"Saved evaluation metrics for {len(eval_metrics)} runs")
             
-            # Plot individual simulations with low opacity
-            for col in all_flows.columns:
-                if col != 'Observed':
-                    plt.plot(all_flows.index, all_flows[col], 'b-', alpha=0.1, linewidth=0.5)
+            # Combine calibration and evaluation metrics
+            combined_metrics = {}
+            for run_id in set(calib_metrics.keys()).union(eval_metrics.keys()):
+                combined_metrics[run_id] = {}
+                
+                # Add calibration metrics with prefix
+                if run_id in calib_metrics:
+                    for metric, value in calib_metrics[run_id].items():
+                        combined_metrics[run_id][f'Calib_{metric}'] = value
+                
+                # Add evaluation metrics with prefix
+                if run_id in eval_metrics:
+                    for metric, value in eval_metrics[run_id].items():
+                        combined_metrics[run_id][f'Eval_{metric}'] = value
             
-            # Calculate ensemble mean
-            simulation_cols = [col for col in all_flows.columns if col != 'Observed']
-            if simulation_cols:
-                ensemble_mean = all_flows[simulation_cols].mean(axis=1)
-                plt.plot(all_flows.index, ensemble_mean, 'r-', linewidth=2, label='Ensemble Mean')
+            # Save combined metrics
+            combined_df = pd.DataFrame.from_dict(combined_metrics, orient='index')
+            combined_df = combined_df.reset_index()
+            combined_df.rename(columns={'index': 'Run'}, inplace=True)
+            combined_df.to_csv(analysis_dir / "performance_metrics.csv", index=False)
+            self.logger.info(f"Saved combined performance metrics for {len(combined_metrics)} runs")
             
-            # Plot observed data
-            plt.plot(all_flows.index, all_flows['Observed'], 'g-', linewidth=2, label='Observed')
-            
-            # Add labels and legend
-            plt.xlabel('Date')
-            plt.ylabel('Streamflow (m³/s)')
-            plt.title(f'Ensemble Streamflow Simulations ({len(metrics)} Runs)')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            
-            # Format x-axis dates
-            plt.gca().xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-            plt.gcf().autofmt_xdate()
-            
-            # Save the plot
-            plt.savefig(analysis_dir / "ensemble_streamflow_comparison.png", dpi=300, bbox_inches='tight')
-            plt.close()
+            # Create period-specific visualization plots
+            self._create_period_plots(all_flows, calib_mask, eval_mask, calib_metrics, eval_metrics, analysis_dir)
             
             self.logger.info(f"Ensemble analysis completed. Results saved to {analysis_dir}")
             return analysis_dir
@@ -2080,3 +2560,390 @@ class SingleSampleEmulator:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
+
+    def _calculate_metrics(self, observed, simulated):
+        """
+        Calculate performance metrics between observed and simulated streamflow.
+        
+        Args:
+            observed: Series of observed streamflow values
+            simulated: Series of simulated streamflow values
+            
+        Returns:
+            Dictionary of performance metrics
+        """
+        import numpy as np
+        
+        # Handle common issues
+        observed = observed.astype(float)
+        simulated = simulated.astype(float)
+        
+        # Drop NaN values
+        valid = ~(np.isnan(observed) | np.isnan(simulated))
+        observed = observed[valid]
+        simulated = simulated[valid]
+        
+        # Apply capping to reduce impact of extreme outliers (use 99.5th percentile)
+        obs_cap = np.percentile(observed, 99.5)
+        observed = np.minimum(observed, obs_cap)
+        simulated = np.minimum(simulated, obs_cap)
+        
+        mean_obs = observed.mean()
+        
+        # Correlation coefficient
+        try:
+            r = np.corrcoef(simulated, observed)[0, 1]
+        except:
+            r = np.nan
+        
+        # Relative variability
+        alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
+        
+        # Bias ratio
+        beta = simulated.mean() / mean_obs if mean_obs != 0 else np.nan
+        
+        # KGE
+        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
+        
+        # Root Mean Square Error (RMSE)
+        rmse = np.sqrt(((observed - simulated) ** 2).mean())
+        
+        # Nash-Sutcliffe Efficiency (NSE)
+        numerator = ((observed - simulated) ** 2).sum()
+        denominator = ((observed - mean_obs) ** 2).sum()
+        nse = 1 - (numerator / denominator) if denominator > 0 else np.nan
+        
+        # Percent Bias (PBIAS)
+        pbias = 100 * (simulated.sum() - observed.sum()) / observed.sum() if observed.sum() != 0 else np.nan
+        
+        # Mean Absolute Error (MAE)
+        mae = np.abs(observed - simulated).mean()
+        
+        return {
+            'KGE': kge,
+            'NSE': nse,
+            'RMSE': rmse,
+            'PBIAS': pbias,
+            'MAE': mae,
+            'r': r,
+            'alpha': alpha,
+            'beta': beta
+        }
+
+    def _create_period_plots(self, all_flows, calib_mask, eval_mask, calib_metrics, eval_metrics, analysis_dir):
+        """
+        Create separate plots for calibration and evaluation periods.
+        
+        Args:
+            all_flows: DataFrame with all observed and simulated flows
+            calib_mask: Boolean mask for calibration period
+            eval_mask: Boolean mask for evaluation period
+            calib_metrics: Dictionary with calibration metrics for each run
+            eval_metrics: Dictionary with evaluation metrics for each run
+            analysis_dir: Directory to save plots
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        from matplotlib.dates import DateFormatter
+        import numpy as np
+        
+        # Create a figure with multiple subplots
+        fig = plt.figure(figsize=(18, 12))
+        gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1])
+        
+        # Plots for calibration and evaluation periods
+        ax_calib = fig.add_subplot(gs[0])
+        ax_eval = fig.add_subplot(gs[1], sharex=ax_calib)
+        
+        # Get simulation columns
+        sim_cols = [col for col in all_flows.columns if col != 'Observed']
+        
+        # Calculate ensemble mean
+        all_flows['Ensemble Mean'] = all_flows[sim_cols].mean(axis=1)
+        
+        # Plot calibration period
+        calib_flows = all_flows[calib_mask]
+        if not calib_flows.empty:
+            # Plot individual simulations
+            for col in sim_cols:
+                ax_calib.plot(calib_flows.index, calib_flows[col], 'b-', alpha=0.05, linewidth=0.5)
+            
+            # Plot ensemble mean
+            ax_calib.plot(calib_flows.index, calib_flows['Ensemble Mean'], 'r-', linewidth=1.5, label='Ensemble Mean')
+            
+            # Plot observed
+            ax_calib.plot(calib_flows.index, calib_flows['Observed'], 'g-', linewidth=2, label='Observed')
+            
+            # Add metrics as text
+            if calib_metrics:
+                # Find best run by KGE
+                best_run = max(calib_metrics, key=lambda x: calib_metrics[x]['KGE'])
+                best_metrics = calib_metrics[best_run]
+                ensemble_kge = calib_metrics.get('Ensemble Mean', {}).get('KGE', np.nan)
+                
+                metrics_text = (
+                    f"Calibration Metrics:\n"
+                    f"Ensemble Mean KGE: {np.nanmean([m['KGE'] for m in calib_metrics.values()]):.3f}\n"
+                    f"Best Run: {best_run} (KGE: {best_metrics['KGE']:.3f})\n"
+                    f"Mean NSE: {np.nanmean([m['NSE'] for m in calib_metrics.values()]):.3f}"
+                )
+                
+                ax_calib.text(0.02, 0.95, metrics_text, transform=ax_calib.transAxes,
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            
+            ax_calib.set_title('Calibration Period', fontsize=14)
+            ax_calib.set_ylabel('Streamflow (m³/s)')
+            ax_calib.grid(True, alpha=0.3)
+            ax_calib.legend(loc='upper right')
+        
+        # Plot evaluation period
+        eval_flows = all_flows[eval_mask]
+        if not eval_flows.empty:
+            # Plot individual simulations
+            for col in sim_cols:
+                ax_eval.plot(eval_flows.index, eval_flows[col], 'b-', alpha=0.05, linewidth=0.5)
+            
+            # Plot ensemble mean
+            ax_eval.plot(eval_flows.index, eval_flows['Ensemble Mean'], 'r-', linewidth=1.5, label='Ensemble Mean')
+            
+            # Plot observed
+            ax_eval.plot(eval_flows.index, eval_flows['Observed'], 'g-', linewidth=2, label='Observed')
+            
+            # Add metrics as text
+            if eval_metrics:
+                # Find best run by KGE
+                best_run = max(eval_metrics, key=lambda x: eval_metrics[x]['KGE'])
+                best_metrics = eval_metrics[best_run]
+                
+                metrics_text = (
+                    f"Evaluation Metrics:\n"
+                    f"Ensemble Mean KGE: {np.nanmean([m['KGE'] for m in eval_metrics.values()]):.3f}\n"
+                    f"Best Run: {best_run} (KGE: {best_metrics['KGE']:.3f})\n"
+                    f"Mean NSE: {np.nanmean([m['NSE'] for m in eval_metrics.values()]):.3f}"
+                )
+                
+                ax_eval.text(0.02, 0.95, metrics_text, transform=ax_eval.transAxes,
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            
+            ax_eval.set_title('Evaluation Period', fontsize=14)
+            ax_eval.set_xlabel('Date')
+            ax_eval.set_ylabel('Streamflow (m³/s)')
+            ax_eval.grid(True, alpha=0.3)
+            ax_eval.legend(loc='upper right')
+        
+        # Format x-axis dates
+        for ax in [ax_calib, ax_eval]:
+            ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+            plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+        
+        # Add overall title
+        plt.suptitle(f'Ensemble Streamflow Simulations ({len(sim_cols)} Runs)', fontsize=16)
+        
+        # Save the plot
+        plt.tight_layout(rect=[0, 0, 1, 0.97])  # Make room for suptitle
+        plt.savefig(analysis_dir / "ensemble_streamflow_by_period.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create additional visualization: comparison scatter plots
+        self._create_scatter_plots(all_flows, calib_mask, eval_mask, calib_metrics, eval_metrics, analysis_dir)
+        
+        # Create flow duration curves by period
+        self._create_flow_duration_curves(all_flows, calib_mask, eval_mask, analysis_dir)
+
+    def _create_scatter_plots(self, all_flows, calib_mask, eval_mask, calib_metrics, eval_metrics, analysis_dir):
+        """Create scatter plots comparing observed vs. ensemble mean streamflow for each period."""
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from scipy.stats import linregress
+        
+        # Create figure
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # Calibration period scatter plot
+        calib_flows = all_flows[calib_mask]
+        if not calib_flows.empty and 'Ensemble Mean' in calib_flows.columns:
+            # Filter out NaN values
+            valid_mask = ~(calib_flows['Observed'].isna() | calib_flows['Ensemble Mean'].isna())
+            if valid_mask.sum() > 0:
+                valid_calib = calib_flows[valid_mask]
+                
+                # Get arrays for regression
+                x = valid_calib['Observed'].values
+                y = valid_calib['Ensemble Mean'].values
+                
+                # Plot scatter
+                ax1.scatter(x, y, alpha=0.6, color='blue', label='Calibration')
+                
+                # Add 1:1 line
+                max_val = max(x.max(), y.max())
+                min_val = min(x.min(), y.min())
+                ax1.plot([min_val, max_val], [min_val, max_val], 'k--', label='1:1 Line')
+                
+                # Add regression line if possible
+                if len(x) >= 2:
+                    try:
+                        slope, intercept, r_value, _, _ = linregress(x, y)
+                        if not np.isnan(slope) and not np.isnan(intercept):
+                            ax1.plot([min_val, max_val], 
+                                    [slope * min_val + intercept, slope * max_val + intercept], 
+                                    'r-', label=f'Regression (r={r_value:.2f})')
+                    except Exception as e:
+                        self.logger.warning(f"Error calculating regression for calibration scatter: {str(e)}")
+                
+                # Add metrics text
+                if calib_metrics:
+                    metrics_text = (
+                        f"Calibration Metrics:\n"
+                        f"KGE: {np.nanmean([m['KGE'] for m in calib_metrics.values()]):.3f}\n"
+                        f"NSE: {np.nanmean([m['NSE'] for m in calib_metrics.values()]):.3f}\n"
+                        f"RMSE: {np.nanmean([m['RMSE'] for m in calib_metrics.values()]):.3f}"
+                    )
+                    ax1.text(0.05, 0.95, metrics_text, transform=ax1.transAxes,
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        
+        ax1.set_xlabel('Observed Streamflow (m³/s)')
+        ax1.set_ylabel('Simulated Streamflow (m³/s)')
+        ax1.set_title('Calibration Period')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        # Evaluation period scatter plot
+        eval_flows = all_flows[eval_mask]
+        if not eval_flows.empty and 'Ensemble Mean' in eval_flows.columns:
+            # Filter out NaN values
+            valid_mask = ~(eval_flows['Observed'].isna() | eval_flows['Ensemble Mean'].isna())
+            if valid_mask.sum() > 0:
+                valid_eval = eval_flows[valid_mask]
+                
+                # Get arrays for regression
+                x = valid_eval['Observed'].values
+                y = valid_eval['Ensemble Mean'].values
+                
+                # Plot scatter
+                ax2.scatter(x, y, alpha=0.6, color='red', label='Evaluation')
+                
+                # Add 1:1 line
+                max_val = max(x.max(), y.max())
+                min_val = min(x.min(), y.min())
+                ax2.plot([min_val, max_val], [min_val, max_val], 'k--', label='1:1 Line')
+                
+                # Add regression line if possible
+                if len(x) >= 2:
+                    try:
+                        slope, intercept, r_value, _, _ = linregress(x, y)
+                        if not np.isnan(slope) and not np.isnan(intercept):
+                            ax2.plot([min_val, max_val], 
+                                    [slope * min_val + intercept, slope * max_val + intercept], 
+                                    'r-', label=f'Regression (r={r_value:.2f})')
+                    except Exception as e:
+                        self.logger.warning(f"Error calculating regression for evaluation scatter: {str(e)}")
+                
+                # Add metrics text
+                if eval_metrics:
+                    metrics_text = (
+                        f"Evaluation Metrics:\n"
+                        f"KGE: {np.nanmean([m['KGE'] for m in eval_metrics.values()]):.3f}\n"
+                        f"NSE: {np.nanmean([m['NSE'] for m in eval_metrics.values()]):.3f}\n"
+                        f"RMSE: {np.nanmean([m['RMSE'] for m in eval_metrics.values()]):.3f}"
+                    )
+                    ax2.text(0.05, 0.95, metrics_text, transform=ax2.transAxes,
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        
+        ax2.set_xlabel('Observed Streamflow (m³/s)')
+        ax2.set_ylabel('Simulated Streamflow (m³/s)')
+        ax2.set_title('Evaluation Period')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        
+        # Try to set equal aspect ratio and axes limits
+        for ax in [ax1, ax2]:
+            try:
+                ax.set_aspect('equal')
+            except:
+                pass
+        
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "ensemble_scatter_by_period.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
+    def _create_flow_duration_curves(self, all_flows, calib_mask, eval_mask, analysis_dir):
+        """Create flow duration curves for calibration and evaluation periods."""
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        # Create figure
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # Get simulation columns
+        sim_cols = [col for col in all_flows.columns if col not in ['Observed', 'Ensemble Mean']]
+        
+        # Calibration period FDC
+        calib_flows = all_flows[calib_mask]
+        if not calib_flows.empty:
+            # Calculate FDC for observed data
+            obs_sorted = calib_flows['Observed'].dropna().sort_values(ascending=False)
+            obs_exceed = np.arange(1, len(obs_sorted) + 1) / (len(obs_sorted) + 1)
+            
+            # Plot observed FDC
+            ax1.plot(obs_exceed, obs_sorted, 'g-', linewidth=2, label='Observed')
+            
+            # Calculate and plot FDC for ensemble mean
+            if 'Ensemble Mean' in calib_flows.columns:
+                mean_sorted = calib_flows['Ensemble Mean'].dropna().sort_values(ascending=False)
+                mean_exceed = np.arange(1, len(mean_sorted) + 1) / (len(mean_sorted) + 1)
+                ax1.plot(mean_exceed, mean_sorted, 'r-', linewidth=1.5, label='Ensemble Mean')
+            
+            # Plot individual model FDCs (limit to first 20 for clarity)
+            for col in sim_cols[:min(20, len(sim_cols))]:
+                sim_sorted = calib_flows[col].dropna().sort_values(ascending=False)
+                sim_exceed = np.arange(1, len(sim_sorted) + 1) / (len(sim_sorted) + 1)
+                ax1.plot(sim_exceed, sim_sorted, 'b-', alpha=0.05, linewidth=0.5)
+        
+        ax1.set_xlabel('Exceedance Probability')
+        ax1.set_ylabel('Streamflow (m³/s)')
+        ax1.set_title('Calibration Period Flow Duration Curve')
+        ax1.set_yscale('log')
+        ax1.grid(True, which='both', alpha=0.3)
+        ax1.legend()
+        
+        # Evaluation period FDC
+        eval_flows = all_flows[eval_mask]
+        if not eval_flows.empty:
+            # Calculate FDC for observed data
+            obs_sorted = eval_flows['Observed'].dropna().sort_values(ascending=False)
+            obs_exceed = np.arange(1, len(obs_sorted) + 1) / (len(obs_sorted) + 1)
+            
+            # Plot observed FDC
+            ax2.plot(obs_exceed, obs_sorted, 'g-', linewidth=2, label='Observed')
+            
+            # Calculate and plot FDC for ensemble mean
+            if 'Ensemble Mean' in eval_flows.columns:
+                mean_sorted = eval_flows['Ensemble Mean'].dropna().sort_values(ascending=False)
+                mean_exceed = np.arange(1, len(mean_sorted) + 1) / (len(mean_sorted) + 1)
+                ax2.plot(mean_exceed, mean_sorted, 'r-', linewidth=1.5, label='Ensemble Mean')
+            
+            # Plot individual model FDCs (limit to first 20 for clarity)
+            for col in sim_cols[:min(20, len(sim_cols))]:
+                sim_sorted = eval_flows[col].dropna().sort_values(ascending=False)
+                sim_exceed = np.arange(1, len(sim_sorted) + 1) / (len(sim_sorted) + 1)
+                ax2.plot(sim_exceed, sim_sorted, 'b-', alpha=0.05, linewidth=0.5)
+        
+        ax2.set_xlabel('Exceedance Probability')
+        ax2.set_ylabel('Streamflow (m³/s)')
+        ax2.set_title('Evaluation Period Flow Duration Curve')
+        ax2.set_yscale('log')
+        ax2.grid(True, which='both', alpha=0.3)
+        ax2.legend()
+        
+        # Use same y-axis limits for both plots if possible
+        try:
+            y_min = min(ax1.get_ylim()[0], ax2.get_ylim()[0])
+            y_max = max(ax1.get_ylim()[1], ax2.get_ylim()[1])
+            ax1.set_ylim(y_min, y_max)
+            ax2.set_ylim(y_min, y_max)
+        except:
+            pass
+        
+        plt.tight_layout()
+        plt.savefig(analysis_dir / "flow_duration_curves_by_period.png", dpi=300, bbox_inches='tight')
+        plt.close()
