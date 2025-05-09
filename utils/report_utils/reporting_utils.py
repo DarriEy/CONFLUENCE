@@ -807,19 +807,18 @@ class VisualizationReporter:
             return self.project_dir / file_def_path / file_name
         else:
             return Path(self.config.get(f'{file_type}'))
-    
+        
     def plot_domain(self):
         """
         Creates a map visualization of the delineated domain with a basemap.
-        Plots catchment boundary, river network, and pour point on top of a contextily basemap.
+        Plots catchment boundary, river network (if not lumped), and pour point on top of a contextily basemap.
         """
         try:
-            
             # Create plot folder if it doesn't exist
             plot_folder = self.project_dir / "plots" / "domain"
             plot_folder.mkdir(parents=True, exist_ok=True)
             plot_filename = plot_folder / 'domain_map.png'
-
+            
             # Load the shapefiles
             # Catchment
             catchment_name = self.config.get('RIVER_BASINS_NAME')
@@ -827,34 +826,41 @@ class VisualizationReporter:
                 catchment_name = f"{self.config['DOMAIN_NAME']}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
             catchment_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', catchment_name)
             catchment_gdf = gpd.read_file(catchment_path)
-
-            # River network
-            river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
-            if river_name == 'default':
-                river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
-            river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
-            river_gdf = gpd.read_file(river_path)
-
+            
+            # Check if we need to load river network (not needed for lumped domains)
+            domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+            load_river_network = domain_method != 'lumped'
+            
+            # River network - only load if not lumped
+            if load_river_network:
+                river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+                if river_name == 'default':
+                    river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
+                river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
+                river_gdf = gpd.read_file(river_path)
+            
             # Pour point
             pour_point_name = self.config.get('POUR_POINT_SHP_NAME')
             if pour_point_name == 'default':
                 pour_point_name = f"{self.config.get('DOMAIN_NAME')}_pourPoint.shp"
             pour_point_path = self._get_file_path('POUR_POINT_SHP_PATH', 'shapefiles/pour_point', pour_point_name)
             pour_point_gdf = gpd.read_file(pour_point_path)
-
+            
             # Reproject to Web Mercator for contextily basemap
             catchment_gdf = catchment_gdf.to_crs(epsg=3857)
-            river_gdf = river_gdf.to_crs(epsg=3857)
+            if load_river_network:
+                river_gdf = river_gdf.to_crs(epsg=3857)
             pour_point_gdf = pour_point_gdf.to_crs(epsg=3857)
-
+            
             # Create figure and axis
             fig, ax = plt.subplots(figsize=(15, 15))
-
+            
             # Reproject everything to Web Mercator for consistency with basemap
             catchment_gdf_web = catchment_gdf.to_crs(epsg=3857)
-            river_gdf_web = river_gdf.to_crs(epsg=3857)
+            if load_river_network:
+                river_gdf_web = river_gdf.to_crs(epsg=3857)
             pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
-
+            
             # Calculate buffer for extent (10% of the catchment bounds)
             bounds = catchment_gdf_web.total_bounds
             buffer_x = (bounds[2] - bounds[0]) * 0.1
@@ -865,14 +871,14 @@ class VisualizationReporter:
                 bounds[2] + buffer_x,
                 bounds[3] + buffer_y
             ]
-
+            
             # Set map extent with buffer
             ax.set_xlim([plot_bounds[0], plot_bounds[2]])
             ax.set_ylim([plot_bounds[1], plot_bounds[3]])
-
+            
             # Add the global basemap
             #self.plot_with_global_basemap(ax, plot_bounds)
-
+            
             # Plot the catchment boundary with a clean style
             catchment_gdf_web.boundary.plot(
                 ax=ax,
@@ -881,34 +887,36 @@ class VisualizationReporter:
                 label='Catchment Boundary',
                 zorder=2
             )
-
-            # Plot the river network with line width based on stream order
-            if 'StreamOrde' in river_gdf_web.columns:
-                min_order = river_gdf_web['StreamOrde'].min()
-                max_order = river_gdf_web['StreamOrde'].max()
-                river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
-                    lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
-                )
-                
-                for idx, row in river_gdf_web.iterrows():
-                    ax.plot(
-                        row.geometry.xy[0],
-                        row.geometry.xy[1],
+            
+            # Plot the river network only if not lumped
+            if load_river_network:
+                # Plot the river network with line width based on stream order
+                if 'StreamOrde' in river_gdf_web.columns:
+                    min_order = river_gdf_web['StreamOrde'].min()
+                    max_order = river_gdf_web['StreamOrde'].max()
+                    river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
+                        lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
+                    )
+                    
+                    for idx, row in river_gdf_web.iterrows():
+                        ax.plot(
+                            row.geometry.xy[0],
+                            row.geometry.xy[1],
+                            color='#3498db',
+                            linewidth=row['line_width'],
+                            zorder=3,
+                            alpha=0.8
+                        )
+                else:
+                    river_gdf_web.plot(
+                        ax=ax,
                         color='#3498db',
-                        linewidth=row['line_width'],
+                        linewidth=1,
+                        label='River Network',
                         zorder=3,
                         alpha=0.8
                     )
-            else:
-                river_gdf_web.plot(
-                    ax=ax,
-                    color='#3498db',
-                    linewidth=1,
-                    label='River Network',
-                    zorder=3,
-                    alpha=0.8
-                )
-
+            
             # Plot the pour point with a prominent style
             pour_point_gdf_web.plot(
                 ax=ax,
@@ -918,36 +926,40 @@ class VisualizationReporter:
                 label='Pour Point',
                 zorder=4
             )
-
+            
             self._add_north_arrow(ax)
-
+            
             # Add title
             plt.title(f'Delineated Domain: {self.config.get("DOMAIN_NAME")}', 
                     fontsize=16, pad=20, fontweight='bold')
-
+            
             # Create custom legend with larger symbols
             legend_elements = [
                 Line2D([0], [0], color='#2c3e50', linewidth=2, label='Catchment Boundary'),
-                Line2D([0], [0], color='#3498db', linewidth=2, label='River Network'),
                 Line2D([0], [0], color='#e74c3c', marker='*', label='Pour Point',
                     markersize=15, linewidth=0)
             ]
+            
+            # Add river network to legend only if it exists
+            if load_river_network:
+                legend_elements.insert(1, Line2D([0], [0], color='#3498db', linewidth=2, label='River Network'))
+            
             ax.legend(handles=legend_elements, loc='upper right', 
                     frameon=True, facecolor='white', framealpha=0.9)
-
+            
             # Remove axes
             ax.set_axis_off()
-
+            
             # Add domain information box
             self._add_domain_info_box(ax, catchment_gdf_web)
-
+            
             # Save the plot
             plt.savefig(plot_filename, dpi=300, bbox_inches='tight', pad_inches=0.1)
             plt.close()
-
+            
             self.logger.info(f"Domain map saved to {plot_filename}")
             return str(plot_filename)
-
+            
         except Exception as e:
             self.logger.error(f"Error in plot_domain: {str(e)}")
             self.logger.error(traceback.format_exc())
@@ -1070,20 +1082,18 @@ class VisualizationReporter:
             self.logger.warning(f"Error adding global basemap: {str(e)}")
             self.logger.warning("Continuing without basemap")
 
-    
+        
     def plot_discretized_domain(self, discretization_method: str) -> str:
         """
         Creates a map visualization of the discretized domain with a clean, professional style.
         
         Args:
-            hru_gdf (gpd.GeoDataFrame): GeoDataFrame containing the HRUs
             discretization_method (str): Method used for discretization (e.g., 'elevation', 'landclass')
         
         Returns:
             str: Path to the saved plot
         """
         try:
-            
             # Create plot folder if it doesn't exist
             plot_folder = self.project_dir / "plots" / "discretization"
             plot_folder.mkdir(parents=True, exist_ok=True)
@@ -1096,12 +1106,17 @@ class VisualizationReporter:
             catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment', catchment_name)
             hru_gdf = gpd.read_file(catchment_path)
 
-            # Load river network for context
-            river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
-            if river_name == 'default':
-                river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
-            river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
-            river_gdf = gpd.read_file(river_path)
+            # Check if we need to load river network (not needed for lumped domains)
+            domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
+            load_river_network = domain_method != 'lumped'
+
+            # River network - only load if not lumped
+            if load_river_network:
+                river_name = self.config.get('RIVER_NETWORK_SHP_NAME')
+                if river_name == 'default':
+                    river_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
+                river_path = self._get_file_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network', river_name)
+                river_gdf = gpd.read_file(river_path)
 
             # Load pour point for context
             pour_point_name = self.config.get('POUR_POINT_SHP_NAME')
@@ -1115,7 +1130,8 @@ class VisualizationReporter:
 
             # Reproject everything to Web Mercator
             hru_gdf_web = hru_gdf.to_crs(epsg=3857)
-            river_gdf_web = river_gdf.to_crs(epsg=3857)
+            if load_river_network:
+                river_gdf_web = river_gdf.to_crs(epsg=3857)
             pour_point_gdf_web = pour_point_gdf.to_crs(epsg=3857)
 
             # Calculate bounds with buffer
@@ -1135,12 +1151,12 @@ class VisualizationReporter:
 
             # Get the column name and setup legend title
             class_mappings = {
-                    'elevation': {'col': 'elevClass', 'title': 'Elevation Classes', 'cm': 'terrain'},  # Changed from 'Spectral' to 'terrain'
-                    'soilclass': {'col': 'soilClass', 'title': 'Soil Classes', 'cm': 'Set3'},
-                    'landclass': {'col': 'landClass', 'title': 'Land Use Classes', 'cm': 'Set2'},
-                    'radiation': {'col': 'radiationClass', 'title': 'Radiation Classes', 'cm': 'YlOrRd'},
-                    'default': {'col': 'HRU_ID', 'title': 'HRU Classes', 'cm': 'tab20'}
-                }
+                'elevation': {'col': 'elevClass', 'title': 'Elevation Classes', 'cm': 'terrain'},
+                'soilclass': {'col': 'soilClass', 'title': 'Soil Classes', 'cm': 'Set3'},
+                'landclass': {'col': 'landClass', 'title': 'Land Use Classes', 'cm': 'Set2'},
+                'radiation': {'col': 'radiationClass', 'title': 'Radiation Classes', 'cm': 'YlOrRd'},
+                'default': {'col': 'HRU_ID', 'title': 'HRU Classes', 'cm': 'tab20'}
+            }
 
             # Get mapping for the discretization method, defaulting to HRU if not found
             mapping = class_mappings.get(discretization_method.lower(), class_mappings['default'])
@@ -1170,7 +1186,6 @@ class VisualizationReporter:
             else:
                 legend_labels = [f'Class {i}' for i in unique_classes]
 
-                        
             # Get colors from the specified colormap
             base_cmap = plt.get_cmap(mapping['cm'])
 
@@ -1192,34 +1207,25 @@ class VisualizationReporter:
                 
                 # Ensure we have exactly n_classes colors by interpolating if necessary
                 if len(all_colors) < n_classes:
-                    # Convert colors to array for interpolation
                     colors_array = np.array(all_colors)
-                    # Create evenly spaced indices
                     indices = np.linspace(0, len(colors_array) - 1, n_classes)
-                    # Interpolate to get exactly n_classes colors
                     colors = [colors_array[int(i)] if i < len(colors_array) else colors_array[-1] for i in indices]
                 else:
-                    # Take exactly n_classes colors
                     colors = all_colors[:n_classes]
             else:
-                # If we have enough colors in the base colormap, use linear spacing
                 colors = [base_cmap(i) for i in np.linspace(0, 1, n_classes)]
-
-            # Ensure we have exactly n_classes colors
-            assert len(colors) == n_classes, f"Color mismatch: {len(colors)} colors for {n_classes} classes"
-
 
             # Create custom colormap and normalization
             cmap = ListedColormap(colors)
             norm = plt.Normalize(vmin=min(unique_classes)-0.5, vmax=max(unique_classes)+0.5)
 
             hru_plot = hru_gdf_web.plot(
-            column=class_col,
-            ax=ax,
-            cmap=cmap,
-            norm=norm,
-            alpha=0.7,
-            legend=False  # Make sure this is False
+                column=class_col,
+                ax=ax,
+                cmap=cmap,
+                norm=norm,
+                alpha=0.7,
+                legend=False
             )
 
             # Create custom legend
@@ -1266,7 +1272,6 @@ class VisualizationReporter:
                         fancybox=True,
                         shadow=True)
 
-
             # Plot HRU boundaries
             hru_gdf_web.boundary.plot(
                 ax=ax,
@@ -1275,31 +1280,32 @@ class VisualizationReporter:
                 alpha=0.5
             )
 
-            # Plot river network
-            if 'StreamOrde' in river_gdf_web.columns:
-                min_order = river_gdf_web['StreamOrde'].min()
-                max_order = river_gdf_web['StreamOrde'].max()
-                river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
-                    lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
-                )
-                for idx, row in river_gdf_web.iterrows():
-                    ax.plot(
-                        row.geometry.xy[0],
-                        row.geometry.xy[1],
+            # Plot river network only if not lumped
+            if load_river_network:
+                if 'StreamOrde' in river_gdf_web.columns:
+                    min_order = river_gdf_web['StreamOrde'].min()
+                    max_order = river_gdf_web['StreamOrde'].max()
+                    river_gdf_web['line_width'] = river_gdf_web['StreamOrde'].apply(
+                        lambda x: 0.5 + 2 * (x - min_order) / (max_order - min_order)
+                    )
+                    for idx, row in river_gdf_web.iterrows():
+                        ax.plot(
+                            row.geometry.xy[0],
+                            row.geometry.xy[1],
+                            color='#3498db',
+                            linewidth=row['line_width'],
+                            zorder=3,
+                            alpha=0.8
+                        )
+                else:
+                    river_gdf_web.plot(
+                        ax=ax,
                         color='#3498db',
-                        linewidth=row['line_width'],
+                        linewidth=1,
+                        label='River Network',
                         zorder=3,
                         alpha=0.8
                     )
-            else:
-                river_gdf_web.plot(
-                    ax=ax,
-                    color='#3498db',
-                    linewidth=1,
-                    label='River Network',
-                    zorder=3,
-                    alpha=0.8
-                )
 
             # Plot pour point
             pour_point_gdf_web.plot(
@@ -1310,7 +1316,6 @@ class VisualizationReporter:
                 label='Pour Point',
                 zorder=4
             )
-
 
             # Add north arrow
             self._add_north_arrow(ax)
