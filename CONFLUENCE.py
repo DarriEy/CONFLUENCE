@@ -92,9 +92,11 @@ class CONFLUENCE:
         self.evaluation_dir = self.project_dir / 'evaluation'
         self.evaluation_dir.mkdir(parents=True, exist_ok=True)
         self.experiment_id = self.config.get('EXPERIMENT_ID')
+        self.catchment_dir = self.project_dir / 'shapefiles' / 'catchment'
+        self.catchment_dir.mkdir(parents=True,  exist_ok=True)
 
         self.setup_logging()
-        
+
        # Log configuration file using the original config path
         log_dir = self.project_dir / f"_workLog_{self.domain_name}"
         self.config_log_file = log_configuration(config, log_dir, self.domain_name)
