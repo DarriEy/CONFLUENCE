@@ -44,8 +44,8 @@ from utils.report_utils.reporting_utils import VisualizationReporter # type: ign
 from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, TimeseriesVisualizer # type: ignore
 
 # Optimisation utilities
-from utils.emulation_utils.random_forest_emulator import RandomForestEmulator # type: ignore
-from utils.emulation_utils.single_sample_emulator import SingleSampleEmulator # type: ignore
+from utils.optimization_utils.random_forest_emulator import RandomForestEmulator # type: ignore
+from utils.optimization_utils.single_sample_emulator import SingleSampleEmulator # type: ignore
 from utils.optimization_utils.dds_optimizer import DDSOptimizer # type: ignore
 from utils.optimization_utils.optimizer_manager import OptimizerManager # type: ignore
 from utils.optimization_utils.pso_optimizer import PSOOptimizer # type: ignore
