@@ -33,6 +33,7 @@ from utils.models_utils.fuse_utils import FUSEPreProcessor, FUSERunner, FuseDeci
 from utils.models_utils.gr_utils import GRPreProcessor, GRRunner, GRPostprocessor # type: ignore
 from utils.models_utils.flash_utils import FLASH, FLASHPostProcessor # type: ignore
 from utils.models_utils.hype_utils import HYPEPreProcessor, HYPERunner, HYPEPostProcessor # type: ignore
+from utils.models_utils.clm_parflow_utils import CLMParFlowPreProcessor, CLMParFlowRunner, CLMParFlowPostProcessor # type: ignore
 #from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
 
 # Evaluation utilities
@@ -45,8 +46,9 @@ from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, T
 # Optimisation utilities
 from utils.emulation_utils.random_forest_emulator import RandomForestEmulator # type: ignore
 from utils.emulation_utils.single_sample_emulator import SingleSampleEmulator # type: ignore
-from utils.optimization_utils.ostrich_util import OstrichOptimizer # type: ignore
 from utils.optimization_utils.dds_optimizer import DDSOptimizer # type: ignore
+from utils.optimization_utils.optimizer_manager import OptimizerManager # type: ignore
+from utils.optimization_utils.pso_optimizer import PSOOptimizer # type: ignore
 
 class CONFLUENCE:
 
@@ -138,7 +140,7 @@ class CONFLUENCE:
             (self.visualise_model_output, lambda: (self.project_dir / "plots" / "results" / "streamflow_comparison.png").exists()),
 
             # --- Emulation and Optimization Steps ---
-            (self.run_dds_optimization, lambda: self.config.get('RUN_ITERATIVE_OPTIMISATION', False) and (self.project_dir / "optimisation" / f"dds_{self.config.get('EXPERIMENT_ID')}" / "best_params.csv").exists()),
+            (self.calibrate_model, lambda: self.config.get('RUN_ITERATIVE_OPTIMISATION', False) and (self.project_dir / "optimisation" / f"dds_{self.config.get('EXPERIMENT_ID')}" / "best_params.csv1").exists()),
             (self.process_attributes, lambda: (self.project_dir / "attributes" / f"{self.domain_name}_attributes.csv").exists()),
             (self.prepare_emulation_data, lambda: (self.project_dir / "emulation" / f"parameter_sets_{self.config.get('EXPERIMENT_ID')}.nc").exists()), 
             (self.calculate_ensemble_performance_metrics, lambda: (self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / "ensemble_analysis" / "performance_metrics.csv").exists()),
@@ -165,6 +167,192 @@ class CONFLUENCE:
 
         self.logger.info("CONFLUENCE workflow completed")
 
+    def calibrate_model(self):
+        """
+        Calibrate the model using the specified optimization algorithm and objectives.
+        
+        Supports multiple optimization algorithms including:
+        - Differential Evolution (DE)
+        - Particle Swarm Optimization (PSO) 
+        - Shuffled Complex Evolution (SCE-UA)
+        
+        Returns:
+            Path: Path to calibration results file or None if calibration failed
+        """
+        self.logger.info("Starting model calibration")
+        
+        # Get the optimization algorithm from the config
+        opt_algorithm = self.config.get('ITERATIVE_OPTIMIZATION_ALGORITHM', 'PSO')
+        
+        try:
+            for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
+                if model == 'SUMMA':
+                    # Create optimization directory if it doesn't exist
+                    opt_dir = self.project_dir / "optimisation"
+                    opt_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Choose the optimizer based on the algorithm
+                    if opt_algorithm == 'PSO':
+                        self.logger.info("Using Particle Swarm Optimization (PSO)")
+                        optimizer = PSOOptimizer(self.config, self.logger)
+                        result = optimizer.run_pso_optimization()
+                        
+                        # Save results to standard location
+                        self._save_optimization_results_to_csv(result)
+                    elif opt_algorithm == 'SCE-UA':
+                        self.logger.info("Using Shuffled Complex Evolution (SCE-UA)")
+                        optimizer = SCEUAOptimizer(self.config, self.logger)
+                        result = optimizer.run_sceua_optimization()
+                        
+                        # Save results to standard location
+                        self._save_optimization_results_to_csv(result)
+                    else:
+                        self.logger.info(f"Using parallel optimization with {opt_algorithm}")
+                        self.run_parallel_optimization()
+                else:
+                    self.logger.warning(f"Calibration for model {model} not yet implemented")
+        except Exception as e:
+            self.logger.error(f"Error during model calibration: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+        
+        # Return the path to the optimization results file
+        results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
+        if results_file.exists():
+            self.logger.info(f"Calibration completed successfully: {results_file}")
+            return results_file
+        else:
+            self.logger.warning("Calibration completed but results file not found")
+            return None
+    
+    def _save_optimization_results_to_csv(self, results):
+        """
+        Save optimization results to a CSV file for compatibility with other parts of CONFLUENCE.
+        
+        Args:
+            results: Dictionary with optimization results
+        """
+        try:
+            # Get best parameters and score
+            best_params = results.get('best_parameters', {})
+            best_score = results.get('best_score', None)
+            
+            if not best_params or best_score is None:
+                self.logger.warning("No valid optimization results to save")
+                return
+            
+            # Create DataFrame from best parameters
+            results_data = {}
+            
+            # First add iteration column
+            results_data['iteration'] = [0]
+            
+            # Add score column with appropriate name based on the target metric
+            target_metric = self.config.get('OPTIMIZATION_METRIC', 'KGE')
+            results_data[target_metric] = [best_score]
+            
+            # Add parameter columns
+            for param_name, values in best_params.items():
+                if isinstance(values, np.ndarray) and len(values) > 1:
+                    # For parameters with multiple values (like HRU-level parameters),
+                    # save the mean value
+                    results_data[param_name] = [float(np.mean(values))]
+                else:
+                    # For scalar parameters or single-value arrays
+                    results_data[param_name] = [float(values[0]) if isinstance(values, np.ndarray) else float(values)]
+            
+            # Create DataFrame
+            results_df = pd.DataFrame(results_data)
+            
+            # Save to standard location
+            results_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_parallel_iteration_results.csv"
+            results_df.to_csv(results_file, index=False)
+            self.logger.info(f"Saved optimization results to {results_file}")
+            
+            # Also save detailed results to optimizer-specific files
+            history = results.get('history', [])
+            if history:
+                # Extract iteration history data
+                history_data = {
+                    'iteration': [],
+                    target_metric: [],
+                }
+                
+                # Add parameter columns to history data
+                for param_name in best_params.keys():
+                    history_data[param_name] = []
+                
+                # Fill history data
+                for h in history:
+                    history_data['iteration'].append(h.get('iteration', 0))
+                    history_data[target_metric].append(h.get('best_score', np.nan))
+                    
+                    # Add parameter values
+                    if 'best_params' in h and h['best_params']:
+                        for param_name, values in h['best_params'].items():
+                            if param_name in history_data:
+                                if isinstance(values, np.ndarray) and len(values) > 1:
+                                    history_data[param_name].append(float(np.mean(values)))
+                                else:
+                                    val = float(values[0]) if isinstance(values, np.ndarray) else float(values)
+                                    history_data[param_name].append(val)
+                
+                # Create DataFrame and save
+                history_df = pd.DataFrame(history_data)
+                history_file = self.project_dir / "optimisation" / f"{self.config.get('EXPERIMENT_ID')}_{opt_algorithm.lower()}_history.csv"
+                history_df.to_csv(history_file, index=False)
+                self.logger.info(f"Saved optimization history to {history_file}")
+        except Exception as e:
+            self.logger.error(f"Error saving optimization results: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+
+    def run_clm_parflow_optimization(self):
+        """
+        Run optimization for CLM-ParFlow parameters.
+        
+        This method would implement a parameter estimation approach for CLM-ParFlow,
+        likely using a similar approach to the existing optimization methods but with
+        parameters specific to CLM-ParFlow.
+        """
+        self.logger.info("Starting CLM-ParFlow parameter optimization")
+        
+        # This is a placeholder for future implementation
+        self.logger.warning("CLM-ParFlow optimization not yet implemented")
+        
+        # Example of how this might be implemented:
+        """
+        # Define parameters to calibrate
+        params_to_calibrate = [
+            # ParFlow parameters
+            {"name": "Geom.Perm.Value", "min": 0.1, "max": 10.0},
+            {"name": "Phase.Saturation.VanGenuchten.Alpha.Value", "min": 0.5, "max": 3.5},
+            {"name": "Phase.Saturation.VanGenuchten.N.Value", "min": 1.5, "max": 7.0},
+            # CLM parameters
+            {"name": "clm_ptf", "min": 1, "max": 16},  # Plant functional type
+        ]
+        
+        # Create optimizer
+        optimizer = ParamOptimizer(self.config, self.logger)
+        
+        # Run optimization
+        best_params = optimizer.optimize(params_to_calibrate)
+        
+        # Run with best parameters
+        runner = CLMParFlowRunner(self.config, self.logger)
+        success = runner.run_with_parameters(best_params)
+        
+        if success:
+            self.logger.info(f"CLM-ParFlow optimization completed successfully")
+            return best_params
+        else:
+            self.logger.error("CLM-ParFlow optimization failed")
+            return None
+        """
+        
+        return None
+    
     @get_function_logger
     def setup_project(self):
         self.logger.info(f"Setting up project for domain: {self.domain_name}")
@@ -448,6 +636,11 @@ class CONFLUENCE:
                 elif model == 'MESH':
                     mpp = MESHPreProcessor(self.config, self.logger)
                     mpp.run_preprocessing()
+                elif model == 'CLM_PARFLOW':
+                    # Add CLM-ParFlow preprocessing
+                    self.logger.info("Initializing CLM-ParFlow preprocessor")
+                    cpp = CLMParFlowPreProcessor(self.config, self.logger)
+                    cpp.run_preprocessing()
                 else:
                     self.logger.warning(f"Unsupported model: {model}. No preprocessing performed.")
                     
@@ -460,7 +653,6 @@ class CONFLUENCE:
         self.logger.info("Model-specific preprocessing completed")
 
 
-    @get_function_logger
     def run_models(self):
         self.logger.info("Starting model runs")
         
@@ -507,15 +699,28 @@ class CONFLUENCE:
                     self.logger.error(f"Error during HYPE model run: {str(e)}")   
 
             elif model == 'MESH':
-                mr = MESHRunner(self.config, self.logger)
-                mr.run_MESH()   
+                try:
+                    mr = MESHRunner(self.config, self.logger)
+                    mr.run_MESH()
+                except Exception as e:
+                    self.logger.error(f"Error during MESH model run: {str(e)}")
+
+            elif model == 'CLM_PARFLOW':
+                try:
+                    self.logger.info("Initializing CLM-ParFlow runner")
+                    clm_parflow_runner = CLMParFlowRunner(self.config, self.logger)
+                    clm_parflow_runner.run_clm_parflow()
+                    self.logger.info("CLM-ParFlow model run completed successfully")
+                except Exception as e:
+                    self.logger.error(f"Error during CLM-ParFlow model run: {str(e)}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
 
             else:
-                self.logger.error(f"Unknown hydrological model: {self.config.get('HYDROLOGICAL_MODEL')}")
+                self.logger.error(f"Unknown hydrological model: {model}")
 
         self.logger.info("Model runs completed")
 
-    @get_function_logger
     def visualise_model_output(self):
         
         # Plot streamflow comparison
@@ -562,6 +767,44 @@ class CONFLUENCE:
                 
             elif model == 'FLASH':
                 pass
+                
+            elif model == 'CLM_PARFLOW':
+                # Add visualization for CLM-ParFlow outputs
+                self.logger.info("Visualizing CLM-ParFlow outputs")
+                
+                # Define observation and simulation files
+                obs_files = [
+                    ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
+                ]
+                
+                # CLM-ParFlow streamflow output location
+                clm_pf_streamflow = str(self.project_dir / "results" / self.config['EXPERIMENT_ID'] / "CLM_PARFLOW" / f"{self.config.get('DOMAIN_NAME')}_{self.config['EXPERIMENT_ID']}_streamflow.csv")
+                
+                model_outputs = [
+                    ("CLM-ParFlow", clm_pf_streamflow)
+                ]
+                
+                # Use a generic CSV-based plotting function
+                # Note: This assumes we'll implement this method in the VisualizationReporter
+                plot_file = visualizer.plot_csv_streamflow_simulations_vs_observations(model_outputs, obs_files)
+                
+                # Plot additional CLM-ParFlow specific outputs like soil moisture
+                try:
+                    soil_moisture_file = self.project_dir / "results" / self.config['EXPERIMENT_ID'] / "CLM_PARFLOW" / f"{self.config.get('DOMAIN_NAME')}_{self.config['EXPERIMENT_ID']}_soil_moisture.nc"
+                    if soil_moisture_file.exists():
+                        soil_moisture_plot = visualizer.plot_soil_moisture(soil_moisture_file)
+                        self.logger.info(f"Soil moisture visualization created: {soil_moisture_plot}")
+                except Exception as e:
+                    self.logger.warning(f"Error creating soil moisture visualization: {str(e)}")
+                    
+                # Plot water balance
+                try:
+                    water_balance_file = self.project_dir / "results" / self.config['EXPERIMENT_ID'] / "CLM_PARFLOW" / f"{self.config.get('DOMAIN_NAME')}_{self.config['EXPERIMENT_ID']}_water_balance.csv"
+                    if water_balance_file.exists():
+                        water_balance_plot = visualizer.plot_water_balance(water_balance_file)
+                        self.logger.info(f"Water balance visualization created: {water_balance_plot}")
+                except Exception as e:
+                    self.logger.warning(f"Error creating water balance visualization: {str(e)}")
 
     @get_function_logger
     def prepare_emulation_data(self):
@@ -1082,62 +1325,6 @@ class CONFLUENCE:
         
         return {'KGE': kge, 'NSE': nse, 'RMSE': rmse}
 
-    def run_dds_optimization(self):
-        """
-        Run DDS optimization if enabled in config.
-        """
-        if not self.config.get('RUN_ITERATIVE_OPTIMISATION', False):
-            self.logger.info("DDS optimization disabled in config. Skipping.")
-            return
-        
-        self.logger.info("Starting DDS optimization")
-        
-        try:
-            # Initialize the DDS optimizer
-            dds_optimizer = DDSOptimizer(self.config, self.logger)
-            
-            # Run the optimization
-            results = dds_optimizer.run_dds_optimization()
-            
-            if results:
-                self.logger.info(f"DDS optimization completed successfully")
-                self.logger.info(f"Best score: {results['best_score']:.4f}")
-                self.logger.info(f"Output directory: {results['output_dir']}")
-                
-                # Log top 5 parameters with their optimized values
-                best_params = results['best_parameters']
-                top_params = sorted(best_params.keys())[:5]  # Just take first 5 for brevity
-                for param in top_params:
-                    if len(best_params[param]) == 1:
-                        # Single value (probably basin parameter)
-                        param_value = best_params[param][0]
-                        self.logger.info(f"  {param}: {param_value:.6f}")
-                    else:
-                        # Multiple values (probably local parameter)
-                        param_mean = np.mean(best_params[param])
-                        param_min = np.min(best_params[param])
-                        param_max = np.max(best_params[param])
-                        self.logger.info(f"  {param}: mean={param_mean:.6f}, range=[{param_min:.6f}, {param_max:.6f}]")
-                
-                # Log final metrics if available
-                if results.get('final_result') and results['final_result'].get('metrics'):
-                    metrics = results['final_result']['metrics']
-                    self.logger.info("Final performance metrics:")
-                    for metric in ['KGE', 'NSE', 'RMSE', 'PBIAS']:
-                        if metric in metrics:
-                            self.logger.info(f"  {metric}: {metrics[metric]:.4f}")
-                
-                return results
-            else:
-                self.logger.warning("DDS optimization did not produce results")
-                return None
-            
-        except Exception as e:
-            self.logger.error(f"Error during DDS optimization: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
-
 
     def _create_additional_ensemble_plots(self, capped_flows, sim_cols, train_mask, test_mask, output_dir):
         """
@@ -1331,7 +1518,6 @@ class CONFLUENCE:
         bv = BenchmarkVizualiser(self.config, self.logger)
         bv.visualize_benchmarks(benchmark_results)
 
-    @get_function_logger    
     def run_postprocessing(self):
         for model in self.config.get('HYDROLOGICAL_MODEL').split(','):
             if model == 'FUSE':
@@ -1352,6 +1538,17 @@ class CONFLUENCE:
             elif model == 'MESH':
                 mpp = MESHPostProcessor(self.config, self.logger)
                 results_file = mpp.extract_streamflow() 
+            elif model == 'CLM_PARFLOW':
+                # Add CLM-ParFlow postprocessing
+                self.logger.info("Running CLM-ParFlow postprocessing")
+                cpp = CLMParFlowPostProcessor(self.config, self.logger)
+                results = cpp.process_results()
+                
+                if results and 'streamflow' in results:
+                    results_file = results['streamflow']
+                    self.logger.info(f"CLM-ParFlow streamflow extracted to: {results_file}")
+                else:
+                    self.logger.warning("CLM-ParFlow postprocessing did not produce streamflow results")
             else:
                 pass
 

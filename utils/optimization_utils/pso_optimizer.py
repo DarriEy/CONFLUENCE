@@ -1,4 +1,5 @@
-# dds_optimizer.py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import os
 import numpy as np
@@ -7,31 +8,30 @@ import netCDF4 as nc
 import xarray as xr
 import matplotlib.pyplot as plt
 import subprocess
-from scipy import stats  
 from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
+from scipy import stats
 from typing import Dict, List, Any, Optional, Tuple, Union
+import pyswarms as ps
+from pyswarms.utils.plotters import plot_cost_history, plot_contour, plot_surface
+from pyswarms.utils.plotters.formatters import Mesher, Designer
 
-class DDSOptimizer:
+class PSOOptimizer:
     """
-    Dynamically Dimensioned Search (DDS) Optimizer for CONFLUENCE.
+    Particle Swarm Optimization (PSO) Optimizer for CONFLUENCE.
     
-    This class performs parameter optimization using the DDS algorithm,
-    which is particularly effective for watershed model calibration.
-    DDS automatically scales the search from global to local as the
-    iteration count increases.
+    This class performs parameter optimization using the PSO algorithm,
+    which is a population-based stochastic optimization technique inspired by 
+    social behavior of bird flocking or fish schooling.
     
-    References:
-    Tolson, B. A., & Shoemaker, C. A. (2007). Dynamically dimensioned search 
-    algorithm for computationally efficient watershed model calibration.
-    Water Resources Research, 43(1).
+    The implementation uses the pyswarms library, which provides different PSO variants.
     """
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
-        Initialize the DDS Optimizer.
+        Initialize the PSO Optimizer.
         
         Args:
             config: Configuration dictionary
@@ -45,12 +45,18 @@ class DDSOptimizer:
         self.experiment_id = self.config.get('EXPERIMENT_ID')
         
         # Create output directory
-        self.output_dir = self.project_dir / "optimisation" / f"dds_{self.experiment_id}"
+        self.output_dir = self.project_dir / "optimisation" / f"pso_{self.experiment_id}"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Get optimization settings
         self.max_iterations = self.config.get('NUMBER_OF_ITERATIONS', 100)
-        self.r_value = self.config.get('DDS_R', 0.2)  # DDS perturbation parameter
+        
+        # PSO specific parameters
+        self.swarm_size = self.config.get('SWRMSIZE', 40)  # Number of particles
+        self.cognitive_param = self.config.get('PSO_COGNITIVE_PARAM', 1.5)  # c1 parameter (personal best influence)
+        self.social_param = self.config.get('PSO_SOCIAL_PARAM', 1.5)  # c2 parameter (global best influence)
+        self.inertia_weight = self.config.get('PSO_INERTIA_WEIGHT', 0.7)  # w parameter (inertia weight)
+        self.inertia_reduction = self.config.get('PSO_INERTIA_REDUCTION_RATE', 0.99)  # Rate at which inertia reduces over iterations
         
         # Define parameter bounds
         self.local_param_info_path = self.project_dir / 'settings' / 'SUMMA' / 'localParamInfo.txt'
@@ -71,17 +77,17 @@ class DDSOptimizer:
         self.calibration_period = self._parse_date_range(calib_period)
         self.evaluation_period = self._parse_date_range(eval_period)
         
-        # Initialize tracking variables
-        self.current_best_params = None
-        self.current_best_score = None
-        self.iteration_history = []
-        
         # Get attribute file path
         self.attr_file_path = self.project_dir / "settings" / "SUMMA" / self.config.get('SETTINGS_SUMMA_ATTRIBUTES', 'attributes.nc')
         
+        # Tracking optimization progress
+        self.best_params = None
+        self.best_score = float('-inf')  # We'll maximize the objective
+        self.iteration_history = []
+        
         # Logging
-        self.logger.info(f"DDS Optimizer initialized with {len(self.local_params)} local parameters and {len(self.basin_params)} basin parameters")
-        self.logger.info(f"Maximum iterations: {self.max_iterations}, r value: {self.r_value}")
+        self.logger.info(f"PSO Optimizer initialized with {len(self.local_params)} local parameters and {len(self.basin_params)} basin parameters")
+        self.logger.info(f"Maximum iterations: {self.max_iterations}, swarm size: {self.swarm_size}")
     
     def _parse_date_range(self, date_range_str):
         """Parse date range string from config into start and end dates."""
@@ -97,6 +103,7 @@ class DDSOptimizer:
         
         return None, None
     
+
     def run_parameter_extraction(self):
         """
         Run a preliminary SUMMA simulation to extract parameter values.
@@ -319,14 +326,14 @@ class DDSOptimizer:
         except Exception as e:
             self.logger.error(f"Error during SUMMA parameter extraction: {str(e)}")
             return False
-            
+        
     def _extract_parameters_from_results(self, extract_dir):
         """
         Extract parameter values from the SUMMA results file.
         
         Args:
             extract_dir: Path to the extraction run directory
-                
+            
         Returns:
             dict: Dictionary with parameter names as keys and arrays of values as values
         """
@@ -531,7 +538,7 @@ class DDSOptimizer:
         
         self.logger.info(f"Found bounds for {len(bounds)} parameters")
         return bounds
-        
+    
     def _parse_param_info_file(self, file_path, param_names):
         """
         Parse parameter bounds from a SUMMA parameter info file.
@@ -578,253 +585,173 @@ class DDSOptimizer:
         
         return bounds
     
-    def run_dds_optimization(self):
+    def _generate_trial_params_file(self, params):
         """
-        Run the DDS optimization algorithm.
-        
-        Returns:
-            Dict: Dictionary with optimization results
-        """
-        self.logger.info("Starting DDS optimization")
-        
-        # Step 1: Get initial parameter values from a preliminary SUMMA run
-        initial_params = self.run_parameter_extraction()
-        
-        # Step 2: Parse parameter bounds
-        param_bounds = self._parse_parameter_bounds()
-        
-        # Step 3: Initialize optimization variables
-        self._initialize_optimization(initial_params, param_bounds)
-        
-        # Step 4: Run the DDS algorithm
-        best_params, best_score, history = self._run_dds_algorithm()
-        
-        # Step 5: Create visualization of optimization progress
-        self._create_optimization_plots(history)
-        
-        # Step 6: Run a final simulation with the best parameters
-        final_result = self._run_final_simulation(best_params)
-        
-        # Return results
-        results = {
-            'best_parameters': best_params,
-            'best_score': best_score,
-            'history': history,
-            'final_result': final_result,
-            'output_dir': str(self.output_dir)
-        }
-        
-        return results
-    
-    def _initialize_optimization(self, initial_params, param_bounds):
-        """
-        Initialize optimization variables.
+        Generate a trialParams.nc file with the given parameters.
         
         Args:
-            initial_params: Dictionary with initial parameter values
-            param_bounds: Dictionary with parameter bounds
-        """
-        self.logger.info("Initializing optimization variables")
-        
-        # Store parameter bounds
-        self.param_bounds = param_bounds
-        
-        # Create normalized parameter dictionary
-        self.normalized_params = {}
-        
-        # Get HRU and GRU information from attributes file
-        with xr.open_dataset(self.attr_file_path) as ds:
-            num_hru = ds.dims['hru']
-            hru_ids = ds['hruId'].values
+            params: Dictionary with parameter values
             
-            if 'gru' in ds.dims:
-                num_gru = ds.dims['gru']
-                gru_ids = ds['gruId'].values
-                hru2gru_ids = ds['hru2gruId'].values
-                
-                # Create mapping from GRU ID to HRU IDs
-                self.gru_to_hrus = {}
-                for hru_idx in range(num_hru):
-                    gru_id = hru2gru_ids[hru_idx]
-                    if gru_id not in self.gru_to_hrus:
-                        self.gru_to_hrus[gru_id] = []
-                    self.gru_to_hrus[gru_id].append(hru_ids[hru_idx])
-            else:
-                num_gru = 1
-                gru_ids = [1]
-                self.gru_to_hrus = {1: hru_ids}
-        
-        # Initialize parameter arrays
-        for param_name, bounds in param_bounds.items():
-            min_val = bounds['min']
-            max_val = bounds['max']
-            
-            # Check if we have initial values
-            if initial_params and param_name in initial_params:
-                initial_values = initial_params[param_name]
-                
-                # Normalize values to [0, 1] range
-                normalized_values = (initial_values - min_val) / (max_val - min_val)
-                
-                # Clip to valid range
-                normalized_values = np.clip(normalized_values, 0, 1)
-            else:
-                # Use random initial values in [0, 1] range
-                if param_name in self.local_params:
-                    normalized_values = np.random.random(num_hru)
-                else:  # Basin parameter
-                    normalized_values = np.random.random(num_gru)
-            
-            self.normalized_params[param_name] = normalized_values
-        
-        # Initialize tracking variables
-        self.current_best_params = self._denormalize_params(self.normalized_params)
-        self.current_best_score = float('-inf')  # We'll maximize the objective
-        self.iteration_history = []
-        
-        # Run initial simulation to get baseline score
-        self.logger.info("Running initial simulation")
-        initial_score = self._evaluate_parameters(self.current_best_params)
-        
-        if initial_score is not None:
-            self.current_best_score = initial_score
-            
-            # Record initial point
-            self.iteration_history.append({
-                'iteration': 0,
-                'score': initial_score,
-                'parameters': self.current_best_params.copy()
-            })
-            
-            self.logger.info(f"Initial score: {initial_score:.4f}")
-        else:
-            self.logger.warning("Could not evaluate initial parameter set")
-    
-    def _run_dds_algorithm(self):
-        """
-        Run the DDS algorithm.
-        
         Returns:
-            Tuple: (best_params, best_score, history)
+            Path: Path to the generated trial parameters file
         """
-        self.logger.info("Running DDS algorithm")
+        self.logger.debug("Generating trial parameters file")
         
-        # Main DDS loop
-        for i in range(1, self.max_iterations + 1):
-            self.logger.info(f"Starting iteration {i}/{self.max_iterations}")
-            
-            # Step 1: Create candidate solution by perturbing a subset of decision variables
-            candidate_params = self._generate_candidate(i)
-            
-            # Step 2: Evaluate candidate solution
-            candidate_score = self._evaluate_parameters(candidate_params)
-            
-            # Step 3: Update current best solution if candidate is better
-            if candidate_score is not None and candidate_score > self.current_best_score:
-                self.current_best_score = candidate_score
-                self.current_best_params = candidate_params.copy()
-                self.logger.info(f"New best score at iteration {i}: {candidate_score:.4f}")
-            
-            # Record history
-            self.iteration_history.append({
-                'iteration': i,
-                'score': candidate_score if candidate_score is not None else float('nan'),
-                'parameters': candidate_params.copy()
-            })
-            
-            # Log progress
-            if i % 10 == 0 or i == self.max_iterations:
-                self.logger.info(f"Completed {i}/{self.max_iterations} iterations. Best score: {self.current_best_score:.4f}")
+        # Get attribute file path for reading HRU information
+        if not self.attr_file_path.exists():
+            self.logger.error(f"Attribute file not found: {self.attr_file_path}")
+            return None
         
-        self.logger.info(f"DDS optimization completed. Best score: {self.current_best_score:.4f}")
-        
-        return self.current_best_params, self.current_best_score, self.iteration_history
-    
-    def _generate_candidate(self, iteration):
+        try:
+            # Read HRU and GRU information from the attributes file
+            with xr.open_dataset(self.attr_file_path) as ds:
+                # Check for GRU dimension
+                has_gru_dim = 'gru' in ds.dims
+                hru_ids = ds['hruId'].values
+                
+                if has_gru_dim:
+                    gru_ids = ds['gruId'].values
+                    self.logger.info(f"Attribute file has {len(gru_ids)} GRUs and {len(hru_ids)} HRUs")
+                else:
+                    gru_ids = np.array([1])  # Default if no GRU dimension
+                    self.logger.info(f"Attribute file has no GRU dimension, using default GRU ID=1")
+                
+                # Create the trial parameters dataset
+                trial_params_path = self.project_dir / "settings" / "SUMMA" / self.config.get('SETTINGS_SUMMA_TRIALPARAMS', 'trialParams.nc')
+                
+                # Routing parameters should be at GRU level
+                routing_params = ['routingGammaShape', 'routingGammaScale']
+                basin_params = ['basin__aquiferHydCond', 'basin__aquiferScaleFactor', 'basin__aquiferBaseflowExp']
+                gru_level_params = routing_params + basin_params
+                
+                with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
+                    # Add dimensions
+                    output_ds.createDimension('hru', len(hru_ids))
+                    
+                    # Add GRU dimension if needed for routing parameters
+                    if any(param in params for param in gru_level_params):
+                        output_ds.createDimension('gru', len(gru_ids))
+                        
+                        # Add GRU ID variable
+                        gru_id_var = output_ds.createVariable('gruId', 'i4', ('gru',))
+                        gru_id_var[:] = gru_ids
+                        gru_id_var.long_name = 'Group Response Unit ID (GRU)'
+                        gru_id_var.units = '-'
+                        
+                        # Add HRU2GRU mapping if available
+                        if 'hru2gruId' in ds.variables:
+                            hru2gru_var = output_ds.createVariable('hru2gruId', 'i4', ('hru',))
+                            hru2gru_var[:] = ds['hru2gruId'].values
+                            hru2gru_var.long_name = 'Index of GRU for each HRU'
+                            hru2gru_var.units = '-'
+                    
+                    # Add HRU ID variable
+                    hru_id_var = output_ds.createVariable('hruId', 'i4', ('hru',))
+                    hru_id_var[:] = hru_ids
+                    hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
+                    hru_id_var.units = '-'
+                    
+                    # Add parameter variables
+                    for param_name, param_values in params.items():
+                        # Ensure param_values is a numpy array
+                        param_values_array = np.asarray(param_values)
+                        
+                        # Check if this is a routing parameter (should be at GRU level)
+                        if param_name in gru_level_params:
+                            # These parameters should be at GRU level
+                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                            
+                            # Most likely, we have 1 value per GRU for these parameters
+                            if len(param_values_array) != len(gru_ids):
+                                if len(param_values_array) > len(gru_ids):
+                                    # Take only what we need
+                                    param_values_array = param_values_array[:len(gru_ids)]
+                                else:
+                                    # Expand by repetition if needed
+                                    repeats = int(np.ceil(len(gru_ids) / len(param_values_array)))
+                                    param_values_array = np.tile(param_values_array, repeats)[:len(gru_ids)]
+                            
+                            # Assign to GRU dimension
+                            param_var[:] = param_values_array
+                            self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
+                        else:
+                            # Regular parameter at HRU level
+                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
+                            
+                            # Handle array shape issues
+                            if param_values_array.ndim > 1:
+                                original_shape = param_values_array.shape
+                                param_values_array = param_values_array.flatten()
+                                self.logger.debug(f"Flattened {param_name} from shape {original_shape} to 1D")
+                            
+                            # Handle array length issues
+                            if len(param_values_array) != len(hru_ids):
+                                if len(param_values_array) > len(hru_ids):
+                                    # Truncate
+                                    param_values_array = param_values_array[:len(hru_ids)]
+                                else:
+                                    # Expand by repetition
+                                    repeats = int(np.ceil(len(hru_ids) / len(param_values_array)))
+                                    param_values_array = np.tile(param_values_array, repeats)[:len(hru_ids)]
+                            
+                            # Assign to HRU dimension
+                            param_var[:] = param_values_array
+                        
+                        # Add attributes
+                        param_var.long_name = f"Trial value for {param_name}"
+                        param_var.units = "N/A"
+                    
+                    # Add global attributes
+                    output_ds.description = "SUMMA Trial Parameter file generated by CONFLUENCE PSO Optimizer"
+                    output_ds.history = f"Created on {datetime.now().isoformat()}"
+                    output_ds.confluence_experiment_id = self.experiment_id
+                
+                self.logger.info(f"Trial parameters file generated: {trial_params_path}")
+                return trial_params_path
+                
+        except Exception as e:
+            self.logger.error(f"Error generating trial parameters file: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None 
+            
+    def _denormalize_individual(self, normalized_individual):
         """
-        Generate a candidate solution by perturbing a subset of decision variables.
+        Denormalize an individual's parameters from [0,1] range to original parameter ranges.
         
         Args:
-            iteration: Current iteration number
+            normalized_individual: Array of normalized parameter values for one individual
             
         Returns:
-            Dict: Dictionary with denormalized parameter values
+            Dict: Parameter dictionary with denormalized values
         """
-        # Create copy of normalized parameters
-        candidate_normalized = {}
-        for param_name, values in self.normalized_params.items():
-            candidate_normalized[param_name] = values.copy()
+        params = {}
         
-        # Calculate probability of selecting each parameter
-        # This probability decreases as the iteration count increases
-        num_params = len(self.normalized_params)
-        selection_probability = 1.0 - np.log(iteration) / np.log(self.max_iterations)
-        selection_probability = max(1.0/num_params, selection_probability)
-        
-        # Select parameters to perturb
-        params_to_perturb = []
-        for param_name in self.normalized_params.keys():
-            if np.random.random() < selection_probability:
-                params_to_perturb.append(param_name)
-        
-        # If no parameters selected, pick one randomly
-        if not params_to_perturb:
-            params_to_perturb = [np.random.choice(list(self.normalized_params.keys()))]
-        
-        # Perturb selected parameters
-        for param_name in params_to_perturb:
-            values = candidate_normalized[param_name]
-            
-            # Apply perturbation to each value
-            for i in range(len(values)):
-                # Calculate standard deviation for perturbation (based on DDS paper)
-                sigma = self.r_value  # DDS perturbation parameter
-                
-                # Apply perturbation
-                values[i] += sigma * np.random.normal()
-                
-                # Reflect back into [0, 1] range if needed
-                if values[i] < 0:
-                    values[i] = -values[i]
-                if values[i] > 1:
-                    values[i] = 2 - values[i]
-                
-                # Ensure it's in [0, 1] after reflection
-                values[i] = np.clip(values[i], 0, 1)
-            
-            candidate_normalized[param_name] = values
-        
-        # Denormalize parameters back to original range
-        candidate_params = self._denormalize_params(candidate_normalized)
-        
-        return candidate_params
-    
-    def _denormalize_params(self, normalized_params):
-        """
-        Denormalize parameters from [0, 1] range to original range.
-        
-        Args:
-            normalized_params: Dictionary with normalized parameter values
-            
-        Returns:
-            Dict: Dictionary with denormalized parameter values
-        """
-        denormalized = {}
-        
-        for param_name, values in normalized_params.items():
+        for i, param_name in enumerate(self.param_names):
             if param_name in self.param_bounds:
                 bounds = self.param_bounds[param_name]
                 min_val = bounds['min']
                 max_val = bounds['max']
                 
-                # Denormalize to original range
-                denormalized[param_name] = min_val + values * (max_val - min_val)
-            else:
-                # If bounds not found, just copy the values
-                denormalized[param_name] = values.copy()
+                # Denormalize value
+                denorm_value = min_val + normalized_individual[i] * (max_val - min_val)
+                
+                # Special handling for GRU and HRU level parameters
+                if param_name in self.basin_params:
+                    # Basin/GRU level parameter - single value
+                    params[param_name] = np.array([denorm_value])
+                else:
+                    # Local/HRU level parameter - may need multiple values
+                    # For simplicity, use the same value for all HRUs
+                    with xr.open_dataset(self.attr_file_path) as ds:
+                        if 'hru' in ds.dims:
+                            num_hrus = ds.sizes['hru']
+                            params[param_name] = np.full(num_hrus, denorm_value)
+                        else:
+                            params[param_name] = np.array([denorm_value])
         
-        return denormalized
-        
+        return params
+    
     def _evaluate_parameters(self, params):
         """
         Evaluate a parameter set by running SUMMA and calculating performance metrics.
@@ -879,134 +806,6 @@ class DDSOptimizer:
             score = -score
         
         return score
-
-    def _generate_trial_params_file(self, params):
-        """
-        Generate a trialParams.nc file with the given parameters.
-        
-        Args:
-            params: Dictionary with parameter values
-            
-        Returns:
-            Path: Path to the generated trial parameters file
-        """
-        self.logger.debug("Generating trial parameters file")
-        
-        # Get attribute file path for reading HRU information
-        if not self.attr_file_path.exists():
-            self.logger.error(f"Attribute file not found: {self.attr_file_path}")
-            return None
-        
-        try:
-            # Read HRU and GRU information from the attributes file
-            with xr.open_dataset(self.attr_file_path) as ds:
-                # Check for GRU dimension
-                has_gru_dim = 'gru' in ds.dims
-                hru_ids = ds['hruId'].values
-                
-                if has_gru_dim:
-                    gru_ids = ds['gruId'].values
-                    self.logger.info(f"Attribute file has {len(gru_ids)} GRUs and {len(hru_ids)} HRUs")
-                else:
-                    gru_ids = np.array([1])  # Default if no GRU dimension
-                    self.logger.info(f"Attribute file has no GRU dimension, using default GRU ID=1")
-                
-                # Create the trial parameters dataset
-                trial_params_path = self.project_dir / "settings" / "SUMMA" / self.config.get('SETTINGS_SUMMA_TRIALPARAMS', 'trialParams.nc')
-                
-                # Routing parameters should be at GRU level
-                routing_params = ['routingGammaShape', 'routingGammaScale']
-                
-                with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
-                    # Add dimensions
-                    output_ds.createDimension('hru', len(hru_ids))
-                    
-                    # Add GRU dimension if needed for routing parameters
-                    if any(param in params for param in routing_params):
-                        output_ds.createDimension('gru', len(gru_ids))
-                        
-                        # Add GRU ID variable
-                        gru_id_var = output_ds.createVariable('gruId', 'i4', ('gru',))
-                        gru_id_var[:] = gru_ids
-                        gru_id_var.long_name = 'Group Response Unit ID (GRU)'
-                        gru_id_var.units = '-'
-                        
-                        # Add HRU2GRU mapping if available
-                        if 'hru2gruId' in ds.variables:
-                            hru2gru_var = output_ds.createVariable('hru2gruId', 'i4', ('hru',))
-                            hru2gru_var[:] = ds['hru2gruId'].values
-                            hru2gru_var.long_name = 'Index of GRU for each HRU'
-                            hru2gru_var.units = '-'
-                    
-                    # Add HRU ID variable
-                    hru_id_var = output_ds.createVariable('hruId', 'i4', ('hru',))
-                    hru_id_var[:] = hru_ids
-                    hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
-                    hru_id_var.units = '-'
-                    
-                    # Add parameter variables
-                    for param_name, param_values in params.items():
-                        # Ensure param_values is a numpy array
-                        param_values_array = np.asarray(param_values)
-                        
-                        # Check if this is a routing parameter (should be at GRU level)
-                        if param_name in routing_params:
-                            # These parameters should be at GRU level
-                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
-                            
-                            # Most likely, we have 1 value per GRU for these parameters
-                            if len(param_values_array) != len(gru_ids):
-                                if len(param_values_array) > len(gru_ids):
-                                    # Take only what we need
-                                    param_values_array = param_values_array[:len(gru_ids)]
-                                else:
-                                    # Expand by repetition if needed
-                                    repeats = int(np.ceil(len(gru_ids) / len(param_values_array)))
-                                    param_values_array = np.tile(param_values_array, repeats)[:len(gru_ids)]
-                            
-                            # Assign to GRU dimension
-                            param_var[:] = param_values_array
-                            self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
-                        else:
-                            # Regular parameter at HRU level
-                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
-                            
-                            # Handle array shape issues
-                            if param_values_array.ndim > 1:
-                                original_shape = param_values_array.shape
-                                param_values_array = param_values_array.flatten()
-                                self.logger.debug(f"Flattened {param_name} from shape {original_shape} to 1D")
-                            
-                            # Handle array length issues
-                            if len(param_values_array) != len(hru_ids):
-                                if len(param_values_array) > len(hru_ids):
-                                    # Truncate
-                                    param_values_array = param_values_array[:len(hru_ids)]
-                                else:
-                                    # Expand by repetition
-                                    repeats = int(np.ceil(len(hru_ids) / len(param_values_array)))
-                                    param_values_array = np.tile(param_values_array, repeats)[:len(hru_ids)]
-                            
-                            # Assign to HRU dimension
-                            param_var[:] = param_values_array
-                        
-                        # Add attributes
-                        param_var.long_name = f"Trial value for {param_name}"
-                        param_var.units = "N/A"
-                    
-                    # Add global attributes
-                    output_ds.description = "SUMMA Trial Parameter file generated by CONFLUENCE DDSOptimizer"
-                    output_ds.history = f"Created on {datetime.now().isoformat()}"
-                    output_ds.confluence_experiment_id = self.experiment_id
-                
-                self.logger.info(f"Trial parameters file generated: {trial_params_path}")
-                return trial_params_path
-                
-        except Exception as e:
-            self.logger.error(f"Error generating trial parameters file: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
         
     def _run_summa_simulation(self):
         """
@@ -1043,7 +842,7 @@ class DDSOptimizer:
         summa_command = f"{summa_exe} -m {file_manager}"
         
         # Run SUMMA
-        log_file = log_dir / f"summa_dds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        log_file = log_dir / f"summa_pso_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         
         try:
             with open(log_file, 'w') as f:
@@ -1057,7 +856,7 @@ class DDSOptimizer:
         except Exception as e:
             self.logger.error(f"Error during SUMMA simulation: {str(e)}")
             return False
-
+    
     def _run_mizuroute_simulation(self):
         """
         Run mizuRoute with the current SUMMA outputs.
@@ -1093,7 +892,7 @@ class DDSOptimizer:
         mizu_command = f"{mizu_exe} {control_file}"
         
         # Run mizuRoute
-        log_file = log_dir / f"mizuroute_dds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        log_file = log_dir / f"mizuroute_pso_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         
         try:
             with open(log_file, 'w') as f:
@@ -1107,7 +906,7 @@ class DDSOptimizer:
         except Exception as e:
             self.logger.error(f"Error during mizuRoute simulation: {str(e)}")
             return False
-
+        
     def _calculate_performance_metrics(self):
         """
         Calculate performance metrics by comparing simulated to observed streamflow.
@@ -1197,7 +996,7 @@ class DDSOptimizer:
                     # Try to find streamflow variable
                     for var_name in ['outflow', 'basRunoff', 'averageRoutedRunoff', 'totalRunoff']:
                         if var_name in ds.variables:
-                            if 'gru' in ds[var_name].dims and ds.dims['gru'] > 1:
+                            if 'gru' in ds[var_name].dims and ds.sizes['gru'] > 1:
                                 # Sum across GRUs if multiple
                                 simulated_flow = ds[var_name].sum(dim='gru').to_pandas()
                             else:
@@ -1278,7 +1077,7 @@ class DDSOptimizer:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
-
+    
     def _calculate_streamflow_metrics(self, observed, simulated):
         """
         Calculate streamflow performance metrics.
@@ -1334,7 +1133,7 @@ class DDSOptimizer:
             'alpha': alpha,
             'beta': beta
         }
-
+    
     def _get_catchment_area(self):
         """
         Get catchment area from basin shapefile.
@@ -1440,8 +1239,158 @@ class DDSOptimizer:
             self.logger.error(f"Error calculating catchment area: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
-            return None
 
+    def run_pso_optimization(self):
+        """
+        Run the PSO optimization algorithm.
+        
+        Retur:
+            Dict: Dictionary with optimization results
+        """
+        self.logger.info("Starting PSO optimization")
+        
+        # Step 1: Get initial parameter values from a preliminary SUMMA run
+        initial_params = self.run_parameter_extraction()
+        
+        # Step 2: Parse parameter bounds
+        param_bounds = self._parse_parameter_bounds()
+        
+        # Step 3: Set up PSO optimizer
+        best_params, best_score, history = self._run_pso_algorithm(initial_params, param_bounds)
+        
+        # Step 4: Create visualization of optimization progress
+        self._create_optimization_plots(history)
+        
+        # Step 5: Run a final simulation with the best parameters
+        final_result = self._run_final_simulation(best_params)
+        
+        # Return results
+        results = {
+            'best_parameters': best_params,
+            'best_score': best_score,
+            'history': history,
+            'final_result': final_result,
+            'output_dir': str(self.output_dir)
+        }
+        
+        return results
+
+    def _run_pso_algorithm(self, initial_params, param_bounds):
+        """
+        Run the PSO algorithm using pyswarms.
+        
+        Args:
+            initial_params: Dictionary with initial parameter values (optional)
+            param_bounds: Dictionary with parameter bounds
+            
+        Returns:
+            Tuple: (best_params, best_score, history)
+        """
+        self.logger.info("Setting up PSO algorithm")
+        
+        # Store parameter names in order
+        self.param_names = list(param_bounds.keys())
+        self.param_bounds = param_bounds
+        
+        # Extract lower and upper bounds as arrays for pyswarms
+        lb = np.array([param_bounds[param]['min'] for param in self.param_names])
+        ub = np.array([param_bounds[param]['max'] for param in self.param_names])
+        
+        # Normalize bounds for PSO (to [0, 1] range)
+        bounds = (np.zeros(len(self.param_names)), np.ones(len(self.param_names)))
+        
+        # Create optimizer options
+        options = {
+            'c1': self.cognitive_param,  # cognitive parameter
+            'c2': self.social_param,     # social parameter
+            'w': self.inertia_weight,    # inertia parameter
+            'k': 3,                      # number of neighbors to consider for local topology
+            'p': 2                       # Minkowski p-norm parameter for distance computation
+        }
+        
+        # Initialize global best PSO optimizer
+        optimizer = ps.single.GlobalBestPSO(
+            n_particles=self.swarm_size,
+            dimensions=len(self.param_names),
+            options=options,
+            bounds=bounds,
+            init_pos=None,  # Random initialization
+            ftol=-float('inf'),  # No function tolerance (run for max iterations)
+            ftol_iter=1
+        )
+        
+        # Set up a custom callback wrapper and iteration counter
+        iteration_history = []
+        current_iteration = [0]  # Use list to make it mutable in inner scope
+        
+        # Create wrapped objective function that does the tracking internally
+        def wrapped_objective_function(x):
+            n_particles = x.shape[0]
+            scores = np.zeros(n_particles)
+            
+            for i in range(n_particles):
+                # Denormalize parameters
+                params = self._denormalize_individual(x[i])
+                
+                # Evaluate parameters
+                score = self._evaluate_parameters(params)
+                
+                # Store score (negative for minimization, PSO minimizes by default)
+                scores[i] = -score if score is not None else float('inf')
+                
+                # Update best if better
+                if score is not None and score > self.best_score:
+                    self.best_score = score
+                    self.best_params = params.copy()
+            
+            # After evaluating all particles in this iteration, record the history
+            if hasattr(optimizer, 'swarm'):
+                # Create history entry
+                history_entry = {
+                    'iteration': current_iteration[0],
+                    'best_score': -optimizer.swarm.best_cost if hasattr(optimizer.swarm, 'best_cost') else self.best_score,
+                    'best_params': self.best_params,
+                    'swarm_positions': x.copy(),
+                    'swarm_scores': -scores.copy(),  # Negate back to original score
+                    'mean_score': -np.nanmean(scores),
+                    'std_score': np.nanstd(scores)
+                }
+                
+                # Add to history
+                iteration_history.append(history_entry)
+                
+                # Log progress
+                self.logger.info(f"Iteration {current_iteration[0]}: Best={history_entry['best_score']:.4f}, "
+                                f"Mean={history_entry['mean_score']:.4f}, Std={history_entry['std_score']:.4f}")
+                
+                # Check if we need to update inertia weight
+                if current_iteration[0] > 0:
+                    optimizer.options['w'] *= self.inertia_reduction
+                    self.logger.debug(f"Updated inertia weight to {optimizer.options['w']:.4f}")
+                
+                # Increment iteration counter for next call
+                current_iteration[0] += 1
+            
+            return scores
+        
+        # Run optimization without passing callback
+        self.logger.info(f"Running PSO optimization with {self.swarm_size} particles for {self.max_iterations} iterations")
+        best_score, best_pos = optimizer.optimize(
+            wrapped_objective_function,
+            iters=self.max_iterations,
+            verbose=True
+        )
+        
+        # Denormalize best position
+        best_params = self._denormalize_individual(best_pos)
+        
+        # Negate best score (PSO minimizes, we maximize)
+        best_score = -best_score
+        
+        self.logger.info(f"PSO optimization completed with best score: {best_score:.4f}")
+        
+        return best_params, best_score, iteration_history
+    
     def _run_final_simulation(self, best_params):
         """
         Run a final simulation with the best parameters.
@@ -1507,7 +1456,7 @@ class DDSOptimizer:
             'mizuroute_success': mizuroute_success,
             'metrics': final_metrics
         }
-
+        
     def _create_optimization_plots(self, history):
         """
         Create plots showing the optimization progress.
@@ -1518,29 +1467,30 @@ class DDSOptimizer:
         self.logger.info("Creating optimization plots")
         
         try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-            
             # Create output directory
             plots_dir = self.output_dir / "plots"
             plots_dir.mkdir(parents=True, exist_ok=True)
             
             # Extract data from history
             iterations = [h['iteration'] for h in history]
-            scores = [h['score'] for h in history]
+            best_scores = [h['best_score'] for h in history]
+            mean_scores = [h['mean_score'] for h in history]
+            std_scores = [h['std_score'] for h in history]
             
             # Plot optimization progress
             plt.figure(figsize=(12, 6))
-            plt.plot(iterations, scores, 'b-o')
+            plt.plot(iterations, best_scores, 'b-', label='Best Score')
+            plt.plot(iterations, mean_scores, 'g-', label='Mean Score')
+            plt.fill_between(iterations, 
+                            [m - s for m, s in zip(mean_scores, std_scores)],
+                            [m + s for m, s in zip(mean_scores, std_scores)],
+                            alpha=0.2, color='green')
+            
             plt.xlabel('Iteration')
             plt.ylabel(f'Performance Metric ({self.target_metric})')
-            plt.title('DDS Optimization Progress')
-            plt.grid(True, alpha=0.3)
-            
-            # Add best iteration marker
-            best_idx = np.nanargmax(scores)
-            plt.plot(iterations[best_idx], scores[best_idx], 'ro', markersize=10, label=f'Best: {scores[best_idx]:.4f} at iteration {iterations[best_idx]}')
+            plt.title('PSO Optimization Progress')
             plt.legend()
+            plt.grid(True, alpha=0.3)
             
             # Save plot
             plt.tight_layout()
@@ -1548,101 +1498,122 @@ class DDSOptimizer:
             plt.close()
             
             # Plot parameter evolution
-            # First, get all parameter names
-            all_params = set()
+            # First, get best parameter values at each iteration
+            param_values = {}
+            for param_name in self.param_names:
+                param_values[param_name] = []
+            
             for h in history:
-                all_params.update(h['parameters'].keys())
-            
-            # Plot separately for each parameter type
-            for param_type, param_list in [('Local', self.local_params), ('Basin', self.basin_params)]:
-                # Filter to parameters of this type
-                params = [p for p in param_list if p in all_params]
-                
-                if not params:
-                    continue
-                
-                # For local parameters, plot mean values
-                if param_type == 'Local':
-                    # Create figure with subplots
-                    n_params = len(params)
-                    n_cols = min(3, n_params)
-                    n_rows = (n_params + n_cols - 1) // n_cols
-                    
-                    plt.figure(figsize=(15, 4 * n_rows))
-                    
-                    for i, param in enumerate(params):
-                        plt.subplot(n_rows, n_cols, i + 1)
-                        
-                        # Extract mean values for each iteration
-                        mean_values = [np.mean(h['parameters'][param]) for h in history]
-                        min_values = [np.min(h['parameters'][param]) for h in history]
-                        max_values = [np.max(h['parameters'][param]) for h in history]
-                        
-                        # Plot mean with min/max range
-                        plt.plot(iterations, mean_values, 'b-o')
-                        plt.fill_between(iterations, min_values, max_values, alpha=0.2, color='blue')
-                        
-                        # Add best iteration marker
-                        plt.plot(iterations[best_idx], mean_values[best_idx], 'ro', markersize=8)
-                        
-                        # Add bounds from parameter info file
-                        if param in self.param_bounds:
-                            bounds = self.param_bounds[param]
-                            plt.axhline(bounds['min'], color='r', linestyle='--', alpha=0.5, label='Min bound')
-                            plt.axhline(bounds['max'], color='g', linestyle='--', alpha=0.5, label='Max bound')
-                        
-                        plt.xlabel('Iteration')
-                        plt.ylabel(f'{param} Value')
-                        plt.title(f'{param} Evolution (Mean with Min/Max Range)')
-                        plt.grid(True, alpha=0.3)
-                    
-                    plt.tight_layout()
-                    plt.savefig(plots_dir / f"{param_type.lower()}_parameter_evolution.png", dpi=300, bbox_inches='tight')
-                    plt.close()
-                
-                else:  # Basin parameters
-                    # Create figure with subplots
-                    n_params = len(params)
-                    n_cols = min(3, n_params)
-                    n_rows = (n_params + n_cols - 1) // n_cols
-                    
-                    plt.figure(figsize=(15, 4 * n_rows))
-                    
-                    for i, param in enumerate(params):
-                        plt.subplot(n_rows, n_cols, i + 1)
-                        
-                        # Extract parameter values for each iteration
-                        param_values = []
-                        for h in history:
-                            if param in h['parameters']:
-                                # For basin parameters, get the value of the first (and usually only) GRU
-                                param_values.append(h['parameters'][param][0])
+                if h['best_params'] is not None:
+                    for param_name in self.param_names:
+                        if param_name in h['best_params']:
+                            values = h['best_params'][param_name]
+                            # Use mean if there are multiple values
+                            if isinstance(values, np.ndarray) and len(values) > 1:
+                                param_values[param_name].append(np.mean(values))
                             else:
-                                param_values.append(np.nan)
-                        
-                        # Plot values
-                        plt.plot(iterations, param_values, 'b-o')
-                        
-                        # Add best iteration marker
-                        plt.plot(iterations[best_idx], param_values[best_idx], 'ro', markersize=8)
-                        
-                        # Add bounds from parameter info file
-                        if param in self.param_bounds:
-                            bounds = self.param_bounds[param]
-                            plt.axhline(bounds['min'], color='r', linestyle='--', alpha=0.5, label='Min bound')
-                            plt.axhline(bounds['max'], color='g', linestyle='--', alpha=0.5, label='Max bound')
-                        
-                        plt.xlabel('Iteration')
-                        plt.ylabel(f'{param} Value')
-                        plt.title(f'{param} Evolution')
-                        plt.grid(True, alpha=0.3)
-                    
-                    plt.tight_layout()
-                    plt.savefig(plots_dir / f"{param_type.lower()}_parameter_evolution.png", dpi=300, bbox_inches='tight')
-                    plt.close()
+                                value = values[0] if isinstance(values, np.ndarray) else values
+                                param_values[param_name].append(value)
+                        else:
+                            param_values[param_name].append(np.nan)
             
-            # Plot streamflow comparison for best iteration and observed
+            # Create subplots for each parameter
+            n_params = len(self.param_names)
+            n_cols = min(3, n_params)
+            n_rows = (n_params + n_cols - 1) // n_cols
+            
+            plt.figure(figsize=(15, 4 * n_rows))
+            
+            for i, param_name in enumerate(self.param_names):
+                plt.subplot(n_rows, n_cols, i + 1)
+                plt.plot(iterations, param_values[param_name], 'b-o')
+                
+                # Add bounds
+                if param_name in self.param_bounds:
+                    bounds = self.param_bounds[param_name]
+                    plt.axhline(bounds['min'], color='r', linestyle='--', alpha=0.5, label='Min bound')
+                    plt.axhline(bounds['max'], color='g', linestyle='--', alpha=0.5, label='Max bound')
+                
+                plt.xlabel('Iteration')
+                plt.ylabel(f'{param_name} Value')
+                plt.title(f'{param_name} Evolution')
+                plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(plots_dir / "parameter_evolution.png", dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # Plot streamflow comparison for best parameters
             self._plot_streamflow_comparison()
+            
+            # Try to create swarm visualization if feasible
+            if len(self.param_names) == 2:
+                # Create meshgrid for plotting contours
+                from scipy.interpolate import griddata
+                
+                # Get final swarm positions and scores
+                final_positions = history[-1]['swarm_positions']
+                final_scores = history[-1]['swarm_scores']
+                
+                # Create grid for contour plot
+                grid_size = 50
+                x = np.linspace(0, 1, grid_size)
+                y = np.linspace(0, 1, grid_size)
+                X, Y = np.meshgrid(x, y)
+                
+                # Interpolate scores onto grid
+                points = final_positions
+                values = final_scores
+                Z = griddata(points, values, (X, Y), method='cubic', fill_value=np.nanmin(values))
+                
+                # Plot contour
+                plt.figure(figsize=(10, 8))
+                plt.contourf(X, Y, Z, 15, cmap='viridis')
+                plt.colorbar(label=f'Performance Metric ({self.target_metric})')
+                
+                # Mark best position
+                best_pos = history[-1]['swarm_positions'][np.argmax(history[-1]['swarm_scores'])]
+                plt.scatter(best_pos[0], best_pos[1], color='r', marker='*', s=200, label='Best Position')
+                
+                # Plot swarm
+                plt.scatter(final_positions[:, 0], final_positions[:, 1], color='white', alpha=0.7, label='Particles')
+                
+                # Labels
+                plt.xlabel(f'{self.param_names[0]} (normalized)')
+                plt.ylabel(f'{self.param_names[1]} (normalized)')
+                plt.title('PSO Search Space (Final Iteration)')
+                plt.legend()
+                
+                # Save plot
+                plt.tight_layout()
+                plt.savefig(plots_dir / "pso_search_space.png", dpi=300, bbox_inches='tight')
+                plt.close()
+            
+            # Plot particle score distribution at different iterations
+            # Select a few iterations to plot (first, middle, last)
+            selected_iterations = [0]  # Always include initial swarm
+            if len(iterations) > 1:
+                middle_iteration = iterations[len(iterations) // 2]
+                selected_iterations.append(middle_iteration)
+                selected_iterations.append(iterations[-1])  # Add final iteration
+            
+            # Create score distribution plots
+            plt.figure(figsize=(15, 5))
+            for i, iteration in enumerate(selected_iterations):
+                plt.subplot(1, len(selected_iterations), i + 1)
+                h = history[iteration]
+                plt.hist(h['swarm_scores'], bins=15, alpha=0.7)
+                plt.axvline(h['best_score'], color='r', linestyle='-', label=f'Best: {h["best_score"]:.4f}')
+                plt.axvline(h['mean_score'], color='g', linestyle='--', label=f'Mean: {h["mean_score"]:.4f}')
+                plt.xlabel(f'Performance Metric ({self.target_metric})')
+                plt.ylabel('Frequency')
+                plt.title(f'Score Distribution at Iteration {iteration}')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(plots_dir / "swarm_score_distribution.png", dpi=300, bbox_inches='tight')
+            plt.close()
             
             self.logger.info("Optimization plots created successfully")
             
@@ -1650,7 +1621,7 @@ class DDSOptimizer:
             self.logger.error(f"Error creating optimization plots: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
-
+    
     def _plot_streamflow_comparison(self):
         """
         Create a plot comparing observed and simulated streamflow for the best parameter set.
@@ -1660,8 +1631,6 @@ class DDSOptimizer:
         try:
             import matplotlib.pyplot as plt
             from matplotlib.dates import DateFormatter
-            import pandas as pd
-            import numpy as np
             
             # Create output directory
             plots_dir = self.output_dir / "plots"

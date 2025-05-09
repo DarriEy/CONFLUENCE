@@ -492,7 +492,55 @@ class RandomForestEmulator:
             'train_score': train_score, 
             'test_score': test_score
         }
+    
+    def optimize_parameters_global(self, fixed_attributes=None):
+        """Use differential evolution for global optimization"""
+        from scipy.optimize import differential_evolution
+        
+        # Define objective function
+        def objective(params_array):
+            input_data = {param: val for param, val in zip(self.param_cols, params_array)}
+            X_pred = pd.DataFrame([input_data])
             
+            # Ensure all columns from training are present
+            for col in self.model.feature_names_in_:
+                if col not in X_pred.columns:
+                    X_pred[col] = 0
+            
+            # Ensure correct column order
+            X_pred = X_pred[self.model.feature_names_in_]
+            
+            # Return negative predicted score (for minimization)
+            return -self.model.predict(X_pred)[0]
+        
+        # Define bounds
+        bounds = [(self.param_mins[param], self.param_maxs[param]) for param in self.param_cols]
+        
+        # Run differential evolution
+        result = differential_evolution(
+            objective, 
+            bounds,
+            popsize=15,  # Increase population size
+            mutation=(0.5, 1.0),  # Allow larger mutations
+            recombination=0.7,
+            strategy='best1bin',
+            maxiter=100,  # More iterations
+            polish=True   # Local optimization at the end
+        )
+        
+        # Convert results to parameter dictionary
+        optimized_params = {}
+        for i, param in enumerate(self.param_cols):
+            param_name = param.replace('param_', '')
+            optimized_params[param_name] = result.x[i]
+            self.logger.info(f"Optimized {param_name}: {result.x[i]:.4f}")
+        
+        # Save to CSV
+        params_df = pd.DataFrame([optimized_params])
+        params_df.to_csv(self.emulation_output_dir / "optimized_parameters.csv", index=False)
+        
+        return optimized_params, -result.fun
+
     def optimize_parameters(self, fixed_attributes=None):
         """
         Optimize parameters to maximize the predicted performance metric.
@@ -1614,7 +1662,7 @@ class RandomForestEmulator:
         # Determine how much to narrow the sampling range based on iteration
         # Start with 50% and decrease by 10% each iteration (50%, 40%, 30%, etc.)
         # but never go below 10%
-        range_reduction = max(0.5 - (0.1 * iteration), 0.1)
+        range_reduction = max(0.8 - (0.05 * iteration), 0.1)
         self.logger.info(f"Using sampling range reduction factor of {range_reduction:.2f}")
         
         try:
@@ -1632,29 +1680,32 @@ class RandomForestEmulator:
                 
                 # Create parameter sets
                 param_sets = []
-                
                 for i in range(num_sets):
-                    # For first set, use the optimized parameters exactly
                     if i == 0:
+                        # First set is optimized parameters
                         param_set = optimized_params.copy()
+                    elif i < 0.2 * num_sets:
+                        # 20% of sets with wide exploration (random)
+                        param_set = {}
+                        for param_name, _ in optimized_params.items():
+                            param_col = f"param_{param_name}"
+                            min_val = self.param_mins.get(param_col, 0)
+                            max_val = self.param_maxs.get(param_col, 1)
+                            param_set[param_name] = np.random.uniform(min_val, max_val)
                     else:
-                        # For other sets, sample around optimized parameters
+                        # Rest with focused exploration around optimal
                         param_set = {}
                         for param_name, optimal_value in optimized_params.items():
-                            # Get parameter bounds
                             param_col = f"param_{param_name}"
                             min_val = self.param_mins.get(param_col, 0)
                             max_val = self.param_maxs.get(param_col, 1)
                             
-                            # Calculate narrowed bounds around optimal value
                             param_range = max_val - min_val
                             narrowed_range = param_range * range_reduction
                             
-                            # New bounds (centered on optimal value but constrained by original bounds)
                             new_min = max(min_val, optimal_value - (narrowed_range / 2))
                             new_max = min(max_val, optimal_value + (narrowed_range / 2))
                             
-                            # Sample parameter value
                             param_set[param_name] = np.random.uniform(new_min, new_max)
                     
                     param_sets.append(param_set)
@@ -2561,7 +2612,8 @@ class RandomForestEmulator:
 
     def _create_combined_streamflow_plot(self, iteration_results):
         """
-        Create a combined plot showing the streamflow for each iteration.
+        Create a combined plot showing the streamflow for each iteration,
+        skipping the first 10% of data to avoid showing spin-up period.
         
         Args:
             iteration_results: List of dictionaries with results from each iteration
@@ -2571,7 +2623,7 @@ class RandomForestEmulator:
         import numpy as np
         from matplotlib.dates import DateFormatter
         
-        self.logger.info("Creating combined streamflow plot")
+        self.logger.info("Creating combined streamflow plot (skipping spin-up period)")
         
         # Read observed data
         obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
@@ -2600,6 +2652,16 @@ class RandomForestEmulator:
             obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
             obs_df.set_index('DateTime', inplace=True)
             observed_flow = obs_df[flow_col]
+            
+            # Calculate the spin-up period (first 10% of data)
+            total_days = (observed_flow.index.max() - observed_flow.index.min()).days
+            spinup_days = int(total_days * 0.1)  # 10% of total period
+            spinup_end_date = observed_flow.index.min() + pd.Timedelta(days=spinup_days)
+            
+            self.logger.info(f"Skipping spin-up period: {observed_flow.index.min()} to {spinup_end_date} ({spinup_days} days)")
+            
+            # Filter out spin-up period
+            observed_flow = observed_flow[observed_flow.index >= spinup_end_date]
             
             # Get simulated streamflow for each iteration
             sim_flows = []
@@ -2636,6 +2698,8 @@ class RandomForestEmulator:
                                             for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
                                                 if var_name in ds.variables:
                                                     flow_series = ds[var_name].isel(seg=reach_index).to_pandas()
+                                                    # Filter out spin-up period
+                                                    flow_series = flow_series[flow_series.index >= spinup_end_date]
                                                     sim_flows.append((iter_num, flow_series))
                                                     break
                             except Exception as e:
@@ -2673,6 +2737,8 @@ class RandomForestEmulator:
                                                 # Convert from m/s to m³/s
                                                 flow_series = flow_series * catchment_area
                                             
+                                            # Filter out spin-up period
+                                            flow_series = flow_series[flow_series.index >= spinup_end_date]
                                             sim_flows.append((iter_num, flow_series))
                                             break
                             except Exception as e:
@@ -2697,7 +2763,7 @@ class RandomForestEmulator:
             # Add labels and legend
             plt.xlabel('Date')
             plt.ylabel('Streamflow (m³/s)')
-            plt.title('Streamflow Comparison Across Iterations')
+            plt.title('Streamflow Comparison Across Iterations (Spin-up Period Excluded)')
             plt.grid(True, alpha=0.3)
             plt.legend()
             
@@ -2724,6 +2790,8 @@ class RandomForestEmulator:
             if final_dir.exists():
                 final_flow = self._get_final_optimized_flow(final_dir)
                 if final_flow is not None:
+                    # Filter out spin-up period
+                    final_flow = final_flow[final_flow.index >= spinup_end_date]
                     # Align index with observed data
                     reindexed_final = final_flow.reindex(observed_flow.index, method='nearest')
                     all_flows['Final_Optimized'] = reindexed_final
@@ -2731,24 +2799,39 @@ class RandomForestEmulator:
             # Save flow data for potential further analysis
             all_flows.to_csv(self.emulation_output_dir / "all_streamflows.csv")
             
-            self.logger.info("Combined streamflow plot created")
+            self.logger.info("Combined streamflow plot created (spin-up period excluded)")
             
         except Exception as e:
             self.logger.error(f"Error creating combined streamflow plot: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
 
-    def _get_final_optimized_flow(self, final_dir):
+    def _get_final_optimized_flow(self, final_dir, exclude_spinup=True):
         """
         Extract the streamflow from the final optimized run.
         
         Args:
             final_dir: Directory for the final optimized run
+            exclude_spinup: Whether to exclude the spin-up period
         
         Returns:
             Series with the streamflow data, or None if not found
         """
         try:
+            # Calculate spin-up period end date if needed
+            spinup_end_date = None
+            if exclude_spinup:
+                # Get observed data to determine the date range
+                obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+                if obs_path.exists():
+                    obs_df = pd.read_csv(obs_path)
+                    date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
+                    if date_col:
+                        obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+                        total_days = (obs_df['DateTime'].max() - obs_df['DateTime'].min()).days
+                        spinup_days = int(total_days * 0.1)  # 10% of total period
+                        spinup_end_date = obs_df['DateTime'].min() + pd.Timedelta(days=spinup_days)
+            
             if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
                 # Use mizuRoute output
                 mizu_dir = final_dir / "simulations" / self.experiment_id / "mizuRoute"
@@ -2775,7 +2858,11 @@ class RandomForestEmulator:
                                     # Try common variable names
                                     for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
                                         if var_name in ds.variables:
-                                            return ds[var_name].isel(seg=reach_index).to_pandas()
+                                            flow_series = ds[var_name].isel(seg=reach_index).to_pandas()
+                                            # Filter out spin-up period if requested
+                                            if exclude_spinup and spinup_end_date is not None:
+                                                flow_series = flow_series[flow_series.index >= spinup_end_date]
+                                            return flow_series
             else:
                 # Use SUMMA output directly
                 summa_dir = final_dir / "simulations" / self.experiment_id / "SUMMA"
@@ -2808,6 +2895,10 @@ class RandomForestEmulator:
                                         # Convert from m/s to m³/s
                                         flow_series = flow_series * catchment_area
                                     
+                                    # Filter out spin-up period if requested
+                                    if exclude_spinup and spinup_end_date is not None:
+                                        flow_series = flow_series[flow_series.index >= spinup_end_date]
+                                        
                                     return flow_series
             
             return None

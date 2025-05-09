@@ -196,7 +196,7 @@ SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setti
 SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
 PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore,Frad_vis,rootingDepth,leafExchangeCoeff,critSoilWilting # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor # Basin parameters to calibrate                       
+BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor,routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
   snowIncept: 
     - lightSnow
@@ -301,6 +301,77 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 # MESH settings
 
+## ============================================= CLM-ParFlow settings: =============================================================
+# This section contains configurations specific to the CLM-ParFlow integrated hydrological model
+
+# CLM-ParFlow executable settings
+CLM_PARFLOW_INSTALL_PATH: default                             # Path to CLM-ParFlow installation, if default uses self.code_dir / installs / parflow / bin
+CLM_PARFLOW_EXE: parflow                                      # Name of ParFlow executable
+CLM_DIR: default                                              # Path to CLM installation, if default uses self.code_dir / installs / clm
+
+# CLM-ParFlow domain settings
+CLM_PARFLOW_NX: 100                                           # Number of grid cells in x-direction
+CLM_PARFLOW_NY: 100                                           # Number of grid cells in y-direction
+CLM_PARFLOW_NZ: 10                                            # Number of grid cells in z-direction
+CLM_PARFLOW_DX: 1000.0                                        # Grid cell size in x-direction [m]
+CLM_PARFLOW_DY: 1000.0                                        # Grid cell size in y-direction [m]
+CLM_PARFLOW_DZ: 0.2                                           # Grid cell size near surface in z-direction [m]
+CLM_PARFLOW_DZMULT: 1.05                                      # Multiplier for vertical grid spacing with depth
+
+# CLM-ParFlow time settings
+CLM_PARFLOW_START_TIME: 0.0                                  # Start time for simulation [h]
+CLM_PARFLOW_STOP_TIME: 8760.0                                # End time for simulation [h]
+CLM_PARFLOW_DT: 1.0                                          # Time step for ParFlow [h]
+CLM_PARFLOW_DUMP_INTERVAL: 24.0                              # Interval for writing output files [h]
+
+# CLM-ParFlow coupling settings
+CLM_PARFLOW_WRITE_SILO: False                                # Write SILO files for visualization
+CLM_PARFLOW_WRITE_PFB: True                                  # Write PFB files for outputs
+CLM_PARFLOW_ISTEP_START: 1                                   # First time step for CLM forcing
+CLM_PARFLOW_CLM_DUMP_INTERVAL: 24                            # Dump interval for CLM output
+CLM_PARFLOW_CLM_REUSE_COUNT: 1                               # Number of times to reuse CLM forcing
+
+# CLM-ParFlow physical parameters
+CLM_PARFLOW_MANNINGS_N: 5.52e-6                              # Manning's roughness coefficient
+CLM_PARFLOW_SPECIFIC_STORAGE: 1.0e-5                         # Specific storage [1/m]
+CLM_PARFLOW_SLOPE_X: 0.001                                   # Average surface slope in x-direction
+CLM_PARFLOW_SLOPE_Y: 0.001                                   # Average surface slope in y-direction
+
+# CLM-ParFlow subsurface parameters
+CLM_PARFLOW_PERM_X: 0.2                                      # Hydraulic conductivity in x-direction [m/h]
+CLM_PARFLOW_PERM_Y: 0.2                                      # Hydraulic conductivity in y-direction [m/h]
+CLM_PARFLOW_PERM_Z: 0.02                                     # Hydraulic conductivity in z-direction [m/h]
+CLM_PARFLOW_POROSITY: 0.4                                    # Soil porosity [-]
+CLM_PARFLOW_VG_ALPHA: 3.5                                    # van Genuchten alpha parameter [1/m]
+CLM_PARFLOW_VG_N: 2.0                                        # van Genuchten n parameter [-]
+CLM_PARFLOW_RESIDUAL_SAT: 0.2                                # Residual saturation [-]
+
+# CLM-ParFlow subsurface layers
+CLM_PARFLOW_USER_PERM: False                                 # Use user-defined permeability file
+CLM_PARFLOW_PERM_FILE: default                               # Path to permeability file, if default uses none
+CLM_PARFLOW_USER_POROSITY: False                             # Use user-defined porosity file
+CLM_PARFLOW_POROSITY_FILE: default                           # Path to porosity file, if default uses none
+
+# CLM-ParFlow run settings
+CLM_PARFLOW_USE_PARALLEL: True                               # Run ParFlow in parallel
+CLM_PARFLOW_USE_TERRAIN_FOLLOWING: True                      # Use terrain-following grid
+CLM_PARFLOW_SOLVER: richards                                 # Solver type - 'richards' or 'impes' for unsaturated or saturated flow
+CLM_PARFLOW_PRECOND_TYPE: pfmg                               # Preconditioner type - 'pfmg', 'smg', or 'none'
+CLM_PARFLOW_MAX_ITER: 10000                                  # Maximum iterations for solver
+CLM_PARFLOW_ABS_TOL: 1.0e-9                                  # Absolute tolerance for solver
+CLM_PARFLOW_DROP_TOL: 1.0e-9                                 # Drop tolerance for solver
+
+# CLM-ParFlow output settings
+CLM_PARFLOW_OUTPUT_DIR: default                              # Path to output directory, if default uses self.project_dir / simulations / [experiment_id] / CLM_PARFLOW / output
+CLM_PARFLOW_VIZ_INTERVAL: 24                                 # Interval for visualization output [h]
+CLM_PARFLOW_PRINT_SATURATION: True                           # Print saturation fields
+CLM_PARFLOW_PRINT_PRESSURE: True                             # Print pressure fields
+CLM_PARFLOW_PRINT_VELOCITY: False                            # Print velocity fields
+CLM_PARFLOW_PRINT_EVAPTRANS: True                            # Print evapotranspiration
+CLM_PARFLOW_PRINT_OVERLAND_SUM: True                         # Print overland flow sum
+CLM_PARFLOW_PRINT_OVERLAND_BC_FLUX: True                     # Print overland boundary flux
+CLM_PARFLOW_PRINT_CLM_OUTPUT: True                           # Print CLM output
+
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
 SIM_REACH_ID: 228                                              # River reach ID used for streamflow evaluation and optimization
@@ -340,7 +411,7 @@ ITERATION_RESULTS_FILE: default                                # Path to iterati
 
 # Large Sample Emulation settings
 RUN_LARGE_SAMPLE_EMULATION: true                               # Whether to run large sample emulation (default: false)
-EMULATION_NUM_SAMPLES: 200                                     # Number of parameter sets to generate (default: 100)
+EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 22                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: lhs                                 # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
@@ -364,40 +435,25 @@ EMULATION_ITERATIONS: 10
 EMULATION_STOP_CRITERIA: 0.01
 
 # Iterative optimisation settings
-RUN_ITERATIVE_OPTIMISATION: False
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-
-#Ostrich settings
-OSTRICH_ALGORITHM: ParallelDDS                                 # Options: DDS, ParallelDDS, PSO, APPSO, SCE, ParaPADDS
-OSTRICH_METRICS: GCOP                                          # Options: GCOP (single-objective), PATO (multi-objective)
-DDS_R:  0.2                                                    # DDS perturbation parameter
-SCE_BUDGET: 10000                                              # SCE budget
-SCE_LOOP_STAGNATION: 5                                         # SCE loop stagnation criteria
-SCE_PCT_CHANGE: 0.01                                           # SCE percent change criteria
-SCE_POP_CONV: 0.001                                            # SCE population convergence criteria
-SCE_NUM_COMPLEXES: 3                                           # SCE number of complexes
-SCE_POINTS_PER_COMPLEX: 19                                     # SCE points per complex
-SCE_POINTS_PER_SUBCOMPLEX: 10                                  # SCE points per subcomplex
-SCE_NUM_EVOLUTION_STEPS: 19                                    # SCE number of evolution steps
-SCE_MIN_COMPLEXES: 3                                           # SCE minimum number of complexes
-SCE_USE_INITIAL_POINT: no                                      # SCE use initial point
-PSO_SWARM_SIZE: 20                                             # PSO swarm size
-PSO_NUM_GENERATIONS: 50                                        # PSO number of generations
-PSO_CONSTRICTION_FACTOR: 1.00                                  # PSO constriction factor
-PSO_COGNITIVE_PARAM: 2.00                                      # PSO cognitive parameter
-PSO_SOCIAL_PARAM: 2.00                                         # PSO social parameter
-PSO_INERTIA_WEIGHT: 1.20                                       # PSO inertia weight
-PSO_INERTIA_REDUCTION_RATE: 0.10                               # PSO inertia reduction rate
-PSO_INIT_POPULATION_METHOD: Random                             # PSO initial population method
-PSO_CONVERGENCE_VAL: 1.00E-4                                   # PSO convergence value
-
-
-OPTMIZATION_ALOGORITHM: NSGA-II                                # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
-OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-MOO_OPTIMIZATION_METRICS: KGE,NSE                              # Optimisation metrics to use in multi objective optimisation
-NUMBER_OF_OBJECTIVES: 2                                        # Number of objectives for multi objective algorithms
+RUN_ITERATIVE_OPTIMISATION: True
+ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA
+NUMBER_OF_ITERATIONS: 200                                      # Number of iterations for calibration 
 POPULATION_SIZE: 100                                           # Population size for genetic algorithms
-NUMBER_OF_GENERATIONS: 10                                      # Number of generations for genetic algorithms
-SWRMSIZE: 10                                                   # Swarm size for swarm based algorithms
-NGSIZE: 10                                                     # Next Generation size
-DIAGNOSTIC_FREQUENCY: 10                                       # Number of iterations between diagnostic output
+OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+
+# DDS specific settings
+DDS_R:  0.2                                                    # DDS perturbation parameter
+
+# SCE-UA specific settings
+NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
+POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
+NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
+EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
+PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
+
+# PSO specific settings 
+SWRMSIZE: 40                 # Number of particles in the swarm
+PSO_COGNITIVE_PARAM: 1.5     # Personal best influence
+PSO_SOCIAL_PARAM: 1.5        # Global best influence 
+PSO_INERTIA_WEIGHT: 0.7      # Inertia weight
+PSO_INERTIA_REDUCTION_RATE: 0.99  # Rate at which inertia reduces
