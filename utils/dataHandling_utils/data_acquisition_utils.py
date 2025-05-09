@@ -118,7 +118,6 @@ class datatoolRunner:
         f"--submit-job",
         f"--cache={self.tool_cache}",
         f"--cluster={self.config['CLUSTER_JSON']}",
-        #f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
 
         return datatool_command

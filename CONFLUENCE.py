@@ -381,7 +381,6 @@ class CONFLUENCE:
         
         return output_file
 
-    @get_function_logger
     def acquire_attributes(self):
 
         # Create attribute directories
@@ -429,7 +428,6 @@ class CONFLUENCE:
         gistool_command_soilclass = gr.create_gistool_command(dataset = 'soil_class', output_dir = soilclass_dir, lat_lims = latlims, lon_lims = lonlims, variables = 'soil_classes')
         gr.execute_gistool_command(gistool_command_soilclass)
 
-    @get_function_logger
     def process_attributes(self):
         """
         Process catchment characteristic attributes.
@@ -460,8 +458,6 @@ class CONFLUENCE:
         else:
             self.logger.info("Attribute processing skipped (PROCESS_CHARACTERISTIC_ATTRIBUTES=False)")
 
-
-    @get_function_logger
     def define_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
 
@@ -488,7 +484,6 @@ class CONFLUENCE:
         else:
             self.logger.info('Shapefile provided, skipping domain definition')
 
-    @get_function_logger
     def plot_domain(self):
         if self.config.get('SPATIAL_MODE') == 'Point':
             self.logger.info("Spatial mode: Point simulations, no domain to plot")
@@ -501,7 +496,6 @@ class CONFLUENCE:
         else:
             self.logger.warning("Could not create domain visualization")
 
-    @get_function_logger
     def discretize_domain(self):
         
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
@@ -522,7 +516,6 @@ class CONFLUENCE:
 
         self.logger.info(f"Domain to be defined using method {domain_method}")
 
-    @get_function_logger
     def plot_discretised_domain(self):
         if self.config.get('SPATIAL_MODE') == 'Point':
             self.logger.info("Spatial mode: Point simulations, discretisation not required")
@@ -536,7 +529,6 @@ class CONFLUENCE:
         else:
             self.logger.warning("Could not create discretization visualization")
 
-    @get_function_logger
     def acquire_forcings(self):
         if self.config.get('SPATIAL_MODE') == 'Point' and self.config.get('DATA_ACQUIRE') == 'supplied':
             self.logger.info("Spatial mode: Point simulations, data supplied")
@@ -563,7 +555,6 @@ class CONFLUENCE:
         datatool_command = dr.create_datatool_command(dataset = self.config['FORCING_DATASET'], output_dir = raw_data_dir, lat_lims = latlims, lon_lims = lonlims, variables = variables, start_date = self.config['EXPERIMENT_TIME_START'], end_date = self.config['EXPERIMENT_TIME_END'])
         dr.execute_datatool_command(datatool_command)
 
-    @get_function_logger
     def model_agnostic_pre_processing(self):
         
         # Data directories
@@ -591,7 +582,6 @@ class CONFLUENCE:
             dap = DataAcquisitionProcessor(self.config, self.logger)
             dap.run_data_acquisition()
        
-    @get_function_logger
     def process_observed_data(self):
         self.logger.info("Processing observed data")
         observed_data_processor = ObservedDataProcessor(self.config, self.logger)
@@ -651,7 +641,6 @@ class CONFLUENCE:
                 raise
                 
         self.logger.info("Model-specific preprocessing completed")
-
 
     def run_models(self):
         self.logger.info("Starting model runs")
@@ -806,7 +795,6 @@ class CONFLUENCE:
                 except Exception as e:
                     self.logger.warning(f"Error creating water balance visualization: {str(e)}")
 
-    @get_function_logger
     def prepare_emulation_data(self):
         """
         Run large sample emulation to generate spatially varying trial parameters.
@@ -867,7 +855,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during large sample emulation: {str(e)}")
             raise
 
-    @get_function_logger
     def calculate_ensemble_performance_metrics(self):
         """
         Calculate performance metrics for ensemble simulations with a focus on calibration and validation periods.
@@ -1446,7 +1433,7 @@ class CONFLUENCE:
             import traceback
             self.logger.error(traceback.format_exc())
 
-    @get_function_logger
+
     def run_random_forest_emulation(self):
         """
         Run random forest emulation to find optimal parameters based on
@@ -1505,7 +1492,6 @@ class CONFLUENCE:
             return self.project_dir / default_suffix
         return Path(path)
 
-    @get_function_logger  
     def run_benchmarking(self):
         # Preprocess data for benchmarking
         preprocessor = BenchmarkPreprocessor(self.config, self.logger)
@@ -1555,7 +1541,6 @@ class CONFLUENCE:
         tv = TimeseriesVisualizer(self.config, self.logger)
         metrics_df = tv.create_visualizations()
             
-    @get_function_logger  
     def run_sensitivity_analysis(self):
         self.logger.info("Starting sensitivity analysis")
         try:
@@ -1582,7 +1567,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during sensitivity analysis: {str(e)}")
             return None
                     
-    @get_function_logger  
     def run_decision_analysis(self):
         self.logger.info("Starting decision analysis")
 
@@ -1606,7 +1590,6 @@ class CONFLUENCE:
                 pass
 
     
-    @get_function_logger
     def subset_geofabric(self):
         self.logger.info("Starting geofabric subsetting process")
 
@@ -1621,7 +1604,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during geofabric subsetting: {str(e)}")
             return None
 
-    @get_function_logger
     def delineate_lumped_watershed(self):
         self.logger.info("Starting geofabric lumped delineation")
         try:
@@ -1632,7 +1614,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during geofabric delineation: {str(e)}")
             return None
 
-    @get_function_logger
     def delineate_point_buffer_shape(self):
         self.logger.info("Starting point buffer")
         try:
@@ -1643,7 +1624,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during point buffer delineation: {str(e)}")
             return None
 
-    @get_function_logger
     def delineate_geofabric(self):
         self.logger.info("Starting geofabric delineation")
         try:
@@ -1654,7 +1634,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during geofabric delineation: {str(e)}")
             return None
 
-    @get_function_logger
     def delineate_coastal(self):
         self.logger.info("Starting geofabric delineation")
         try:

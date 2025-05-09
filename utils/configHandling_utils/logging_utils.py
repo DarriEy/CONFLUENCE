@@ -43,8 +43,8 @@ def get_function_logger(func):
         logger = setup_logger(func.__name__, log_file)
 
         # Log the function's source code
-        source_code = inspect.getsource(func)
-        logger.info(f"Function source code:\n{source_code}\n{'='*50}\n")
+        #source_code = inspect.getsource(func)
+        #logger.info(f"Function source code:\n{source_code}\n{'='*50}\n")
 
         # Add the logger to the function's globals so it can be accessed within the function
         func.__globals__['logger'] = logger

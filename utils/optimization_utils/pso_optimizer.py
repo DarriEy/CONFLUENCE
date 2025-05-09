@@ -673,7 +673,7 @@ class PSOOptimizer:
                             
                             # Assign to GRU dimension
                             param_var[:] = param_values_array
-                            self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
+                            #self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
                         else:
                             # Regular parameter at HRU level
                             param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)

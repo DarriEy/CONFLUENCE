@@ -214,7 +214,7 @@ class VariableHandler:
     
     def process_forcing_data(self, data: xr.Dataset) -> xr.Dataset:
         """Process forcing data by mapping variable names and converting units."""
-        self.logger.info("Starting forcing data processing")
+        self.logger.info("Starting forcing data unit processing")
         
         processed_data = data.copy()
         
@@ -255,7 +255,7 @@ class VariableHandler:
                 # Rename after conversion
                 processed_data = processed_data.rename({dataset_var: model_var})
         
-        self.logger.info("Forcing data processing completed")
+        self.logger.info("Forcing data unit processing completed")
         return processed_data
 
     def _find_matching_variable(self, standard_name: str, dataset_map: Dict) -> Optional[str]:
