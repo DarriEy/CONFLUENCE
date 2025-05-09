@@ -37,7 +37,7 @@ from utils.models_utils.clm_parflow_utils import CLMParFlowPreProcessor, CLMParF
 #from utils.models_utils.mesh_utils import MESHPreProcessor, MESHRunner, MESHPostProcessor # type: ignore
 
 # Evaluation utilities
-#from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
+from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
 
 # Reporting utilities
 from utils.report_utils.reporting_utils import VisualizationReporter # type: ignore
@@ -94,6 +94,7 @@ class CONFLUENCE:
         self.experiment_id = self.config.get('EXPERIMENT_ID')
 
         self.setup_logging()
+        
        # Log configuration file using the original config path
         log_dir = self.project_dir / f"_workLog_{self.domain_name}"
         self.config_log_file = log_configuration(config, log_dir, self.domain_name)
@@ -119,7 +120,7 @@ class CONFLUENCE:
         # Define the workflow steps and their output checks
         workflow_steps = [
             # Initiate project
-            (self.setup_project, (self.project_dir / 'catchment').exists),
+            (self.setup_project, (self.project_dir).exists),
             
             # Geospatial domain definition and analysis
             (self.create_pourPoint, lambda: (self.project_dir / "shapefiles" / "pour_point" / f"{self.domain_name}_pourPoint.shp").exists()),
@@ -468,13 +469,13 @@ class CONFLUENCE:
             if self.config.get('SPATIAL_MODE') == 'Point':
                 self.delineate_point_buffer_shape()        
             elif domain_method == 'subset':
-                self.subset_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+                self.subset_geofabric()
             elif domain_method == 'lumped':
-                self.delineate_lumped_watershed(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+                self.delineate_lumped_watershed()
             elif domain_method == 'delineate':
-                self.delineate_geofabric(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+                self.delineate_geofabric()
                 if self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                    self.delineate_coastal(work_log_dir=self.data_dir / f"domain_{self.domain_name}" / f"shapefiles/_workLog")
+                    self.delineate_coastal()
 
             elif self.config.get('SPATIAL_MODE') == 'Point':
                 self.logger.info("Spatial mode: Point simulations, delineation not required")
