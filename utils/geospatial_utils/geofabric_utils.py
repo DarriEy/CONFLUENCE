@@ -145,7 +145,22 @@ class GeofabricDelineator:
         for attempt in range(self.max_retries if retry else 1):
             try:
                 if run_cmd:
-                    full_command = f"{run_cmd} {command}"
+                    # If the command includes module load, we need special handling
+                    if "module load" in command:
+                        # Split the command to extract the module load part and the actual command
+                        parts = command.split(" && ")
+                        if len(parts) == 2:
+                            module_part = parts[0]
+                            actual_cmd = parts[1]
+                            # For srun, we need to ensure the environment is properly passed
+                            if run_cmd == "srun":
+                                full_command = f"{module_part} && {run_cmd} {actual_cmd}"
+                            else:
+                                full_command = f"{module_part} && {run_cmd} {actual_cmd}"
+                        else:
+                            full_command = f"{run_cmd} {command}"
+                    else:
+                        full_command = f"{run_cmd} {command}"
                 else:
                     full_command = command
 
@@ -169,14 +184,18 @@ class GeofabricDelineator:
         threshold = self.config.get('STREAM_THRESHOLD')
         max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
 
+        # Always load GDAL module before TauDEM commands
+        module_prefix = "module load gdal/3.9.2 && "
+        self.logger.info("Loading GDAL module: gdal/3.9.2")
+
         steps = [
-            f"{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
-            f"{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
-            f"{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
-            f"{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
-            f"{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
-            f"{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
-            f"{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+            f"{module_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
+            f"{module_prefix}{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
+            f"{module_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
+            f"{module_prefix}{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
+            f"{module_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
+            f"{module_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            f"{module_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
         ]
 
         for step in steps:

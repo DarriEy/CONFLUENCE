@@ -45,6 +45,7 @@ from utils.report_utils.result_vizualisation_utils import BenchmarkVizualiser, T
 
 # Optimisation utilities
 from utils.optimization_utils.single_sample_emulator import SingleSampleEmulator, RandomForestEmulator # type: ignore
+from utils.optimization_utils.ensemble_performance_analyzer import EnsemblePerformanceAnalyzer # type: ignore
 from utils.optimization_utils.dds_optimizer import DDSOptimizer # type: ignore
 from utils.optimization_utils.optimizer_manager import OptimizerManager # type: ignore
 from utils.optimization_utils.pso_optimizer import PSOOptimizer # type: ignore
@@ -209,8 +210,7 @@ class CONFLUENCE:
                         # Save results to standard location
                         self._save_optimization_results_to_csv(result)
                     else:
-                        self.logger.info(f"Using parallel optimization with {opt_algorithm}")
-                        self.run_parallel_optimization()
+                        self.logger.info(f"Optimisation algorithm not supported")
                 else:
                     self.logger.warning(f"Calibration for model {model} not yet implemented")
         except Exception as e:
@@ -355,7 +355,6 @@ class CONFLUENCE:
         
         return None
     
-    @get_function_logger
     def setup_project(self):
         self.logger.info(f"Setting up project for domain: {self.domain_name}")
         
@@ -366,10 +365,7 @@ class CONFLUENCE:
         
         return project_dir
 
-    @get_function_logger
     def create_pourPoint(self):
-
-                    
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
             self.logger.info("Using user-provided pour point shapefile")
             return None
@@ -462,29 +458,33 @@ class CONFLUENCE:
 
     def define_domain(self):
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-
+        
         # Skip domain definition if shapefile is provided
-        if self.config.get('RIVER_BASINS_NAME') == 'default':        
-
-            # Skip domain definition if in point mode
-            if self.config.get('SPATIAL_MODE') == 'Point':
-                self.delineate_point_buffer_shape()        
-            elif domain_method == 'subset':
-                self.subset_geofabric()
-            elif domain_method == 'lumped':
-                self.delineate_lumped_watershed()
-            elif domain_method == 'delineate':
-                self.delineate_geofabric()
-                if self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                    self.delineate_coastal()
-
-            elif self.config.get('SPATIAL_MODE') == 'Point':
-                self.logger.info("Spatial mode: Point simulations, delineation not required")
-                return None
-            else:
-                self.logger.error(f"Unknown domain definition method: {domain_method}")
-        else:
+        if self.config.get('RIVER_BASINS_NAME') != 'default':
             self.logger.info('Shapefile provided, skipping domain definition')
+            return
+        
+        # Skip domain definition if in point mode
+        if self.config.get('SPATIAL_MODE') == 'Point':
+            self.delineate_point_buffer_shape()
+            return
+        
+        # Map of domain methods to their corresponding functions
+        domain_methods = {
+            'subset': self.subset_geofabric,
+            'lumped': self.delineate_lumped_watershed,
+            'delineate': self.delineate_geofabric
+        }
+        
+        method_function = domain_methods.get(domain_method)
+        if method_function:
+            method_function()
+            
+            # Handle coastal watersheds if needed
+            if domain_method == 'delineate' and self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
+                self.delineate_coastal()
+        else:
+            self.logger.error(f"Unknown domain definition method: {domain_method}")
 
     def plot_domain(self):
         if self.config.get('SPATIAL_MODE') == 'Point':
@@ -849,581 +849,16 @@ class CONFLUENCE:
 
     def calculate_ensemble_performance_metrics(self):
         """
-        Calculate performance metrics for ensemble simulations with a focus on calibration and validation periods.
+        Calculate performance metrics for ensemble simulations and create visualizations.
         
-        This method:
-        1. Processes all ensemble simulation outputs
-        2. Compares them with observed streamflow
-        3. Calculates performance metrics (KGE, NSE, RMSE, PBIAS) for calibration and validation periods
-        4. Creates visualization of ensemble runs vs observed for different time periods
+        This method delegates to the EnsemblePerformanceAnalyzer class for all
+        performance metric calculations and visualization creation.
         
         Returns:
             Path: Path to performance metrics file
         """
-        self.logger.info("Calculating performance metrics for ensemble simulations")
-        
-        # Define paths
-        ensemble_dir = self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / "ensemble_runs"
-        metrics_dir = self.project_dir / "emulation" / self.config.get('EXPERIMENT_ID') / "ensemble_analysis"
-        metrics_dir.mkdir(parents=True, exist_ok=True)
-        metrics_file = metrics_dir / "performance_metrics.csv"
-        
-        # Check if ensemble runs exist
-        if not ensemble_dir.exists() or not any(ensemble_dir.glob("run_*")):
-            self.logger.error("No ensemble run directories found, cannot calculate metrics")
-            return None
-        
-        # Get observed data
-        obs_path = self.config.get('OBSERVATIONS_PATH')
-        if obs_path == 'default':
-            obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
-        
-        if not obs_path.exists():
-            self.logger.error(f"Observed streamflow file not found: {obs_path}")
-            return None
-        
-        try:
-            import pandas as pd
-            import numpy as np
-            import matplotlib.pyplot as plt
-            from matplotlib.dates import DateFormatter
-            
-            # Load observed data
-            obs_df = pd.read_csv(obs_path)
-            
-            # Identify date and streamflow columns in observed data
-            date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
-            flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
-            
-            if date_col is None or flow_col is None:
-                self.logger.error(f"Could not identify date or flow columns in observed data: {obs_df.columns.tolist()}")
-                return None
-            
-            # Convert date column to datetime and set as index
-            obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
-            obs_df.set_index('DateTime', inplace=True)
-            
-            # Set up calibration and evaluation periods from config
-            calib_period = self.config.get('CALIBRATION_PERIOD', '')
-            eval_period = self.config.get('EVALUATION_PERIOD', '')
-            
-            if calib_period and ',' in calib_period and eval_period and ',' in eval_period:
-                calib_start, calib_end = [s.strip() for s in calib_period.split(',')]
-                eval_start, eval_end = [s.strip() for s in eval_period.split(',')]
-                
-                calib_mask = (obs_df.index >= pd.Timestamp(calib_start)) & (obs_df.index <= pd.Timestamp(calib_end))
-                eval_mask = (obs_df.index >= pd.Timestamp(eval_start)) & (obs_df.index <= pd.Timestamp(eval_end))
-                
-                # Log the period definitions
-                self.logger.info(f"Using calibration period: {calib_start} to {calib_end}")
-                self.logger.info(f"Using evaluation period: {eval_start} to {eval_end}")
-            else:
-                # If periods not defined, use time-based split (70% calibration, 30% evaluation)
-                total_time = obs_df.index[-1] - obs_df.index[0]
-                split_point = obs_df.index[0] + pd.Timedelta(seconds=total_time.total_seconds() * 0.7)
-                
-                calib_mask = obs_df.index <= split_point
-                eval_mask = obs_df.index > split_point
-                
-                self.logger.info(f"Using time-based split for calibration (before {split_point}) and evaluation (after {split_point})")
-            
-            # Process each ensemble run
-            run_dirs = sorted(ensemble_dir.glob("run_*"))
-            metrics = {}
-            all_flows = pd.DataFrame(index=obs_df.index)
-            all_flows['Observed'] = obs_df[flow_col]
-            
-            for run_dir in run_dirs:
-                run_id = run_dir.name
-                self.logger.debug(f"Processing {run_id}")
-                
-                # Find streamflow output file
-                results_file = run_dir / "results" / f"{run_id}_streamflow.csv"
-                
-                if not results_file.exists():
-                    self.logger.warning(f"No streamflow results found for {run_id}")
-                    continue
-                
-                # Read streamflow data
-                sim_df = pd.read_csv(results_file)
-                
-                # Convert time column to datetime and set as index
-                time_col = next((col for col in sim_df.columns if 'time' in col.lower() or 'date' in col.lower()), 'time')
-                sim_df['DateTime'] = pd.to_datetime(sim_df[time_col])
-                sim_df.set_index('DateTime', inplace=True)
-                
-                # Get streamflow column
-                sim_flow_col = next((col for col in sim_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q' in col.lower()), 'streamflow')
-                
-                # Add to all flows dataframe
-                all_flows[run_id] = sim_df[sim_flow_col].reindex(obs_df.index, method='nearest')
-                
-                # Calculate performance metrics for calibration and evaluation periods
-                metrics[run_id] = {}
-                
-                # Calibration period
-                if calib_mask.sum() > 0:
-                    common_idx = obs_df.index[calib_mask].intersection(sim_df.index)
-                    if len(common_idx) > 0:
-                        observed = obs_df.loc[common_idx, flow_col]
-                        simulated = sim_df.loc[common_idx, sim_flow_col]
-                        
-                        calib_metrics = self._calculate_performance_metrics(observed, simulated)
-                        for metric, value in calib_metrics.items():
-                            metrics[run_id][f"Calib_{metric}"] = value
-                    else:
-                        self.logger.warning(f"No common time steps between observed and simulated data for {run_id} in calibration period")
-                
-                # Evaluation period
-                if eval_mask.sum() > 0:
-                    common_idx = obs_df.index[eval_mask].intersection(sim_df.index)
-                    if len(common_idx) > 0:
-                        observed = obs_df.loc[common_idx, flow_col]
-                        simulated = sim_df.loc[common_idx, sim_flow_col]
-                        
-                        eval_metrics = self._calculate_performance_metrics(observed, simulated)
-                        for metric, value in eval_metrics.items():
-                            metrics[run_id][f"Eval_{metric}"] = value
-                    else:
-                        self.logger.warning(f"No common time steps between observed and simulated data for {run_id} in evaluation period")
-            
-            if not metrics:
-                self.logger.error("No valid metrics calculated for any ensemble run")
-                return None
-            
-            # Convert metrics to DataFrame and save
-            metrics_df = pd.DataFrame.from_dict(metrics, orient='index')
-            
-            # Ensure the index (run IDs) is saved as a column
-            metrics_df = metrics_df.reset_index()
-            metrics_df.rename(columns={'index': 'Run'}, inplace=True)
-            
-            # Save metrics
-            metrics_df.to_csv(metrics_file, index=False)
-            self.logger.info(f"Performance metrics saved to {metrics_file}")
-            
-            # Create visualization
-            try:
-                self._plot_ensemble_comparison(all_flows, metrics_df.set_index('Run'), metrics_dir)
-            except Exception as e:
-                self.logger.error(f"Error creating ensemble plots: {str(e)}")
-                import traceback
-                self.logger.error(traceback.format_exc())
-            
-            return metrics_file
-                
-        except Exception as e:
-            self.logger.error(f"Error calculating ensemble performance metrics: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
-
-    def _calculate_performance_metrics(self, observed, simulated):
-        """
-        Calculate streamflow performance metrics with improved handling of outliers.
-        
-        Args:
-            observed: Series of observed streamflow values
-            simulated: Series of simulated streamflow values
-        
-        Returns:
-            Dictionary of performance metrics
-        """
-        # Make sure both series are numeric
-        observed = pd.to_numeric(observed, errors='coerce')
-        simulated = pd.to_numeric(simulated, errors='coerce')
-        
-        # Drop NaN values in either series
-        valid = ~(observed.isna() | simulated.isna())
-        observed = observed[valid]
-        simulated = simulated[valid]
-        
-        if len(observed) == 0:
-            self.logger.error("No valid data points for metric calculation")
-            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
-        
-        # Cap extremely high flow values (outliers) - use the 99.5th percentile
-        flow_cap = observed.quantile(0.995)
-        observed_capped = observed.clip(upper=flow_cap)
-        simulated_capped = simulated.clip(upper=flow_cap)
-        
-        # Nash-Sutcliffe Efficiency (NSE)
-        mean_obs = observed_capped.mean()
-        nse_numerator = ((observed_capped - simulated_capped) ** 2).sum()
-        nse_denominator = ((observed_capped - mean_obs) ** 2).sum()
-        nse = 1 - (nse_numerator / nse_denominator) if nse_denominator > 0 else np.nan
-        
-        # Root Mean Square Error (RMSE)
-        rmse = np.sqrt(((observed_capped - simulated_capped) ** 2).mean())
-        
-        # Percent Bias (PBIAS)
-        pbias = 100 * (simulated_capped.sum() - observed_capped.sum()) / observed_capped.sum() if observed_capped.sum() != 0 else np.nan
-        
-        # Kling-Gupta Efficiency (KGE)
-        r = observed_capped.corr(simulated_capped)  # Correlation coefficient
-        alpha = simulated_capped.std() / observed_capped.std() if observed_capped.std() != 0 else np.nan  # Relative variability
-        beta = simulated_capped.mean() / mean_obs if mean_obs != 0 else np.nan  # Bias ratio
-        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
-        
-        # Mean Absolute Error (MAE)
-        mae = (observed_capped - simulated_capped).abs().mean()
-        
-        return {
-            'KGE': kge,
-            'NSE': nse,
-            'RMSE': rmse,
-            'PBIAS': pbias,
-            'MAE': mae,
-            'r': r,
-            'alpha': alpha,
-            'beta': beta
-        }
-
-    def _plot_ensemble_comparison(self, all_flows, metrics_df, output_dir):
-        """
-        Create visualizations comparing all ensemble runs to observed data with focus on training and testing periods.
-        
-        Args:
-            all_flows: DataFrame with observed and simulated flows
-            metrics_df: DataFrame with performance metrics
-            output_dir: Directory to save visualizations
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-            from matplotlib.dates import DateFormatter
-            import matplotlib.gridspec as gridspec
-            
-            # Handle outliers by capping values
-            flow_cap = all_flows['Observed'].quantile(0.995) if 'Observed' in all_flows else 100  # Default cap if no observed data
-            capped_flows = all_flows.clip(upper=flow_cap)
-            
-            # Ensure we actually have data to plot
-            if capped_flows.empty:
-                self.logger.warning("Empty flow data, cannot create ensemble plots")
-                return
-            
-            # Get time information - assuming index is datetime
-            date_range = capped_flows.index
-            if len(date_range) == 0:
-                self.logger.warning("Empty date range, cannot create ensemble plots")
-                return
-            
-            # Get calibration and evaluation periods from config
-            calib_period = self.config.get('CALIBRATION_PERIOD', '')
-            eval_period = self.config.get('EVALUATION_PERIOD', '')
-            
-            if calib_period and ',' in calib_period and eval_period and ',' in eval_period:
-                calib_start, calib_end = [s.strip() for s in calib_period.split(',')]
-                eval_start, eval_end = [s.strip() for s in eval_period.split(',')]
-                
-                # Create masks for periods
-                try:
-                    calib_mask = (capped_flows.index >= pd.Timestamp(calib_start)) & (capped_flows.index <= pd.Timestamp(calib_end))
-                    eval_mask = (capped_flows.index >= pd.Timestamp(eval_start)) & (capped_flows.index <= pd.Timestamp(eval_end))
-                    spinup_mask = ~(calib_mask | eval_mask)
-                except:
-                    # If timestamps fail, use time-based split
-                    spinup_end = date_range[0] + (date_range[-1] - date_range[0]) * 0.2
-                    calib_end = date_range[0] + (date_range[-1] - date_range[0]) * 0.7
-                    
-                    spinup_mask = (date_range >= date_range[0]) & (date_range < spinup_end)
-                    calib_mask = (date_range >= spinup_end) & (date_range < calib_end)
-                    eval_mask = date_range >= calib_end
-            else:
-                # Use time-based split (20% spinup, 50% calibration, 30% evaluation)
-                spinup_end = date_range[0] + (date_range[-1] - date_range[0]) * 0.2
-                calib_end = date_range[0] + (date_range[-1] - date_range[0]) * 0.7
-                
-                spinup_mask = (date_range >= date_range[0]) & (date_range < spinup_end)
-                calib_mask = (date_range >= spinup_end) & (date_range < calib_end)
-                eval_mask = date_range >= calib_end
-            
-            # Calculate ensemble mean (excluding 'Observed' column)
-            sim_cols = [col for col in capped_flows.columns if col != 'Observed' and not col.startswith('Unnamed')]
-            if not sim_cols:
-                self.logger.warning("No simulation columns found in data")
-                return
-                
-            capped_flows['Ensemble Mean'] = capped_flows[sim_cols].mean(axis=1)
-            
-            # Create a figure with three subplots (spinup, training, testing)
-            fig = plt.figure(figsize=(18, 12))
-            gs = gridspec.GridSpec(3, 1, height_ratios=[1, 2, 2])
-            
-            # Create axes for each period
-            ax_spinup = fig.add_subplot(gs[0])
-            ax_train = fig.add_subplot(gs[1], sharex=ax_spinup)
-            ax_test = fig.add_subplot(gs[2], sharex=ax_spinup)
-            
-            # Plot spinup period
-            if spinup_mask.sum() > 0:
-                spinup_flows = capped_flows[spinup_mask]
-                if 'Observed' in spinup_flows:
-                    ax_spinup.plot(spinup_flows.index, spinup_flows['Observed'], 'k-', linewidth=2)
-                if 'Ensemble Mean' in spinup_flows:
-                    ax_spinup.plot(spinup_flows.index, spinup_flows['Ensemble Mean'], 'r-', linewidth=1.5)
-                    
-                    # Plot each simulation with low alpha (limit to first 20 for clarity)
-                    for col in sim_cols[:min(20, len(sim_cols))]:
-                        ax_spinup.plot(spinup_flows.index, spinup_flows[col], 'b-', alpha=0.05, linewidth=0.5)
-                    
-                ax_spinup.set_title('Spinup Period', fontsize=12)
-                ax_spinup.set_ylabel('Flow (m³/s)')
-                ax_spinup.grid(True, alpha=0.3)
-            
-            # Plot calibration period
-            if calib_mask.sum() > 0:
-                calib_flows = capped_flows[calib_mask]
-                if 'Observed' in calib_flows and 'Ensemble Mean' in calib_flows:
-                    ax_train.plot(calib_flows.index, calib_flows['Observed'], 'k-', linewidth=2)
-                    ax_train.plot(calib_flows.index, calib_flows['Ensemble Mean'], 'r-', linewidth=1.5)
-                    
-                    # Plot each simulation with low alpha (limit to first 20 for clarity)
-                    for col in sim_cols[:min(20, len(sim_cols))]:
-                        ax_train.plot(calib_flows.index, calib_flows[col], 'b-', alpha=0.05, linewidth=0.5)
-                    
-                    # Add metrics if we can calculate them
-                    try:
-                        train_metrics = self._calculate_period_metrics(calib_flows['Observed'], calib_flows['Ensemble Mean'])
-                        metrics_text = (
-                            f"Training Metrics:\n"
-                            f"KGE: {train_metrics['KGE']:.3f}\n"
-                            f"NSE: {train_metrics['NSE']:.3f}\n"
-                            f"RMSE: {train_metrics['RMSE']:.3f}"
-                        )
-                        ax_train.text(0.02, 0.95, metrics_text, transform=ax_train.transAxes,
-                                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                    except Exception as e:
-                        self.logger.warning(f"Could not calculate training metrics: {str(e)}")
-                    
-                ax_train.set_title('Calibration Period', fontsize=12)
-                ax_train.set_ylabel('Flow (m³/s)')
-                ax_train.grid(True, alpha=0.3)
-            
-            # Plot evaluation period
-            if eval_mask.sum() > 0:
-                eval_flows = capped_flows[eval_mask]
-                if 'Observed' in eval_flows and 'Ensemble Mean' in eval_flows:
-                    ax_test.plot(eval_flows.index, eval_flows['Observed'], 'k-', linewidth=2)
-                    ax_test.plot(eval_flows.index, eval_flows['Ensemble Mean'], 'r-', linewidth=1.5)
-                    
-                    # Plot each simulation with low alpha (limit to first 20 for clarity)
-                    for col in sim_cols[:min(20, len(sim_cols))]:
-                        ax_test.plot(eval_flows.index, eval_flows[col], 'b-', alpha=0.05, linewidth=0.5)
-                    
-                    # Add metrics if we can calculate them
-                    try:
-                        test_metrics = self._calculate_period_metrics(eval_flows['Observed'], eval_flows['Ensemble Mean'])
-                        metrics_text = (
-                            f"Evaluation Metrics:\n"
-                            f"KGE: {test_metrics['KGE']:.3f}\n"
-                            f"NSE: {test_metrics['NSE']:.3f}\n"
-                            f"RMSE: {test_metrics['RMSE']:.3f}"
-                        )
-                        ax_test.text(0.02, 0.95, metrics_text, transform=ax_test.transAxes,
-                                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                    except Exception as e:
-                        self.logger.warning(f"Could not calculate evaluation metrics: {str(e)}")
-                
-                ax_test.set_title('Evaluation Period', fontsize=12)
-                ax_test.set_xlabel('Date')
-                ax_test.set_ylabel('Flow (m³/s)')
-                ax_test.grid(True, alpha=0.3)
-            
-            # Format x-axis dates
-            for ax in [ax_spinup, ax_train, ax_test]:
-                ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
-                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
-            
-            # Add a common legend
-            fig.legend(['Observed', 'Ensemble Mean', 'Ensemble Runs'], 
-                    loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=3)
-            
-            # Add overall ensemble information
-            fig.text(0.02, 0.98, f"Ensemble Size: {len(sim_cols)} runs", fontsize=12)
-            
-            # Save plot
-            plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust for the legend at the top
-            plt.savefig(output_dir / "ensemble_streamflow_comparison.png", dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            # Create additional plots
-            self._create_additional_ensemble_plots(capped_flows, sim_cols, calib_mask, eval_mask, output_dir)
-            
-        except Exception as e:
-            self.logger.error(f"Error creating ensemble plots: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-
-    def _calculate_period_metrics(self, observed, simulated):
-        """
-        Calculate metrics for a specific time period with improved robustness.
-        
-        Args:
-            observed: Series of observed values
-            simulated: Series of simulated values
-            
-        Returns:
-            Dictionary of performance metrics
-        """
-        # Clean and align data
-        valid = ~(observed.isna() | simulated.isna())
-        observed = observed[valid]
-        simulated = simulated[valid]
-        
-        if len(observed) < 2:
-            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan}
-        
-        # Cap values at 99.5 percentile to reduce impact of outliers
-        cap_val = observed.quantile(0.995)
-        observed = observed.clip(upper=cap_val)
-        simulated = simulated.clip(upper=cap_val)
-        
-        # Nash-Sutcliffe Efficiency (NSE)
-        mean_obs = observed.mean()
-        nse_numerator = ((observed - simulated) ** 2).sum()
-        nse_denominator = ((observed - mean_obs) ** 2).sum()
-        nse = 1 - (nse_numerator / nse_denominator) if nse_denominator > 0 else np.nan
-        
-        # Root Mean Square Error (RMSE)
-        rmse = np.sqrt(((observed - simulated) ** 2).mean())
-        
-        # Kling-Gupta Efficiency (KGE)
-        try:
-            r = observed.corr(simulated)  # Correlation coefficient
-            alpha = simulated.std() / observed.std() if observed.std() > 0 else np.nan  # Relative variability
-            beta = simulated.mean() / mean_obs if mean_obs > 0 else np.nan  # Bias ratio
-            
-            if np.isnan(r) or np.isnan(alpha) or np.isnan(beta):
-                kge = np.nan
-            else:
-                kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
-        except:
-            kge = np.nan
-        
-        return {'KGE': kge, 'NSE': nse, 'RMSE': rmse}
-
-
-    def _create_additional_ensemble_plots(self, capped_flows, sim_cols, train_mask, test_mask, output_dir):
-        """
-        Create additional ensemble analysis plots (scatter, FDC, etc.) with improved error handling.
-        
-        Args:
-            capped_flows: DataFrame with capped flow values
-            sim_cols: List of simulation column names
-            train_mask: Boolean mask for training period
-            test_mask: Boolean mask for testing period
-            output_dir: Directory to save plots
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-            from scipy.stats import linregress
-            
-            # Create scatter plot comparing observed vs ensemble mean for training and testing
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-            
-            # Training period scatter
-            train_flows = capped_flows[train_mask].copy() if isinstance(train_mask, pd.Series) else pd.DataFrame()
-            
-            # First check if we have non-empty dataframe with both columns
-            if not train_flows.empty and 'Observed' in train_flows and 'Ensemble Mean' in train_flows:
-                # Filter out NaN values
-                valid_mask = ~(train_flows['Observed'].isna() | train_flows['Ensemble Mean'].isna())
-                if valid_mask.sum() > 0:
-                    valid_train_flows = train_flows[valid_mask]
-                    
-                    # Convert to NumPy arrays for regression
-                    x_vals = valid_train_flows['Observed'].values
-                    y_vals = valid_train_flows['Ensemble Mean'].values
-                    
-                    # Plot scatter points
-                    ax1.scatter(x_vals, y_vals, alpha=0.7, s=30, c='blue', label='Training')
-                    
-                    # Add 1:1 line
-                    if len(x_vals) > 0:
-                        max_val = max(valid_train_flows['Observed'].max(), valid_train_flows['Ensemble Mean'].max())
-                        min_val = min(valid_train_flows['Observed'].min(), valid_train_flows['Ensemble Mean'].min())
-                        ax1.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=1)
-                        
-                        # Add regression line only if we have enough points
-                        if len(x_vals) >= 2:
-                            try:
-                                # Simple approach to avoid shape errors
-                                slope, intercept, r_value, _, _ = linregress(x_vals, y_vals)
-                                
-                                # Only plot if we got valid results
-                                if not np.isnan(slope) and not np.isnan(intercept):
-                                    ax1.plot([min_val, max_val], 
-                                        [slope * min_val + intercept, slope * max_val + intercept], 
-                                        'r-', linewidth=1, label=f'Regression (r={r_value:.2f})')
-                            except Exception as e:
-                                self.logger.warning(f"Error calculating regression for training period: {str(e)}")
-                    
-                    ax1.set_xlabel('Observed Flow (m³/s)')
-                    ax1.set_ylabel('Ensemble Mean Flow (m³/s)')
-                    ax1.set_title('Training Period Scatter Plot')
-                    ax1.grid(True, alpha=0.3)
-                    ax1.legend()
-            
-            # Testing period scatter
-            test_flows = capped_flows[test_mask].copy() if isinstance(test_mask, pd.Series) else pd.DataFrame()
-            
-            # First check if we have non-empty dataframe with both columns
-            if not test_flows.empty and 'Observed' in test_flows and 'Ensemble Mean' in test_flows:
-                # Filter out NaN values
-                valid_mask = ~(test_flows['Observed'].isna() | test_flows['Ensemble Mean'].isna())
-                if valid_mask.sum() > 0:
-                    valid_test_flows = test_flows[valid_mask]
-                    
-                    # Convert to NumPy arrays for regression
-                    x_vals = valid_test_flows['Observed'].values
-                    y_vals = valid_test_flows['Ensemble Mean'].values
-                    
-                    # Plot scatter points
-                    ax2.scatter(x_vals, y_vals, alpha=0.7, s=30, c='red', label='Testing')
-                    
-                    # Add 1:1 line
-                    if len(x_vals) > 0:
-                        max_val = max(valid_test_flows['Observed'].max(), valid_test_flows['Ensemble Mean'].max())
-                        min_val = min(valid_test_flows['Observed'].min(), valid_test_flows['Ensemble Mean'].min())
-                        ax2.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=1)
-                        
-                        # Add regression line only if we have enough points
-                        if len(x_vals) >= 2:
-                            try:
-                                # Simple approach to avoid shape errors
-                                slope, intercept, r_value, _, _ = linregress(x_vals, y_vals)
-                                
-                                # Only plot if we got valid results
-                                if not np.isnan(slope) and not np.isnan(intercept):
-                                    ax2.plot([min_val, max_val], 
-                                        [slope * min_val + intercept, slope * max_val + intercept], 
-                                        'r-', linewidth=1, label=f'Regression (r={r_value:.2f})')
-                            except Exception as e:
-                                self.logger.warning(f"Error calculating regression for testing period: {str(e)}")
-                    
-                    ax2.set_xlabel('Observed Flow (m³/s)')
-                    ax2.set_ylabel('Ensemble Mean Flow (m³/s)')
-                    ax2.set_title('Testing Period Scatter Plot')
-                    ax2.grid(True, alpha=0.3)
-                    ax2.legend()
-            
-            # Save the figure with equal aspect if possible
-            for ax in [ax1, ax2]:
-                try:
-                    ax.set_aspect('equal')
-                except:
-                    self.logger.warning("Could not set equal aspect ratio for scatter plot")
-            
-            plt.tight_layout()
-            plt.savefig(output_dir / "ensemble_scatter_plot.png", dpi=300, bbox_inches='tight')
-            plt.close()
-        except Exception as e:
-            self.logger.error(f"Error creating additional ensemble plots: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
+        analyzer = EnsemblePerformanceAnalyzer(self.config, self.logger)
+        return analyzer.calculate_ensemble_performance_metrics()
 
 
     def run_random_forest_emulation(self):
@@ -1549,7 +984,6 @@ class CONFLUENCE:
                     if self.config.get('RUN_SENSITIVITY_ANALYSIS', True) == True:
                         sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
 
-                    sensitivity_results = sensitivity_analyzer.run_sensitivity_analysis(results_file)
                     self.logger.info("Sensitivity analysis completed")
                     return sensitivity_results
                 else:
@@ -1580,7 +1014,6 @@ class CONFLUENCE:
             
             else:
                 pass
-
     
     def subset_geofabric(self):
         self.logger.info("Starting geofabric subsetting process")
@@ -1635,31 +1068,6 @@ class CONFLUENCE:
             self.logger.error(f"Error during coastal delineation: {str(e)}")
             return None
 
-    def run_parallel_optimization(self):        
-        config_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_config_files' / 'config_active.yaml'
-
-        if shutil.which("srun"):
-            run_command = "srun"
-        elif shutil.which("mpirun"):
-            run_command = "mpirun"
-
-        cmd = [
-            run_command,
-            '-n', str(self.config.get('MPI_PROCESSES')),
-            'python',
-            str(Path(__file__).parent / 'utils' / 'optimization_utils' / 'parallel_parameter_estimation.py'), 
-            str(config_path)
-        ]
-
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error running parallel optimization: {e}")
-
-    def run_ostrich_optimization(self):
-        optimizer = OstrichOptimizer(self.config, self.logger)
-        optimizer.run_optimization()
-
     def calculate_landcover_mode(self, input_dir, output_file, start_year, end_year):
         # List all the geotiff files for the years we're interested in
         geotiff_files = [input_dir / f"domain_{self.config['DOMAIN_NAME']}_{year}.tif" for year in range(start_year, end_year + 1)]
@@ -1689,7 +1097,6 @@ class CONFLUENCE:
             dst.write(mode_data, 1)
         
         print(f"Mode calculation complete. Result saved to {output_file}")
-
 
 def main():
     parser = argparse.ArgumentParser(description='Run CONFLUENCE workflow')
