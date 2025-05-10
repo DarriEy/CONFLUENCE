@@ -134,7 +134,7 @@ class GeofabricDelineator:
     def run_command(self, command: str, retry: bool = True) -> None:
         def get_run_command():
             if shutil.which("srun"):
-                return "srun"
+                return "mpirun"
             elif shutil.which("mpirun"):
                 return "mpirun"
             else:
