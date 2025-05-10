@@ -223,7 +223,7 @@ class FUSEPreProcessor:
             # Get area from river basins shapefile using GRU_area
             basin_name = self.config.get('RIVER_BASINS_NAME')
             if basin_name == 'default':
-                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
+                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
             basin_gdf = gpd.read_file(basin_path)
             
@@ -1038,7 +1038,7 @@ class FuseDecisionAnalyzer:
         if self.area_km2 is None:
             basin_name = self.config.get('RIVER_BASINS_NAME')
             if basin_name == 'default':
-                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_delineate.shp"
+                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
             basin_gdf = gpd.read_file(basin_path)
             
@@ -1245,7 +1245,7 @@ class FUSEPostprocessor:
             # Get catchment area from river basins shapefile
             basin_name = self.config.get('RIVER_BASINS_NAME')
             if basin_name == 'default':
-                basin_name = f"{self.domain_name}_riverBasins_delineate.shp"
+                basin_name = f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
             basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
             basin_gdf = gpd.read_file(basin_path)
             
