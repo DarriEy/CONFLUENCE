@@ -1741,21 +1741,28 @@ class LumpedWatershedDelineator:
             else:
                 mpi_prefix = ""
             
+            # Add environment variables to the command if using srun
+            env_prefix = ""
+            if mpi_cmd == "srun":
+                # Get current LD_LIBRARY_PATH
+                ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+                if ld_library_path:
+                    env_prefix = f"--export=ALL,LD_LIBRARY_PATH={ld_library_path} "
+                    self.logger.info(f"Using LD_LIBRARY_PATH: {ld_library_path}")
+            
             # TauDEM processing steps with absolute paths
             steps = [
-                f"{mpi_prefix}{self.taudem_dir}/pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
-                f"{mpi_prefix}{self.taudem_dir}/d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
-                f"{mpi_prefix}{self.taudem_dir}/aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
-                f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
-                f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.output_dir}/p.tif -src {self.output_dir}/src.tif -o {self.pour_point_path} -om {self.output_dir}/om.shp",
-                f"{mpi_prefix}{self.taudem_dir}/gagewatershed -p {self.output_dir}/p.tif -o {self.output_dir}/om.shp -gw {self.output_dir}/watershed.tif -id {self.output_dir}/watershed_id.txt"
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.output_dir}/p.tif -src {self.output_dir}/src.tif -o {self.pour_point_path} -om {self.output_dir}/om.shp",
+                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/gagewatershed -p {self.output_dir}/p.tif -o {self.output_dir}/om.shp -gw {self.output_dir}/watershed.tif -id {self.output_dir}/watershed_id.txt"
             ]
             
             for step in steps:
                 self.run_command(step)
                 self.logger.info(f"Completed TauDEM step: {step}")
-                
-            # Rest of the method remains the same...
                 
             # Convert the watershed raster to polygon
             watershed_shp_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_lumped.shp"
