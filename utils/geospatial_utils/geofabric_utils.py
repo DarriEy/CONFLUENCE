@@ -193,7 +193,8 @@ class GeofabricDelineator:
             mpi_prefix = f"{mpi_cmd} -n {self.mpi_processes} "
         else:
             mpi_prefix = ""
-
+            
+        mpi_prefix = ""
         # Build the TauDEM commands with module loading
         steps = [
             f"{mpi_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
