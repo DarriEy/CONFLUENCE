@@ -73,21 +73,35 @@ class GeofabricDelineator:
             taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
         os.environ['PATH'] = f"{os.environ['PATH']}:{taudem_dir}"
 
-    def run_command(self, command: str, retry: bool = True) -> None:
-        for attempt in range(self.max_retries if retry else 1):
-            try:
-                self.logger.info(f"Running command: {command}")
-                result = subprocess.run(command, check=True, shell=True, capture_output=True, text=True)
-                self.logger.info(f"Command output: {result.stdout}")
-                return
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error executing command: {command}")
-                self.logger.error(f"Error details: {e.stderr}")
-                if attempt < self.max_retries - 1 and retry:
-                    self.logger.info(f"Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    raise
+    def run_command(self, command: str):
+        """
+        Run a shell command and log any errors.
+        
+        Args:
+            command (str): The command to run.
+            
+        Raises:
+            subprocess.CalledProcessError: If the command fails.
+        """
+        try:
+            # Set up environment with GDAL library path
+            env = os.environ.copy()
+            
+            # Check if GDAL is already loaded in current environment
+            gdal_lib_path = os.environ.get('LD_LIBRARY_PATH', '')
+            
+            # If GDAL library path is specified in config, use it
+            if self.config.get('GDAL_LIB_PATH'):
+                gdal_path = self.config.get('GDAL_LIB_PATH')
+                env['LD_LIBRARY_PATH'] = f"{gdal_path}:{gdal_lib_path}"
+            
+            result = subprocess.run(command, check=True, shell=True, env=env, 
+                                capture_output=True, text=True)
+            self.logger.info(f"Command output: {result.stdout}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error executing command: {command}")
+            self.logger.error(f"Error details: {e.stderr}")
+            raise
 
     @get_function_logger
     def delineate_geofabric(self) -> Tuple[Optional[Path], Optional[Path]]:
@@ -176,14 +190,18 @@ class GeofabricDelineator:
             self.logger.error(f"TauDEM directory not found: {self.taudem_dir}")
             raise RuntimeError("TauDEM directory not available")
 
+        # Always load GDAL module before TauDEM commands
+        module_prefix = "module load gdal/3.9.2 && "
+        self.logger.info("Loading GDAL module: gdal/3.9.2")
+
         steps = [
-            f"{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
-            f"{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
-            f"{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
-            f"{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
-            f"{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
-            f"{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
-            f"{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+            f"{module_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
+            f"{module_prefix}{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
+            f"{module_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
+            f"{module_prefix}{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
+            f"{module_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
+            f"{module_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            f"{module_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
         ]
 
         for step in steps:
@@ -191,6 +209,7 @@ class GeofabricDelineator:
             self.logger.info(f"Completed TauDEM step: {step}")
 
     def _clean_geometries(self, geometry):
+
         """Clean and validate geometry."""
         if geometry is None or not geometry.is_valid:
             return None
@@ -1472,22 +1491,39 @@ class LumpedWatershedDelineator:
         else:
             self.dem_path = Path(self.dem_path)
 
-    def run_command(self, command: str):
-        """
-        Run a shell command and log any errors.
+    def run_command(self, command: str, retry: bool = True) -> None:
+        def get_run_command():
+            if shutil.which("srun"):
+                return "srun"
+            elif shutil.which("mpirun"):
+                return "mpirun"
+            else:
+                return None
 
-        Args:
-            command (str): The command to run.
+        run_cmd = get_run_command()
 
-        Raises:
-            subprocess.CalledProcessError: If the command fails.
-        """
-        try:
-            subprocess.run(command, check=True, shell=True)
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error executing command: {command}")
-            self.logger.error(f"Error details: {str(e)}")
-            raise
+        for attempt in range(self.max_retries if retry else 1):
+            try:
+                if run_cmd:
+                    full_command = f"{run_cmd} {command}"
+                else:
+                    full_command = command
+
+                self.logger.info(f"Running command: {full_command}")
+                result = subprocess.run(full_command, check=True, shell=True, capture_output=True, text=True)
+                self.logger.info(f"Command output: {result.stdout}")
+                return
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Error executing command: {full_command}")
+                self.logger.error(f"Error details: {e.stderr}")
+                if attempt < self.max_retries - 1 and retry:
+                    self.logger.info(f"Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                elif run_cmd:
+                    self.logger.info(f"Trying without {run_cmd}...")
+                    run_cmd = None  # Try without srun/mpirun on the next attempt
+                else:
+                    raise
 
     @get_function_logger
     def delineate_lumped_watershed(self) -> Tuple[Optional[Path], Optional[Path]]:
@@ -1741,28 +1777,24 @@ class LumpedWatershedDelineator:
             else:
                 mpi_prefix = ""
             
-            # Add environment variables to the command if using srun
-            env_prefix = ""
-            if mpi_cmd == "srun":
-                # Get current LD_LIBRARY_PATH
-                ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
-                if ld_library_path:
-                    env_prefix = f"--export=ALL,LD_LIBRARY_PATH={ld_library_path} "
-                    self.logger.info(f"Using LD_LIBRARY_PATH: {ld_library_path}")
+            # Always load GDAL module before TauDEM commands
+            module_prefix = "module load gdal/3.9.2 && "
+            self.logger.info("Loading GDAL module: gdal/3.9.2")
             
             # TauDEM processing steps with absolute paths
             steps = [
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.output_dir}/p.tif -src {self.output_dir}/src.tif -o {self.pour_point_path} -om {self.output_dir}/om.shp",
-                f"{mpi_prefix}{env_prefix}{self.taudem_dir}/gagewatershed -p {self.output_dir}/p.tif -o {self.output_dir}/om.shp -gw {self.output_dir}/watershed.tif -id {self.output_dir}/watershed_id.txt"
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.output_dir}/p.tif -src {self.output_dir}/src.tif -o {self.pour_point_path} -om {self.output_dir}/om.shp",
+                f"{module_prefix}{mpi_prefix}{self.taudem_dir}/gagewatershed -p {self.output_dir}/p.tif -o {self.output_dir}/om.shp -gw {self.output_dir}/watershed.tif -id {self.output_dir}/watershed_id.txt"
             ]
             
             for step in steps:
+                self.logger.info(f"Running TauDEM command: {step}")
                 self.run_command(step)
-                self.logger.info(f"Completed TauDEM step: {step}")
+                self.logger.info(f"Completed TauDEM step")
                 
             # Convert the watershed raster to polygon
             watershed_shp_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_lumped.shp"
