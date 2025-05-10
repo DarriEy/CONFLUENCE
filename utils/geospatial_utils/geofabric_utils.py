@@ -51,6 +51,11 @@ class GeofabricDelineator:
         self.max_retries = self.config.get('MAX_RETRIES', 3)
         self.retry_delay = self.config.get('RETRY_DELAY', 5)
         self.min_gru_size = self.config.get('MIN_GRU_SIZE', 5.0)  # Default 1 km²
+        self.taudem_dir = self.config.get('TAUDEM_DIR')
+        if self.taudem_dir == "default":
+            self.taudem_dir = str(self.config.get('CONFLUENCE_DATA_DIR') / 'installs' / 'TauDEM' / 'bin')
+
+
         #self.pour_point_path = self.project_dir / 'shapefiles' / 'pour_point' / f"{self.config['DOMAIN_NAME']}_pourPoint.shp"
 
     def _get_dem_path(self) -> Path:
@@ -166,7 +171,7 @@ class GeofabricDelineator:
         max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
 
         steps = [
-            f"pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
+            f"{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
             f"d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
             f"aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
             f"gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
