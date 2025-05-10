@@ -53,7 +53,7 @@ class GeofabricDelineator:
         self.min_gru_size = self.config.get('MIN_GRU_SIZE', 5.0)  # Default 1 km²
         self.taudem_dir = self.config.get('TAUDEM_DIR')
         if self.taudem_dir == "default":
-            self.taudem_dir = str(self.config.get('CONFLUENCE_DATA_DIR') / 'installs' / 'TauDEM' / 'bin')
+            self.taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
 
 
         #self.pour_point_path = self.project_dir / 'shapefiles' / 'pour_point' / f"{self.config['DOMAIN_NAME']}_pourPoint.shp"
@@ -1452,7 +1452,7 @@ class LumpedWatershedDelineator:
         self.dem_path = self.config.get('DEM_PATH')
         self.taudem_dir = self.config.get('TAUDEM_DIR')
         if self.taudem_dir == "default":
-            self.taudem_dir = str(self.config.get('CONFLUENCE_DATA_DIR') / 'installs' / 'TauDEM' / 'bin')
+            self.taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
 
         dem_name = self.config['DEM_NAME']
         if dem_name == "default":
