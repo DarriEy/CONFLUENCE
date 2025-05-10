@@ -1445,6 +1445,9 @@ class LumpedWatershedDelineator:
         self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
         self.delineation_method = self.config.get('LUMPED_WATERSHED_METHOD', 'pysheds')
         self.dem_path = self.config.get('DEM_PATH')
+        self.taudem_dir = self.config.get('TAUDEM_DIR')
+        if self.taudem_dir == "default":
+            self.taudem_dir = str(self.config.get('CONFLUENCE_DATA_DIR') / 'installs' / 'TauDEM' / 'bin')
 
         dem_name = self.config['DEM_NAME']
         if dem_name == "default":
@@ -1720,7 +1723,7 @@ class LumpedWatershedDelineator:
             
             # TauDEM processing steps for lumped watershed delineation
             steps = [
-                f"{mpi_prefix}pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
+                f"{mpi_prefix}{self.taudem_dir}/pitremove -z {self.dem_path} -fel {self.output_dir}/fel.tif",
                 f"{mpi_prefix}d8flowdir -fel {self.output_dir}/fel.tif -p {self.output_dir}/p.tif -sd8 {self.output_dir}/sd8.tif",
                 f"{mpi_prefix}aread8 -p {self.output_dir}/p.tif -ad8 {self.output_dir}/ad8.tif",
                 f"{mpi_prefix}threshold -ssa {self.output_dir}/ad8.tif -src {self.output_dir}/src.tif -thresh 100",
