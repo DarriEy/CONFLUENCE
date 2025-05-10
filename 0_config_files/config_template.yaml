@@ -86,7 +86,7 @@ DEM_PATH: default                                              # If 'default', u
 DEM_NAME: default                                                # Name of elevation dem tiff
 SOURCE_GEOFABRIC_BASINS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/catchment/8020000010-basins.gpkg                                   # Path to source geofabric basins
 SOURCE_GEOFABRIC_RIVERS_PATH: /Users/darrieythorsson/compHydro/data/CWARHM_data/domain_NorthAmerica/shapefiles/river_network/8020000010-streamnet.gpkg                                  # Path to source geofabric rivers
-TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM 
+TAUDEM_DIR: default                                            # If 'default', uses 'root_path/installs/TauDEM/bin 
 OUTPUT_DIR: default                                            # If 'default', uses 'root_path/domain_[name]/shapefiles/r
 CATCHMENT_PLOT_DIR: default                                    # Directory to output plots of domain catchment
 SOIL_CLASS_PATH: default                                       # Path to soil classification raster. If 'default', uses root_path/domain_[name]/attributes/soilclass

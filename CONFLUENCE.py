@@ -500,25 +500,15 @@ class CONFLUENCE:
             self.logger.warning("Could not create domain visualization")
 
     def discretize_domain(self):
-        
-        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-        domain_discretizer = DomainDiscretizer(self.config, self.logger)
-        hru_shapefile = domain_discretizer.discretize_domain()
-
-        if isinstance(hru_shapefile, pd.Series) or isinstance(hru_shapefile, pd.DataFrame):
-            if not hru_shapefile.empty:
-                self.logger.info(f"Domain discretized successfully. HRU shapefile(s):")
-                for index, shapefile in hru_shapefile.items():
-                    self.logger.info(f"  {index}: {shapefile}")
-            else:
-                self.logger.error("Domain discretization failed. No shapefiles were created.")
-        elif hru_shapefile:
-            self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
-        else:
-            self.logger.error("Domain discretization failed.")
-
-        self.logger.info(f"Domain to be defined using method {domain_method}")
-
+        try:
+            self.logger.info(f"Discretizing domain using method: {self.config.get('DOMAIN_DISCRETIZATION')}")
+            domain_discretizer = DomainDiscretizer(self.config, self.logger)
+            hru_shapefile = domain_discretizer.discretize_domain()
+            self.logger.info(f"Domain discretized successfully. HRU shapefile(s): {hru_shapefile}")
+        except Exception as e:
+            self.logger.error(f"Error during discretisation: {str(e)}")
+            raise
+       
     def plot_discretised_domain(self):
         if self.config.get('SPATIAL_MODE') == 'Point':
             self.logger.info("Spatial mode: Point simulations, discretisation not required")
