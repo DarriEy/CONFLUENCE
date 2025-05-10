@@ -25,9 +25,6 @@ module load r/4.4.1
 # Activate your Python environment if necessary
 source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
 
-# Export binary paths to system path
-export PATH="/work/comphyd_lab/data/CONFLUENCE_data/installs/TauDEM/bin:$PATH"
-
 # Run the Python script
 python CONFLUENCE.py --config 0_config_files/config_active.yaml   
 
