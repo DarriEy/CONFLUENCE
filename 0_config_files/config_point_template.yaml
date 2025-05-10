@@ -385,7 +385,7 @@ ATTRIBUTES_GLWD_PATH: default                                 # Path to Global L
 ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
 
 # Attribute processing settings
-ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
+ATTRIBUTES_PROCESS_LUMPED: False                               # Process lumped catchment attributes even for distributed domains
 ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
 ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
 

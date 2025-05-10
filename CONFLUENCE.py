@@ -135,7 +135,7 @@ class CONFLUENCE:
             # Model agnostic data pre- processing
             (self.process_observed_data, lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv").exists()),
             (self.acquire_forcings, lambda: (self.project_dir / "forcing" / "raw_data").exists()),
-            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()),
+            (self.model_agnostic_pre_processing, lambda: (self.project_dir / "forcing" / "basin_averaged_data1").exists()),
 
             # Model specific processing
             (self.model_specific_pre_processing, lambda: (self.project_dir / "forcing" / f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()),
@@ -581,9 +581,9 @@ class CONFLUENCE:
         fr.run_resampling()
 
         # Prepare run the MAF Orchestrator
-        if 'MESH' in self.config.get('HYDROLOGICAL_MODEL').split(',') or 'HYPE' in self.config.get('HYDROLOGICAL_MODEL').split(','):
-            dap = DataAcquisitionProcessor(self.config, self.logger)
-            dap.run_data_acquisition()
+        #if 'MESH' in self.config.get('HYDROLOGICAL_MODEL').split(',') or 'HYPE' in self.config.get('HYDROLOGICAL_MODEL').split(','):
+            #dap = DataAcquisitionProcessor(self.config, self.logger)
+            #dap.run_data_acquisition()
        
     def process_observed_data(self):
         self.logger.info("Processing observed data")
