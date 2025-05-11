@@ -954,7 +954,7 @@ class gistoolRunner:
             #"--submit-job",
             "--print-geotiff=true",
             f"--cache={self.tool_cache}_{self.domain_name}",
-            f"--account={self.config['TOOL_ACCOUNT']}"
+            #f"--account={self.config['TOOL_ACCOUNT']}"
         ] 
         
         if start_date and end_date:
