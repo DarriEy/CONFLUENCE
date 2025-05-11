@@ -32,7 +32,7 @@ CONFLUENCE is a  hydrological modeling platform designed to streamline the  mode
 - **Multi-Model Support**: SUMMA, FUSE, MESH, HYPE, GR models with mizuRoute routing
 - **Automated Domain Processing**: Geofabric delineation and discretization
 - **Advanced Visualization**: Comprehensive plotting and reporting tools
-- **Parallel Processing**: HPC-ready with MPI support
+- **Parallel Processing**: HPC-optimised 
 - **Configuration-Based**: YAML-based configuration for reproducible workflows
 - **AI Integration**: Optional INDRA system for AI-assisted workflow guidance
 
