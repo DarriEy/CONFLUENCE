@@ -72,10 +72,9 @@ class MizuRouteRunner:
         
         mizu_out_path = self._get_config_path('EXPERIMENT_OUTPUT_MIZUROUTE', f"simulations/{experiment_id}/mizuRoute/")
 
-        # Backup settings if required
-        if self.config.get('EXPERIMENT_BACKUP_SETTINGS') == 'yes':
-            backup_path = mizu_out_path / "run_settings"
-            self._backup_settings(settings_path, backup_path)
+        # Backup settings
+        backup_path = mizu_out_path / "run_settings"
+        self._backup_settings(settings_path, backup_path)
 
         # Run mizuRoute
         os.makedirs(mizu_log_path, exist_ok=True)
@@ -151,10 +150,9 @@ class SummaRunner:
         
         summa_out_path = self._get_config_path('EXPERIMENT_OUTPUT_SUMMA', f"simulations/{experiment_id}/SUMMA/")
 
-        # Backup settings if required
-        if self.config.get('EXPERIMENT_BACKUP_SETTINGS') == 'yes':
-            backup_path = summa_out_path / "run_settings"
-            self._backup_settings(settings_path, backup_path)
+        # Backup settings 
+        backup_path = summa_out_path / "run_settings"
+        self._backup_settings(settings_path, backup_path)
 
         # Run SUMMA
         os.makedirs(summa_log_path, exist_ok=True)
