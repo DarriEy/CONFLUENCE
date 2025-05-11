@@ -665,6 +665,8 @@ class ObservedDataProcessor:
         # Get configuration parameters
         station_id = self.config.get('STATION_ID')
         hydat_path = self.config.get('HYDAT_PATH')
+        if hydat_path == 'default':
+            hydat_path = f"{str(self.project_dir.parent().parent() / 'geospatial-data' / 'hydat')}/Hydat.sqlite3"
         
         # Check if HYDAT_PATH exists
         if not hydat_path or not Path(hydat_path).exists():

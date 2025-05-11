@@ -718,8 +718,12 @@ class FUSERunner:
         self.logger.info("Executing FUSE model")
         
         # Construct command
+        fuse_fm = self.config['SETTINGS_FUSE_FILEMANAGER']
+        if fuse_fm == 'default':
+            fuse_fm = 'fm_catch.txt'
+            
         fuse_exe = self.fuse_path / self.config.get('FUSE_EXE', 'fuse.exe')
-        control_file = self.project_dir / 'settings' / 'FUSE' / self.config['SETTINGS_FUSE_FILEMANAGER']
+        control_file = self.project_dir / 'settings' / 'FUSE' / fuse_fm
         
         command = [
             str(fuse_exe),
