@@ -118,13 +118,38 @@ CONFLUENCE/
 
 ## Example Workflows
 
-Browse the `examples/` directory for Jupyter notebooks demonstrating:
+Browse the `jupyter_notebooks/` directory for comprehensive tutorials demonstrating:
 
-1. **Basic Workflow** - Simple watershed setup and model run
-2. **Domain Discretization** - Different discretization methods
-3. **Multi-Model Comparison** - Running multiple models
-4. **Calibration Example** - Model optimization workflow
-5. **Visualization Guide** - Creating plots and reports
+1. **[01_lumped_basin_workflow.ipynb](jupyter_notebooks/01_lumped_basin_workflow.ipynb)** - Complete lumped basin modeling tutorial (Bow River at Banff)
+2. **[02_semi_distributed_basin_workflow.ipynb](jupyter_notebooks/02_semi_distributed_basin_workflow.ipynb)** - Semi-Distributed modeling with multiple GRUs
+3. **[03_distributed_basin_workflow.ipynb](jupyter_notebooks/02_semi_distributed_basin_workflow.ipynb)** - Distributed modeling with multiple GRUs
+4. **[04_regional_domain_workflow.ipynb](jupyter_notebooks/04_regional_domain_workflow.ipynb)** - Regional-scale modeling (Iceland example)
+5. **[05_continental_domain_workflow.ipynb](jupyter_notebooks/04_regional_domain_workflow.ipynb)** - Continental-scale modeling (North America example)
+
+Each notebook includes step-by-step instructions and can be run interactively to learn CONFLUENCE's capabilities.
+
+### Getting Started with Examples
+
+```bash
+# Navigate to the notebooks directory
+cd examples/
+
+# Start Jupyter
+jupyter notebook
+```
+
+## Documentation
+
+📚 **Full documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
+
+[![Documentation Status](https://readthedocs.org/projects/confluence/badge/?version=latest)](https://confluence.readthedocs.io/en/latest/?badge=latest)
+
+The documentation includes:
+- **[Getting Started Guide](https://confluence.readthedocs.io/en/latest/getting_started.html)** - Quick introduction to CONFLUENCE
+- **[Installation Instructions](https://confluence.readthedocs.io/en/latest/installation.html)** - Detailed setup guide
+- **[Configuration Guide](https://confluence.readthedocs.io/en/latest/configuration.html)** - Complete configuration reference
+- **[Examples](https://confluence.readthedocs.io/en/latest/examples.html)** - Practical tutorials based on Jupyter notebooks
+- **[API Reference](https://confluence.readthedocs.io/en/latest/api.html)** - Detailed API documentation
 
 ## Contributing
 
