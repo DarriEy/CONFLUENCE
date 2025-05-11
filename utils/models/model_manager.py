@@ -36,15 +36,62 @@ from utils.reporting.result_vizualisation_utils import TimeseriesVisualizer # ty
 
 
 class ModelManager:
-    """Manages all model operations including preprocessing, running, postprocessing, and visualization."""
+    """
+    Manages all hydrological model operations within the CONFLUENCE framework.
+    
+    The ModelManager is responsible for coordinating the execution of hydrological
+    models, including preprocessing of input data, executing model simulations,
+    postprocessing results, and visualizing outputs. It provides a unified interface
+    for interacting with multiple hydrological models, allowing for consistent
+    execution and comparison.
+    
+    The ModelManager supports multiple hydrological models:
+    - SUMMA: Structure for Unifying Multiple Modeling Alternatives
+    - FUSE: Framework for Understanding Structural Errors
+    - GR: Génie Rural models (GR4J, GR5J, etc.)
+    - HYPE: HYdrological Predictions for the Environment
+    - FLASH: A deep learning streamflow prediction model
+    - (MESH): Modélisation Environnementale Communautaire - Surface et Hydrologie
+              (currently commented out)
+              
+    For each model, the ModelManager provides standardized interfaces for:
+    1. Preprocessing: Converting common input data to model-specific formats
+    2. Execution: Running the hydrological simulations
+    3. Postprocessing: Extracting and formatting simulation results
+    4. Visualization: Creating standardized plots and visualizations
+    
+    The ModelManager dynamically selects the appropriate model components based
+    on the configuration, allowing for flexible model selection and comparison.
+    
+    Attributes:
+        config (Dict[str, Any]): Configuration dictionary
+        logger (logging.Logger): Logger instance
+        data_dir (Path): Path to the CONFLUENCE data directory
+        domain_name (str): Name of the hydrological domain
+        project_dir (Path): Path to the project directory
+        experiment_id (str): ID of the current experiment
+        preprocessors (Dict[str, Any]): Mapping of model names to preprocessor classes
+        runners (Dict[str, Any]): Mapping of model names to runner classes
+        postprocessors (Dict[str, Any]): Mapping of model names to postprocessor classes
+        runner_methods (Dict[str, str]): Mapping of model names to runner method names
+    """
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
         Initialize the Model Manager.
         
+        Sets up the ModelManager with mappings between model names and their
+        corresponding preprocessor, runner, and postprocessor classes. This provides
+        a flexible architecture that allows for dynamic model selection based on
+        the configuration.
+        
         Args:
-            config: Configuration dictionary
-            logger: Logger instance
+            config (Dict[str, Any]): Configuration dictionary containing all settings
+            logger (logging.Logger): Logger instance for recording operations
+            
+        Raises:
+            KeyError: If essential configuration values are missing
+            ImportError: If required model utility modules cannot be imported
         """
         self.config = config
         self.logger = logger
@@ -94,7 +141,28 @@ class ModelManager:
         }
     
     def preprocess_models(self):
-        """Process the forcing data into model-specific formats."""
+        """
+        Process the forcing data into model-specific formats.
+        
+        This method converts the model-agnostic forcing data into formats required
+        by each specific hydrological model. For each configured model, it:
+        1. Creates the model-specific input directory
+        2. Loads the appropriate preprocessor based on the model type
+        3. Executes the preprocessing operations
+        
+        Special handling is provided for SUMMA when used with the MizuRoute
+        routing model, which requires additional preprocessing for distributed
+        and semi-distributed simulations.
+        
+        The method iterates through all models specified in the HYDROLOGICAL_MODEL
+        configuration parameter, which can be a comma-separated list for multi-model
+        simulations.
+        
+        Raises:
+            FileNotFoundError: If required input files cannot be found
+            ValueError: If preprocessing parameters are invalid
+            Exception: For other model-specific preprocessing errors
+        """
         self.logger.info("Starting model-specific preprocessing")
         
         models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
@@ -139,7 +207,32 @@ class ModelManager:
         self.logger.info("Model-specific preprocessing completed")
     
     def run_models(self):
-        """Run all configured hydrological models."""
+        """
+        Run all configured hydrological models.
+        
+        This method executes the simulation for each hydrological model specified
+        in the configuration. For each model, it:
+        1. Loads the appropriate runner class
+        2. Creates a runner instance
+        3. Executes the model-specific run method
+        4. Handles any routing operations (e.g., MizuRoute for SUMMA)
+        
+        After all models have been executed, the method calls visualize_outputs()
+        to generate standardized visualizations of the simulation results.
+        
+        The method supports multiple models through the HYDROLOGICAL_MODEL 
+        configuration parameter, which can be a comma-separated list for multi-model
+        simulations and comparisons.
+        
+        Special handling is provided for SUMMA when used with spatially distributed
+        configurations, which requires the MizuRoute routing model to route runoff
+        through the stream network.
+        
+        Raises:
+            FileNotFoundError: If model executable or input files cannot be found
+            RuntimeError: If model execution fails
+            Exception: For other model-specific execution errors
+        """
         self.logger.info("Starting model runs")
         
         models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
@@ -188,7 +281,30 @@ class ModelManager:
         self.logger.info("Model runs completed")
     
     def visualize_outputs(self):
-        """Visualize model outputs."""
+        """
+        Visualize model outputs.
+        
+        This method creates standardized visualizations of the simulation results
+        for each hydrological model. It handles different visualization approaches
+        based on the model type and spatial configuration (lumped vs. distributed).
+        
+        The visualizations include:
+        - Time series plots of streamflow (simulated vs. observed)
+        - Model-specific state and flux variables
+        - Performance metrics
+        
+        For SUMMA, special handling is provided based on the domain configuration:
+        - For lumped models, SUMMA output is used directly
+        - For distributed models, MizuRoute output is used for streamflow
+        
+        The method uses the VisualizationReporter to create the plots, which are
+        saved in the project's plots directory.
+        
+        Raises:
+            FileNotFoundError: If model output or observation files cannot be found
+            ValueError: If visualization parameters are invalid
+            Exception: For other visualization errors
+        """
         self.logger.info('Starting model output visualisation')
         
         models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
@@ -241,7 +357,30 @@ class ModelManager:
                 self.logger.info(f"Visualization for {model} not yet implemented")
     
     def postprocess_results(self):
-        """Post-process model results."""
+        """
+        Post-process model results.
+        
+        This method extracts and processes the raw simulation outputs from each
+        hydrological model into standardized formats for analysis and visualization.
+        For each model, it:
+        1. Loads the appropriate postprocessor class
+        2. Creates a postprocessor instance
+        3. Extracts streamflow or other results from model outputs
+        
+        After extracting results from all models, the method creates final time
+        series visualizations using the TimeseriesVisualizer.
+        
+        The postprocessing operations typically include:
+        - Extracting streamflow time series from model outputs
+        - Computing performance metrics
+        - Converting units if necessary
+        - Storing results in standardized formats
+        
+        Raises:
+            FileNotFoundError: If model output files cannot be found
+            ValueError: If postprocessing parameters are invalid
+            Exception: For other model-specific postprocessing errors
+        """
         self.logger.info("Starting model post-processing")
         
         models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
