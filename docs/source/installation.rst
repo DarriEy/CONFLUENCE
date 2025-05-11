@@ -68,16 +68,6 @@ Installation Steps
 
       python CONFLUENCE.py --help
 
-Docker Installation (Optional)
-------------------------------
-
-For a containerized installation:
-
-.. code-block:: bash
-
-   docker build -t confluence .
-   docker run -v /path/to/data:/data confluence
-
 Next Steps
 ----------
 
