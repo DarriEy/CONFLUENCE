@@ -8,7 +8,7 @@ from utils.dataHandling_utils.data_utils import ObservedDataProcessor # type: ig
 from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore 
 from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore 
 from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore 
-from utils.geospatial_utils.raster_utils import calculate_landcover_mode # type: ignore 
+from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
 from utils.dataHandling_utils.data_utils import ProjectInitialisation # type: ignore 
 
 class DataManager:

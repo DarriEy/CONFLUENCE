@@ -4,8 +4,8 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, Union, Tuple
 
-from utils.geospatial_utils.domain_utilities import DomainDelineator # type: ignore
-from utils.geospatial_utils.discretization_utils import DomainDiscretizer # type: ignore
+from utils.geospatial.domain_utilities import DomainDelineator # type: ignore
+from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
 from utils.reporting.domain_visualization_utils import DomainVisualizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
 

@@ -43,7 +43,7 @@ from utils.project_utils.workflow_orchestrator import WorkflowOrchestrator # typ
 from utils.configHandling_utils.config_utils import ConfigManager # type: ignore
 from utils.configHandling_utils.logging_manager import LoggingManager # type: ignore
 from utils.dataHandling_utils.data_manager import DataManager # type: ignore
-from utils.geospatial_utils.domain_manager import DomainManager # type: ignore
+from utils.geospatial.domain_manager import DomainManager # type: ignore
 from utils.models_utils.model_manager import ModelManager # type: ignore
 from utils.evaluation_utils.analysis_manager import AnalysisManager # type: ignore
 from utils.optimization_utils.optimization_manager import OptimizationManager # type: ignore

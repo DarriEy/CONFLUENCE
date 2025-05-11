@@ -3,7 +3,7 @@
 from pathlib import Path
 import logging
 from typing import Tuple, Optional
-from utils.geospatial_utils.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator
+from utils.geospatial.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 
 
 class DomainDelineator:

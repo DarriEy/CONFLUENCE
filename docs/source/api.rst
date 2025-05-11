@@ -22,7 +22,7 @@ Data Handling Utilities
 Geospatial Utilities
 --------------------
 
-.. automodule:: utils.geospatial_utils.geofabric_utils
+.. automodule:: utils.geospatial.geofabric_utils
    :members:
    :undoc-members:
    :show-inheritance:
