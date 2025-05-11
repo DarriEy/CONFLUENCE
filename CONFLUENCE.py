@@ -43,7 +43,7 @@ from utils.evaluation_util.evaluation_utils import SensitivityAnalyzer, Decision
 from utils.optimization_utils.emulation_runner import EmulationRunner # type: ignore
 from utils.optimization_utils.dds_optimizer import DDSOptimizer # type: ignore
 from utils.optimization_utils.pso_optimizer import PSOOptimizer # type: ignore
-from utils.optimization_utils.scu_ua_optimizer import SCEUAOptimizer # type: ignore
+from utils.optimization_utils.sce_ua_optimizer import SCEUAOptimizer # type: ignore
 from utils.optimization_utils.results_utils import OptimizationResultsManager # type: ignore
 
 class CONFLUENCE:
@@ -108,7 +108,6 @@ class CONFLUENCE:
             self.experiment_id, 
             self.logger
         )
-
 
     def setup_logging(self):
         log_dir = self.project_dir / f"_workLog_{self.config.get('DOMAIN_NAME')}"
