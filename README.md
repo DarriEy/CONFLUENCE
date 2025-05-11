@@ -1,7 +1,7 @@
 # CONFLUENCE
 
 <p align="center">
-  <img src="https://github.com/DarriEy/CONFLUENCE/blob/main/docs/Conf.jpg" alt="CONFLUENCE Logo" width="600">
+  <img src="https://github.com/DarriEy/CONFLUENCE/blob/main/docs/source/_static/Conf.jpg" alt="CONFLUENCE Logo" width="600">
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ CONFLUENCE is a  hydrological modeling platform designed to streamline the  mode
 - **Multi-Model Support**: SUMMA, FUSE, MESH, HYPE, GR models with mizuRoute routing
 - **Automated Domain Processing**: Geofabric delineation and discretization
 - **Advanced Visualization**: Comprehensive plotting and reporting tools
-- **Parallel Processing**: HPC-ready with MPI support
+- **Parallel Processing**: HPC-optimised 
 - **Configuration-Based**: YAML-based configuration for reproducible workflows
 - **AI Integration**: Optional INDRA system for AI-assisted workflow guidance
 
@@ -118,13 +118,38 @@ CONFLUENCE/
 
 ## Example Workflows
 
-Browse the `examples/` directory for Jupyter notebooks demonstrating:
+Browse the `jupyter_notebooks/` directory for comprehensive tutorials demonstrating:
 
-1. **Basic Workflow** - Simple watershed setup and model run
-2. **Domain Discretization** - Different discretization methods
-3. **Multi-Model Comparison** - Running multiple models
-4. **Calibration Example** - Model optimization workflow
-5. **Visualization Guide** - Creating plots and reports
+1. **[01_lumped_basin_workflow.ipynb](examples/01_lumped_basin_workflow.ipynb)** - Complete lumped basin modeling tutorial (Bow River at Banff)
+2. **[02_semi_distributed_basin_workflow.ipynb](examples/02_semi_distributed_basin_workflow.ipynb)** - Semi-Distributed modeling with multiple GRUs
+3. **[03_distributed_basin_workflow.ipynb](examples/03_distributed_basin_workflow.ipynb)** - Distributed modeling with multiple GRUs
+4. **[04_regional_domain_workflow.ipynb](examples/04_regional_domain_workflow.ipynb)** - Regional-scale modeling (Iceland example)
+5. **[05_continental_domain_workflow.ipynb](examples/05_continental_North_America_workflow.ipynb)** - Continental-scale modeling (North America example)
+
+Each notebook includes step-by-step instructions and can be run interactively to learn CONFLUENCE's capabilities.
+
+### Getting Started with Examples
+
+```bash
+# Navigate to the notebooks directory
+cd examples/
+
+# Start Jupyter
+jupyter notebook
+```
+
+## Documentation
+
+📚 **Full documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
+
+[![Documentation Status](https://readthedocs.org/projects/confluence/badge/?version=latest)](https://confluence.readthedocs.io/en/latest/?badge=latest)
+
+The documentation includes:
+- **[Getting Started Guide](https://confluence.readthedocs.io/en/latest/getting_started.html)** - Quick introduction to CONFLUENCE
+- **[Installation Instructions](https://confluence.readthedocs.io/en/latest/installation.html)** - Detailed setup guide
+- **[Configuration Guide](https://confluence.readthedocs.io/en/latest/configuration.html)** - Complete configuration reference
+- **[Examples](https://confluence.readthedocs.io/en/latest/examples.html)** - Practical tutorials based on Jupyter notebooks
+- **[API Reference](https://confluence.readthedocs.io/en/latest/api.html)** - Detailed API documentation
 
 ## Contributing
 
