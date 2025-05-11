@@ -264,7 +264,6 @@ STREAMFLOW_RAW_NAME: default                                   # Name of streamf
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to HYDAT database      
 
-
 ### ============================================= 6. Optimisation settings: ===============================================================
 
 CALIBRATION_PERIOD: 2013-01-01, 2016-12-31                     # start_date, end_date in format YYYY-MM-DD
@@ -335,7 +334,7 @@ ATTRIBUTES_OVERWRITE_EXISTING: false                           # Whether to over
  
 ### Attribute Processing data settings
 ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"  # Base directory for attribute data, if default uses data_dir/geospatial-data
-ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
+ATTRIBUTES_SOILGRIDS_PATH: default                             # Will use {data_dir}/geospatial-data/soilgrids
 ATTRIBUTES_PELLETIER_PATH: default                             # Will use {data_dir}/geospatial-data/pelletier
 ATTRIBUTES_MERIT_PATH: default                                 # Will use {data_dir}/geospatial-data/merit
 ATTRIBUTES_MODIS_PATH: default                                 # Will use {data_dir}/geospatial-data/modis
