@@ -8,9 +8,8 @@ CONFLUENCE provides an integrated framework for:
 - Hydrological model setup and configuration
 - Multi-model comparison and evaluation
 - Parameter optimization and calibration
-- Uncertainty quantification
 - Model emulation and machine learning integration
-- Comprehensive workflow management
+- Workflow management
 
 Usage:
     python CONFLUENCE.py [--config CONFIG_PATH]

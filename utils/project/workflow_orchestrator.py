@@ -7,16 +7,50 @@ from datetime import datetime
 
 
 class WorkflowOrchestrator:
-    """Orchestrates the CONFLUENCE workflow execution."""
+    """
+    Orchestrates the CONFLUENCE workflow execution and manages the step sequence.
+    
+    The WorkflowOrchestrator is responsible for defining, coordinating, and executing
+    the complete CONFLUENCE modeling workflow. It integrates the various manager 
+    components into a coherent sequence of operations, handling dependencies between
+    steps, tracking progress, and providing status information.
+    
+    Key responsibilities:
+    - Defining the sequence of workflow steps and their validation checks
+    - Coordinating execution across different manager components
+    - Handling execution flow (skipping completed steps, stopping on errors)
+    - Providing status information and execution reports
+    - Validating prerequisites before workflow execution
+    
+    This class represents the "conductor" of the CONFLUENCE system, ensuring that
+    each component performs its tasks in the correct order and with the necessary
+    inputs from previous steps.
+    
+    Attributes:
+        managers (Dict[str, Any]): Dictionary of manager instances
+        config (Dict[str, Any]): Configuration dictionary
+        logger (logging.Logger): Logger instance
+        domain_name (str): Name of the hydrological domain
+        experiment_id (str): ID of the current experiment
+        project_dir (Path): Path to the project directory
+    """
     
     def __init__(self, managers: Dict[str, Any], config: Dict[str, Any], logger: logging.Logger):
         """
         Initialize the workflow orchestrator.
         
+        Sets up the orchestrator with references to all manager components, the 
+        configuration, and the logger. This creates the central coordination point
+        for the entire CONFLUENCE workflow.
+        
         Args:
-            managers: Dictionary of manager instances
-            config: Configuration dictionary
-            logger: Logger instance
+            managers (Dict[str, Any]): Dictionary of manager instances for each 
+                                      functional area (project, domain, data, etc.)
+            config (Dict[str, Any]): Configuration dictionary with all settings
+            logger (logging.Logger): Logger instance for recording operations
+            
+        Raises:
+            KeyError: If essential configuration values are missing
         """
         self.managers = managers
         self.config = config
@@ -27,10 +61,26 @@ class WorkflowOrchestrator:
     
     def define_workflow_steps(self) -> List[Tuple[Callable, Callable]]:
         """
-        Define the workflow steps and their output checks.
+        Define the workflow steps and their output validation checks.
+        
+        This method establishes the complete sequence of operations for a CONFLUENCE
+        modeling workflow. Each step consists of:
+        1. A function to execute (typically a method from a manager component)
+        2. A check function that verifies the step's output exists
+        
+        The workflow follows a logical progression through five main phases:
+        1. Project initialization
+        2. Geospatial domain definition and analysis
+        3. Model-agnostic data preprocessing
+        4. Model-specific processing and execution
+        5. Optimization, emulation, and analysis
+        
+        The check functions enable the orchestrator to skip steps that have already
+        been completed, facilitating restart capabilities and efficient execution.
         
         Returns:
-            List of tuples containing (function, check_function) pairs
+            List[Tuple[Callable, Callable]]: List of (function, check_function) pairs
+                defining the workflow steps and their validation checks
         """
         return [
             # --- Project Initialization ---
@@ -128,8 +178,28 @@ class WorkflowOrchestrator:
             ),
         ]
     
-    def run_workflow(self):
-        """Execute the CONFLUENCE workflow."""
+    def run_workflow(self) -> None:
+        """
+        Execute the complete CONFLUENCE workflow.
+        
+        This method represents the main execution point of the CONFLUENCE system,
+        running through all workflow steps in sequence. For each step, it:
+        1. Checks if the step has already been completed (unless forced to rerun)
+        2. Executes the step if necessary
+        3. Tracks execution time and status
+        4. Handles any errors according to configuration settings
+        
+        The method provides detailed logging throughout the execution process and
+        generates a summary report upon completion. It respects the FORCE_RUN_ALL_STEPS
+        and STOP_ON_ERROR configuration settings to control execution behavior.
+        
+        Workflow execution follows a linear sequence defined by define_workflow_steps(),
+        with dependency management handled by the output validation checks.
+        
+        Raises:
+            RuntimeError: If a workflow step fails and STOP_ON_ERROR is True
+            Exception: For other errors during workflow execution
+        """
         self.logger.info("=" * 60)
         self.logger.info(f"Starting CONFLUENCE workflow for domain: {self.domain_name}")
         self.logger.info(f"Experiment ID: {self.experiment_id}")
@@ -203,10 +273,22 @@ class WorkflowOrchestrator:
     
     def validate_workflow_prerequisites(self) -> bool:
         """
-        Validate that all prerequisites are met before running workflow.
+        Validate that all prerequisites are met before running the workflow.
+        
+        This method performs a series of checks to ensure that the workflow can be
+        executed successfully:
+        1. Verifies that all required configuration parameters are present
+        2. Confirms that all manager components have been properly initialized
+        
+        These validations help prevent runtime errors by catching configuration or
+        initialization issues before workflow execution begins.
         
         Returns:
-            True if all prerequisites are met, False otherwise
+            bool: True if all prerequisites are met, False otherwise
+            
+        Note:
+            This method logs detailed information about any validation failures,
+            making it useful for diagnosing configuration problems.
         """
         valid = True
         
@@ -236,10 +318,26 @@ class WorkflowOrchestrator:
     
     def get_workflow_status(self) -> Dict[str, Any]:
         """
-        Get the current status of the workflow.
+        Get the current status of the workflow execution.
+        
+        This method examines each step in the workflow to determine whether it has
+        been completed, using the same output validation checks used during execution.
+        It provides a comprehensive view of workflow progress, including which steps
+        are complete and which are pending.
+        
+        The status information is useful for:
+        - Monitoring long-running workflows
+        - Generating progress reports
+        - Diagnosing execution issues
+        - Providing feedback to users
         
         Returns:
-            Dictionary containing workflow status information
+            Dict[str, Any]: Dictionary containing workflow status information, including:
+                - total_steps: Total number of workflow steps
+                - completed_steps: Number of completed steps
+                - pending_steps: Number of pending steps
+                - step_details: List of dictionaries with details for each step
+                  (name and completion status)
         """
         workflow_steps = self.define_workflow_steps()
         
