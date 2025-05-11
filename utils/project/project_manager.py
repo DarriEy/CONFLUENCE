@@ -1,4 +1,4 @@
-# In utils/project_utils/project_manager.py
+# In utils/project/project_manager.py
 
 from pathlib import Path
 import logging
