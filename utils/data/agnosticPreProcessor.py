@@ -1026,6 +1026,9 @@ class geospatialStatistics:
         # Get the output path and check if the file already exists
         intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
         intersect_name = self.config.get('INTERSECT_LAND_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_landclass.shp'
+
         output_file = intersect_path / intersect_name
         
         # Check if output already exists
@@ -1116,6 +1119,9 @@ class geospatialStatistics:
         # Check land stats
         intersect_land_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
         intersect_land_name = self.config.get('INTERSECT_LAND_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_landclass.shp'
+
         land_output_file = intersect_land_path / intersect_land_name
         
         if land_output_file.exists():
