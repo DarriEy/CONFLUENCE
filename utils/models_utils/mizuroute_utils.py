@@ -106,6 +106,8 @@ class MizuRoutePreProcessor:
         
         intersect_path = Path(self.config.get('INTERSECT_ROUTING_PATH'))
         intersect_name = self.config.get('INTERSECT_ROUTING_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_routing_basins.shp'
         
         if intersect_path == 'default':
             intersect_path = self.project_dir / 'shapefiles/catchment_intersection' 

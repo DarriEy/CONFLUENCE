@@ -443,7 +443,10 @@ class DataPreProcessor:
             dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
 
         dem_path = self._get_file_path('DEM_PATH', 'attributes/elevation/dem', dem_name)
-        intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem', self.config.get('INTERSECT_DEM_NAME'))
+        dem_name = self.config.get('INTERSECT_DEM_NAME')
+        if dem_name == 'default':
+            dem_name = 'catchment_with_dem.shp'
+        intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem', dem_name)
 
         # Ensure the directory exists
         os.makedirs(os.path.dirname(intersect_path), exist_ok=True)
@@ -477,7 +480,10 @@ class DataPreProcessor:
         if soil_name == 'default':
             soil_name = f"domain_{self.config['DOMAIN_NAME']}_soil_classes.tif"
         soil_path = self._get_file_path('SOIL_CLASS_PATH', 'attributes/soilclass/', soil_name)
-        intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids', self.config.get('INTERSECT_SOIL_NAME'))
+        intersect_soil_name = self.config.get('INTERSECT_SOIL_NAME')
+        if intersect_soil_name == 'default':
+            intersect_soil_name = 'catchment_with_soilclass.shp'
+        intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids', intersect_soil_name)
         self.logger.info(f'processing landclasses: {soil_path}')
 
         if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:
@@ -537,7 +543,10 @@ class DataPreProcessor:
         if land_name == 'default':
             land_name = f"domain_{self.config['DOMAIN_NAME']}_land_classes.tif"
         land_path = self._get_file_path('LAND_CLASS_PATH', 'attributes/landclass/', land_name)
-        intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass', self.config.get('INTERSECT_LAND_NAME'))
+        intersect_name = self.config.get('INTERSECT_LAND_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_landclass.shp'
+        intersect_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass', intersect_name)
         self.logger.info(f'processing landclasses: {land_path}')
 
         if not intersect_path.exists() or self.config.get('FORCE_RUN_ALL_STEPS') == True:

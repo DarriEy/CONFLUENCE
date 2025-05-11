@@ -756,6 +756,8 @@ class SummaPreProcessor:
 
         intersect_path = self._get_default_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
         intersect_name = self.config.get('INTERSECT_SOIL_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_soilclass.shp'
         intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
 
         shp = gpd.read_file(intersect_path / intersect_name)
@@ -796,6 +798,8 @@ class SummaPreProcessor:
         """Insert land class data from supplied intersection file."""
         intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
         intersect_name = self.config.get('INTERSECT_LAND_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_landclass.shp'
         intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
 
         shp = gpd.read_file(intersect_path / intersect_name)
@@ -838,6 +842,9 @@ class SummaPreProcessor:
 
         intersect_path = self._get_default_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_name = self.config.get('INTERSECT_DEM_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_dem.shp'
+
         intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
         elev_column ='elev_mean'
 

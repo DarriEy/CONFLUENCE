@@ -325,13 +325,13 @@ INSTALL_PATH_MIZUROUTE: default                                # Mizuroute insta
 
 # Intersection paths (for zonal statistics)
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
-INTERSECT_SOIL_NAME: catchment_with_soilclass.shp              # Name of the shapefile with intersection between catchment and SOILGRIDS-derived USDA soil classes, stored in columns 'USDA_{1,...n}'
+INTERSECT_SOIL_NAME: default                                   # Name of the shapefile with intersection between catchment and SOILGRIDS-derived USDA soil classes, stored in columns 'USDA_{1,...n}'
 INTERSECT_ROUTING_PATH: default                                # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
-INTERSECT_ROUTING_NAME: catchment_with_routing_basins.shp      # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
+INTERSECT_ROUTING_NAME: default                                # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 INTERSECT_DEM_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
-INTERSECT_DEM_NAME: catchment_with_dem.shp                     # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
+INTERSECT_DEM_NAME: default                                    # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 INTERSECT_LAND_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
-INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
+INTERSECT_LAND_NAME: default                                   # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
