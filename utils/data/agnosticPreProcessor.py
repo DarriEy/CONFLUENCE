@@ -1119,8 +1119,8 @@ class geospatialStatistics:
         # Check land stats
         intersect_land_path = self._get_file_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
         intersect_land_name = self.config.get('INTERSECT_LAND_NAME')
-        if intersect_name == 'default':
-            intersect_name = 'catchment_with_landclass.shp'
+        if intersect_land_name == 'default':
+            intersect_land_name = 'catchment_with_landclass.shp'
 
         land_output_file = intersect_land_path / intersect_land_name
         
