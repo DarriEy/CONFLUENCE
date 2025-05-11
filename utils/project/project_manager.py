@@ -87,7 +87,7 @@ class ProjectManager:
                 return
             
             lat, lon = map(float, pour_point_coords.split('/'))
-            buffer_dist = 0.01
+            buffer_dist = self.config.get('POINT_BUFFER_DISTANCE', 0.001)
             
             min_lon = round(lon - buffer_dist, 4)
             max_lon = round(lon + buffer_dist, 4)
