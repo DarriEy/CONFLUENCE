@@ -46,7 +46,7 @@ from utils.dataHandling_utils.data_manager import DataManager # type: ignore
 from utils.geospatial.domain_manager import DomainManager # type: ignore
 from utils.models.model_manager import ModelManager # type: ignore
 from utils.evaluation_utils.analysis_manager import AnalysisManager # type: ignore
-from utils.optimization_utils.optimization_manager import OptimizationManager # type: ignore
+from utils.optimization.optimization_manager import OptimizationManager # type: ignore
 
 
 class CONFLUENCE:

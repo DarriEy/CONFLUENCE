@@ -4,7 +4,7 @@ from pathlib import Path
 import logging
 from typing import Dict, Optional
 
-from utils.optimization_utils.single_sample_emulator import SingleSampleEmulator, RandomForestEmulator, attributeProcessor, EnsemblePerformanceAnalyzer
+from utils.optimization.single_sample_emulator import SingleSampleEmulator, RandomForestEmulator, attributeProcessor, EnsemblePerformanceAnalyzer # type: ignore
 
 
 class EmulationRunner:

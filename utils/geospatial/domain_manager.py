@@ -1,4 +1,4 @@
-# In utils/geospatial_utils/domain_manager.py
+# In utils/geospatial/domain_manager.py
 
 from pathlib import Path
 import logging
