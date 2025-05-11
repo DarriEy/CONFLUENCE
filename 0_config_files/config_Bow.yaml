@@ -28,7 +28,7 @@ EXPERIMENT_ID: run_1                                     # Name of experiment
 MPI_PROCESSES: 100w                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
-### ============================================= 2. Geopsatial settings: =================================================================
+### ============================================= 2. Geospatial settings: =================================================================
 # Coordinate settings
 POUR_POINT_COORDS: 51.1722/-115.5717                          # Pour point coordinates lat/lon, if default use user provided shapefile. 
 BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
@@ -38,11 +38,11 @@ POUR_POINT_SHP_PATH: default                                   # If 'default', u
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: delineate                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
-CLEANUP_INTERMEDIATE_FILES: False                               # Remove temporary files from delieation
+CLEANUP_INTERMEDIATE_FILES: False                              # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
 MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
