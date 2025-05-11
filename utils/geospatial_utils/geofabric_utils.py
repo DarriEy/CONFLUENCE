@@ -35,7 +35,6 @@ from scipy import ndimage # type: ignore
 import pandas as pd # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from utils.configHandling_utils.logging_utils import setup_logger, get_function_logger # type: ignore
 
 class GeofabricDelineator:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -87,7 +86,6 @@ class GeofabricDelineator:
                 else:
                     raise
 
-    @get_function_logger
     def delineate_geofabric(self) -> Tuple[Optional[Path], Optional[Path]]:
         try:
             self.logger.info(f"Starting geofabric delineation for {self.domain_name}")
@@ -227,7 +225,6 @@ class GeofabricDelineator:
         except:
             return geometry
             
-    @get_function_logger
     def delineate_coastal(self, work_log_dir=None) -> Tuple[Optional[Path], Optional[Path]]:
         """
         Delineate coastal watersheds that drain directly to the ocean.
@@ -762,7 +759,6 @@ class GeofabricDelineator:
             self.logger.error(f"Error dividing coastal strip by buffer method: {str(e)}")
             return None
 
-    @get_function_logger
     def delineate_point_buffer_shape(self) -> Tuple[Optional[Path], Optional[Path]]:
         """
         Create a small square buffer around the pour point for point-scale simulations.
@@ -1507,7 +1503,6 @@ class LumpedWatershedDelineator:
             self.logger.error(f"Error details: {str(e)}")
             raise
 
-    @get_function_logger
     def delineate_lumped_watershed(self) -> Tuple[Optional[Path], Optional[Path]]:
         """
         Delineate a lumped watershed using either TauDEM or pysheds.

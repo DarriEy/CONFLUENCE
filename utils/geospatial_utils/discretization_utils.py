@@ -41,7 +41,8 @@ class DomainDiscretizer:
             dem_name = f"domain_{self.config['DOMAIN_NAME']}_elv.tif"
 
         self.dem_path = self._get_file_path("DEM_PATH", "attributes/elevation/dem", dem_name)
-
+        self.catchment_dir = self.project_dir / 'shapefiles' / 'catchment'
+        self.catchment_dir.mkdir(parents=True, exist_ok=True)
         delineation_method = self.config.get('DOMAIN_DEFINITION_METHOD')
 
         if delineation_method == 'delineate':
