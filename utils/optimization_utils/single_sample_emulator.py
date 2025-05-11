@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
-from utils.configHandling_utils.logging_utils import get_function_logger # type: ignore
 
 class SingleSampleEmulator:
     """
@@ -110,7 +109,6 @@ class SingleSampleEmulator:
             self.logger.error(f"Error during large sample emulation setup: {str(e)}")
             raise
 
-    @get_function_logger
     def analyze_parameter_space(self, consolidated_file_path=None):
         """
         Analyze the parameter space of the ensemble simulations.
@@ -900,7 +898,6 @@ class SingleSampleEmulator:
         
         return values.astype(np.float64)
         
-    @get_function_logger
     def run_ensemble_simulations(self):
         """
         Run SUMMA and MizuRoute for each ensemble member (each run directory).
@@ -1949,7 +1946,6 @@ class SingleSampleEmulator:
             self.logger.error(traceback.format_exc())
             return None
 
-    @get_function_logger
     def run_job(self, job_info):
         """
         Run a single simulation job, handling both lumped and distributed domains.
@@ -2334,7 +2330,6 @@ class SingleSampleEmulator:
         self.logger.info(f"Successfully stored all parameter sets in: {consolidated_file_path}")
         return consolidated_file_path
 
-    @get_function_logger
     def analyze_ensemble_results(self):
         """
         Analyze the results of ensemble simulations, focusing on streamflow.
