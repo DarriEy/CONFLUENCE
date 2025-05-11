@@ -120,11 +120,11 @@ CONFLUENCE/
 
 Browse the `jupyter_notebooks/` directory for comprehensive tutorials demonstrating:
 
-1. **[01_lumped_basin_workflow.ipynb](jupyter_notebooks/01_lumped_basin_workflow.ipynb)** - Complete lumped basin modeling tutorial (Bow River at Banff)
-2. **[02_semi_distributed_basin_workflow.ipynb](jupyter_notebooks/02_semi_distributed_basin_workflow.ipynb)** - Semi-Distributed modeling with multiple GRUs
-3. **[03_distributed_basin_workflow.ipynb](jupyter_notebooks/02_semi_distributed_basin_workflow.ipynb)** - Distributed modeling with multiple GRUs
-4. **[04_regional_domain_workflow.ipynb](jupyter_notebooks/04_regional_domain_workflow.ipynb)** - Regional-scale modeling (Iceland example)
-5. **[05_continental_domain_workflow.ipynb](jupyter_notebooks/04_regional_domain_workflow.ipynb)** - Continental-scale modeling (North America example)
+1. **[01_lumped_basin_workflow.ipynb](exemples/01_lumped_basin_workflow.ipynb)** - Complete lumped basin modeling tutorial (Bow River at Banff)
+2. **[02_semi_distributed_basin_workflow.ipynb](exemples/02_semi_distributed_basin_workflow.ipynb)** - Semi-Distributed modeling with multiple GRUs
+3. **[03_distributed_basin_workflow.ipynb](exemples/03_distributed_basin_workflow.ipynb)** - Distributed modeling with multiple GRUs
+4. **[04_regional_domain_workflow.ipynb](exemples/04_regional_domain_workflow.ipynb)** - Regional-scale modeling (Iceland example)
+5. **[05_continental_domain_workflow.ipynb](examples/05_continental_North_America_workflow.ipynb)** - Continental-scale modeling (North America example)
 
 Each notebook includes step-by-step instructions and can be run interactively to learn CONFLUENCE's capabilities.
 
