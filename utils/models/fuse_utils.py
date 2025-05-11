@@ -21,7 +21,7 @@ from typing import Dict, List, Tuple, Any
 
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.evaluation_utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
+from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
 from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
 
 class FUSEPreProcessor:

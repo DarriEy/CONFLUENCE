@@ -1,23 +1,10 @@
-import os
 import sys
 import time
 from typing import Dict, Any
-import tempfile
 from pathlib import Path
 import subprocess
-import cdsapi # type: ignore
-import calendar
-import netCDF4 as nc4 # type: ignore
-import numpy as np # type: ignore
-from datetime import datetime
-import requests # type: ignore
-import shutil
-import tarfile
-from netrc import netrc
-from hs_restclient import HydroShare, HydroShareAuthBasic # type: ignore
-from osgeo import gdal # type: ignore
-import urllib.request
-import ssl
+
+
 
 class gistoolRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -33,7 +20,7 @@ class gistoolRunner:
 
         #Import required CONFLUENCE utils
         sys.path.append(str(self.code_dir))
-        from utils.configHandling_utils.config_utils import get_default_path # type: ignore
+        from utils.config.config_utils import get_default_path # type: ignore
 
         #Get the path to the directory containing the gistool script
         self.gistool_path = get_default_path(self.config, self.data_dir, self.config['GISTOOL_PATH'], 'installs/gistool', self.logger)
@@ -92,7 +79,7 @@ class datatoolRunner:
 
         #Import required CONFLUENCE utils
         sys.path.append(str(self.code_dir))
-        from utils.configHandling_utils.config_utils import get_default_path # type: ignore
+        from utils.config.config_utils import get_default_path # type: ignore
 
         #Get the path to the directory containing the gistool script
         self.datatool_path = get_default_path(self.config, self.data_dir, self.config['DATATOOL_PATH'], 'installs/datatool', self.logger)
