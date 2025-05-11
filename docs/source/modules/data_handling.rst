@@ -9,7 +9,7 @@ Components
 Data Acquisition
 ~~~~~~~~~~~~~~~~
 
-.. autoclass:: utils.dataHandling_utils.data_acquisition_utils.DataAcquisitionProcessor
+.. autoclass:: utils.data.data_acquisition_utils.DataAcquisitionProcessor
    :members:
    :undoc-members:
    :show-inheritance:
@@ -17,7 +17,7 @@ Data Acquisition
 Attribute Processing
 ~~~~~~~~~~~~~~~~~~~~
 
-.. autoclass:: utils.dataHandling_utils.attribute_processing_util.attributeProcessor
+.. autoclass:: utils.data.attribute_processing_util.attributeProcessor
    :members:
    :undoc-members:
    :show-inheritance:
@@ -30,7 +30,7 @@ Processing Streamflow Data
 
 .. code-block:: python
 
-   from utils.dataHandling_utils.data_utils import ObservedDataProcessor
+   from utils.data.data_utils import ObservedDataProcessor
    
    processor = ObservedDataProcessor(config, logger)
    processor.process_streamflow_data()
@@ -40,7 +40,7 @@ Acquiring Forcing Data
 
 .. code-block:: python
 
-   from utils.dataHandling_utils.data_acquisition_utils import datatoolRunner
+   from utils.data.data_acquisition_utils import datatoolRunner
    
    dr = datatoolRunner(config, logger)
    dr.execute_datatool_command(command)

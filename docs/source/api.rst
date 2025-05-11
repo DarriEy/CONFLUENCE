@@ -9,12 +9,12 @@ API Reference
 Data Handling Utilities
 -----------------------
 
-.. automodule:: utils.dataHandling_utils.data_utils
+.. automodule:: utils.data.data_utils
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: utils.dataHandling_utils.attribute_processing_util
+.. automodule:: utils.data.attribute_processing_util
    :members:
    :undoc-members:
    :show-inheritance:

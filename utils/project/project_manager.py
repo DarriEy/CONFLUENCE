@@ -4,7 +4,7 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional
 
-from utils.dataHandling_utils.data_utils import ProjectInitialisation
+from utils.data.data_utils import ProjectInitialisation # type: ignore
 
 
 class ProjectManager:

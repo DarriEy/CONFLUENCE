@@ -4,12 +4,12 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, List
 
-from utils.dataHandling_utils.data_utils import ObservedDataProcessor # type: ignore 
-from utils.dataHandling_utils.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore 
-from utils.dataHandling_utils.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore 
-from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore 
+from utils.data.data_utils import ObservedDataProcessor # type: ignore 
+from utils.data.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore 
+from utils.data.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore 
+from utils.data.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
-from utils.dataHandling_utils.data_utils import ProjectInitialisation # type: ignore 
+from utils.data.data_utils import ProjectInitialisation # type: ignore 
 
 class DataManager:
     """Manages all data acquisition and preprocessing operations."""
@@ -216,7 +216,7 @@ class DataManager:
             # Run MAF Orchestrator if needed (currently commented out)
             # hydrological_models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
             # if 'MESH' in hydrological_models or 'HYPE' in hydrological_models:
-            #     from utils.dataHandling_utils.data_utils import DataAcquisitionProcessor
+            #     from utils.data.data_utils import DataAcquisitionProcessor
             #     dap = DataAcquisitionProcessor(self.config, self.logger)
             #     dap.run_data_acquisition()
             

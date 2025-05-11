@@ -12,7 +12,7 @@ from rpy2.robjects import pandas2ri # type: ignore
 from rpy2.robjects.conversion import localconverter # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
+from utils.data.variable_utils import VariableHandler # type: ignore
 
 class GRPreProcessor:
     """

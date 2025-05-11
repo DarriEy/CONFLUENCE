@@ -15,7 +15,7 @@ from datetime import datetime
 import xarray as xr # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.dataHandling_utils.variable_utils import VariableHandler # type: ignore
+from utils.data.variable_utils import VariableHandler # type: ignore
 
 class ProjectInitialisation:
     def __init__(self, config, logger):

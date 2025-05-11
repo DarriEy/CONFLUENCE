@@ -42,7 +42,7 @@ from utils.project.project_manager import ProjectManager # type: ignore
 from utils.project.workflow_orchestrator import WorkflowOrchestrator # type: ignore
 from utils.config.config_utils import ConfigManager # type: ignore
 from utils.config.logging_manager import LoggingManager # type: ignore
-from utils.dataHandling_utils.data_manager import DataManager # type: ignore
+from utils.data.data_manager import DataManager # type: ignore
 from utils.geospatial.domain_manager import DomainManager # type: ignore
 from utils.models.model_manager import ModelManager # type: ignore
 from utils.evaluation.analysis_manager import AnalysisManager # type: ignore
