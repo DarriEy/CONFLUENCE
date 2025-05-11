@@ -5,16 +5,13 @@ from pathlib import Path
 import pandas as pd # type: ignore
 import numpy as np # type: ignore
 import matplotlib.pyplot as plt # type: ignore
-import xarray as xr # type: ignore
 import seaborn as sns # type: ignore
 import plotly.graph_objects as go # type: ignore
-import math
 import matplotlib.gridspec as gridspec # type: ignore
-from matplotlib.colors import LinearSegmentedColormap # type: ignore
 import matplotlib.dates as mdates # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.evaluation_util.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
+from utils.evaluation_utils.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
 
 class resultMapper:
     def __init__(self, config, logger):
