@@ -17,15 +17,62 @@ from utils.optimization.emulation_runner import EmulationRunner # type: ignore
 
 
 class OptimizationManager:
-    """Manages all optimization operations including calibration and emulation."""
+    """
+    Manages all optimization operations including calibration and emulation.
+    
+    The OptimizationManager is responsible for coordinating model calibration and 
+    parameter emulation within the CONFLUENCE framework. It provides a unified 
+    interface for different optimization algorithms and handles the interaction 
+    between optimization components and hydrological models.
+    
+    Key responsibilities:
+    - Coordinating model calibration using different optimization algorithms
+    - Executing parameter emulation workflows
+    - Managing optimization results and performance metrics
+    - Validating optimization configurations
+    - Providing status information on optimization progress
+    
+    The OptimizationManager supports multiple optimization algorithms:
+    - PSO: Particle Swarm Optimization
+    - SCE-UA: Shuffled Complex Evolution
+    - DDS: Dynamically Dimensioned Search
+    
+    It also supports parameter emulation for rapid exploration of parameter space
+    and uncertainty quantification.
+    
+    The OptimizationManager acts as a bridge between the underlying optimization
+    algorithms and the CONFLUENCE workflow, ensuring consistent execution and
+    results management.
+    
+    Attributes:
+        config (Dict[str, Any]): Configuration dictionary
+        logger (logging.Logger): Logger instance
+        data_dir (Path): Path to the CONFLUENCE data directory
+        domain_name (str): Name of the hydrological domain
+        project_dir (Path): Path to the project directory
+        experiment_id (str): ID of the current experiment
+        results_manager (OptimizationResultsManager): Manager for optimization results
+        emulation_runner (EmulationRunner): Runner for parameter emulation
+        optimizers (Dict[str, Any]): Mapping of algorithm names to optimizer classes
+        optimizer_methods (Dict[str, str]): Mapping of algorithm names to method names
+    """
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
         Initialize the Optimization Manager.
         
+        Sets up the OptimizationManager with the necessary components for model
+        calibration and parameter emulation. This includes initializing the results
+        manager, emulation runner, and mappings between optimization algorithms
+        and their implementation classes.
+        
         Args:
-            config: Configuration dictionary
-            logger: Logger instance
+            config (Dict[str, Any]): Configuration dictionary containing all settings
+            logger (logging.Logger): Logger instance for recording operations
+            
+        Raises:
+            KeyError: If essential configuration values are missing
+            ImportError: If required optimizer modules cannot be imported
         """
         self.config = config
         self.logger = logger
@@ -62,8 +109,29 @@ class OptimizationManager:
         """
         Calibrate the model using the specified optimization algorithm.
         
+        This method coordinates the calibration process for the configured
+        hydrological model using the optimization algorithm specified in the
+        configuration. It currently supports calibration for the SUMMA model,
+        with planned support for other models.
+        
+        The calibration process involves:
+        1. Checking if iterative optimization is enabled in the configuration
+        2. Determining which optimization algorithm to use
+        3. Executing the calibration for each configured hydrological model
+        4. Saving and returning the path to the calibration results
+        
+        The optimization algorithm is specified through the ITERATIVE_OPTIMIZATION_ALGORITHM
+        configuration parameter (default: 'PSO'). Supported algorithms include PSO,
+        SCE-UA, and DDS.
+        
         Returns:
-            Path to calibration results file or None if calibration failed
+            Optional[Path]: Path to calibration results file or None if calibration
+                          was disabled or failed
+                          
+        Raises:
+            ValueError: If the optimization algorithm is not supported
+            RuntimeError: If the calibration process fails
+            Exception: For other errors during calibration
         """
         self.logger.info("Starting model calibration")
         
@@ -98,11 +166,27 @@ class OptimizationManager:
         """
         Calibrate SUMMA model using specified algorithm.
         
+        This is an internal method that handles the specifics of calibrating the
+        SUMMA hydrological model. It:
+        1. Creates the optimization directory if it doesn't exist
+        2. Loads the appropriate optimizer class based on the algorithm
+        3. Executes the optimization process
+        4. Saves and returns the results
+        
+        The method supports different optimization algorithms (PSO, SCE-UA, DDS)
+        through a dynamic dispatch approach using the optimizers and optimizer_methods
+        mappings.
+        
         Args:
-            algorithm: Optimization algorithm to use
+            algorithm (str): Optimization algorithm to use ('PSO', 'SCE-UA', or 'DDS')
             
         Returns:
-            Path to results file or None if failed
+            Optional[Path]: Path to results file or None if optimization failed
+            
+        Raises:
+            ValueError: If the specified algorithm is not supported
+            RuntimeError: If the optimization process fails
+            Exception: For other errors during optimization
         """
         # Create optimization directory if it doesn't exist
         opt_dir = self.project_dir / "optimisation"
@@ -153,8 +237,29 @@ class OptimizationManager:
         """
         Run model parameter emulation workflow.
         
+        This method executes the parameter emulation process, which enables rapid
+        exploration of parameter space and uncertainty quantification. The emulation
+        workflow includes:
+        1. Generation of parameter sets using Latin Hypercube Sampling or other methods
+        2. Execution of model simulations with the generated parameter sets
+        3. Analysis of model performance across the parameter space
+        4. Training of emulator models (e.g., Random Forest) to predict performance
+        5. Optimization using the trained emulator
+        
+        Parameter emulation is a computationally efficient approach for exploring
+        parameter sensitivity and uncertainty, and for identifying optimal parameter
+        sets without running the full hydrological model for every parameter combination.
+        
+        The emulation is controlled by configuration parameters starting with EMULATION_*,
+        including RUN_LARGE_SAMPLE_EMULATION and RUN_RANDOM_FOREST_EMULATION.
+        
         Returns:
-            Dictionary with emulation results or None if failed
+            Optional[Dict]: Dictionary with emulation results or None if emulation
+                          was disabled or failed
+                          
+        Raises:
+            RuntimeError: If the emulation process fails
+            Exception: For other errors during emulation
         """
         self.logger.info("Starting model parameter emulation")
         
@@ -179,8 +284,24 @@ class OptimizationManager:
         """
         Get status of optimization operations.
         
+        This method provides a comprehensive status report on the optimization
+        and emulation operations. It checks for the existence of key files and
+        directories to determine which steps have been completed successfully.
+        
+        The status information includes:
+        - Whether iterative optimization is enabled
+        - Which optimization algorithm is configured
+        - Which performance metric is being used
+        - Whether optimization results exist
+        - Whether emulation is enabled and its status
+        - The existence of various emulation outputs
+        
+        This information is useful for tracking progress, diagnosing issues,
+        and providing feedback to users.
+        
         Returns:
-            Dictionary containing optimization status information
+            Dict[str, Any]: Dictionary containing optimization status information,
+                          including configuration settings and existence of output files
         """
         status = {
             'iterative_optimization_enabled': self.config.get('RUN_ITERATIVE_OPTIMISATION', False),
@@ -210,8 +331,23 @@ class OptimizationManager:
         """
         Validate optimization configuration settings.
         
+        This method checks the configuration for optimization to ensure that
+        all required settings are present and valid. It verifies:
+        1. Whether the specified optimization algorithm is supported
+        2. Whether the model to be calibrated is supported
+        3. Whether parameters to calibrate are defined
+        4. Whether the performance metric is valid
+        
+        These validations help prevent runtime errors by catching configuration
+        issues before the optimization process begins.
+        
         Returns:
-            Dictionary indicating validation results
+            Dict[str, bool]: Dictionary containing validation results for each
+                           aspect of the optimization configuration:
+                           - algorithm_valid: Whether the algorithm is supported
+                           - model_supported: Whether the model is supported for calibration
+                           - parameters_defined: Whether parameters are defined for calibration
+                           - metric_valid: Whether the performance metric is valid
         """
         validation = {
             'algorithm_valid': False,
@@ -244,8 +380,20 @@ class OptimizationManager:
         """
         Get list of available optimization algorithms.
         
+        This method provides information about the optimization algorithms
+        supported by the OptimizationManager. The information includes both
+        the algorithm identifiers used in configuration and descriptions of
+        each algorithm.
+        
+        This information is useful for user interfaces and documentation to
+        help users select an appropriate optimization algorithm.
+        
         Returns:
-            Dictionary mapping algorithm names to descriptions
+            Dict[str, str]: Dictionary mapping algorithm identifiers to their
+                          descriptions:
+                          - 'PSO': 'Particle Swarm Optimization'
+                          - 'SCE-UA': 'Shuffled Complex Evolution'
+                          - 'DDS': 'Dynamically Dimensioned Search'
         """
         return {
             'PSO': 'Particle Swarm Optimization',
@@ -257,11 +405,28 @@ class OptimizationManager:
         """
         Load optimization results from file.
         
+        This method loads and formats optimization results from a previously
+        completed calibration run. It converts the results from CSV format to
+        a dictionary structure that can be easily used for analysis or visualization.
+        
+        If no filename is provided, the method loads the results for the current
+        experiment ID.
+        
         Args:
-            filename: Name of results file to load
+            filename (str, optional): Name of results file to load. If None, uses
+                                    the default filename based on experiment_id.
             
         Returns:
-            Dictionary with optimization results or None if failed
+            Optional[Dict]: Dictionary with optimization results organized as:
+                          - 'parameters': List of parameter sets as dictionaries
+                          - 'best_iteration': Dictionary of the best parameter set
+                          - 'columns': List of column names from the results file
+                          Returns None if loading fails
+                          
+        Raises:
+            FileNotFoundError: If the results file cannot be found
+            ValueError: If the file format is invalid
+            Exception: For other errors during loading
         """
         try:
             results_df = self.results_manager.load_optimization_results(filename)
