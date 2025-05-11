@@ -1,7 +1,7 @@
 # CONFLUENCE
 
 <p align="center">
-  <img src="https://github.com/DarriEy/CONFLUENCE/blob/main/0_base_settings/Conf.jpg" alt="CONFLUENCE Logo" width="600">
+  <img src="https://github.com/DarriEy/CONFLUENCE/blob/main/docs/Conf.jpg" alt="CONFLUENCE Logo" width="600">
 </p>
 
 <p align="center">
