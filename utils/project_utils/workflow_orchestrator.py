@@ -36,7 +36,7 @@ class WorkflowOrchestrator:
             # --- Project Initialization ---
             (
                 self.managers['project'].setup_project,
-                lambda: self.project_dir.exists()
+                lambda: (self.project_dir / 'shapefiles_').exists()
             ),
             
             # --- Geospatial Domain Definition and Analysis ---
