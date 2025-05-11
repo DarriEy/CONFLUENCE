@@ -9,7 +9,7 @@ Components
 Data Acquisition
 ~~~~~~~~~~~~~~~~
 
-.. autoclass:: utils.data.data_acquisition_utils.DataAcquisitionProcessor
+.. autoclass:: utils.data.data_utils.DataAcquisitionProcessor
    :members:
    :undoc-members:
    :show-inheritance:
@@ -40,7 +40,7 @@ Acquiring Forcing Data
 
 .. code-block:: python
 
-   from utils.data.data_acquisition_utils import datatoolRunner
+   from utils.data.data_utils import datatoolRunner
    
    dr = datatoolRunner(config, logger)
    dr.execute_datatool_command(command)

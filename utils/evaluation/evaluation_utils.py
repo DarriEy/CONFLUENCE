@@ -523,3 +523,104 @@ class Benchmarker:
         except Exception as e:
             self.logger.error(f"Error saving benchmark results: {str(e)}")
             raise
+
+class BenchmarkPreprocessor:
+    def __init__(self, config: dict, logger):
+        self.config = config
+        self.logger = logger
+        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+
+    def preprocess_benchmark_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        Preprocess data for hydrobm benchmarking.
+        """
+        self.logger.info("Starting benchmark data preprocessing")
+
+        # Load and process data
+        streamflow_data = self._load_streamflow_data()
+        forcing_data = self._load_forcing_data()
+        merged_data = self._merge_data(streamflow_data, forcing_data)
+        
+        # Aggregate to daily timestep using a single resample pass
+        daily_data = self._process_to_daily(merged_data)
+        
+        # Filter data for the experiment run period
+        filtered_data = daily_data.loc[start_date:end_date]
+        
+        # Validate and save data
+        self._validate_data(filtered_data)
+        output_path = self.project_dir / 'evaluation'
+        output_path.mkdir(exist_ok=True)
+        filtered_data.to_csv(output_path / "benchmark_input_data.csv")
+        
+        return filtered_data
+
+    def _process_to_daily(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate data to daily values with correct units using a single resample."""
+        daily_data = data.resample('D').agg({
+            'temperature': 'mean',
+            'streamflow': 'mean',
+            'precipitation': 'sum'
+        })
+        return daily_data
+
+    def _validate_data(self, data: pd.DataFrame):
+        """Validate data ranges and consistency."""
+        missing = data.isnull().sum()
+        if missing.any():
+            self.logger.warning(f"Missing values detected:\n{missing}")
+        
+        if (data['temperature'] < 200).any() or (data['temperature'] > 330).any():
+            self.logger.warning("Temperature values outside physical range (200-330 K)")
+        
+        if (data['streamflow'] < 0).any():
+            self.logger.warning("Negative streamflow values detected")
+        
+        if (data['precipitation'] < 0).any():
+            self.logger.warning("Negative precipitation values detected")
+            
+        if (data['precipitation'] > 1000).any():
+            self.logger.warning("Extremely high precipitation values (>1000 mm/day) detected")
+
+        self.logger.info(f"Data statistics:\n{data.describe()}")
+
+    def _load_streamflow_data(self) -> pd.DataFrame:
+        """Load and basic process streamflow data."""
+        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
+        data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
+        # Ensure the index is sorted for a faster merge later on
+        data.sort_index(inplace=True)
+        return data.rename(columns={'discharge_cms': 'streamflow'})
+
+    def _load_forcing_data(self) -> pd.DataFrame:
+        """Load and process forcing data, returning hourly dataframe."""
+        forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
+        # Use open_mfdataset to load all netCDF files at once efficiently
+        combined_ds = xr.open_mfdataset(list(forcing_path.glob("*.nc")), combine='by_coords')
+        
+        # Average across HRUs
+        averaged_ds = combined_ds.mean(dim='hru')
+        
+        # Convert precipitation to mm/day (assuming input is in m/s)
+        precip_data = averaged_ds['pptrate'] * 3600
+        
+        # Create DataFrame directly using to_series for better integration
+        forcing_df = pd.DataFrame({
+            'temperature': averaged_ds['airtemp'].to_series(),
+            'precipitation': precip_data.to_series()
+        })
+        forcing_df.sort_index(inplace=True)
+        return forcing_df
+
+    def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: pd.DataFrame) -> pd.DataFrame:
+        """Merge streamflow and forcing data on timestamps using concatenation for efficiency."""
+        merged_data = pd.concat([streamflow_data, forcing_data], axis=1, join='inner')
+        
+        # Verify data completeness
+        expected_records = len(pd.date_range(merged_data.index.min(), 
+                                              merged_data.index.max(), 
+                                              freq='h'))
+        if len(merged_data) != expected_records:
+            self.logger.warning(f"Data gaps detected. Expected {expected_records} records, got {len(merged_data)}")
+        
+        return merged_data

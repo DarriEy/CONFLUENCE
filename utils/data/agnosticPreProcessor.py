@@ -11,13 +11,10 @@ from shapely.geometry import Polygon # type: ignore
 import rasterstats # type: ignore
 from pyproj import CRS, Transformer # type: ignore
 import pyproj # type: ignore
-import shapefile # type: ignore
 import rasterio # type: ignore
 from rasterstats import zonal_stats # type: ignore
 import multiprocessing as mp
-from functools import partial
 import time
-import warnings
 import uuid
 
 class forcingResampler:

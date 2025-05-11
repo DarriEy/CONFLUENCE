@@ -4,12 +4,10 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, List
 
-from utils.data.data_utils import ObservedDataProcessor # type: ignore 
-from utils.data.data_acquisition_utils import gistoolRunner, datatoolRunner # type: ignore 
-from utils.data.agnosticPreProcessor_util import forcingResampler, geospatialStatistics # type: ignore 
+from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatoolRunner # type: ignore 
+from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
 from utils.data.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
-from utils.data.data_utils import ProjectInitialisation # type: ignore 
 
 class DataManager:
     """Manages all data acquisition and preprocessing operations."""
@@ -30,7 +28,6 @@ class DataManager:
         
         # Initialize variable handler
         self.variable_handler = VariableHandler(self.config, self.logger, 'ERA5', 'SUMMA')
-        self.project_initialisation = ProjectInitialisation(self.config, self.logger)
         
     def acquire_attributes(self):
         """Acquire geospatial attributes including DEM, soil, and land cover data."""

@@ -4,8 +4,7 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, Tuple, List
 
-from utils.evaluation.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker # type: ignore
-from utils.data.data_utils import BenchmarkPreprocessor # type: ignore
+from utils.evaluation.evaluation_utils import SensitivityAnalyzer, DecisionAnalyzer, Benchmarker, BenchmarkPreprocessor # type: ignore
 from utils.reporting.result_vizualisation_utils import BenchmarkVizualiser # type: ignore
 from utils.models.fuse_utils import FuseDecisionAnalyzer # type: ignore
 

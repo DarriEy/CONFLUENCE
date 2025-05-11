@@ -13,162 +13,10 @@ from shapely.geometry import Point # type: ignore
 import csv
 from datetime import datetime
 import xarray as xr # type: ignore
+import time
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.data.variable_utils import VariableHandler # type: ignore
-
-class ProjectInitialisation:
-    def __init__(self, config, logger):
-        self.config = config
-        self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
-        self.domain_name = self.config.get('DOMAIN_NAME')
-        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-
-
-    def setup_project(self):
-        self.project_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create directory structure
-        shapefile_dir = self.project_dir / "shapefiles"
-        shapefile_dir.mkdir(parents=True, exist_ok=True)
-        pourPoint_dir = shapefile_dir / "pour_point"
-        pourPoint_dir.mkdir(parents=True, exist_ok=True)
-        catchment_dir = shapefile_dir / "catchment"
-        catchment_dir.mkdir(parents=True, exist_ok=True)
-        riverNetwork_dir = shapefile_dir / "river_network"
-        riverNetwork_dir.mkdir(parents=True, exist_ok=True)
-        riverBasins_dir = shapefile_dir / "river_basins"
-        riverBasins_dir.mkdir(parents=True, exist_ok=True)
-        Q_observations_dir = self.project_dir / 'observations' / 'streamflow' / 'raw_data'
-        Q_observations_dir.mkdir(parents=True, exist_ok=True)
-        documentation_dir = self.project_dir / "documentation"
-        documentation_dir.mkdir(parents=True, exist_ok=True)
-        attributes_dir = self.project_dir / 'attributes'
-        attributes_dir.mkdir(parents=True, exist_ok=True)
-
-        # If in point mode, update bounding box coordinates
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            self._update_bounding_box_for_point_mode()
-
-        return self.project_dir
-
-    def _update_bounding_box_for_point_mode(self):
-        """
-        Update the bounding box coordinates in the config to create a 0.02 degree buffer
-        around the pour point for point-scale simulations.
-        """
-        try:
-            # Get pour point coordinates
-            pour_point_coords = self.config.get('POUR_POINT_COORDS', '')
-            if not pour_point_coords or pour_point_coords.lower() == 'default':
-                self.logger.warning("Pour point coordinates not specified, cannot update bounding box for point mode")
-                return
-            
-            # Parse coordinates
-            lat, lon = map(float, pour_point_coords.split('/'))
-            
-            # Define buffer distance (0.01 degree in each direction for a total of 0.02 degrees)
-            buffer_dist = 0.01
-            
-            # Create a square buffer around the point
-            min_lon = round(lon - buffer_dist, 4)
-            max_lon = round(lon + buffer_dist, 4)
-            min_lat = round(lat - buffer_dist, 4)
-            max_lat = round(lat + buffer_dist, 4)
-            
-            # Format the new bounding box string
-            new_bbox = f"{max_lat}/{min_lon}/{min_lat}/{max_lon}"
-            
-            self.logger.info(f"Updating bounding box for point-scale simulation to: {new_bbox}")
-            
-            # Update the configuration in memory
-            self.config['BOUNDING_BOX_COORDS'] = new_bbox
-            
-            # Update the active config file
-            self._update_active_config_file('BOUNDING_BOX_COORDS', new_bbox)
-            
-        except Exception as e:
-            self.logger.error(f"Error updating bounding box for point mode: {str(e)}")
-
-    def _update_active_config_file(self, key, value):
-        """
-        Update a specific key in the active configuration file.
-        
-        Args:
-            key (str): The configuration key to update
-            value (str): The new value to set
-        """
-        try:
-            # Get the path to the active config file
-            if 'CONFLUENCE_CODE_DIR' in self.config:
-                config_path = Path(self.config['CONFLUENCE_CODE_DIR']) / '0_config_files' / 'config_active.yaml'
-            else:
-                self.logger.warning("CONFLUENCE_CODE_DIR not specified, cannot update config file")
-                return
-            
-            if not config_path.exists():
-                self.logger.warning(f"Active config file not found at {config_path}")
-                return
-            
-            # Read the current config file
-            with open(config_path, 'r') as f:
-                lines = f.readlines()
-            
-            # Update the specific key
-            updated = False
-            for i, line in enumerate(lines):
-                # Look for the key at the beginning of the line
-                if line.strip().startswith(f"{key}:"):
-                    # Replace the line with the updated value
-                    lines[i] = f"{key}: {value}  # Updated for point-scale simulation\n"
-                    updated = True
-                    break
-            
-            if not updated:
-                self.logger.warning(f"Could not find {key} in config file to update")
-                return
-            
-            # Write the updated config back to the file
-            with open(config_path, 'w') as f:
-                f.writelines(lines)
-            
-            self.logger.info(f"Updated {key} in active config file: {config_path}")
-        
-        except Exception as e:
-            self.logger.error(f"Error updating config file: {str(e)}")
-
-    def create_pourPoint(self):
-        if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
-            return None
-        
-        try:
-            lat, lon = map(float, self.config['POUR_POINT_COORDS'].split('/'))
-            point = Point(lon, lat)
-            gdf = gpd.GeoDataFrame({'geometry': [point]}, crs="EPSG:4326")
-            
-            if self.config.get('POUR_POINT_SHP_PATH') == 'default':
-                output_path = self.project_dir / "shapefiles" / "pour_point"
-            else:
-                output_path = Path(self.config['POUR_POINT_SHP_PATH'])
-            
-            pour_point_shp_name = self.config.get('POUR_POINT_SHP_NAME')
-            if pour_point_shp_name == 'default':
-                pour_point_shp_name = f"{self.domain_name}_pourPoint.shp"
-            
-            output_path.mkdir(parents=True, exist_ok=True)
-            output_file = output_path / pour_point_shp_name
-            
-            gdf.to_file(output_file)
-            return output_file
-        except ValueError:
-            self.logger.error("Invalid pour point coordinates format. Expected 'lat,lon'.")
-        except Exception as e:
-            self.logger.error(f"Error creating pour point shapefile: {str(e)}")
-        
-        return None
-
 
 class DataAcquisitionProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -1068,103 +916,137 @@ class ObservedDataProcessor:
         self.logger.info(f"Number of non-null values: {resampled_data.count()}")
         self.logger.info(f"Number of null values: {resampled_data.isnull().sum()}")
 
-class BenchmarkPreprocessor:
-    def __init__(self, config: dict, logger):
+
+class gistoolRunner:
+    def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.tool_cache = self.config.get('TOOL_CACHE')
+        if self.tool_cache == 'default':
+            self.tool_cache = '$HOME/cache_dir/'
 
-    def preprocess_benchmark_data(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        Preprocess data for hydrobm benchmarking.
-        """
-        self.logger.info("Starting benchmark data preprocessing")
+        #Import required CONFLUENCE utils
+        sys.path.append(str(self.code_dir))
+        from utils.config.config_utils import get_default_path # type: ignore
 
-        # Load and process data
-        streamflow_data = self._load_streamflow_data()
-        forcing_data = self._load_forcing_data()
-        merged_data = self._merge_data(streamflow_data, forcing_data)
+        #Get the path to the directory containing the gistool script
+        self.gistool_path = get_default_path(self.config, self.data_dir, self.config['GISTOOL_PATH'], 'installs/gistool', self.logger)
+    
+    def create_gistool_command(self, dataset, output_dir, lat_lims, lon_lims, variables, start_date=None, end_date=None):
+        dataset_dir = dataset
+        if dataset == 'soil_class':
+            dataset_dir = 'soil_classes'
+ 
+        gistool_command = [
+            f"{self.gistool_path}/extract-gis.sh",
+            f"--dataset={dataset}",
+            f"--dataset-dir={self.config['GISTOOL_DATASET_ROOT']}{dataset_dir}",
+            f"--output-dir={output_dir}",
+            f"--lat-lims={lat_lims}",
+            f"--lon-lims={lon_lims}",
+            f"--variable={variables}",
+            f"--prefix=domain_{self.domain_name}_",
+            f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
+            #"--submit-job",
+            "--print-geotiff=true",
+            f"--cache={self.tool_cache}_{self.domain_name}",
+            f"--account={self.config['TOOL_ACCOUNT']}"
+        ] 
         
-        # Aggregate to daily timestep using a single resample pass
-        daily_data = self._process_to_daily(merged_data)
-        
-        # Filter data for the experiment run period
-        filtered_data = daily_data.loc[start_date:end_date]
-        
-        # Validate and save data
-        self._validate_data(filtered_data)
-        output_path = self.project_dir / 'evaluation'
-        output_path.mkdir(exist_ok=True)
-        filtered_data.to_csv(output_path / "benchmark_input_data.csv")
-        
-        return filtered_data
+        if start_date and end_date:
+            gistool_command.extend([
+                f"--start-date={start_date}",
+                f"--end-date={end_date}"
+            ])
 
-    def _process_to_daily(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Aggregate data to daily values with correct units using a single resample."""
-        daily_data = data.resample('D').agg({
-            'temperature': 'mean',
-            'streamflow': 'mean',
-            'precipitation': 'sum'
-        })
-        return daily_data
+        return gistool_command  
+    
+    def execute_gistool_command(self, gistool_command):
+        
+        #Run the gistool command
+        try:
+            subprocess.run(gistool_command, check=True)
+            self.logger.info("gistool completed successfully.")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running gistool: {e}")
+            raise
+        self.logger.info("Geospatial data acquisition process completed")
 
-    def _validate_data(self, data: pd.DataFrame):
-        """Validate data ranges and consistency."""
-        missing = data.isnull().sum()
-        if missing.any():
-            self.logger.warning(f"Missing values detected:\n{missing}")
-        
-        if (data['temperature'] < 200).any() or (data['temperature'] > 330).any():
-            self.logger.warning("Temperature values outside physical range (200-330 K)")
-        
-        if (data['streamflow'] < 0).any():
-            self.logger.warning("Negative streamflow values detected")
-        
-        if (data['precipitation'] < 0).any():
-            self.logger.warning("Negative precipitation values detected")
+class datatoolRunner:
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        self.config = config
+        self.logger = logger
+        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
+        self.domain_name = self.config.get('DOMAIN_NAME')
+        self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+        self.tool_cache = self.config.get('TOOL_CACHE')
+        if self.tool_cache == 'default':
+            self.tool_cache = '$HOME/cache_dir/'
+
+        #Import required CONFLUENCE utils
+        sys.path.append(str(self.code_dir))
+        from utils.config.config_utils import get_default_path # type: ignore
+
+        #Get the path to the directory containing the gistool script
+        self.datatool_path = get_default_path(self.config, self.data_dir, self.config['DATATOOL_PATH'], 'installs/datatool', self.logger)
+    
+    def create_datatool_command(self, dataset, output_dir, start_date, end_date, lat_lims, lon_lims, variables):
+        dataset_dir = dataset
+        if dataset == "ERA5":
+            dataset_dir = 'era5'
+        elif dataset == "RDRS":
+            dataset_dir = 'rdrsv2.1'
+
+        datatool_command = [
+        f"{self.datatool_path}/extract-dataset.sh",
+        f"--dataset={dataset}",
+        f"--dataset-dir={self.config['DATATOOL_DATASET_ROOT']}{dataset_dir}",
+        f"--output-dir={output_dir}",
+        f"--start-date={start_date}",
+        f"--end-date={end_date}",
+        f"--lat-lims={lat_lims}",
+        f"--lon-lims={lon_lims}",
+        f"--variable={variables}",
+        f"--prefix=domain_{self.domain_name}_",
+        f"--submit-job",
+        f"--cache={self.tool_cache}",
+        f"--cluster={self.config['CLUSTER_JSON']}",
+        ] 
+
+        return datatool_command
+
+    def execute_datatool_command(self, datatool_command):
+        try:
+            # Submit the array job
+            result = subprocess.run(datatool_command, check=True, capture_output=True, text=True)
+            self.logger.info("datatool job submitted successfully.")
             
-        if (data['precipitation'] > 1000).any():
-            self.logger.warning("Extremely high precipitation values (>1000 mm/day) detected")
+            # Extract job ID from the output
+            job_id = None
+            for line in result.stdout.split('\n'):
+                if 'Submitted batch job' in line:
+                    job_id = line.split()[-1]
+                    break
+            
+            if not job_id:
+                raise RuntimeError("Could not extract job ID from submission output")
+            
+            # Wait for all array jobs to complete
+            while True:
+                check_cmd = ['squeue', '-j', job_id, '-h']
+                status_result = subprocess.run(check_cmd, capture_output=True, text=True)
+                if not status_result.stdout.strip():
+                    break
+                time.sleep(30)
+            
+            self.logger.info("All datatool array jobs completed.")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Error running datatool: {e}")
+            raise
+        self.logger.info("Meteorological data acquisition process completed")
 
-        self.logger.info(f"Data statistics:\n{data.describe()}")
-
-    def _load_streamflow_data(self) -> pd.DataFrame:
-        """Load and basic process streamflow data."""
-        streamflow_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"
-        data = pd.read_csv(streamflow_path, parse_dates=['datetime'], index_col='datetime')
-        # Ensure the index is sorted for a faster merge later on
-        data.sort_index(inplace=True)
-        return data.rename(columns={'discharge_cms': 'streamflow'})
-
-    def _load_forcing_data(self) -> pd.DataFrame:
-        """Load and process forcing data, returning hourly dataframe."""
-        forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
-        # Use open_mfdataset to load all netCDF files at once efficiently
-        combined_ds = xr.open_mfdataset(list(forcing_path.glob("*.nc")), combine='by_coords')
-        
-        # Average across HRUs
-        averaged_ds = combined_ds.mean(dim='hru')
-        
-        # Convert precipitation to mm/day (assuming input is in m/s)
-        precip_data = averaged_ds['pptrate'] * 3600
-        
-        # Create DataFrame directly using to_series for better integration
-        forcing_df = pd.DataFrame({
-            'temperature': averaged_ds['airtemp'].to_series(),
-            'precipitation': precip_data.to_series()
-        })
-        forcing_df.sort_index(inplace=True)
-        return forcing_df
-
-    def _merge_data(self, streamflow_data: pd.DataFrame, forcing_data: pd.DataFrame) -> pd.DataFrame:
-        """Merge streamflow and forcing data on timestamps using concatenation for efficiency."""
-        merged_data = pd.concat([streamflow_data, forcing_data], axis=1, join='inner')
-        
-        # Verify data completeness
-        expected_records = len(pd.date_range(merged_data.index.min(), 
-                                              merged_data.index.max(), 
-                                              freq='h'))
-        if len(merged_data) != expected_records:
-            self.logger.warning(f"Data gaps detected. Expected {expected_records} records, got {len(merged_data)}")
-        
-        return merged_data
