@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "confluence"
+version = "0.1.0"
+description = "Community Optimization and Numerical Framework for Large-domain Understanding of Environmental Networks and Computational Exploration"
+readme = "README.md"
+authors = [
+    {name = "Darri Eythorsson", email = "darri.eythorsson@ucalgary.ca"}
+]
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Hydrology",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "pandas",
+    "numpy",
+    "rasterio",
+    "scipy",
+    "pathlib",
+    "pyyaml",
+    # Add all other dependencies from your requirements.txt
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]
+docs = [
+    "sphinx>=4.2.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0",
+]
+
+[project.scripts]
+confluence = "CONFLUENCE:main"
+
+[tool.setuptools]
+packages = ["utils", "utils.dataHandling_utils", "utils.configHandling_utils", "utils.geospatial_utils", "utils.models_utils", "utils.evaluation_util", "utils.report_utils", "utils.emulation_utils", "utils.optimization_utils"]
