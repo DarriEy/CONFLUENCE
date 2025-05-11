@@ -70,6 +70,7 @@ HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological m
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
+SUMMA_EXE: summa.exe                                           # Name of SUMMA executable
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
@@ -94,27 +95,17 @@ DECISION_OPTIONS:                                              # Select which SU
     - jrdn1991 
     - smnv2000 
 
-# SUMMMA Paths and filenames
-SUMMA_EXE: summa.exe                                           # Name of SUMMA executable
-SETTINGS_SUMMA_FILEMANAGER: fileManager.txt                    # Name of SUMMA file manager
-SETTINGS_SUMMA_FORCING_LIST: forcingFileList.txt               # Name of SUMMA forcing file list
-SETTINGS_SUMMA_COLDSTATE: coldState.nc                         # Name of SUMMA initial conditions file
-SETTINGS_SUMMA_TRIALPARAMS: trialParams.nc                     # Name of SUMMA trial parameters file
-SETTINGS_SUMMA_ATTRIBUTES: attributes.nc                       # Name of SUMMA attributes file
-SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA output control file
-SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
-SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
-
 # Parallel SUMMA settings
+SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                         # Name of parallel SUMMA binary
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
 SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
 SETTINGS_SUMMA_GRU_COUNT: 85                                   # Number of GRUs in SUMMA shapefile
 SETTINGS_SUMMA_GRU_PER_JOB: 5                                  # Number of GRUs per job
-SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                         # Name of parallel SUMMA binary
 
 # Mizuroute settings
+EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
 SETTINGS_MIZU_ROUTING_DT: 3600                                 # Duration of the routing time step [s].
 SETTINGS_MIZU_ROUTING_UNITS: m/s                               # Units of the variable to be routed.
@@ -123,13 +114,6 @@ SETTINGS_MIZU_OUTPUT_FREQ: single                              # Frequency with 
 SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output. '0' for both KWT and IRF; '1' IRF only; '2' KWT only.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
 SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
-
-# Mizuroute Paths and filenames
-EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
-SETTINGS_MIZU_TOPOLOGY: topology.nc                            # Name of the river network topology file.
-SETTINGS_MIZU_PARAMETERS: param.nml.default                    # Mizuroute parameter file
-SETTINGS_MIZU_CONTROL_FILE: mizuroute.control                  # Name of the control file.
-SETTINGS_MIZU_REMAP: routing_remap.nc                          # Name of the optional catchment remapping file, for cases when SUMMA uses different catchments than mizuRoute.
 
 # FUSE settings
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
@@ -316,12 +300,24 @@ EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA o
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute/mizuRoute_logs'
 SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
+SETTINGS_SUMMA_FILEMANAGER: fileManager.txt                    # Name of SUMMA file manager
+SETTINGS_SUMMA_FORCING_LIST: forcingFileList.txt               # Name of SUMMA forcing file list
+SETTINGS_SUMMA_COLDSTATE: coldState.nc                         # Name of SUMMA initial conditions file
+SETTINGS_SUMMA_TRIALPARAMS: trialParams.nc                     # Name of SUMMA trial parameters file
+SETTINGS_SUMMA_ATTRIBUTES: attributes.nc                       # Name of SUMMA attributes file
+SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA output control file
+SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
+SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 
-# Mizuroute paths
+# Mizuroute paths and filenames
 EXPERIMENT_LOG_MIZUROUTE: default                              # Path to mizuRoute experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/SUMMA'/SUMMA_logs.
 EXPERIMENT_OUTPUT_MIZUROUTE: default                           # Path to mizuRoute output. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute'.
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
 INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path. If "default", self.code_dir / installs / mizuRoute / route / bin
+SETTINGS_MIZU_TOPOLOGY: topology.nc                            # Name of the river network topology file.
+SETTINGS_MIZU_PARAMETERS: param.nml.default                    # Mizuroute parameter file
+SETTINGS_MIZU_CONTROL_FILE: mizuroute.control                  # Name of the control file.
+SETTINGS_MIZU_REMAP: routing_remap.nc                          # Name of the optional catchment remapping file, for cases when SUMMA uses different catchments than mizuRoute.
 
 # Intersection paths (for zonal statistics)
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
