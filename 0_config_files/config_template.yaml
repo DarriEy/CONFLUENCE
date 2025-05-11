@@ -21,18 +21,22 @@ CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff_lumped"                                           # Name of experimental domain
-EXPERIMENT_ID: run_1                                     # Name of experiment
+DOMAIN_NAME: "Bow_at_Banff_lumped"                             # Name of experimental domain
+EXPERIMENT_ID: run_1                                           # Name of experiment
+EXPERIMENT_TIME_START: 2018-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
-FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
-SPATIAL_MODE: Lumped                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
+FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
+SPATIAL_MODE: Lumped                                           # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
 
 ### ============================================= 2. Geopsatial settings: =================================================================
+
 # Coordinate settings
-POUR_POINT_COORDS: 51.1722/-115.5717                          # Pour point coordinates lat/lon, if default use user provided shapefile. 
-BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
+POUR_POINT_COORDS: 51.1722/-115.5717                           # Pour point coordinates lat/lon, if default use user provided shapefile. 
+BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5                # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
 
 # Pour point shapefile path
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
@@ -49,10 +53,10 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: GRUs                                    # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
-MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
+MIN_HRU_SIZE: 2                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
@@ -110,20 +114,13 @@ EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm"
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
-# Experiment settings
-EXPERIMENT_TIME_START: 2018-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
-EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
-# Data acquisition settings
 DATA_ACQUIRE: HPC                                              # Where to acquire data from, current options: HPC, supplied
 
 # Forcing data settings
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2018"                                     # Forcing start year
-FORCING_END_YEAR: "2022"                                       # Forcing end year 
-FORCING_VARIABLES: default  # Forcing dataset variables to use or acquire                                                                    
-FORCING_MEASUREMENT_HEIGHT: 2                                # Reference height for forcing measurements [m].
+FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
+FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
@@ -142,31 +139,31 @@ INTERSECT_LAND_PATH: default                                   # If 'default', u
 INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 
 ### ============================================= 6.1 Attribute Analysis settings: ===============================================================
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True
 # Enable/disable attribute processing
-  
-# Processing parameters
+PROCESS_CHARACTERISTIC_ATTRIBUTES: True
 CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
+ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
+ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
+ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
 
 ### Attribute Processing data settings
 # Base paths for attribute data
-ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
+ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"    # Base directory for attribute data, if default uses data_dir/geospatial-data
 
 # Soil attribute data paths
 ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
-ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
+ATTRIBUTES_PELLETIER_PATH: default                            # Will use {data_dir}/geospatial-data/pelletier
 
 # Topographic attribute data paths
-ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
+ATTRIBUTES_MERIT_PATH: default                                # Will use {data_dir}/geospatial-data/merit
 
 # Land cover attribute data paths
-ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
-ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
+ATTRIBUTES_MODIS_PATH: default                                # Will use {data_dir}/geospatial-data/modis
+ATTRIBUTES_GLCLU_PATH: default                                # Will use {data_dir}/geospatial-data/glclu2019
 
 # Climate attribute data paths
-ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
-ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
+ATTRIBUTES_FOREST_HEIGHT_PATH: default                        # Will use {data_dir}/geospatial-data/forest_height
+ATTRIBUTES_WORLDCLIM_PATH: default                            # Will use {data_dir}/geospatial-data/worldclim
 
 # Geology attribute data paths (new)
 ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
@@ -180,21 +177,16 @@ HRU_GAUGE_MAPPING: {}                                         # Mapping between 
 ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
 ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
 
-# Attribute processing settings
-ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
-ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
-ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
-
-
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
+HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
+
 PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore,Frad_vis,rootingDepth,leafExchangeCoeff,critSoilWilting # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor,routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
@@ -301,77 +293,6 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 # MESH settings
 
-## ============================================= CLM-ParFlow settings: =============================================================
-# This section contains configurations specific to the CLM-ParFlow integrated hydrological model
-
-# CLM-ParFlow executable settings
-CLM_PARFLOW_INSTALL_PATH: default                             # Path to CLM-ParFlow installation, if default uses self.code_dir / installs / parflow / bin
-CLM_PARFLOW_EXE: parflow                                      # Name of ParFlow executable
-CLM_DIR: default                                              # Path to CLM installation, if default uses self.code_dir / installs / clm
-
-# CLM-ParFlow domain settings
-CLM_PARFLOW_NX: 100                                           # Number of grid cells in x-direction
-CLM_PARFLOW_NY: 100                                           # Number of grid cells in y-direction
-CLM_PARFLOW_NZ: 10                                            # Number of grid cells in z-direction
-CLM_PARFLOW_DX: 1000.0                                        # Grid cell size in x-direction [m]
-CLM_PARFLOW_DY: 1000.0                                        # Grid cell size in y-direction [m]
-CLM_PARFLOW_DZ: 0.2                                           # Grid cell size near surface in z-direction [m]
-CLM_PARFLOW_DZMULT: 1.05                                      # Multiplier for vertical grid spacing with depth
-
-# CLM-ParFlow time settings
-CLM_PARFLOW_START_TIME: 0.0                                  # Start time for simulation [h]
-CLM_PARFLOW_STOP_TIME: 8760.0                                # End time for simulation [h]
-CLM_PARFLOW_DT: 1.0                                          # Time step for ParFlow [h]
-CLM_PARFLOW_DUMP_INTERVAL: 24.0                              # Interval for writing output files [h]
-
-# CLM-ParFlow coupling settings
-CLM_PARFLOW_WRITE_SILO: False                                # Write SILO files for visualization
-CLM_PARFLOW_WRITE_PFB: True                                  # Write PFB files for outputs
-CLM_PARFLOW_ISTEP_START: 1                                   # First time step for CLM forcing
-CLM_PARFLOW_CLM_DUMP_INTERVAL: 24                            # Dump interval for CLM output
-CLM_PARFLOW_CLM_REUSE_COUNT: 1                               # Number of times to reuse CLM forcing
-
-# CLM-ParFlow physical parameters
-CLM_PARFLOW_MANNINGS_N: 5.52e-6                              # Manning's roughness coefficient
-CLM_PARFLOW_SPECIFIC_STORAGE: 1.0e-5                         # Specific storage [1/m]
-CLM_PARFLOW_SLOPE_X: 0.001                                   # Average surface slope in x-direction
-CLM_PARFLOW_SLOPE_Y: 0.001                                   # Average surface slope in y-direction
-
-# CLM-ParFlow subsurface parameters
-CLM_PARFLOW_PERM_X: 0.2                                      # Hydraulic conductivity in x-direction [m/h]
-CLM_PARFLOW_PERM_Y: 0.2                                      # Hydraulic conductivity in y-direction [m/h]
-CLM_PARFLOW_PERM_Z: 0.02                                     # Hydraulic conductivity in z-direction [m/h]
-CLM_PARFLOW_POROSITY: 0.4                                    # Soil porosity [-]
-CLM_PARFLOW_VG_ALPHA: 3.5                                    # van Genuchten alpha parameter [1/m]
-CLM_PARFLOW_VG_N: 2.0                                        # van Genuchten n parameter [-]
-CLM_PARFLOW_RESIDUAL_SAT: 0.2                                # Residual saturation [-]
-
-# CLM-ParFlow subsurface layers
-CLM_PARFLOW_USER_PERM: False                                 # Use user-defined permeability file
-CLM_PARFLOW_PERM_FILE: default                               # Path to permeability file, if default uses none
-CLM_PARFLOW_USER_POROSITY: False                             # Use user-defined porosity file
-CLM_PARFLOW_POROSITY_FILE: default                           # Path to porosity file, if default uses none
-
-# CLM-ParFlow run settings
-CLM_PARFLOW_USE_PARALLEL: True                               # Run ParFlow in parallel
-CLM_PARFLOW_USE_TERRAIN_FOLLOWING: True                      # Use terrain-following grid
-CLM_PARFLOW_SOLVER: richards                                 # Solver type - 'richards' or 'impes' for unsaturated or saturated flow
-CLM_PARFLOW_PRECOND_TYPE: pfmg                               # Preconditioner type - 'pfmg', 'smg', or 'none'
-CLM_PARFLOW_MAX_ITER: 10000                                  # Maximum iterations for solver
-CLM_PARFLOW_ABS_TOL: 1.0e-9                                  # Absolute tolerance for solver
-CLM_PARFLOW_DROP_TOL: 1.0e-9                                 # Drop tolerance for solver
-
-# CLM-ParFlow output settings
-CLM_PARFLOW_OUTPUT_DIR: default                              # Path to output directory, if default uses self.project_dir / simulations / [experiment_id] / CLM_PARFLOW / output
-CLM_PARFLOW_VIZ_INTERVAL: 24                                 # Interval for visualization output [h]
-CLM_PARFLOW_PRINT_SATURATION: True                           # Print saturation fields
-CLM_PARFLOW_PRINT_PRESSURE: True                             # Print pressure fields
-CLM_PARFLOW_PRINT_VELOCITY: False                            # Print velocity fields
-CLM_PARFLOW_PRINT_EVAPTRANS: True                            # Print evapotranspiration
-CLM_PARFLOW_PRINT_OVERLAND_SUM: True                         # Print overland flow sum
-CLM_PARFLOW_PRINT_OVERLAND_BC_FLUX: True                     # Print overland boundary flux
-CLM_PARFLOW_PRINT_CLM_OUTPUT: True                           # Print CLM output
-
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
 SIM_REACH_ID: 228                                              # River reach ID used for streamflow evaluation and optimization
@@ -401,13 +322,6 @@ RUN_SENSITIVITY_ANALYSIS: true                                 # Check to select
 
 # Model decision analysis settings
 RUN_DECISION_ANALYSIS: true                                    # Check to select whether to run an analysis of model decisions 
-
-# Optimisation paths and filenames
-OSTRICH_PATH: default                                          # Path to ostrich executable, if default, uses self.data_dir / installs / ostrich
-OSTRICH_EXE: OstrichMPI                                        # Name of Ostrich executable
-OSTRICH_OUTPUT_FILE: ostrich_output.txt                        # Name of Ostrich output file
-OPTIMIZATION_RESULTS_FILE: default                             # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
-ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
 
 # Large Sample Emulation settings
 RUN_LARGE_SAMPLE_EMULATION: true                               # Whether to run large sample emulation (default: false)
