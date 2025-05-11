@@ -10,11 +10,10 @@ readme = "README.md"
 authors = [
     {name = "Darri Eythorsson", email = "darri.eythorsson@ucalgary.ca"}
 ]
-license = {file = "LICENSE"}
+license = {text = "GPL-3.0"}  # Changed from {file = "LICENSE"} to avoid deprecation warning
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -27,8 +26,8 @@ dependencies = [
     "numpy",
     "rasterio",
     "scipy",
-    "pathlib",
     "pyyaml",
+    "matplotlib",
     # Add all other dependencies from your requirements.txt
 ]
 
@@ -47,5 +46,9 @@ docs = [
 [project.scripts]
 confluence = "CONFLUENCE:main"
 
-[tool.setuptools]
-packages = ["utils", "utils.dataHandling_utils", "utils.configHandling_utils", "utils.geospatial_utils", "utils.models_utils", "utils.evaluation_util", "utils.report_utils", "utils.emulation_utils", "utils.optimization_utils"]
+[tool.setuptools.packages.find]
+include = ["CONFLUENCE*", "utils*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml"]

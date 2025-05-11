@@ -531,7 +531,6 @@ class DataPreProcessor:
                 self.logger.error(f"Failed to save file: {e}")
                 raise
 
-
     def calculate_land_stats(self):
         self.logger.info("Calculating land statistics")
         subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
