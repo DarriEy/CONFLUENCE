@@ -14,7 +14,12 @@
 # steps of the workflow, but never the other way around. Note on path specification if deviating from default paths, a full path must be specified. 
 #E.g. '/home/user/non-default/path'
 
-### ============================================= 1. Global settings: =====================================================================
+## ================================================= 0. Global Paths: =====================================================================
+
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
+CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
+
+### ============================================= 1. Experiment settings: =====================================================================
 
 # Experiment settings
 DOMAIN_NAME: "Bow_at_Banff_lumped"                             # Name of experimental domain
@@ -70,9 +75,10 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 
 # SUMMA settings
 SUMMA_EXE: summa.exe                                           # Name of SUMMA executable
+SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
+SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                         # Name of parallel SUMMA binary
+
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
-SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
-SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
 PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore,Frad_vis,rootingDepth,leafExchangeCoeff,critSoilWilting # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor,routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
@@ -93,15 +99,6 @@ DECISION_OPTIONS:                                              # Select which SU
     - melr1977 
     - jrdn1991 
     - smnv2000 
-
-# Parallel SUMMA settings
-SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                         # Name of parallel SUMMA binary
-SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
-SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
-SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
-SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
-SETTINGS_SUMMA_GRU_COUNT: 85                                   # Number of GRUs in SUMMA shapefile
-SETTINGS_SUMMA_GRU_PER_JOB: 5                                  # Number of GRUs per job
 
 # Mizuroute settings
 EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
@@ -216,10 +213,6 @@ ATTRIBUTES_PROCESS_LUMPED: True                                # Process lumped 
 ATTRIBUTES_OVERWRITE_EXISTING: False                           # Whether to overwrite existing attribute files
 
 ### ============================================= 7. Data and Path Settings: =====================================================================
-
-# Global Paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
-CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid

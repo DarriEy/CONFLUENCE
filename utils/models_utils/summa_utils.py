@@ -508,11 +508,11 @@ class SummaPreProcessor:
 
         num_hru = len(forcing_hruIds)
 
-        # Read trial parameters from configuration
-        num_tp = int(self.config.get('SETTINGS_SUMMA_TRIALPARAM_N', 0))
+        # Setup example trial parameter file initialisation
+        num_tp = 1
         all_tp = {}
         for i in range(num_tp):
-            par_and_val = self.config.get(f'SETTINGS_SUMMA_TRIALPARAM_{i+1}')
+            par_and_val = 'maxstep,900'
             if par_and_val:
                 arr = par_and_val.split(',')
                 if len(arr) > 2:
@@ -1139,7 +1139,7 @@ class SummaRunner:
         
         self.logger.info(f"Completed all SUMMA point simulations ({len(fm_list)} sites)")
         return main_output_path
-
+    
     def run_summa_parallel(self):
         """
         Run SUMMA in parallel using SLURM array jobs.
@@ -1166,51 +1166,29 @@ class SummaRunner:
         summa_log_path.mkdir(parents=True, exist_ok=True)
         summa_out_path.mkdir(parents=True, exist_ok=True)
 
-        # Get and validate GRU count
-        total_grus = self.config.get('SETTINGS_SUMMA_GRU_COUNT')
-        if total_grus == 'default':
-            # Get catchment shapefile path
-            subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
-            if subbasins_name == 'default':
-                subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
-            subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / subbasins_name
-            
-            # Read shapefile and count unique GRU_IDs
-            try:
-                gdf = gpd.read_file(subbasins_shapefile)
-                total_grus = len(gdf[self.config.get('CATCHMENT_SHP_GRUID')].unique())
-                self.logger.info(f"Counted {total_grus} unique GRUs from shapefile")
-            except Exception as e:
-                self.logger.warning(f"Error counting GRUs from shapefile: {str(e)}. Using default value of 10.")
-                total_grus = 10
-        else:
-            # Convert to int if it's a string
-            try:
-                total_grus = int(total_grus)
-            except (ValueError, TypeError):
-                self.logger.warning(f"Invalid GRU count '{total_grus}'. Using default value of 10.")
-                total_grus = 10
+        # Get total GRU count from catchment shapefile
+        subbasins_name = self.config.get('CATCHMENT_SHP_NAME')
+        if subbasins_name == 'default':
+            subbasins_name = f"{self.config['DOMAIN_NAME']}_HRUs_{self.config['DOMAIN_DISCRETIZATION']}.shp"
+        subbasins_shapefile = self.project_dir / "shapefiles" / "catchment" / subbasins_name
+        
+        # Read shapefile and count unique GRU_IDs
+        try:
+            gdf = gpd.read_file(subbasins_shapefile)
+            total_grus = len(gdf[self.config.get('CATCHMENT_SHP_GRUID')].unique())
+            self.logger.info(f"Counted {total_grus} unique GRUs from shapefile: {subbasins_shapefile}")
+        except Exception as e:
+            self.logger.error(f"Error counting GRUs from shapefile: {str(e)}")
+            raise RuntimeError(f"Failed to count GRUs from shapefile {subbasins_shapefile}: {str(e)}")
 
-        # Get and validate GRUs per job
-        grus_per_job = self.config.get('SETTINGS_SUMMA_GRU_PER_JOB')
-        if grus_per_job == 'default':
-            if total_grus > 500:
-                # Divide GRUs among 500 jobs (rounded up to ensure all GRUs are covered)
-                grus_per_job = -(-total_grus // 500)  # Ceiling division
-                self.logger.info(f"Setting GRUs per job to {grus_per_job} to distribute {total_grus} GRUs across ~500 jobs")
-            else:
-                grus_per_job = 1
-                self.logger.info("Setting default of 1 GRU per job")
-        else:
-            # Convert to int if it's a string
-            try:
-                grus_per_job = int(grus_per_job)
-            except (ValueError, TypeError):
-                self.logger.warning(f"Invalid GRUs per job '{grus_per_job}'. Using default value of 1.")
-                grus_per_job = 1
+        # Logically estimate GRUs per job based on total GRU count
+        grus_per_job = self._estimate_grus_per_job(total_grus)
+        self.logger.info(f"Estimated optimal GRUs per job: {grus_per_job} for {total_grus} total GRUs")
 
         # Calculate number of array jobs needed (minimum 1)
         n_array_jobs = max(1, -(-total_grus // grus_per_job))  # Ceiling division
+        
+        self.logger.info(f"Will launch {n_array_jobs} parallel jobs with {grus_per_job} GRUs per job")
         
         # Create SLURM script
         slurm_script = self._create_slurm_script(
@@ -1320,6 +1298,61 @@ class SummaRunner:
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
+    def _estimate_grus_per_job(self, total_grus: int) -> int:
+        """
+        Estimate the optimal number of GRUs per job based on total GRU count.
+        
+        This function balances computational efficiency with queue management by:
+        - Keeping the number of parallel jobs reasonable (not too many small jobs)
+        - Ensuring each job has enough work to be worthwhile
+        - Adapting to different domain sizes
+        
+        Args:
+            total_grus (int): Total number of GRUs in the domain
+            
+        Returns:
+            int: Optimal number of GRUs to process per job
+        """
+        # Define optimization parameters
+        min_jobs = 10          # Minimum number of jobs to split into
+        max_jobs = 500         # Maximum number of jobs to prevent queue flooding
+        min_grus_per_job = 1   # Minimum GRUs per job
+        ideal_grus_per_job = 50  # Ideal number of GRUs per job for efficiency
+        
+        # For very small domains, process all GRUs in fewer jobs
+        if total_grus <= min_jobs:
+            return 1
+        
+        # For small to medium domains, aim for the ideal GRUs per job
+        if total_grus <= ideal_grus_per_job * min_jobs:
+            return max(min_grus_per_job, total_grus // min_jobs)
+        
+        # For larger domains, balance between ideal number and not exceeding max jobs
+        ideal_jobs = total_grus // ideal_grus_per_job
+        
+        if ideal_jobs <= max_jobs:
+            # We can use the ideal number
+            grus_per_job = ideal_grus_per_job
+        else:
+            # Need to increase GRUs per job to stay under max_jobs limit
+            grus_per_job = -(-total_grus // max_jobs)  # Ceiling division
+        
+        # Additional consideration for very large domains
+        # If we have more than 10,000 GRUs, we might want to increase GRUs per job
+        # to reduce overhead and improve efficiency
+        if total_grus > 10000:
+            # Scale up based on domain size
+            scale_factor = min(3.0, total_grus / 10000)
+            grus_per_job = int(grus_per_job * scale_factor)
+        
+        # Ensure we don't exceed total GRUs
+        grus_per_job = min(grus_per_job, total_grus)
+        
+        self.logger.debug(f"GRU estimation details: total_grus={total_grus}, "
+                        f"ideal_jobs={ideal_jobs}, grus_per_job={grus_per_job}")
+        
+        return grus_per_job
+
     def _create_slurm_script(self, summa_path: Path, summa_exe: str, settings_path: Path, 
                             filemanager: str, summa_log_path: Path, summa_out_path: Path,
                             total_grus: int, grus_per_job: int, n_array_jobs: int) -> str:
@@ -1343,9 +1376,9 @@ class SummaRunner:
                 
         # Create the script
         script = f"""#!/bin/bash
-#SBATCH --cpus-per-task={self.config.get('SETTINGS_SUMMA_CPUS_PER_TASK', 1)}
-#SBATCH --time={self.config.get('SETTINGS_SUMMA_TIME_LIMIT', '03:00:00')}
-#SBATCH --mem={self.config.get('SETTINGS_SUMMA_MEM', '4G')}
+#SBATCH --cpus-per-task=1
+#SBATCH --time=03:00:00'
+#SBATCH --mem=4G
 #SBATCH --job-name=Summa-{self.config.get('DOMAIN_NAME')}
 #SBATCH --output={summa_log_path}/summa_%A_%a.out
 #SBATCH --error={summa_log_path}/summa_%A_%a.err
