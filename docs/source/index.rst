@@ -1,7 +1,7 @@
 CONFLUENCE Documentation
 ========================
 
-.. image:: _static/confluence_logo.png
+.. image:: _static/Conf.jpg
    :width: 200px
    :align: center
 
