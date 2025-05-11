@@ -31,3 +31,10 @@ source_suffix = {
     '.rst': 'restructuredtext',
     '.md': 'markdown',
 }
+
+html_context = {
+    'display_github': True,
+    'github_user': 'DarriEy',
+    'github_repo': 'CONFLUENCE',
+    'github_version': 'main/docs/source/',
+}
