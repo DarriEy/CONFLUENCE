@@ -138,6 +138,9 @@ cd examples/
 jupyter notebook
 ```
 
+> **Note**: University of Calgary ARC users can get quick started using the **[OpenOnDemand Service](https://ood-arc.rcs.ucalgary.ca/pun/sys/dashboard/batch_connect/sys/uc_jupyter/session_contexts/new)** Please use the following script path /work/comphyd_lab/data/CONFLUENCE_data/installs/jupyter-conf.sh as the Jupyter initialization batch script
+
+
 ## Documentation
 
 📚 **Full documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
