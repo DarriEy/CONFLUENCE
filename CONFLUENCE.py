@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-CONFLUENCE - Community Optimization and Numerical Framework for Large-domain 
-Understanding of Environmental Networks and Computational Exploration
+CONFLUENCE - Community Optimization Nexus for Leveraging
+Understanding of Environmental Networks in Computational Exploration
 
 This is the main entry point for the CONFLUENCE hydrological modeling platform.
 CONFLUENCE provides an integrated framework for:
