@@ -43,7 +43,7 @@ class GeofabricDelineator:
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
-        self.mpi_processes = self.config.get('MPI_PROCESSES', multiprocessing.cpu_count())
+        self.mpi_processes = self.config.get('MPI_PROCESSES',1)
         self.interim_dir = self.project_dir / "taudem-interim-files" / "d8"
         self.dem_path = self._get_dem_path()
         self._set_taudem_path()
@@ -1470,7 +1470,7 @@ class LumpedWatershedDelineator:
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.output_dir = self.project_dir / "shapefiles/tempdir"
-        self.mpi_processes = self.config.get('MPI_PROCESSES', 4)
+        self.mpi_processes = self.config.get('MPI_PROCESSES', 1)
         self.delineation_method = self.config.get('LUMPED_WATERSHED_METHOD', 'pysheds')
         self.dem_path = self.config.get('DEM_PATH')
         self.taudem_dir = self.config.get('TAUDEM_DIR')
