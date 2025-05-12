@@ -1,4 +1,4 @@
-# In utils/configHandling_utils/logging_manager.py
+# In utils/config/logging_manager.py
 
 from pathlib import Path
 import logging
@@ -10,14 +10,52 @@ import yaml
 
 
 class LoggingManager:
-    """Manages logging configuration and setup for CONFLUENCE."""
+    """
+    Manages logging configuration and setup for the CONFLUENCE framework.
+    
+    The LoggingManager is responsible for establishing a structured and comprehensive
+    logging system for CONFLUENCE operations. It creates and configures loggers that
+    provide detailed tracking of workflow execution, error conditions, and system
+    status. The logging system supports both console output for interactive feedback
+    and file-based logging for detailed analysis and troubleshooting.
+    
+    Key responsibilities:
+    - Setting up the main logger with appropriate handlers and formatters
+    - Creating and managing module-specific loggers
+    - Capturing and preserving the configuration used for each run
+    - Creating run summaries with execution statistics
+    - Providing archiving capabilities for log persistence
+    
+    The logging system uses a hierarchical approach with different levels of detail
+    for console (less verbose) and file (more verbose) outputs. It also supports
+    module-specific logging configurations to allow fine-grained control over 
+    log verbosity.
+    
+    Attributes:
+        config (Dict[str, Any]): Configuration dictionary
+        data_dir (Path): Path to the CONFLUENCE data directory
+        domain_name (str): Name of the hydrological domain
+        project_dir (Path): Path to the project directory
+        log_dir (Path): Path to the logging directory
+        logger (logging.Logger): Main logger instance
+        config_log_file (Path): Path to the logged configuration file
+    """
     
     def __init__(self, config: Dict[str, Any]):
         """
         Initialize the logging manager.
         
+        This method sets up the logging directory structure and initializes the main
+        logger for CONFLUENCE. It also captures and preserves the configuration
+        used for the current run.
+        
         Args:
-            config: Configuration dictionary
+            config (Dict[str, Any]): Configuration dictionary containing all settings
+            
+        Raises:
+            KeyError: If essential configuration values are missing
+            PermissionError: If log directories cannot be created due to permissions
+            OSError: If other file system operations fail
         """
         self.config = config
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
@@ -38,11 +76,25 @@ class LoggingManager:
         """
         Set up logging configuration with console and file handlers.
         
+        This method creates and configures the main logger for CONFLUENCE with
+        two handlers:
+        1. A file handler that captures detailed log information for debugging
+           and records all log levels (DEBUG and above)
+        2. A console handler that provides less verbose output for interactive
+           feedback, showing only important messages (INFO and above)
+        
+        The log file is named with a timestamp to ensure uniqueness across runs.
+        
         Args:
-            log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            log_level (Optional[str]): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+                                      If None, uses the level from configuration
             
         Returns:
-            Configured logger instance
+            logging.Logger: Configured logger instance ready for use
+            
+        Raises:
+            ValueError: If an invalid log level is specified
+            PermissionError: If log file cannot be created due to permissions
         """
         # Get log level from config or parameter
         if log_level is None:
@@ -102,8 +154,22 @@ class LoggingManager:
         """
         Log the configuration file to the log directory.
         
+        This method preserves the configuration used for the current run by
+        saving it to a file in the log directory. This is critical for
+        reproducibility and debugging, as it captures the exact settings
+        used for each experiment.
+        
+        The configuration can be saved in either YAML or JSON format, depending
+        on the CONFIG_FORMAT setting. Additionally, a 'latest' symlink is created
+        for easy access to the most recent configuration.
+        
         Returns:
-            Path to the logged configuration file
+            Path: Path to the logged configuration file
+            
+        Raises:
+            PermissionError: If the configuration file cannot be written
+            OSError: If the symlink cannot be created
+            Exception: For other errors during configuration logging
         """
         # Create timestamp for config log
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -139,14 +205,28 @@ class LoggingManager:
     
     def setup_module_logger(self, module_name: str, log_level: Optional[str] = None) -> logging.Logger:
         """
-        Set up a logger for a specific module.
+        Set up a logger for a specific module with dedicated log file.
+        
+        This method creates a module-specific logger that allows for fine-grained
+        control over logging verbosity on a per-module basis. Each module logger
+        writes to its own log file while also propagating messages to the main
+        logger for consolidated logging.
+        
+        Module-specific log levels can be specified in the configuration using
+        the pattern MODULE_NAME_LOG_LEVEL (e.g., DOMAIN_LOG_LEVEL). If not specified,
+        the method falls back to the global log level.
         
         Args:
-            module_name: Name of the module
-            log_level: Logging level for this module
+            module_name (str): Name of the module (e.g., 'domain', 'data', 'model')
+            log_level (Optional[str]): Logging level for this module
+                                      If None, uses module-specific or global level
             
         Returns:
-            Configured logger for the module
+            logging.Logger: Configured logger for the module
+            
+        Raises:
+            ValueError: If an invalid log level is specified
+            PermissionError: If log file cannot be created due to permissions
         """
         # Create module-specific log file
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -184,15 +264,31 @@ class LoggingManager:
     def create_run_summary(self, start_time: datetime, end_time: datetime, 
                           status: Dict[str, Any]) -> Path:
         """
-        Create a summary file for the run.
+        Create a summary file for the run with execution statistics.
+        
+        This method generates a JSON file containing a summary of the workflow
+        execution, including timing information, configuration settings, and
+        execution status. This summary is valuable for tracking experiment
+        history, performance analysis, and troubleshooting.
+        
+        The summary includes:
+        - Domain and experiment identifiers
+        - Start and end times
+        - Execution duration
+        - Workflow status (completion of steps)
+        - Key configuration settings
         
         Args:
-            start_time: Workflow start time
-            end_time: Workflow end time
-            status: Workflow status dictionary
+            start_time (datetime): Workflow start time
+            end_time (datetime): Workflow end time
+            status (Dict[str, Any]): Workflow status dictionary with execution details
             
         Returns:
-            Path to the summary file
+            Path: Path to the created summary file
+            
+        Raises:
+            PermissionError: If the summary file cannot be written
+            TypeError: If the status dictionary contains non-serializable objects
         """
         summary_file = self.log_dir / f'run_summary_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
         
@@ -219,13 +315,27 @@ class LoggingManager:
     
     def archive_logs(self, archive_name: Optional[str] = None) -> Path:
         """
-        Archive all logs for the current run.
+        Archive all logs for the current run into a compressed file.
+        
+        This method collects all log files for the current run and compresses
+        them into a ZIP archive. This is useful for preserving logs long-term,
+        sharing logs for troubleshooting, or cleaning up log directories while
+        retaining the information.
+        
+        If no archive name is provided, one is generated using the domain name
+        and current timestamp.
         
         Args:
-            archive_name: Name for the archive file
+            archive_name (Optional[str]): Name for the archive file
+                                         If None, a name is generated automatically
             
         Returns:
-            Path to the created archive
+            Path: Path to the created archive file
+            
+        Raises:
+            PermissionError: If the archive cannot be created
+            ImportError: If the shutil module is not available
+            Exception: For other errors during archiving
         """
         import shutil
         
@@ -248,13 +358,24 @@ class LoggingManager:
     
     def get_log_file_path(self, log_type: str = 'general') -> Optional[Path]:
         """
-        Get the path to a specific log file.
+        Get the path to a specific log file type.
+        
+        This method locates and returns the path to a specific type of log file,
+        such as the general log, configuration log, or module-specific logs.
+        For types other than 'config', it returns the most recent log file
+        of that type.
         
         Args:
-            log_type: Type of log file ('general', 'config', etc.)
+            log_type (str): Type of log file to retrieve:
+                          - 'general': Main CONFLUENCE log
+                          - 'config': Configuration log
+                          - Any module name: Module-specific log
             
         Returns:
-            Path to the log file if it exists
+            Optional[Path]: Path to the requested log file if it exists, None otherwise
+            
+        Raises:
+            ValueError: If an invalid log_type is specified
         """
         if log_type == 'general':
             # Find the most recent general log
@@ -268,10 +389,32 @@ class LoggingManager:
             return log_files[-1] if log_files else None
     
     class ConsoleFilter(logging.Filter):
-        """Filter to reduce console output verbosity."""
+        """
+        Filter to reduce console output verbosity by excluding noisy debug messages.
+        
+        This filter prevents debug-level messages from certain verbose modules
+        (e.g., matplotlib, urllib3, requests) from appearing in the console output.
+        This helps maintain a cleaner console interface while still capturing
+        all messages in the log files.
+        
+        The filter is applied only to the console handler, not to file handlers,
+        ensuring that complete logging information is still preserved.
+        """
         
         def filter(self, record):
-            """Filter out verbose debug messages from console."""
+            """
+            Filter log records based on level and module.
+            
+            This method determines whether a log record should be displayed in
+            the console output. It filters out DEBUG-level messages from modules
+            known to be verbose.
+            
+            Args:
+                record: Log record to be evaluated
+                
+            Returns:
+                bool: True if the record should be displayed, False otherwise
+            """
             # Filter out debug messages from specific modules
             if record.levelno <= logging.DEBUG:
                 if record.module in ['matplotlib', 'urllib3', 'requests']:
