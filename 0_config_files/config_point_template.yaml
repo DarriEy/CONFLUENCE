@@ -264,21 +264,21 @@ OBSERVATIONS_PATH: default                                     # Path to observe
 
 # Observation data paths
 STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, current options: USGS, WSC, VI  
-DOWNLOAD_USGS_DATA: True
+DOWNLOAD_USGS_DATA: False
 STATION_ID: 06719505
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
 STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # SNOTEL data settings
-DOWNLOAD_SNOTEL: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
+DOWNLOAD_SNOTEL: 'true'                                       # Download SNOTEL data, options: 'true' or 'false'
 SNOTEL_STATION: '602'                                          # SNOTEL station ID (numeric)
 SNOTEL_PATH: '/work/comphyd_lab/data/geospatial-data/SNOTEL'   # Path to directory containing SNOTEL data files
 
 # FLUXNET data settings
-DOWNLOAD_SNOTEL: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
-SNOTEL_STATION: 'US-??'                                        # SNOTEL station ID (numeric)
-SNOTEL_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet'   # Path to directory containing SNOTEL data files
+DOWNLOAD_FLUXNET: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
+FLUXNET_TOWER: 'US-??'                                        # SNOTEL station ID (numeric)
+FLUXNET_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet'   # Path to directory containing SNOTEL data files
 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
