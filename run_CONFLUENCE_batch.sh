@@ -2,7 +2,7 @@
 #SBATCH --job-name=confluence_active 
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
-#SBATCH --time=144:00:00
+#SBATCH --time=168:00:00
 #SBATCH --ntasks=1
 #SBATCH --mem=50G
 
