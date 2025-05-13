@@ -16,8 +16,6 @@
   </a>
 </p>
 
-<h3 align="center">Community Optimization and Numerical Framework for Large-domain<br>Understanding of Environmental Networks and Computational Exploration</h3>
-
 ---
 
 ## Overview
@@ -25,16 +23,6 @@
 CONFLUENCE is a  hydrological modeling platform designed to streamline the  modeling workflow—from conceptualization to evaluation. It provides a unified framework for running multiple hydrological models, handling data preprocessing, model calibration, and result visualization across various scales and regions.
 
 > **Note**: CONFLUENCE is currently under active development. Features and interfaces may change.
-
-## Key Features
-
-- **Unified Workflow**: Integrated pipeline from data acquisition to result visualization
-- **Multi-Model Support**: SUMMA, FUSE, MESH, HYPE, GR models with mizuRoute routing
-- **Automated Domain Processing**: Geofabric delineation and discretization
-- **Advanced Visualization**: Comprehensive plotting and reporting tools
-- **Parallel Processing**: HPC-optimised 
-- **Configuration-Based**: YAML-based configuration for reproducible workflows
-- **AI Integration**: Optional INDRA system for AI-assisted workflow guidance
 
 ## Quick Start
 
@@ -64,11 +52,6 @@ The `run_CONFLUENCE_batch.sh` script is pre-configured for the shared University
 For development and testing, you can use the provided Jupyter notebooks:
 
 ## Prerequisites
-
-### Required Software
-- Python 3.11
-- NetCDF libraries
-- GDAL/OGR tools
 
 ### Required Models and tools (compile separately)
 - [SUMMA](https://github.com/CH-Earth/summa.git)
