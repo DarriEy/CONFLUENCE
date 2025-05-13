@@ -1031,7 +1031,7 @@ class GeofabricDelineator:
             self._process_geofabric(basins, rivers)
             
             subset_basins_path, subset_rivers_path = self._get_output_paths()
-            
+        
             if self.config.get('DELINEATE_BY_POURPOINT', True):
                 basins, rivers, pour_point = self.ensure_crs_consistency(basins, rivers, pour_point)
                 downstream_basin_id = self.find_basin_for_pour_point(pour_point, basins)
@@ -1042,8 +1042,6 @@ class GeofabricDelineator:
             else:
                 subset_basins, subset_rivers = basins, rivers
             
-            #subset_basins = self._merge_small_grus(subset_basins)
-
             self._save_geofabric(subset_basins, subset_rivers, subset_basins_path, subset_rivers_path)
             return subset_rivers_path, subset_basins_path
 
