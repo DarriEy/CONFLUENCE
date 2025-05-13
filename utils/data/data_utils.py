@@ -789,10 +789,54 @@ class ObservedDataProcessor:
                 return False
             
             # Create a new DataFrame with just Date and SWE
-            processed_df = pd.DataFrame({
-                'Date': pd.to_datetime(df['Date'], format='%d/%m/%Y'),
-                'SWE': df[swe_column]
-            })
+            # Try multiple date formats to handle different SNOTEL file formats
+            try:
+                # First, examine a sample date to detect format
+                sample_date = df['Date'].iloc[0]
+                self.logger.info(f"Sample date format: {sample_date}")
+                
+                # Try to infer the date format and parse accordingly
+                if '/' in sample_date:  # Format like "DD/MM/YYYY"
+                    date_format = '%d/%m/%Y'
+                elif '-' in sample_date:  # Format like "YYYY-MM-DD"
+                    if sample_date.count('-') == 2:
+                        parts = sample_date.split('-')
+                        if len(parts[0]) == 4:  # YYYY-MM-DD
+                            date_format = '%Y-%m-%d'
+                        else:  # DD-MM-YYYY
+                            date_format = '%d-%m-%Y'
+                    else:
+                        date_format = 'mixed'
+                else:
+                    # If format is unclear, use 'mixed' to let pandas infer for each date
+                    date_format = 'mixed'
+                
+                self.logger.info(f"Using date format: {date_format}")
+                
+                # Parse dates with the detected format
+                if date_format == 'mixed':
+                    processed_df = pd.DataFrame({
+                        'Date': pd.to_datetime(df['Date'], infer_datetime_format=True),
+                        'SWE': df[swe_column]
+                    })
+                else:
+                    processed_df = pd.DataFrame({
+                        'Date': pd.to_datetime(df['Date'], format=date_format),
+                        'SWE': df[swe_column]
+                    })
+                    
+            except Exception as date_error:
+                self.logger.warning(f"Error with specific date format: {str(date_error)}")
+                self.logger.info("Attempting with flexible date parsing...")
+                
+                # Fall back to letting pandas infer the date format
+                processed_df = pd.DataFrame({
+                    'Date': pd.to_datetime(df['Date'], infer_datetime_format=True),
+                    'SWE': df[swe_column]
+                })
+            
+            # Ensure the Date column is formatted consistently
+            processed_df['Date'] = processed_df['Date'].dt.strftime('%Y-%m-%d')
             
             # Save the processed data
             processed_df.to_csv(output_file, index=False)
