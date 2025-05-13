@@ -1042,7 +1042,7 @@ class GeofabricDelineator:
             else:
                 subset_basins, subset_rivers = basins, rivers
             
-            subset_basins = self._merge_small_grus(subset_basins)
+            #subset_basins = self._merge_small_grus(subset_basins)
 
             self._save_geofabric(subset_basins, subset_rivers, subset_basins_path, subset_rivers_path)
             return subset_rivers_path, subset_basins_path
