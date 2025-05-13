@@ -8,6 +8,7 @@ from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatool
 from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
 from utils.data.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
+from utils.data.data_utils import process_snotel_data # type: ignore
 
 class DataManager:
     """
@@ -151,7 +152,33 @@ class DataManager:
             variables='elv'
         )
         gistool_runner.execute_gistool_command(gistool_command)
-    
+
+    def process_snow_data(self):
+        """
+        Process snow data, including SNOTEL SWE data if configured.
+        
+        Returns:
+            bool: True if processing was successful, False otherwise
+        """
+        self.logger.info("Processing snow data")
+        
+        # Process SNOTEL data if enabled
+        success, output_file = process_snotel_data(
+            config=self.config,
+            project_dir=self.project_dir,
+            domain_name=self.config.get('DOMAIN_NAME'),
+            logger=self.logger
+        )
+        
+        if success:
+            self.logger.info(f"Successfully processed SNOTEL data: {output_file}")
+        else:
+            self.logger.warning("SNOTEL data processing was skipped or failed")
+        
+        # Add any other snow data processing here if needed
+        
+        return success
+
     def _acquire_landcover_data(self, gistool_runner, output_dir: Path, lat_lims: str, lon_lims: str):
         """
         Acquire land cover data using gistool.
@@ -334,6 +361,7 @@ class DataManager:
         try:
             observed_data_processor = ObservedDataProcessor(self.config, self.logger)
             observed_data_processor.process_streamflow_data()
+            self.process_snow_data() 
             self.logger.info("Observed data processing completed successfully")
             
         except Exception as e:
