@@ -22,7 +22,7 @@ CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 # Experiment settings
 DOMAIN_NAME: "Loveland_Lift"                                   # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 1950-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 2000-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
