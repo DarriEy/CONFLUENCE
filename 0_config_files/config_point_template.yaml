@@ -30,7 +30,7 @@ EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experime
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: True                                      # Run all steps in the workflow and overwrite existing files
 SPATIAL_MODE: Point                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
-POINT_BUFFER_DISTANCE: 0.001                                   # Point buffer distance (0.01 degrees, approximately 1km at the equator)
+POINT_BUFFER_DISTANCE: 0.0001                                   # Point buffer distance (0.01 degrees, approximately 1km at the equator)
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
