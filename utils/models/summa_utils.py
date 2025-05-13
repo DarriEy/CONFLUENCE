@@ -766,7 +766,7 @@ class SummaPreProcessor:
         for i in range(13):
             col_name = f'USGS_{i}'
             if col_name not in shp.columns:
-                shp[col_name] = 0  # Add the missing column and initialize with 0 or any suitable default value
+                shp[col_name] = 1  # Add the missing column and initialize with 0 or any suitable default value
 
         with nc4.Dataset(attribute_file, "r+") as att:
             for idx in range(len(att['hruId'])):
@@ -806,7 +806,7 @@ class SummaPreProcessor:
         for i in range(1, 18):
             col_name = f'IGBP_{i}'
             if col_name not in shp.columns:
-                shp[col_name] = 0  # Add the missing column and initialize with 0
+                shp[col_name] = 1  # Add the missing column and initialize with 0
 
         is_water = 0
 
