@@ -168,6 +168,10 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 ## Acknowledgments
 
+This work is intended to fuse a collection of community assets in an integrated workflow framework. 
+
+This work primarily builds on the work presented in the [Community Workflows to Advance Reproducibility in Hydrological Modelling, CWARHM, Knoben et al., 2023](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2021WR031753) and later advances on those workflows in the [Model Agnostic Framework, Keshavarz et al., 2025](https://github.com/CH-Earth/agnostic-orchestrator). 
+
 This work was supported by NOAA (grant no. NA22NWS4320003). Computational resources provided by the Digital Research Alliance of Canada and the University of Calgary.
 
 ---
