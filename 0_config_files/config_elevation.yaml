@@ -60,6 +60,7 @@ DEM_PATH: default
 DOMAIN_DEFINITION_METHOD: delineate
 DOMAIN_DISCRETIZATION: elevation
 DOMAIN_NAME: Bow_at_Banff_elevation
+DOWNLOAD_SNOTEL: 'false'
 DOWNLOAD_USGS_DATA: true
 DOWNLOAD_WSC_DATA: true
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/
@@ -221,6 +222,8 @@ SETTINGS_SUMMA_TRIALPARAMS: trialParams.nc
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false
 SIMULATIONS_PATH: default
 SIM_REACH_ID: 228
+SNOTEL_PATH: /work/comphyd_lab/data/geospatial-data/fluxnet
+SNOTEL_STATION: US-??
 SOIL_CLASS_NAME: default
 SOIL_CLASS_PATH: default
 SOURCE_GEOFABRIC_BASINS_PATH: default
