@@ -707,6 +707,103 @@ class ObservedDataProcessor:
 
         self._resample_and_save(vi_data['discharge_cms'])
 
+    def process_snotel_data(self):
+        """
+        Process SNOTEL snow water equivalent data.
+        
+        This method:
+        1. Checks if SNOTEL data download is enabled in configuration
+        2. Finds the appropriate SNOTEL CSV file based on station ID
+        3. Extracts date and SWE columns
+        4. Saves processed data to project directory
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        self.logger.info("Processing SNOTEL data")
+        
+        # Check if SNOTEL processing is enabled
+        if not self.config.get('DOWNLOAD_SNOTEL') == 'true':
+            self.logger.info("SNOTEL data processing is disabled in configuration")
+            return False
+        
+        try:
+            # Get SNOTEL configuration parameters
+            snotel_path = self.config.get('SNOTEL_PATH')
+            snotel_station_id = self.config.get('SNOTEL_STATION')
+            domain_name = self.config.get('DOMAIN_NAME')
+            
+            if not snotel_path or not snotel_station_id:
+                self.logger.error("Missing SNOTEL_PATH or SNOTEL_STATION in configuration")
+                return False
+            
+            # Create directory for processed data if it doesn't exist
+            project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / domain_name
+            output_dir = project_dir / 'observations' / 'snow' / 'swe'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Define output file path
+            output_file = output_dir / f"{domain_name}_swe_processed.csv"
+            
+            # Find the appropriate SNOTEL file based on station ID
+            snotel_file = None
+            snotel_dir = Path(snotel_path)
+            
+            # Search for files containing the station ID
+            for file in snotel_dir.glob(f"*{snotel_station_id}*.csv"):
+                snotel_file = file
+                break
+            
+            if not snotel_file:
+                self.logger.error(f"No SNOTEL file found for station ID: {snotel_station_id}")
+                return False
+            
+            self.logger.info(f"Found SNOTEL file: {snotel_file}")
+            
+            # Read the SNOTEL data file
+            import pandas as pd
+            
+            # Read the data, skipping header rows until we find the actual data
+            # Usually headers end when we find a line starting with "Date"
+            with open(snotel_file, 'r') as f:
+                # Find the line number where data starts
+                line_num = 0
+                for i, line in enumerate(f):
+                    if line.startswith('Date'):
+                        line_num = i
+                        break
+            
+            # Read the data starting from the identified line
+            df = pd.read_csv(snotel_file, skiprows=line_num)
+            
+            # Extract just the Date and SWE columns
+            # The column name might vary, so we'll try to identify it
+            swe_column = None
+            for col in df.columns:
+                if 'Snow Water Equivalent' in col:
+                    swe_column = col
+                    break
+            
+            if not swe_column:
+                self.logger.error("Could not find Snow Water Equivalent column in SNOTEL data")
+                return False
+            
+            # Create a new DataFrame with just Date and SWE
+            processed_df = pd.DataFrame({
+                'Date': pd.to_datetime(df['Date'], format='%d/%m/%Y'),
+                'SWE': df[swe_column]
+            })
+            
+            # Save the processed data
+            processed_df.to_csv(output_file, index=False)
+            
+            self.logger.info(f"Processed SNOTEL data saved to {output_file}")
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Error processing SNOTEL data: {str(e)}")
+            return False
+
     def _download_and_process_usgs_data(self):
         """
         Process USGS streamflow data by fetching it directly from USGS API.
@@ -1049,117 +1146,3 @@ class datatoolRunner:
             self.logger.error(f"Error running datatool: {e}")
             raise
         self.logger.info("Meteorological data acquisition process completed")
-
-from pathlib import Path
-import pandas as pd
-import logging
-from typing import Optional, Tuple, Dict, Any
-
-
-def process_snotel_data(
-    config: Dict[str, Any], 
-    project_dir: Path, 
-    domain_name: str,
-    logger: Optional[logging.Logger] = None
-) -> Tuple[bool, Optional[Path]]:
-    """
-    Process SNOTEL snow water equivalent data.
-    
-    This function:
-    1. Finds the appropriate SNOTEL CSV file based on station ID
-    2. Extracts date and SWE columns
-    3. Saves processed data to project directory
-    
-    Args:
-        config: Configuration dictionary containing SNOTEL settings
-        project_dir: Project directory path where processed data will be saved
-        domain_name: Domain name for the output filename
-        logger: Optional logger instance for logging messages
-    
-    Returns:
-        Tuple containing:
-            - bool: True if successful, False otherwise
-            - Optional[Path]: Path to the output file if successful, None otherwise
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-    
-    logger.info("Processing SNOTEL data")
-    
-    # Check if SNOTEL processing is enabled
-    if not config.get('DOWNLOAD_SNOTEL') == 'true':
-        logger.info("SNOTEL data processing is disabled in configuration")
-        return False, None
-    
-    try:
-        # Get SNOTEL configuration parameters
-        snotel_path = config.get('SNOTEL_PATH')
-        snotel_station_id = config.get('SNOTEL_STATION')
-        
-        if not snotel_path or not snotel_station_id:
-            logger.error("Missing SNOTEL_PATH or SNOTEL_STATION in configuration")
-            return False, None
-        
-        # Create directory for processed data if it doesn't exist
-        output_dir = Path(project_dir) / 'observations' / 'snow' / 'swe'
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Define output file path
-        output_file = output_dir / f"{domain_name}_swe_processed.csv"
-        
-        # Find the appropriate SNOTEL file based on station ID
-        snotel_file = None
-        snotel_dir = Path(snotel_path)
-        
-        # Search for files containing the station ID
-        for file in snotel_dir.glob(f"*{snotel_station_id}*.csv"):
-            snotel_file = file
-            break
-        
-        if not snotel_file:
-            logger.error(f"No SNOTEL file found for station ID: {snotel_station_id}")
-            return False, None
-        
-        logger.info(f"Found SNOTEL file: {snotel_file}")
-        
-        # Read the SNOTEL data file
-        # Read the data, skipping header rows until we find the actual data
-        # Usually headers end when we find a line starting with "Date"
-        with open(snotel_file, 'r') as f:
-            # Find the line number where data starts
-            line_num = 0
-            for i, line in enumerate(f):
-                if line.startswith('Date'):
-                    line_num = i
-                    break
-        
-        # Read the data starting from the identified line
-        df = pd.read_csv(snotel_file, skiprows=line_num)
-        
-        # Extract just the Date and SWE columns
-        # The column name might vary, so we'll try to identify it
-        swe_column = None
-        for col in df.columns:
-            if 'Snow Water Equivalent' in col:
-                swe_column = col
-                break
-        
-        if not swe_column:
-            logger.error("Could not find Snow Water Equivalent column in SNOTEL data")
-            return False, None
-        
-        # Create a new DataFrame with just Date and SWE
-        processed_df = pd.DataFrame({
-            'Date': pd.to_datetime(df['Date'], format='%d/%m/%Y'),
-            'SWE': df[swe_column]
-        })
-        
-        # Save the processed data
-        processed_df.to_csv(output_file, index=False)
-        
-        logger.info(f"Processed SNOTEL data saved to {output_file}")
-        return True, output_file
-    
-    except Exception as e:
-        logger.error(f"Error processing SNOTEL data: {str(e)}")
-        return False, None

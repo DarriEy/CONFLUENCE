@@ -909,6 +909,9 @@ class geospatialStatistics:
         # Get the output path and check if the file already exists
         intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_name = self.config.get('INTERSECT_DEM_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_soilclass.shp'
+
         output_file = intersect_path / intersect_name
         
         # Check if output already exists
@@ -960,6 +963,8 @@ class geospatialStatistics:
         # Get the output path and check if the file already exists
         intersect_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
         intersect_name = self.config.get('INTERSECT_SOIL_NAME')
+        if intersect_name == 'default':
+            intersect_name = 'catchment_with_soilclass.shp'
         output_file = intersect_path / intersect_name
         
         # Check if output already exists
@@ -1101,6 +1106,9 @@ class geospatialStatistics:
         # Check soil stats
         intersect_soil_path = self._get_file_path('INTERSECT_SOIL_PATH', 'shapefiles/catchment_intersection/with_soilgrids')
         intersect_soil_name = self.config.get('INTERSECT_SOIL_NAME')
+        if intersect_soil_name == 'default':
+            intersect_soil_name = 'catchment_with_soilclass.shp'
+
         soil_output_file = intersect_soil_path / intersect_soil_name
         
         if soil_output_file.exists():
@@ -1140,6 +1148,9 @@ class geospatialStatistics:
         # Check elevation stats
         intersect_dem_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_dem_name = self.config.get('INTERSECT_DEM_NAME')
+        if intersect_dem_name == 'default':
+            intersect_dem_name = 'catchment_with_soilclass.shp'
+
         dem_output_file = intersect_dem_path / intersect_dem_name
         
         if dem_output_file.exists():
