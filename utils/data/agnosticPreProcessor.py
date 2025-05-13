@@ -910,7 +910,7 @@ class geospatialStatistics:
         intersect_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_name = self.config.get('INTERSECT_DEM_NAME')
         if intersect_name == 'default':
-            intersect_name = 'catchment_with_soilclass.shp'
+            intersect_name = 'catchment_with_dem.shp'
 
         output_file = intersect_path / intersect_name
         
@@ -1149,7 +1149,7 @@ class geospatialStatistics:
         intersect_dem_path = self._get_file_path('INTERSECT_DEM_PATH', 'shapefiles/catchment_intersection/with_dem')
         intersect_dem_name = self.config.get('INTERSECT_DEM_NAME')
         if intersect_dem_name == 'default':
-            intersect_dem_name = 'catchment_with_soilclass.shp'
+            intersect_dem_name = 'catchment_with_dem.shp'
 
         dem_output_file = intersect_dem_path / intersect_dem_name
         
