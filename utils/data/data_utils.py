@@ -738,7 +738,7 @@ class ObservedDataProcessor:
                 return False
             
             # Create directory for processed data if it doesn't exist
-            project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / domain_name
+            project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
             output_dir = project_dir / 'observations' / 'snow' / 'swe'
             output_dir.mkdir(parents=True, exist_ok=True)
             
