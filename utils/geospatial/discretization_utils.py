@@ -52,34 +52,6 @@ class DomainDiscretizer:
         elif delineation_method == 'subset':
             self.delineation_suffix = f"subset_{self.config['GEOFABRIC_TYPE']}"
 
-    '''  
-    def sort_catchment_shape(self):
-        self.logger.info("Sorting catchment shape")
-        
-        self.catchment_path = self.config.get('CATCHMENT_PATH')
-        self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
-        
-        if self.catchment_path == 'default':
-            self.catchment_path = self.project_dir / 'shapefiles' / 'catchment'
-        else:
-            self.catchment_path = Path(self.catchment_path)
-        
-        gru_id = self.config.get('CATCHMENT_SHP_GRUID')
-        hru_id = self.config.get('CATCHMENT_SHP_HRUID')
-        
-        # Open the shape
-        shp = gpd.read_file(self.catchment_path / self.catchment_name)
-        
-        # Sort
-        shp = shp.sort_values(by=[gru_id, hru_id])
-        
-        # Save
-        shp.to_file(self.catchment_path / self.catchment_name)
-        
-        self.logger.info(f"Catchment shape sorted and saved to {self.catchment_path / self.catchment_name}")
-
-        return shp
-    '''
 
     def sort_catchment_shape(self):
         """
@@ -178,7 +150,7 @@ class DomainDiscretizer:
         """
         self.logger.info(f"config domain name {self.config.get('DOMAIN_NAME')}")
         if self.config.get('RIVER_BASINS_NAME') == 'default':
-            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.delineation_suffix}.shp")
+            gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp")
         
             if self.config.get('DELINEATE_COASTAL_WATERSHEDS') == True:
                 gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_with_coastal.shp")
