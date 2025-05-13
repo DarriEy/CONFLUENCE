@@ -8,7 +8,6 @@ from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatool
 from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
 from utils.data.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
-from utils.data.data_utils import process_snotel_data # type: ignore
 
 class DataManager:
     """
