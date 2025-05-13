@@ -119,7 +119,7 @@ class AnalysisManager:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
-    
+
     def run_sensitivity_analysis(self) -> Optional[Dict]:
         """
         Run sensitivity analysis to evaluate parameter importance and uncertainty.

@@ -793,9 +793,7 @@ class SummaPreProcessor:
     def insert_land_class(self, attribute_file):
         """Insert land class data into the attributes file."""
         self.logger.info("Inserting land class into attributes file")
-        
 
-        """Insert land class data from supplied intersection file."""
         intersect_path = self._get_default_path('INTERSECT_LAND_PATH', 'shapefiles/catchment_intersection/with_landclass')
         intersect_name = self.config.get('INTERSECT_LAND_NAME')
         if intersect_name == 'default':
@@ -804,6 +802,12 @@ class SummaPreProcessor:
 
         shp = gpd.read_file(intersect_path / intersect_name)
 
+        # Check and create missing IGBP_X columns
+        for i in range(1, 18):
+            col_name = f'IGBP_{i}'
+            if col_name not in shp.columns:
+                shp[col_name] = 0  # Add the missing column and initialize with 0
+
         is_water = 0
 
         with nc4.Dataset(attribute_file, "r+") as att:
@@ -811,17 +815,20 @@ class SummaPreProcessor:
                 attribute_hru = att['hruId'][idx]
                 shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
                 
+                # Check if there are any matching rows for this HRU
+                if not any(shp_mask):
+                    self.logger.warning(f"No land class data found for HRU {attribute_hru}, using default class")
+                    att['vegTypeIndex'][idx] = 1  # Use a reasonable default (1 = Evergreen Needleleaf)
+                    continue
+                
                 tmp_hist = []
                 for j in range(1, 18):
                     col_name = f'IGBP_{j}'
-                    if col_name in shp.columns:
-                        tmp_hist.append(shp[col_name][shp_mask].values[0])
-                    else:
-                        tmp_hist.append(0)
+                    tmp_hist.append(shp[col_name][shp_mask].values[0])
                 
                 tmp_lc = np.argmax(np.asarray(tmp_hist)) + 1
                 
-                if shp[f'IGBP_{tmp_lc}'][shp_mask].values != tmp_hist[tmp_lc - 1]:
+                if shp[f'IGBP_{tmp_lc}'][shp_mask].values[0] != tmp_hist[tmp_lc - 1]:
                     self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
                     tmp_lc = -999
                 
