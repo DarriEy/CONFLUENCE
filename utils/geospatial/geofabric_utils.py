@@ -23,15 +23,12 @@ import shutil
 from functools import wraps
 import sys
 import glob
-#from pysheds.grid import Grid # type: ignore
 import rasterio # type: ignore
 import numpy as np # type: ignore
 from shapely.geometry import Polygon # type: ignore
-import multiprocessing  
 from shapely.ops import unary_union # type: ignore
 import time
 import shapely # type: ignore
-from scipy import ndimage # type: ignore
 import pandas as pd # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -49,7 +46,7 @@ class GeofabricDelineator:
         self._set_taudem_path()
         self.max_retries = self.config.get('MAX_RETRIES', 3)
         self.retry_delay = self.config.get('RETRY_DELAY', 5)
-        self.min_gru_size = self.config.get('MIN_GRU_SIZE', 5.0)  # Default 1 km²
+        self.min_gru_size = self.config.get('MIN_GRU_SIZE', 0)  # Default 1 km²
         self.taudem_dir = self.config.get('TAUDEM_DIR')
         if self.taudem_dir == "default":
             self.taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
