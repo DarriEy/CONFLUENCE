@@ -99,7 +99,7 @@ class CONFLUENCE:
             # Initialize configuration management
             self.config_manager = ConfigManager(config_path)
             self.config = self.config_manager.config
-            
+
             # Initialize logging system
             self.logging_manager = LoggingManager(self.config)
             self.logger = self.logging_manager.logger
@@ -107,6 +107,11 @@ class CONFLUENCE:
             self.logger.info("Initializing CONFLUENCE system")
             self.logger.info(f"Configuration loaded from: {config_path}")
             
+            # Initialize paths
+            self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+            self.domain_name = self.config.get('DOMAIN_NAME')
+            self.project_dir = self.data_dir / f"domain_{self.domain_name}"
+
             # Initialize all manager components
             self.managers = self._initialize_managers()
             
