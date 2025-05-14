@@ -1,0 +1,3 @@
+CAMELS-SPAT Experiment Summary
+Date: 2025-05-13
+Experiment: camelsspat_tutorial

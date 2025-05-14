@@ -185,7 +185,7 @@ OUTPUT_BASINS_PATH: default
 OUTPUT_DIR: default
 OUTPUT_RIVERS_PATH: default
 PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore
-POINT_BUFFER_DISTANCE: 0.001
+POINT_BUFFER_DISTANCE: 0.0001
 POPULATION_SIZE: 100
 POUR_POINT_COORDS: 56.6358/-99.9483
 POUR_POINT_SHP_NAME: default
