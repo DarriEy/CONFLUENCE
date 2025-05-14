@@ -760,35 +760,51 @@ class SummaPreProcessor:
             intersect_name = 'catchment_with_soilclass.shp'
         intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
 
-        shp = gpd.read_file(intersect_path / intersect_name)
+        try:
+            shp = gpd.read_file(intersect_path / intersect_name)
 
-        # Check and create missing USGS_X columns
-        for i in range(13):
-            col_name = f'USGS_{i}'
-            if col_name not in shp.columns:
-                shp[col_name] = 0  # Add the missing column and initialize with 0 or any suitable default value
+            # Check and create missing USGS_X columns
+            for i in range(13):
+                col_name = f'USGS_{i}'
+                if col_name not in shp.columns:
+                    shp[col_name] = 0  # Add the missing column and initialize with 0
 
-        with nc4.Dataset(attribute_file, "r+") as att:
-            for idx in range(len(att['hruId'])):
-                attribute_hru = att['hruId'][idx]
-                shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
-                
-                tmp_hist = []
-                for j in range(13):
-                    col_name = f'USGS_{j}'
-                    if col_name in shp.columns:
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    attribute_hru = att['hruId'][idx]
+                    shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
+                    
+                    # Check if there are any matching rows for this HRU
+                    if not any(shp_mask):
+                        self.logger.warning(f"No soil class data found for HRU {attribute_hru}, using default class")
+                        att['soilTypeIndex'][idx] = 6  # Use a default value (6 = loam)
+                        continue
+                    
+                    tmp_hist = []
+                    for j in range(13):
+                        col_name = f'USGS_{j}'
                         tmp_hist.append(shp[col_name][shp_mask].values[0])
-                    else:
-                        tmp_hist.append(0)
-                
-                tmp_hist[0] = -1
-                tmp_sc = np.argmax(np.asarray(tmp_hist))
-                
-                if shp[f'USGS_{tmp_sc}'][shp_mask].values != tmp_hist[tmp_sc]:
-                    self.logger.warning(f'Index and mode soil class do not match at hru_id {attribute_hru}')
-                    tmp_sc = -999
-                
-                att['soilTypeIndex'][idx] = tmp_sc
+                    
+                    tmp_hist[0] = -1  # Set USGS_0 to -1 to avoid selecting it
+                    tmp_sc = np.argmax(np.asarray(tmp_hist))
+                    
+                    if shp[f'USGS_{tmp_sc}'][shp_mask].values[0] != tmp_hist[tmp_sc]:
+                        self.logger.warning(f'Index and mode soil class do not match at hru_id {attribute_hru}')
+                        tmp_sc = 6  # Use a default value (6 = loam) instead of -999
+                    
+                    # Ensure soil type index is positive (SUMMA requires this)
+                    if tmp_sc <= 0:
+                        self.logger.warning(f"Invalid soil class {tmp_sc} for HRU {attribute_hru}, using default class")
+                        tmp_sc = 6  # Use a default value (6 = loam)
+                    
+                    att['soilTypeIndex'][idx] = tmp_sc
+        
+        except Exception as e:
+            self.logger.error(f"Error inserting soil class: {str(e)}")
+            # If the process fails, set all soil types to a default value
+            with nc4.Dataset(attribute_file, "r+") as att:
+                self.logger.warning("Setting all soil types to default value (6 = loam)")
+                att['soilTypeIndex'][:] = 6  # Set all to loam as fallback
 
     def insert_land_class(self, attribute_file):
         """Insert land class data into the attributes file."""
@@ -800,47 +816,60 @@ class SummaPreProcessor:
             intersect_name = 'catchment_with_landclass.shp'
         intersect_hruId_var = self.config.get('CATCHMENT_SHP_HRUID')
 
-        shp = gpd.read_file(intersect_path / intersect_name)
+        try:
+            shp = gpd.read_file(intersect_path / intersect_name)
 
-        # Check and create missing IGBP_X columns
-        for i in range(1, 18):
-            col_name = f'IGBP_{i}'
-            if col_name not in shp.columns:
-                shp[col_name] = 0  # Add the missing column and initialize with 0
+            # Check and create missing IGBP_X columns
+            for i in range(1, 18):
+                col_name = f'IGBP_{i}'
+                if col_name not in shp.columns:
+                    shp[col_name] = 0  # Add the missing column and initialize with 0
 
-        is_water = 0
+            is_water = 0
 
-        with nc4.Dataset(attribute_file, "r+") as att:
-            for idx in range(len(att['hruId'])):
-                attribute_hru = att['hruId'][idx]
-                shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
-                
-                # Check if there are any matching rows for this HRU
-                if not any(shp_mask):
-                    self.logger.warning(f"No land class data found for HRU {attribute_hru}, using default class")
-                    att['vegTypeIndex'][idx] = 1  # Use a reasonable default (1 = Evergreen Needleleaf)
-                    continue
-                
-                tmp_hist = []
-                for j in range(1, 18):
-                    col_name = f'IGBP_{j}'
-                    tmp_hist.append(shp[col_name][shp_mask].values[0])
-                
-                tmp_lc = np.argmax(np.asarray(tmp_hist)) + 1
-                
-                if shp[f'IGBP_{tmp_lc}'][shp_mask].values[0] != tmp_hist[tmp_lc - 1]:
-                    self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
-                    tmp_lc = -999
-                
-                if tmp_lc == 17:
-                    if any(val > 0 for val in tmp_hist[0:-1]):  # HRU is mostly water but other land classes are present
-                        tmp_lc = np.argmax(np.asarray(tmp_hist[0:-1])) + 1  # select 2nd-most common class
-                    else:
-                        is_water += 1  # HRU is exclusively water
-                
-                att['vegTypeIndex'][idx] = tmp_lc
+            with nc4.Dataset(attribute_file, "r+") as att:
+                for idx in range(len(att['hruId'])):
+                    attribute_hru = att['hruId'][idx]
+                    shp_mask = (shp[intersect_hruId_var].astype(int) == attribute_hru)
+                    
+                    # Check if there are any matching rows for this HRU
+                    if not any(shp_mask):
+                        self.logger.warning(f"No land class data found for HRU {attribute_hru}, using default class")
+                        att['vegTypeIndex'][idx] = 1  # Use a default value (1 = Evergreen Needleleaf)
+                        continue
+                    
+                    tmp_hist = []
+                    for j in range(1, 18):
+                        col_name = f'IGBP_{j}'
+                        tmp_hist.append(shp[col_name][shp_mask].values[0])
+                    
+                    tmp_lc = np.argmax(np.asarray(tmp_hist)) + 1
+                    
+                    if shp[f'IGBP_{tmp_lc}'][shp_mask].values[0] != tmp_hist[tmp_lc - 1]:
+                        self.logger.warning(f'Index and mode land class do not match at hru_id {attribute_hru}')
+                        tmp_lc = 1  # Use a default value (1 = Evergreen Needleleaf) instead of -999
+                    
+                    if tmp_lc == 17:
+                        if any(val > 0 for val in tmp_hist[0:-1]):  # HRU is mostly water but other land classes are present
+                            tmp_lc = np.argmax(np.asarray(tmp_hist[0:-1])) + 1  # select 2nd-most common class
+                        else:
+                            is_water += 1  # HRU is exclusively water
+                    
+                    # Ensure vegetation type index is positive (SUMMA requires this)
+                    if tmp_lc <= 0:
+                        self.logger.warning(f"Invalid vegetation class {tmp_lc} for HRU {attribute_hru}, using default class")
+                        tmp_lc = 1  # Use a default value (1 = Evergreen Needleleaf)
+                    
+                    att['vegTypeIndex'][idx] = tmp_lc
 
-            self.logger.info(f"{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.")
+                self.logger.info(f"{is_water} HRUs were identified as containing only open water. Note that SUMMA skips hydrologic calculations for such HRUs.")
+        
+        except Exception as e:
+            self.logger.error(f"Error inserting land class: {str(e)}")
+            # If the process fails, set all vegetation types to a default value
+            with nc4.Dataset(attribute_file, "r+") as att:
+                self.logger.warning("Setting all vegetation types to default value (1 = Evergreen Needleleaf)")
+                att['vegTypeIndex'][:] = 1  # Set all to Evergreen Needleleaf as fallback
 
 
     def insert_elevation(self, attribute_file):
