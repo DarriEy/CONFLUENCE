@@ -1,7 +1,0 @@
-caravan_script: /home/darri.eythorsson/code/CONFLUENCE/examples/run_watersheds_caravan.py
-config_dir: /home/darri.eythorsson/code/CONFLUENCE/0_config_files/caravan
-dataset: camels
-dry_run: false
-experiment_name: caravan_tutorial
-max_watersheds: 5
-template_config: /home/darri.eythorsson/code/CONFLUENCE/0_config_files/config_caravan_template.yaml

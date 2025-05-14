@@ -1,9 +1,0 @@
-camelsspat_dir: /work/comphyd_lab/data/_to-be-moved/camels-spat-upload/shapefiles/meso-scale/shapes-distributed
-camelsspat_script: /home/darri.eythorsson/code/CONFLUENCE/9_scripts/run_watersheds_camelsspat.py
-config_dir: /home/darri.eythorsson/code/CONFLUENCE/0_config_files/camels_spat
-dataset: camels-spat
-dry_run: false
-experiment_name: camelsspat_tutorial
-max_watersheds: 5
-metadata_csv: camels-spat-metadata.csv
-template_config: /home/darri.eythorsson/code/CONFLUENCE/0_config_files/config_distributed_basin_template.yaml
