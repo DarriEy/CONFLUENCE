@@ -138,7 +138,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 
-SIM_REACH_ID: 228                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 STREAMFLOW_DATA_PROVIDER: WSC                                  # Provider of streamflow data, current options: USGS, WSC, VI, NIWA
 DOWNLOAD_USGS_DATA: True                                       # Download USGS data through API
 DOWNLOAD_WSC_DATA: True                                        # Download HYDAT data from HPC
