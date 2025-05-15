@@ -1393,10 +1393,10 @@ class datatoolRunner:
 
     def execute_datatool_command(self, datatool_command):
         """
-        Execute the datatool command and robustly monitor job completion.
+        Execute the datatool command and wait for the job to complete in the queue.
         
-        This implementation tracks the specific job ID for this run and
-        waits for that job to complete before proceeding.
+        This simplified implementation focuses on tracking the specific job ID
+        until it's no longer present in the Slurm queue.
         """
         try:
             # Submit the array job
@@ -1410,12 +1410,9 @@ class datatoolRunner:
                 if 'Submitted batch job' in line:
                     try:
                         job_id = line.split()[-1].strip()
-                        # Validate job ID is numeric
-                        if not job_id.isdigit():
-                            self.logger.warning(f"Extracted non-numeric job ID: '{job_id}'")
                         break
-                    except (IndexError, ValueError) as e:
-                        self.logger.warning(f"Error parsing job ID from line '{line}': {e}")
+                    except (IndexError, ValueError):
+                        pass
             
             if not job_id:
                 self.logger.error("Could not extract job ID from submission output")
@@ -1424,93 +1421,36 @@ class datatoolRunner:
             
             self.logger.info(f"Monitoring job ID: {job_id}")
             
-            # Wait for this specific job to complete
+            # Wait for job to no longer be in the queue
             wait_time = 30  # seconds between checks
-            max_runtime = 60 * 60 * 24  # 24 hours max runtime
-            start_time = time.time()
+            max_checks = 240  # Maximum number of checks (2 hours at 30 sec intervals)
+            check_count = 0
             
-            while True:
-                # Check if we've exceeded maximum runtime
-                if time.time() - start_time > max_runtime:
-                    self.logger.warning(f"Job {job_id} exceeded maximum monitoring time of 24 hours")
-                    break
-                
-                # Check job status with squeue, filtering ONLY for our specific job ID
-                check_cmd = ['squeue', '-j', job_id, '-h', '-o', '%A %t']
+            while check_count < max_checks:
+                # Check if job is still in the queue
+                check_cmd = ['squeue', '-j', job_id, '-h']
                 status_result = subprocess.run(check_cmd, capture_output=True, text=True)
                 
-                # If no output, the job is no longer in the queue (completed or failed)
+                # If no output, the job is no longer in the queue
                 if not status_result.stdout.strip():
-                    # Double-check with sacct to confirm completion
-                    sacct_cmd = ['sacct', '-j', job_id, '--format=State', '--noheader']
-                    sacct_result = subprocess.run(sacct_cmd, capture_output=True, text=True)
-                    
-                    # Look for COMPLETED status in sacct output
-                    job_completed = False
-                    job_failed = False
-                    
-                    for line in sacct_result.stdout.strip().split('\n'):
-                        state = line.strip()
-                        if state == 'COMPLETED':
-                            job_completed = True
-                        elif state in ('FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY', 'NODE_FAIL'):
-                            job_failed = True
-                    
-                    if job_failed:
-                        self.logger.error(f"Job {job_id} has failed. Check the Slurm output logs.")
-                        # Check if we have output files despite the failure
-                        output_dir = self.project_dir / "forcing/datatool-outputs"
-                        file_pattern = f"domain_{self.domain_name}_*.nc*"
-                        matching_files = list(output_dir.glob(file_pattern))
-                        
-                        if matching_files and any(f.stat().st_size > 1024 for f in matching_files):
-                            self.logger.info("Despite job failure, output files were found. Continuing.")
-                            break
-                        else:
-                            raise RuntimeError(f"Job {job_id} failed and no valid output files were found")
-                    
-                    if job_completed or not sacct_result.stdout.strip():
-                        # If job shows as completed or is not in sacct (purged from history),
-                        # verify output files exist
-                        output_dir = self.project_dir / "forcing/datatool-outputs"
-                        file_pattern = f"domain_{self.domain_name}_*.nc*"
-                        matching_files = list(output_dir.glob(file_pattern))
-                        
-                        if matching_files and any(f.stat().st_size > 1024 for f in matching_files):
-                            self.logger.info(f"All tasks for job {job_id} have completed and output files found")
-                            break
-                        else:
-                            # If no output files yet, wait a bit longer
-                            self.logger.warning("Job no longer in queue but no output files found, checking again...")
-                            time.sleep(wait_time)
-                            continue
-                else:
-                    # Job is still in the queue, count running/pending tasks
-                    running_tasks = 0
-                    pending_tasks = 0
-                    
-                    for line in status_result.stdout.strip().split('\n'):
-                        parts = line.strip().split()
-                        if len(parts) >= 2:
-                            # Only count if the job ID matches to avoid confusion with array tasks
-                            if parts[0] == job_id or parts[0].startswith(f"{job_id}_"):
-                                status = parts[1]
-                                if status == 'R':
-                                    running_tasks += 1
-                                elif status == 'PD':
-                                    pending_tasks += 1
-                    
-                    self.logger.info(f"Job {job_id} has {running_tasks} running and {pending_tasks} pending tasks. Waiting {wait_time} seconds.")
+                    self.logger.info(f"Job {job_id} is no longer in the queue, assuming completed.")
+                    # Wait an additional minute to allow for any file system operations to complete
+                    time.sleep(60)
+                    break
                 
-                # Wait before checking again
+                self.logger.info(f"Job {job_id} still in queue. Waiting {wait_time} seconds. Check {check_count+1}/{max_checks}")
                 time.sleep(wait_time)
+                check_count += 1
             
-            self.logger.info("datatool job execution completed successfully.")
-        
+            if check_count >= max_checks:
+                self.logger.warning(f"Reached maximum checks ({max_checks}) for job {job_id}, but continuing anyway")
+            
+            self.logger.info("datatool job monitoring completed.")
+            
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error running datatool: {e}")
-            self.logger.error(f"Command output: {e.stdout if hasattr(e, 'stdout') else 'No output'}")
-            self.logger.error(f"Command error: {e.stderr if hasattr(e, 'stderr') else 'No error output'}")
+            if hasattr(e, 'stderr') and e.stderr:
+                self.logger.error(f"Command error output: {e.stderr}")
             raise
         except Exception as e:
             self.logger.error(f"Unexpected error during datatool execution: {e}")
