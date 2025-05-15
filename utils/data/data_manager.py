@@ -338,6 +338,10 @@ class DataManager:
             
             # Process SNOTEL data
             observed_data_processor.process_snotel_data()
+
+            # Process FLUXNET data
+            observed_data_processor.process_fluxnet_data()
+
             self.logger.info("Observed data processing completed successfully")
             
         except Exception as e:

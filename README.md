@@ -101,15 +101,9 @@ CONFLUENCE/
 
 ## Example Workflows
 
-Browse the `jupyter_notebooks/` directory for comprehensive tutorials demonstrating:
+Browse the `jupyter_notebooks/` directory for comprehensive tutorials.
 
-1. **[01_lumped_basin_workflow.ipynb](examples/01_lumped_basin_workflow.ipynb)** - Complete lumped basin modeling tutorial (Bow River at Banff)
-2. **[02_semi_distributed_basin_workflow.ipynb](examples/02_semi_distributed_basin_workflow.ipynb)** - Semi-Distributed modeling with multiple GRUs
-3. **[03_distributed_basin_workflow.ipynb](examples/03_distributed_basin_workflow.ipynb)** - Distributed modeling with multiple GRUs
-4. **[04_regional_domain_workflow.ipynb](examples/04_regional_domain_workflow.ipynb)** - Regional-scale modeling (Iceland example)
-5. **[05_continental_domain_workflow.ipynb](examples/05_continental_North_America_workflow.ipynb)** - Continental-scale modeling (North America example)
-
-Each notebook includes step-by-step instructions and can be run interactively to learn CONFLUENCE's capabilities.
+Each notebook includes step-by-step instructions and can be run interactively.
 
 ### Getting Started with Examples
 
@@ -126,7 +120,7 @@ jupyter notebook
 
 ## Documentation
 
-📚 **Full documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
+📚 **Documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
 
 [![Documentation Status](https://readthedocs.org/projects/confluence/badge/?version=latest)](https://confluence.readthedocs.io/en/latest/?badge=latest)
 

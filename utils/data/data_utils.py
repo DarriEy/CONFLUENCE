@@ -707,6 +707,76 @@ class ObservedDataProcessor:
 
         self._resample_and_save(vi_data['discharge_cms'])
 
+    def process_fluxnet_data(self):
+        """
+        Process FLUXNET data by copying relevant station files to the project directory.
+        
+        This method:
+        1. Checks if FLUXNET data acquisition is enabled in configuration
+        2. Locates files containing the specified station ID
+        3. Copies them to the project directory's observations/fluxnet folder
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        self.logger.info("Processing FLUXNET data")
+        
+        # Check if FLUXNET processing is enabled
+        if self.config.get('DOWNLOAD_FLUXNET') != 'true':
+            self.logger.info("FLUXNET data processing is disabled in configuration")
+            return False
+        
+        try:
+            # Get FLUXNET configuration parameters
+            fluxnet_path = Path(self.config.get('FLUXNET_PATH'))
+            station_id = self.config.get('FLUXNET_STATION')
+            
+            if not fluxnet_path or not station_id:
+                self.logger.error("Missing FLUXNET_PATH or FLUXNET_STATION in configuration")
+                return False
+            
+            # Create directory for FLUXNET data if it doesn't exist
+            output_dir = self.project_dir / 'observations' / 'fluxnet'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.logger.info(f"Looking for FLUXNET files with station ID: {station_id}")
+            
+            # Find files containing the station ID
+            import shutil
+            import glob
+            
+            # Check if the path exists
+            if not fluxnet_path.exists():
+                self.logger.error(f"FLUXNET path does not exist: {fluxnet_path}")
+                return False
+                
+            # Find all files in the directory (including subdirectories) that match the station ID
+            matching_files = []
+            for file_path in fluxnet_path.glob('**/*'):
+                if file_path.is_file() and station_id in file_path.name:
+                    matching_files.append(file_path)
+                    
+            if not matching_files:
+                self.logger.warning(f"No FLUXNET files found for station ID: {station_id}")
+                return False
+                
+            self.logger.info(f"Found {len(matching_files)} FLUXNET files for station {station_id}")
+            
+            # Copy files to the project directory
+            for file_path in matching_files:
+                dest_file = output_dir / file_path.name
+                shutil.copy2(file_path, dest_file)
+                self.logger.info(f"Copied {file_path.name} to {dest_file}")
+            
+            self.logger.info(f"Successfully processed FLUXNET data for station {station_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error processing FLUXNET data: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+
     def process_snotel_data(self):
         """
         Process SNOTEL snow water equivalent data.

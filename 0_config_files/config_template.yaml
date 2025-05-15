@@ -79,8 +79,8 @@ SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in pa
 SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                         # Name of parallel SUMMA binary
 
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
-PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore,Frad_vis,rootingDepth,leafExchangeCoeff,critSoilWilting # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor,routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: aquiferBaseflowExp,aquiferBaseflowRate,qSurfScale,summerLAI,frozenPrecipMultip,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore,Frad_vis,rootingDepth,leafExchangeCoeff,critSoilWilting # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
   snowIncept: 
     - lightSnow
@@ -150,9 +150,9 @@ SNOTEL_STATION: '602'                                          # SNOTEL station 
 SNOTEL_PATH: '/work/comphyd_lab/data/geospatial-data/SNOTEL'   # Path to directory containing SNOTEL data files
 
 # FLUXNET data settings
-DOWNLOAD_SNOTEL: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
-SNOTEL_STATION: 'US-??'                                          # SNOTEL station ID (numeric)
-SNOTEL_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet'   # Path to directory containing SNOTEL data files
+DOWNLOAD_FLUXNET: 'false'                                       # Download FLUXNET data, options: 'true' or 'false'
+FLUXNET_STATION: 'CA-NS7'                                          # FLUXNET station ID (numeric)
+FLUXNET_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet'   # Path to directory containing FLUXNET data files
 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
