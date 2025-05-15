@@ -154,6 +154,9 @@ DOWNLOAD_FLUXNET: 'false'                                       # Download FLUXN
 FLUXNET_STATION: 'CA-NS7'                                          # FLUXNET station ID (numeric)
 FLUXNET_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet'   # Path to directory containing FLUXNET data files
 
+# USGS GW data settings
+DOWNLOAD_USGS_GW: 'true'                                          # Download USGS groundwater data, options: 'true' or 'false'
+USGS_STATION: '06306300'                                          # USGS   station ID (numeric)
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 

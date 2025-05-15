@@ -342,6 +342,10 @@ class DataManager:
             # Process FLUXNET data
             observed_data_processor.process_fluxnet_data()
 
+            # Process FLUXNET data
+            observed_data_processor.process_usgs_groundwater_data()
+
+
             self.logger.info("Observed data processing completed successfully")
             
         except Exception as e:

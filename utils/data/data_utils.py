@@ -707,6 +707,165 @@ class ObservedDataProcessor:
 
         self._resample_and_save(vi_data['discharge_cms'])
 
+    def process_usgs_groundwater_data(self):
+        """
+        Process USGS groundwater level data by fetching it directly from USGS API.
+        
+        This method:
+        1. Checks if USGS groundwater data acquisition is enabled in configuration
+        2. Downloads groundwater level data for the specified USGS station from the API
+        3. Processes the JSON response to extract relevant data
+        4. Saves processed data to the project directory's observations/groundwater folder
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        self.logger.info("Processing USGS groundwater level data")
+        
+        # Check if USGS groundwater processing is enabled
+        if self.config.get('DOWNLOAD_USGS_GW') != 'true':
+            self.logger.info("USGS groundwater data processing is disabled in configuration")
+            return False
+        
+        try:
+            # Get configuration parameters
+            station_id = self.config.get('USGS_STATION')
+            
+            if not station_id:
+                self.logger.error("Missing USGS_STATION in configuration")
+                return False
+            
+            # If station ID includes a prefix, extract just the numeric part for the API
+            if '-' in station_id:
+                station_numeric = station_id.split('-')[-1]
+            else:
+                station_numeric = station_id
+            
+            # Create directory for processed data if it doesn't exist
+            output_dir = self.project_dir / 'observations' / 'groundwater'
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Define output file path
+            output_file = output_dir / f"{self.domain_name}_groundwater_processed.csv"
+            
+            # Construct the URL for JSON formatted groundwater level data
+            url = f"https://waterservices.usgs.gov/nwis/gwlevels/?format=json&sites={station_numeric}&siteStatus=all"
+            
+            self.logger.info(f"Retrieving groundwater level data for USGS station {station_id}")
+            self.logger.info(f"API URL: {url}")
+            
+            # Fetch data from USGS API
+            import requests
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            
+            # Parse JSON response
+            data = response.json()
+            
+            # Extract the relevant data from the response
+            if 'value' not in data or 'timeSeries' not in data['value']:
+                self.logger.error("No groundwater data found in the API response")
+                return False
+            
+            # Check if we have any time series data
+            time_series = data['value']['timeSeries']
+            if not time_series:
+                self.logger.error(f"No groundwater level data found for station {station_id}")
+                return False
+            
+            self.logger.info(f"Found {len(time_series)} time series in response")
+            
+            # Create lists to store data
+            dates = []
+            values = []
+            units = []
+            qualifiers = []
+            
+            # Process each time series (there might be multiple parameter codes)
+            for ts in time_series:
+                # Extract parameter information
+                try:
+                    variable = ts['variable']['variableName']
+                    unit_code = ts['variable']['unit']['unitCode']
+                    self.logger.info(f"Processing time series: {variable}, unit: {unit_code}")
+                    
+                    # Only process groundwater level data
+                    if 'level' not in variable.lower() and 'depth' not in variable.lower():
+                        self.logger.info(f"Skipping non-level time series: {variable}")
+                        continue
+                    
+                    # Extract the values
+                    values_list = ts['values'][0]['value']
+                    
+                    for value_obj in values_list:
+                        dates.append(value_obj['dateTime'])
+                        values.append(float(value_obj['value']))
+                        units.append(unit_code)
+                        
+                        # Extract qualifiers (e.g., A for approved, P for provisional)
+                        qualifier_list = value_obj.get('qualifiers', [])
+                        qualifiers.append(','.join(qualifier_list))
+                
+                except (KeyError, IndexError, ValueError) as e:
+                    self.logger.warning(f"Error processing time series: {e}")
+                    continue
+            
+            if not dates:
+                self.logger.error("No valid groundwater level data found after processing")
+                return False
+            
+            # Create a DataFrame
+            import pandas as pd
+            df = pd.DataFrame({
+                'datetime': pd.to_datetime(dates),
+                'groundwater_level': values,
+                'unit': units,
+                'qualifier': qualifiers
+            })
+            
+            # Sort by date
+            df.sort_values('datetime', inplace=True)
+            
+            # Handle units - convert to consistent units if needed
+            # Most common units: ft (feet) or m (meters) below land surface
+            if df['unit'].nunique() > 1:
+                self.logger.warning(f"Multiple units found in groundwater data: {df['unit'].unique()}")
+                # Could add unit conversion here in the future
+            
+            # Set datetime as index
+            df.set_index('datetime', inplace=True)
+            
+            # Basic statistics for logging
+            self.logger.info(f"Date range: {df.index.min()} to {df.index.max()}")
+            self.logger.info(f"Number of records: {len(df)}")
+            self.logger.info(f"Min level: {df['groundwater_level'].min()} {df['unit'].iloc[0]}")
+            self.logger.info(f"Max level: {df['groundwater_level'].max()} {df['unit'].iloc[0]}")
+            self.logger.info(f"Mean level: {df['groundwater_level'].mean()} {df['unit'].iloc[0]}")
+            
+            # Resample to regular intervals if needed
+            resample_freq = self.get_resample_freq()
+            if resample_freq != 'D':  # Groundwater levels are usually daily at most
+                self.logger.info(f"Resampling groundwater level data to {resample_freq} frequency")
+                resampled_df = df.resample(resample_freq).mean()
+                # Fill missing values with linear interpolation
+                resampled_df = resampled_df.interpolate(method='linear', limit=30)
+                df = resampled_df
+            
+            # Save to CSV
+            df.to_csv(output_file)
+            self.logger.info(f"Processed groundwater level data saved to {output_file}")
+            
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error fetching data from USGS API: {str(e)}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error processing USGS groundwater data: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+
     def process_fluxnet_data(self):
         """
         Process FLUXNET data by copying relevant station files to the project directory.

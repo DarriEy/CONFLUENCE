@@ -122,15 +122,6 @@ jupyter notebook
 
 📚 **Documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
 
-[![Documentation Status](https://readthedocs.org/projects/confluence/badge/?version=latest)](https://confluence.readthedocs.io/en/latest/?badge=latest)
-
-The documentation includes:
-- **[Getting Started Guide](https://confluence.readthedocs.io/en/latest/getting_started.html)** - Quick introduction to CONFLUENCE
-- **[Installation Instructions](https://confluence.readthedocs.io/en/latest/installation.html)** - Detailed setup guide
-- **[Configuration Guide](https://confluence.readthedocs.io/en/latest/configuration.html)** - Complete configuration reference
-- **[Examples](https://confluence.readthedocs.io/en/latest/examples.html)** - Practical tutorials based on Jupyter notebooks
-- **[API Reference](https://confluence.readthedocs.io/en/latest/api.html)** - Detailed API documentation
-
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on:
