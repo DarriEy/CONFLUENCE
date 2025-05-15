@@ -1,7 +1,0 @@
-config_dir: ../CONFLUENCE/0_config_files/fluxnet
-dry_run: false
-experiment_name: fluxnet_tutorial
-fluxnet_csv: fluxnet_transformed.csv
-fluxnet_script: ../CONFLUENCE/9_scripts/run_towers_fluxnet.py
-max_sites: 5
-template_config: ../CONFLUENCE/0_config_files/config_point_template.yaml
