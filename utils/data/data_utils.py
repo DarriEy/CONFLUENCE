@@ -1423,7 +1423,7 @@ class datatoolRunner:
             
             # Wait for job to no longer be in the queue
             wait_time = 30  # seconds between checks
-            max_checks = 240  # Maximum number of checks (2 hours at 30 sec intervals)
+            max_checks = 1000  # Maximum number of checks
             check_count = 0
             
             while check_count < max_checks:
@@ -1435,7 +1435,6 @@ class datatoolRunner:
                 if not status_result.stdout.strip():
                     self.logger.info(f"Job {job_id} is no longer in the queue, assuming completed.")
                     # Wait an additional minute to allow for any file system operations to complete
-                    time.sleep(60)
                     break
                 
                 self.logger.info(f"Job {job_id} still in queue. Waiting {wait_time} seconds. Check {check_count+1}/{max_checks}")
