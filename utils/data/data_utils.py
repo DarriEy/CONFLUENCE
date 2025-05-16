@@ -1078,12 +1078,12 @@ class ObservedDataProcessor:
             self.logger.error(f"Error processing SNOTEL data: {str(e)}")
             return False
 
-    def _process_caravans_data(self):
+    def process_caravans_data(self):
         """
         Process CARAVANS streamflow data.
         
-        This function reads CARAVANS CSV data, processes it to match
-        the standard format, and saves it to the preprocessed folder.
+        This function reads CARAVANS CSV data, processes it, and converts from mm/d to m³/s
+        using the basin area from the shapefile.
         """
         # Check if CARAVANS processing is enabled
         if not self.config.get('PROCESS_CARAVANS', False):
@@ -1125,7 +1125,7 @@ class ObservedDataProcessor:
                     raise ValueError("No date column found in CARAVANS data")
             
             discharge_columns = [col for col in caravans_data.columns 
-                                if 'discharge' in col.lower() or 'm3s' in col.lower() or 'flow' in col.lower()]
+                            if 'discharge' in col.lower() or 'm3s' in col.lower() or 'flow' in col.lower()]
             
             if not discharge_columns:
                 self.logger.error("No discharge column found in CARAVANS data")
@@ -1135,15 +1135,13 @@ class ObservedDataProcessor:
             self.logger.info(f"Using '{discharge_col}' as discharge column")
             
             # Rename columns and select only necessary ones
-            caravans_data = caravans_data.rename(columns={discharge_col: 'discharge_cms'})
-            caravans_data = caravans_data[['date', 'discharge_cms']]
+            caravans_data = caravans_data.rename(columns={discharge_col: 'discharge_mmd'})
+            caravans_data = caravans_data[['date', 'discharge_mmd']]
             
             # Convert discharge to numeric, handling errors
-            caravans_data['discharge_cms'] = pd.to_numeric(caravans_data['discharge_cms'], errors='coerce')
-            caravans_data['discharge_cms'] = caravans_data['discharge_cms'] / 0.02831685
-
-            # IMPORTANT: Convert date to datetime BEFORE setting as index
-            # Try different date formats - first European format (DD/MM/YYYY), then ISO format (YYYY-MM-DD)
+            caravans_data['discharge_mmd'] = pd.to_numeric(caravans_data['discharge_mmd'], errors='coerce')
+            
+            # Convert date to datetime
             try:
                 # First try European format (DD/MM/YYYY)
                 caravans_data['datetime'] = pd.to_datetime(caravans_data['date'], format='%d/%m/%Y', errors='coerce')
@@ -1176,10 +1174,93 @@ class ObservedDataProcessor:
             caravans_data.sort_index(inplace=True)
             
             # Now drop rows with NaN discharge values
-            na_count = caravans_data['discharge_cms'].isna().sum()
+            na_count = caravans_data['discharge_mmd'].isna().sum()
             if na_count > 0:
                 self.logger.warning(f"Dropping {na_count} rows with missing or non-numeric discharge values")
-                caravans_data = caravans_data.dropna(subset=['discharge_cms'])
+                caravans_data = caravans_data.dropna(subset=['discharge_mmd'])
+            
+            # Get the basin area from the shapefile
+            try:
+                # Determine the shapefile path
+                subbasins_name = self.config.get('RIVER_BASINS_NAME')
+                if subbasins_name == 'default':
+                    subbasins_name = f"{self.config['DOMAIN_NAME']}_riverBasins.shp"
+                
+                shapefile_path = self.project_dir / "shapefiles/river_basins" / subbasins_name
+                
+                # Check if shapefile exists
+                if not shapefile_path.exists():
+                    # Try alternative location
+                    alt_shapefile_path = self.project_dir / "shapefiles/catchment" / f"{self.domain_name}_catchment.shp"
+                    if alt_shapefile_path.exists():
+                        shapefile_path = alt_shapefile_path
+                        self.logger.info(f"Using alternative shapefile: {shapefile_path}")
+                    else:
+                        raise FileNotFoundError(f"Cannot find shapefile at {shapefile_path} or {alt_shapefile_path}")
+                
+                # Read the shapefile
+                import geopandas as gpd
+                gdf = gpd.read_file(shapefile_path)
+                
+                # Get area column from the shapefile
+                area_column = self.config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+                
+                # If area column not found, try alternative names
+                if area_column not in gdf.columns:
+                    area_alternatives = ['GRU_area', 'area', 'Area', 'AREA', 'basin_area', 'HRU_area', 'catchment_area']
+                    for alt in area_alternatives:
+                        if alt in gdf.columns:
+                            area_column = alt
+                            self.logger.info(f"Using alternative area column: {area_column}")
+                            break
+                    
+                    # If still not found, calculate area from geometry
+                    if area_column not in gdf.columns:
+                        self.logger.warning("No area column found, calculating from geometry...")
+                        # Convert to equal-area projection for accurate area calculation
+                        gdf_projected = gdf.to_crs('+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs')
+                        gdf['calculated_area'] = gdf_projected.geometry.area
+                        area_column = 'calculated_area'
+                        # Area is now in square meters, convert to square km
+                        gdf[area_column] = gdf[area_column] / 1e6
+                
+                # Sum the areas to get total basin area in km²
+                basin_area_km2 = gdf[area_column].sum() / 1e6  # Convert m² to km²
+                
+                # Check if area is reasonable (between 0.01 and 1,000,000 km²)
+                if basin_area_km2 < 0.01:
+                    self.logger.warning(f"Basin area is suspiciously small: {basin_area_km2} km². Check units in shapefile.")
+                    # Try to guess if area is in different units and convert
+                    if basin_area_km2 * 1e6 > 0.01:  # If area in m² makes more sense
+                        basin_area_km2 = basin_area_km2 * 1e6
+                        self.logger.info(f"Assuming area was in m², converted to: {basin_area_km2} km²")
+                
+                if basin_area_km2 > 1000000:
+                    self.logger.warning(f"Basin area is suspiciously large: {basin_area_km2} km². Check units in shapefile.")
+                    # Try to guess if area is in different units and convert
+                    if basin_area_km2 / 1e6 < 1000000:  # If area in km² makes more sense
+                        basin_area_km2 = basin_area_km2 / 1e6
+                        self.logger.info(f"Assuming area was already in km², adjusted to: {basin_area_km2} km²")
+                
+                # Print the basin area
+                self.logger.info(f"Basin area: {basin_area_km2:.2f} km²")
+                
+                # Convert discharge from mm/d to m³/s
+                # Formula: m³/s = (mm/d × basin_area_km² × 1000) / 86400
+                # 1000: convert km² to m²
+                # 86400: seconds in a day
+                conversion_factor = (basin_area_km2 * 1000) / 86400
+                caravans_data['discharge_cms'] = caravans_data['discharge_mmd'] * conversion_factor
+                
+                self.logger.info(f"Converted discharge from mm/d to m³/s using conversion factor: {conversion_factor:.6f}")
+                self.logger.info(f"Min discharge: {caravans_data['discharge_cms'].min():.4f} m³/s")
+                self.logger.info(f"Max discharge: {caravans_data['discharge_cms'].max():.4f} m³/s")
+                self.logger.info(f"Mean discharge: {caravans_data['discharge_cms'].mean():.4f} m³/s")
+                
+            except Exception as basin_error:
+                self.logger.error(f"Error determining basin area: {basin_error}")
+                self.logger.warning("Using default conversion factor of 1.0")
+                caravans_data['discharge_cms'] = caravans_data['discharge_mmd']
             
             # Verify we have a DatetimeIndex
             if not isinstance(caravans_data.index, pd.DatetimeIndex):
@@ -1189,9 +1270,6 @@ class ObservedDataProcessor:
             
             self.logger.info(f"Data date range: {caravans_data.index.min()} to {caravans_data.index.max()}")
             self.logger.info(f"Number of records: {len(caravans_data)}")
-            self.logger.info(f"Min discharge: {caravans_data['discharge_cms'].min()} m³/s")
-            self.logger.info(f"Max discharge: {caravans_data['discharge_cms'].max()} m³/s")
-            self.logger.info(f"Mean discharge: {caravans_data['discharge_cms'].mean()} m³/s")
             
             # Resample and save the data
             self._resample_and_save(caravans_data['discharge_cms'])

@@ -189,7 +189,7 @@ ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overw
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: GR                                      # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
+HYDROLOGICAL_MODEL: GR,FUSE                                      # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
