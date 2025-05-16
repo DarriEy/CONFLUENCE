@@ -125,10 +125,6 @@ class WorkflowOrchestrator:
                 self.managers['data'].run_model_agnostic_preprocessing,
                 lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()
             ),
-            (
-                self.managers['analysis'].run_benchmarking,
-                lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()
-            ),
             
             # --- Model Specific Processing and Initialization ---
             (
@@ -158,6 +154,11 @@ class WorkflowOrchestrator:
             ),
             
             # --- Analysis Steps ---
+            (
+                self.managers['analysis'].run_benchmarking,
+                lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()
+            ),
+
             (
                 self.managers['analysis'].run_decision_analysis,
                 lambda: (self.config.get('RUN_DECISION_ANALYSIS', False) and
