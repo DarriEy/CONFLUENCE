@@ -539,9 +539,11 @@ class SummaPreProcessor:
             var[:] = forcing_hruIds
 
             # Create variables for specified trial parameters
-            for var, val in all_tp.items():
-                tp_var = tp.createVariable(var, 'f8', 'hru', fill_value=False)
-                tp_var[:] = val
+
+            if self.config.get('SETTINGS_SUMMA_TRIALPARAM_N') != 0:
+                for var, val in all_tp.items():
+                    tp_var = tp.createVariable(var, 'f8', 'hru', fill_value=False)
+                    tp_var[:] = val
 
         self.logger.info(f"Trial parameters file created at: {parameter_path}")
 

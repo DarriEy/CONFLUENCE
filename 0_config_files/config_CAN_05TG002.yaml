@@ -17,29 +17,28 @@
 ### ============================================= 1. Global settings: =====================================================================
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
-CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data/camels_spat"
+CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "camels_camels_01423000"
+DOMAIN_NAME: "CAN_05TG002"
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 1                                                # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
-SPATIAL_MODE: Lumped                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
-POUR_POINT_COORDS: 42.28867684217906/-74.87785743547227
-BOUNDING_BOX_COORDS: 42.56259307885795/-75.30536041245146/42.02757110598391/-74.45851745576604
+POUR_POINT_COORDS: 55.48990558/-98.19201494
+BOUNDING_BOX_COORDS: 55.59041666666666/-98.75125/55.177083333333336/-98.17291667
 
 # Pour point shapefile path
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: lumped
+DOMAIN_DEFINITION_METHOD: delineate
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
@@ -66,18 +65,18 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
-RIVER_BASINS_NAME: "camels_camels_01423000_basin.shp"
-RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASINS_NAME: "CAN_05TG002_distributed_basin.shp"
+RIVER_BASIN_SHP_RM_GRUID: COMID                                # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: COMID                              # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
-RIVER_NETWORK_SHP_NAME: "camels_camels_01423000_river.shp"
+RIVER_NETWORK_SHP_NAME: "CAN_05TG002_distributed_river.shp"
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
@@ -111,8 +110,8 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2000-01-01 00:00
-EXPERIMENT_TIME_END: 2010-12-31 23:00
+EXPERIMENT_TIME_START: 2008-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -189,12 +188,12 @@ ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overw
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
+HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
-SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
+SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
 
 # SUMMMA Paths and filenames
@@ -304,29 +303,26 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 229                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 71008513
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings
 OBSERVATIONS_PATH: default                                     # Path to observed streamflow data for evaluation. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # Observation data paths
-PROCESS_CARAVANS: True
-STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, current options: USGS, WSC, VI  
+STREAMFLOW_DATA_PROVIDER: WSC
+DOWNLOAD_USGS_DATA: False
+DOWNLOAD_WSC_DATA: True
+STATION_ID: 05TG002
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
-STREAMFLOW_RAW_NAME: camels_camels_01423000_Discharge.csv
+STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to HYDAT database      
 
-
-DOWNLOAD_USGS_DATA: False                                       # Download USGS data through API
-STATION_ID: '01423000'                                         # Station ID from provider
-
-
 ### ============================================= 6. Optimisation settings: ===============================================================
 # Optimization settings general
-CALIBRATION_PERIOD: 2000-01-01, 2005-12-31
-EVALUATION_PERIOD: 2006-01-01, 2010-12-31
+CALIBRATION_PERIOD: 2012-01-01, 2014-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2014-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
 SPINUP_PERIOD: 2011-01-01, 2011-12-31
 OPTMIZATION_ALOGORITHM: NSGA-II                                # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
@@ -366,14 +362,7 @@ PSO_INIT_POPULATION_METHOD: Random                             # PSO initial pop
 PSO_CONVERGENCE_VAL: 1.00E-4                                   # PSO convergence value
 
 # Sensitivity analysis settings
-RUN_SENSITIVITY_ANALYSIS: false                                 # Check to select whether to run a sensitivy analysis from the calibration output
-
-# Iterative optimisation settings
-RUN_ITERATIVE_OPTIMISATION: False
-ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 200                                      # Number of iterations for calibration 
-POPULATION_SIZE: 100                                           # Population size for genetic algorithms
-OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+RUN_SENSITIVITY_ANALYSIS: true                                 # Check to select whether to run a sensitivy analysis from the calibration output
 
 # Model decision analysis settings
 RUN_DECISION_ANALYSIS: true                                    # Check to select whether to run an analysis of model decisions 
@@ -404,59 +393,15 @@ OPTIMIZATION_RESULTS_FILE: default                             # Path to optimiz
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
 
 
-### ============================================= 6.1 Attribute Analysis settings: ===============================================================
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: false
-# Enable/disable attribute processing
-  
-# Processing parameters
-CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
-
-### Attribute Processing data settings
-# Base paths for attribute data
-ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
-
-# Soil attribute data paths
-ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
-ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
-
-# Topographic attribute data paths
-ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
-
-# Land cover attribute data paths
-ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
-ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
-
-# Climate attribute data paths
-ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
-ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
-
-# Geology attribute data paths (new)
-ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
-ATTRIBUTES_GROUNDWATER_PATH: default                          # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
-
-# Hydrology attribute data paths (new)
-ATTRIBUTES_STREAMFLOW_PATH: default                           # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
-HRU_GAUGE_MAPPING: {}                                         # Mapping between HRU IDs and gauge IDs for distributed domains
-
-# Open water attribute data paths (new)
-ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
-ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
-
-# Attribute processing settings
-ATTRIBUTES_PROCESS_LUMPED: false                               # Process lumped catchment attributes even for distributed domains
-ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
-ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
-
 # Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: false                              # Whether to run large sample emulation (default: false)
+RUN_LARGE_SAMPLE_EMULATION: true                              # Whether to run large sample emulation (default: false)
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
 EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
 EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: false                              # Run ensemble simulations in parallel (requires MPI)
-EMULATION_MAX_PARALLEL_JOBS: 10                                # Maximum number of parallel jobs when running ensemble
+EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
+EMULATION_MAX_PARALLEL_JOBS: 100                                # Maximum number of parallel jobs when running ensemble
 EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
 EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
@@ -465,7 +410,7 @@ EMULATION_MAX_RETRIES: 3                                       # Maximum number 
 
 
 # Add to configuration file
-RUN_RANDOM_FOREST_EMULATION: False
+RUN_RANDOM_FOREST_EMULATION: True
 EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
 EMULATION_RF_N_ESTIMATORS: 100
 EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth

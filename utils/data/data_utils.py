@@ -1078,7 +1078,7 @@ class ObservedDataProcessor:
             self.logger.error(f"Error processing SNOTEL data: {str(e)}")
             return False
 
-    def process_caravans_data(self):
+    def _process_caravans_data(self):
         """
         Process CARAVANS streamflow data.
         
