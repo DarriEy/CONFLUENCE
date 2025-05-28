@@ -12,9 +12,6 @@ from utils.optimization.dds_optimizer import DDSOptimizer # type: ignore
 from utils.optimization.pso_optimizer import PSOOptimizer # type: ignore
 from utils.optimization.sce_ua_optimizer import SCEUAOptimizer # type: ignore
 
-# Results management
-from utils.optimization.optimization_manager import OptimizationResultsManager # type: ignore
-
 # Emulation
 from utils.optimization.emulation_runner import EmulationRunner # type: ignore
 

@@ -8,7 +8,6 @@ CONFLUENCE provides an integrated framework for:
 - Hydrological model setup and configuration
 - Multi-model comparison and evaluation
 - Parameter optimization and calibration
-- Model emulation and machine learning integration
 - Workflow management
 
 Usage:
@@ -22,7 +21,6 @@ Example:
 For more information, see the documentation at:
     https://github.com/your-org/CONFLUENCE
 
-Author: CONFLUENCE Development Team
 License: MIT License
 Version: 1.0.0
 """
@@ -31,7 +29,7 @@ from pathlib import Path
 import sys
 import argparse
 from datetime import datetime
-from typing import Optional
+import yaml # type: ignore
 
 # Add the parent directory to the path to enable imports
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -39,14 +37,12 @@ sys.path.append(str(Path(__file__).resolve().parent))
 # Import CONFLUENCE components
 from utils.project.project_manager import ProjectManager # type: ignore
 from utils.project.workflow_orchestrator import WorkflowOrchestrator # type: ignore
-from utils.config.config_utils import ConfigManager # type: ignore
 from utils.config.logging_manager import LoggingManager # type: ignore
 from utils.data.data_manager import DataManager # type: ignore
 from utils.geospatial.domain_manager import DomainManager # type: ignore
 from utils.models.model_manager import ModelManager # type: ignore
 from utils.evaluation.analysis_manager import AnalysisManager # type: ignore
 from utils.optimization.optimization_manager import OptimizationManager # type: ignore
-
 
 class CONFLUENCE:
     """
@@ -58,7 +54,6 @@ class CONFLUENCE:
     is handled by a dedicated manager class.
     
     Architecture:
-        - ConfigManager: Handles configuration loading and validation
         - LoggingManager: Manages all logging operations
         - ProjectManager: Manages project structure and initialization
         - DomainManager: Handles spatial domain definition and discretization
@@ -69,7 +64,6 @@ class CONFLUENCE:
         - WorkflowOrchestrator: Coordinates the execution workflow
     
     Attributes:
-        config_manager (ConfigManager): Configuration management instance
         config (dict): Loaded configuration dictionary
         logging_manager (LoggingManager): Logging management instance
         logger (logging.Logger): Main logger instance
@@ -97,8 +91,7 @@ class CONFLUENCE:
         """
         try:
             # Initialize configuration management
-            self.config_manager = ConfigManager(config_path)
-            self.config = self.config_manager.config
+            self.config = self.load_config(config_path)
 
             # Initialize logging system
             self.logging_manager = LoggingManager(self.config)
@@ -135,7 +128,11 @@ class CONFLUENCE:
             else:
                 print(f"ERROR: {error_msg}")
             raise
-    
+
+    def load_config(self, config_path):
+        with open(config_path, 'r') as config_file:
+            return yaml.safe_load(config_file)
+
     def _initialize_managers(self) -> dict:
         """
         Initialize all manager components.
