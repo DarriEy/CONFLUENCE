@@ -232,7 +232,7 @@ Examples:
   # Show version information
   python CONFLUENCE.py --version
   
-For more information, visit: https://github.com/your-org/CONFLUENCE
+For more information, visit: https://github.com/DarriEy/CONFLUENCE
         """
     )
     
