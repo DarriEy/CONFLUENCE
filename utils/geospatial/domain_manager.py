@@ -4,9 +4,11 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, Union, Tuple
 
-from utils.geospatial.domain_utilities import DomainDelineator # type: ignore
 from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
+from utils.reporting.domain_visualization_utils import DomainVisualizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
+from utils.geospatial.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
+
 
 class DomainManager:
     """Manages all domain-related operations including definition, discretization, and visualization."""
@@ -29,7 +31,12 @@ class DomainManager:
         self.reporter = VisualizationReporter(self.config, self.logger)
         
         # Initialize utility classes
-        self.domain_delineator = DomainDelineator(self.config, self.logger)
+        self.delineator = GeofabricDelineator(self.config, self.logger)
+        self.lumped_delineator = LumpedWatershedDelineator(self.config, self.logger)
+        self.subsetter = GeofabricSubsetter(self.config, self.logger)
+        
+
+        self.domain_visualizer = DomainVisualizer(self.config, self.logger, self.reporter)
         self.domain_discretizer = None  # Initialized when needed
     
     def define_domain(self) -> Optional[Union[Path, Tuple[Path, Path]]]:
@@ -49,14 +56,14 @@ class DomainManager:
         
         # Handle point mode
         if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
-            result = self.domain_delineator.delineate_point_buffer_shape()
+            result = self.delineator.delineate_point_buffer_shape()
             return result
         
         # Map of domain methods to their corresponding functions
         domain_methods = {
-            'subset': self.domain_delineator.subset_geofabric,
-            'lumped': self.domain_delineator.delineate_lumped_watershed,
-            'delineate': self.domain_delineator.delineate_geofabric
+            'subset': self.subsetter.subset_geofabric,
+            'lumped': self.lumped_delineator.delineate_lumped_watershed,
+            'delineate': self.delineator.delineate_geofabric
         }
         
         # Execute the appropriate domain method
@@ -66,7 +73,7 @@ class DomainManager:
             
             # Handle coastal watersheds if needed
             if domain_method == 'delineate' and self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                coastal_result = self.domain_delineator.delineate_coastal()
+                coastal_result = self.delineator.delineate_coastal()
                 self.logger.info(f"Coastal delineation completed: {coastal_result}")
                 
             self.logger.info(f"Domain definition completed using method: {domain_method}")

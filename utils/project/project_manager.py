@@ -75,8 +75,6 @@ class ProjectManager:
         # Create directory structure
         directories = {
             'shapefiles': ['pour_point', 'catchment', 'river_network', 'river_basins'],
-            'observations/streamflow': ['raw_data'],
-            'documentation': [],
             'attributes': []
         }
         
@@ -137,135 +135,6 @@ class ProjectManager:
         
         return None
     
-    def _update_bounding_box_for_point_mode(self):
-        """
-        Update the bounding box coordinates for point-scale simulations.
-        
-        For point-scale simulations, this method creates a small bounding box around 
-        the pour point coordinates by adding a buffer distance in all directions.
-        It then updates both the runtime configuration and the active configuration file.
-        
-        The buffer distance is controlled by the POINT_BUFFER_DISTANCE configuration
-        parameter, with a default of 0.001 degrees (approximately 100m at the equator).
-        
-        Raises:
-            ValueError: If pour point coordinates are incorrectly formatted
-            Exception: For other errors during bounding box update
-        """
-        try:
-            pour_point_coords = self.config.get('POUR_POINT_COORDS', '')
-            if not pour_point_coords or pour_point_coords.lower() == 'default':
-                self.logger.warning("Pour point coordinates not specified, cannot update bounding box for point mode")
-                return
-            
-            lat, lon = map(float, pour_point_coords.split('/'))
-            buffer_dist = self.config.get('POINT_BUFFER_DISTANCE', 0.001)
-            
-            min_lon = round(lon - buffer_dist, 4)
-            max_lon = round(lon + buffer_dist, 4)
-            min_lat = round(lat - buffer_dist, 4)
-            max_lat = round(lat + buffer_dist, 4)
-            
-            new_bbox = f"{max_lat}/{min_lon}/{min_lat}/{max_lon}"
-            
-            self.logger.info(f"Updating bounding box for point-scale simulation to: {new_bbox}")
-            
-            self.config['BOUNDING_BOX_COORDS'] = new_bbox
-            self._update_active_config_file('BOUNDING_BOX_COORDS', new_bbox)
-            
-        except Exception as e:
-            self.logger.error(f"Error updating bounding box for point mode: {str(e)}")
-    
-    def _update_active_config_file(self, key: str, value: str):
-        """
-        Update a specific key in the active configuration file.
-        
-        This method modifies the active configuration file on disk to reflect runtime
-        changes to the configuration. It searches for the specific key and replaces
-        its value, preserving the rest of the file.
-        
-        Args:
-            key (str): The configuration key to update
-            value (str): The new value to set for the key
-            
-        Raises:
-            FileNotFoundError: If the active configuration file cannot be found
-            PermissionError: If the file cannot be written due to permission issues
-            Exception: For other errors during file update
-        """
-        try:
-            if 'CONFLUENCE_CODE_DIR' not in self.config:
-                self.logger.warning("CONFLUENCE_CODE_DIR not specified, cannot update config file")
-                return
-            
-            config_path = Path(self.config['CONFLUENCE_CODE_DIR']) / '0_config_files' / 'config_active.yaml'
-            
-            if not config_path.exists():
-                self.logger.warning(f"Active config file not found at {config_path}")
-                return
-            
-            with open(config_path, 'r') as f:
-                lines = f.readlines()
-            
-            updated = False
-            for i, line in enumerate(lines):
-                if line.strip().startswith(f"{key}:"):
-                    lines[i] = f"{key}: {value}  # Updated for point-scale simulation\n"
-                    updated = True
-                    break
-            
-            if not updated:
-                self.logger.warning(f"Could not find {key} in config file to update")
-                return
-            
-            with open(config_path, 'w') as f:
-                f.writelines(lines)
-            
-            self.logger.info(f"Updated {key} in active config file: {config_path}")
-        
-        except Exception as e:
-            self.logger.error(f"Error updating config file: {str(e)}")
-    
-    def validate_project_structure(self) -> bool:
-        """
-        Validate that the project structure is properly set up.
-        
-        This method checks that all required directories exist in the project
-        structure. It's used to verify that the project was initialized correctly
-        before proceeding with other workflow steps.
-        
-        The required directories include:
-        - Main project directory
-        - Shapefiles directory
-        - Attributes directory 
-        - Forcing directory
-        - Simulations directory
-        - Evaluation directory
-        - Plots directory
-        - Optimisation directory
-        
-        Returns:
-            bool: True if all required directories exist, False otherwise
-        """
-        required_dirs = [
-            self.project_dir,
-            self.project_dir / 'shapefiles',
-            self.project_dir / 'attributes',
-            self.project_dir / 'forcing',
-            self.project_dir / 'simulations',
-            self.project_dir / 'evaluation',
-            self.project_dir / 'plots',
-            self.project_dir / 'optimisation'
-        ]
-        
-        all_exist = True
-        for dir_path in required_dirs:
-            if not dir_path.exists():
-                self.logger.warning(f"Required directory missing: {dir_path}")
-                all_exist = False
-        
-        return all_exist
-    
     def get_project_info(self) -> Dict[str, Any]:
         """
         Get information about the project configuration.
@@ -290,8 +159,7 @@ class ProjectManager:
             'experiment_id': self.config.get('EXPERIMENT_ID'),
             'project_dir': str(self.project_dir),
             'data_dir': str(self.data_dir),
-            'pour_point_coords': self.config.get('POUR_POINT_COORDS'),
-            'structure_valid': self.validate_project_structure()
+            'pour_point_coords': self.config.get('POUR_POINT_COORDS')
         }
         
         return info
