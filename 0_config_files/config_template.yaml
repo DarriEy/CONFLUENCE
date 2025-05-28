@@ -237,7 +237,7 @@ USGS_STATION: '06306300'                                       # USGS   station 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-OPTIMISATION_METHODS: [emulation, iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 # Single Site Emulation settings
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
@@ -247,6 +247,7 @@ EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble si
 EMULATION_MAX_PARALLEL_JOBS: 100                               # Maximum number of parallel jobs when running ensemble
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
+EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA

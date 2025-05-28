@@ -140,52 +140,6 @@ INTERSECT_DEM_NAME: catchment_with_dem.shp                     # Name of the sha
 INTERSECT_LAND_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
 INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 
-### ============================================= 6.1 Attribute Analysis settings: ===============================================================
-
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True
-# Enable/disable attribute processing
-  
-# Processing parameters
-CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
-
-### Attribute Processing data settings
-# Base paths for attribute data
-ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
-
-# Soil attribute data paths
-ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
-ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
-
-# Topographic attribute data paths
-ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
-
-# Land cover attribute data paths
-ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
-ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
-
-# Climate attribute data paths
-ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
-ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
-
-# Geology attribute data paths (new)
-ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
-ATTRIBUTES_GROUNDWATER_PATH: default                          # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
-
-# Hydrology attribute data paths (new)
-ATTRIBUTES_STREAMFLOW_PATH: default                           # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
-HRU_GAUGE_MAPPING: {}                                         # Mapping between HRU IDs and gauge IDs for distributed domains
-
-# Open water attribute data paths (new)
-ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
-ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
-
-# Attribute processing settings
-ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
-ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
-ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
-
-
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
 HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
@@ -193,8 +147,8 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 
 # SUMMA settings
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
-SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
-SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
+SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
+SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
 
 # SUMMMA Paths and filenames
 SETTINGS_SUMMA_PATH: default                                   # Path to SUMMA run settings, if default self.data_dir / settings / SUMMA
@@ -207,7 +161,7 @@ SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA o
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
-SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
+SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
@@ -243,26 +197,6 @@ EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA o
 EXPERIMENT_OUTPUT_MIZUROUTE: default                           # Path to mizuRoute output. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute'.
 EXPERIMENT_LOG_MIZUROUTE: default                              # Path to mizuRoute experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/SUMMA'/SUMMA_logs.
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute/mizuRoute_logs'
-
-# Summaflow settings
-SUMMAFLOW: spatial                                             # SUMMA setup paradigm, options: spatial or stochastic
-UNIFY_SOIL: false                                              # Merge small soil areas
-MINIMUM_LAND_FRACTION: 0.01                                    # Minimum land cover classification fraction to include
-NUM_LAND_COVER: 20                                             # Number of land cover classes
-LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-GEOFABRIC_MAPPING:                                             
-    basinID: 
-      in_varname: 'GRU_ID'
-    nextDownID: 
-      in_varname: 'DSLINKO'
-    area: 
-      in_varname: 'HRU_area'
-      in_units: 'm^2'
-      out_units: 'm^2'
-    rivlen: 
-      in_varname: 'Length'
-      in_units: 'm'
-      out_units: 'm'
 
 # FUSE settings
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
@@ -324,45 +258,32 @@ HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to 
 CALIBRATION_PERIOD: 2012-01-01, 2014-12-31                     # start_date, end_date in format YYYY-MM-DD
 EVALUATION_PERIOD:  2014-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
 SPINUP_PERIOD: 2011-01-01, 2011-12-31
-OPTMIZATION_ALOGORITHM: NSGA-II                                # Options are: Differential Evolution: "DE", Particle Swarm: "PSO", Shuffled Complex Evolution: "SCE-UA", Basin-hopping" "Basin-hopping", Dynamically Dimensioned Search "DDS", or NSGA-II or NSGA-III or Borg-MOEA or SMS-EMOA or MOEA/D or MOPSO, OSTRICH
+PARAMS_TO_CALIBRATE: Fcapil,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,theta_mp,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
+
+# Iterative optimisation settings
+OPTIMISATION_METHODS: [iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+ITERATIVE_OPTIMIZATION_ALGORITHM: SCE-UA                       # Options DDS, PSO or SCE-UA
+NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
+POPULATION_SIZE: 50                                           # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-MOO_OPTIMIZATION_METRICS: KGE,NSE                              # Optimisation metrics to use in multi objective optimisation
-NUMBER_OF_OBJECTIVES: 2                                        # Number of objectives for multi objective algorithms
-POPULATION_SIZE: 100                                           # Population size for genetic algorithms
-NUMBER_OF_ITERATIONS: 10000                                    # Number of iterations for calibration 
-NUMBER_OF_GENERATIONS: 10                                      # Number of generations for genetic algorithms
-SWRMSIZE: 10                                                   # Swarm size for swarm based algorithms
-NGSIZE: 10                                                     # Next Generation size
-DIAGNOSTIC_FREQUENCY: 10                                       # Number of iterations between diagnostic output
-PARAMS_TO_CALIBRATE: newSnowDenMin,newSnowDenMultTemp,Fcapil,k_snow,soil_dens_intr,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: basin__aquiferHydCond,basin__aquiferBaseflowExp,basin__aquiferScaleFactor # Basin parameters to calibrate                       
 
-#Ostrich settings
-OSTRICH_ALGORITHM: ParallelDDS                                 # Options: DDS, ParallelDDS, PSO, APPSO, SCE, ParaPADDS
-OSTRICH_METRICS: GCOP                                          # Options: GCOP (single-objective), PATO (multi-objective)
+# DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
-SCE_BUDGET: 10000                                              # SCE budget
-SCE_LOOP_STAGNATION: 5                                         # SCE loop stagnation criteria
-SCE_PCT_CHANGE: 0.01                                           # SCE percent change criteria
-SCE_POP_CONV: 0.001                                            # SCE population convergence criteria
-SCE_NUM_COMPLEXES: 3                                           # SCE number of complexes
-SCE_POINTS_PER_COMPLEX: 19                                     # SCE points per complex
-SCE_POINTS_PER_SUBCOMPLEX: 10                                  # SCE points per subcomplex
-SCE_NUM_EVOLUTION_STEPS: 19                                    # SCE number of evolution steps
-SCE_MIN_COMPLEXES: 3                                           # SCE minimum number of complexes
-SCE_USE_INITIAL_POINT: no                                      # SCE use initial point
-PSO_SWARM_SIZE: 20                                             # PSO swarm size
-PSO_NUM_GENERATIONS: 50                                        # PSO number of generations
-PSO_CONSTRICTION_FACTOR: 1.00                                  # PSO constriction factor
-PSO_COGNITIVE_PARAM: 2.00                                      # PSO cognitive parameter
-PSO_SOCIAL_PARAM: 2.00                                         # PSO social parameter
-PSO_INERTIA_WEIGHT: 1.20                                       # PSO inertia weight
-PSO_INERTIA_REDUCTION_RATE: 0.10                               # PSO inertia reduction rate
-PSO_INIT_POPULATION_METHOD: Random                             # PSO initial population method
-PSO_CONVERGENCE_VAL: 1.00E-4                                   # PSO convergence value
 
-# Sensitivity analysis settings
-RUN_SENSITIVITY_ANALYSIS: true                                 # Check to select whether to run a sensitivy analysis from the calibration output
+# SCE-UA specific settings
+NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
+POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
+NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
+EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
+PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
+
+# PSO specific settings 
+SWRMSIZE: 40                                                   # Number of particles in the swarm
+PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
+PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
+PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
+PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
 
 # Model decision analysis settings
 RUN_DECISION_ANALYSIS: true                                    # Check to select whether to run an analysis of model decisions 
