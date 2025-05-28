@@ -22,9 +22,9 @@ CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 ### ============================================= 1. Experiment settings: =====================================================================
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff_lumped"                             # Name of experimental domain
+DOMAIN_NAME: "Bow_at_Banff"                                    # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 2018-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 
 # Computatational settings
@@ -102,8 +102,6 @@ DECISION_OPTIONS:                                              # Select which SU
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
 FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
 
-
-
 ### ============================================= 4.3 Model Specific settings: GR 
 
 # GR settings
@@ -117,7 +115,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 4.5 Model Specific settings: MESH 
 
-MESH_EXE: mesh.exe
+MESH_EXE: mesh.exe                                             # Name of MESH executable
 
 ### ============================================= 4.6 Model Specific settings: LSTM 
 
@@ -136,7 +134,6 @@ FLASH_USE_SNOW: False                                          # Use snow data
 
 ### ============================================= 4.a Model Specific settings: MizuRoute 
 
-
 EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
 SETTINGS_MIZU_ROUTING_DT: 3600                                 # Duration of the routing time step [s].
@@ -147,14 +144,13 @@ SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
 SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
 
-
 ### ============================================= 5. Evaluation settings: =================================================================
 
 SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 
 # Streamflow data settings
 STREAMFLOW_DATA_PROVIDER: WSC                                  # Provider of streamflow data, current options: USGS, WSC, VI, NIWA
-DOWNLOAD_USGS_DATA: True                                       # Download USGS data through API
+DOWNLOAD_USGS_DATA: False                                       # Download USGS data through API
 DOWNLOAD_WSC_DATA: True                                        # Download HYDAT data from HPC
 STATION_ID: 05BB001                                            # Station ID from provider
 
