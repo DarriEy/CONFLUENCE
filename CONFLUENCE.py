@@ -37,7 +37,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 # Import CONFLUENCE components
 from utils.project.project_manager import ProjectManager # type: ignore
 from utils.project.workflow_orchestrator import WorkflowOrchestrator # type: ignore
-from utils.config.logging_manager import LoggingManager # type: ignore
+from utils.project.logging_manager import LoggingManager # type: ignore
 from utils.data.data_manager import DataManager # type: ignore
 from utils.geospatial.domain_manager import DomainManager # type: ignore
 from utils.models.model_manager import ModelManager # type: ignore
