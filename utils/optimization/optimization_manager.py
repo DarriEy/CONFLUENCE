@@ -251,7 +251,7 @@ class OptimizationManager:
         sets without running the full hydrological model for every parameter combination.
         
         The emulation is controlled by configuration parameters starting with EMULATION_*,
-        including RUN_LARGE_SAMPLE_EMULATION and RUN_RANDOM_FOREST_EMULATION.
+        including RUN_SINGLE_SITE_EMULATION.
         
         Returns:
             Optional[Dict]: Dictionary with emulation results or None if emulation
@@ -309,8 +309,8 @@ class OptimizationManager:
             'optimization_metric': self.config.get('OPTIMIZATION_METRIC', 'KGE'),
             'optimization_dir': str(self.project_dir / "optimisation"),
             'results_exist': False,
-            'emulation_enabled': self.config.get('RUN_LARGE_SAMPLE_EMULATION', False),
-            'rf_emulation_enabled': self.config.get('RUN_RANDOM_FOREST_EMULATION', False)
+            'emulation_enabled': self.config.get('RUN_SINGLE_SITE_EMULATION', False),
+            'rf_emulation_enabled': self.config.get('RUN_SINGLE_SITE_EMULATION', False)
         }
         
         # Check for optimization results

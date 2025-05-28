@@ -199,7 +199,7 @@ class DecisionAnalyzer:
         self.mizuroute_runner = MizuRouteRunner(config, logger)
 
         # Get decision options from config
-        self.decision_options = self.config.get('DECISION_OPTIONS', {})
+        self.decision_options = self.config.get('SUMMA_DECISION_OPTIONS', {})
 
     def generate_combinations(self) -> List[Tuple[str, ...]]:
         return list(itertools.product(*self.decision_options.values()))

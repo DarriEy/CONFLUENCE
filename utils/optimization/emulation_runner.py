@@ -104,7 +104,7 @@ class EmulationRunner:
         self.logger.info("Starting large sample emulation")
         
         # Check if emulation is enabled in config
-        if not self.config.get('RUN_LARGE_SAMPLE_EMULATION', False):
+        if not self.config.get('RUN_SINGE_SITE_EMULATION', False):
             self.logger.info("Large sample emulation disabled in config. Skipping.")
             return None
         

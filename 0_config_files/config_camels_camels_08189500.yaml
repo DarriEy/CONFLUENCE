@@ -149,7 +149,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 
 # SUMMA settings
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
-SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
+SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1: #maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
 
 # SUMMMA Paths and filenames

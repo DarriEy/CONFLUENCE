@@ -147,8 +147,7 @@ class WorkflowOrchestrator:
             ),
             (
                 self.managers['optimization'].run_emulation,
-                lambda: ((self.config.get('RUN_LARGE_SAMPLE_EMULATION', False) or 
-                         self.config.get('RUN_RANDOM_FOREST_EMULATION', False)) and
+                lambda: ((self.config.get('RUN_SINGLE_SITE_EMULATION', False)) and
                         (self.project_dir / "emulation" / self.experiment_id / 
                          "rf_emulation" / "optimized_parameters.csv").exists())
             ),
