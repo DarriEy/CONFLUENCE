@@ -5,7 +5,6 @@ import logging
 from typing import Dict, Any, Optional, Union, Tuple
 
 from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
-from utils.reporting.domain_visualization_utils import DomainVisualizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
 from utils.geospatial.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
 
@@ -36,7 +35,6 @@ class DomainManager:
         self.subsetter = GeofabricSubsetter(self.config, self.logger)
         
 
-        self.domain_visualizer = DomainVisualizer(self.config, self.logger, self.reporter)
         self.domain_discretizer = None  # Initialized when needed
     
     def define_domain(self) -> Optional[Union[Path, Tuple[Path, Path]]]:

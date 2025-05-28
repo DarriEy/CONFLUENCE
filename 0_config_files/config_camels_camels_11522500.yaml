@@ -27,7 +27,6 @@ EXPERIMENT_ID: run_1                                     # Name of experiment
 # Computatational settings
 MPI_PROCESSES: 1                                                # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
-SPATIAL_MODE: Lumped                                            # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
 
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
