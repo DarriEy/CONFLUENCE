@@ -13,7 +13,7 @@ from utils.optimization.pso_optimizer import PSOOptimizer # type: ignore
 from utils.optimization.sce_ua_optimizer import SCEUAOptimizer # type: ignore
 
 # Emulation
-from utils.optimization.emulation_runner import EmulationRunner # type: ignore
+from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
 
 
 class OptimizationManager:
