@@ -136,7 +136,7 @@ class OptimizationManager:
         self.logger.info("Starting model calibration")
         
         # Check if iterative optimization is enabled
-        if not self.config.get('RUN_ITERATIVE_OPTIMISATION', False):
+        if not 'iteration' in self.config.get('OPTIMISATION_METHODS', []):
             self.logger.info("Iterative optimization is disabled in configuration")
             return None
         
@@ -304,13 +304,13 @@ class OptimizationManager:
                           including configuration settings and existence of output files
         """
         status = {
-            'iterative_optimization_enabled': self.config.get('RUN_ITERATIVE_OPTIMISATION', False),
+            'iterative_optimization_enabled': 'iteration' in self.config.get('OPTIMISATION_METHODS', []),
             'optimization_algorithm': self.config.get('ITERATIVE_OPTIMIZATION_ALGORITHM', 'PSO'),
             'optimization_metric': self.config.get('OPTIMIZATION_METRIC', 'KGE'),
             'optimization_dir': str(self.project_dir / "optimisation"),
             'results_exist': False,
-            'emulation_enabled': self.config.get('RUN_SINGLE_SITE_EMULATION', False),
-            'rf_emulation_enabled': self.config.get('RUN_SINGLE_SITE_EMULATION', False)
+            'emulation_enabled': 'emulation' in self.config.get('OPTIMISATION_METHODS', []),
+            'rf_emulation_enabled': 'emulation' in self.config.get('OPTIMISATION_METHODS', [])
         }
         
         # Check for optimization results

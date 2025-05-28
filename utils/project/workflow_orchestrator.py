@@ -82,6 +82,11 @@ class WorkflowOrchestrator:
             List[Tuple[Callable, Callable]]: List of (function, check_function) pairs
                 defining the workflow steps and their validation checks
         """
+
+        # Get configured analyses
+        analyses = self.config.get('ANALYSES', [])
+        optimisations = self.config.get('OPTIMISATION_METHODS', []) 
+
         return [
             # --- Project Initialization ---
             (
@@ -139,37 +144,46 @@ class WorkflowOrchestrator:
             ),
             
             # --- Optimization and Emulation Steps ---
+            # Optimization
             (
                 self.managers['optimization'].calibrate_model,
-                lambda: (self.config.get('RUN_ITERATIVE_OPTIMISATION', False) and 
+                lambda: ('optimization' in optimisations and 
                         (self.project_dir / "optimisation" / 
-                         f"{self.experiment_id}_parallel_iteration_results.csv").exists())
+                        f"{self.experiment_id}_parallel_iteration_results.csv").exists())
             ),
+            
+            # Emulation
             (
                 self.managers['optimization'].run_emulation,
-                lambda: ((self.config.get('RUN_SINGLE_SITE_EMULATION', False)) and
+                lambda: ('emulation' in optimisations and
                         (self.project_dir / "emulation" / self.experiment_id / 
-                         "rf_emulation" / "optimized_parameters.csv").exists())
+                        "rf_emulation" / "optimized_parameters.csv").exists())
             ),
             
             # --- Analysis Steps ---
+            # Benchmarking
             (
                 self.managers['analysis'].run_benchmarking,
-                lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()
+                lambda: ('benchmarking' in analyses and
+                        (self.project_dir / "evaluation" / "benchmark_scores.csv").exists())
             ),
-
+            
+            # Decision Analysis
             (
                 self.managers['analysis'].run_decision_analysis,
-                lambda: (self.config.get('RUN_DECISION_ANALYSIS', False) and
+                lambda: ('decision' in analyses and
                         (self.project_dir / "optimisation" / 
-                         f"{self.experiment_id}_model_decisions_comparison.csv").exists())
+                        f"{self.experiment_id}_model_decisions_comparison.csv").exists())
             ),
+            
+            # Sensitivity Analysis
             (
                 self.managers['analysis'].run_sensitivity_analysis,
-                lambda: (self.config.get('RUN_SENSITIVITY_ANALYSIS', False) and
+                lambda: ('sensitivity' in analyses and
                         (self.project_dir / "plots" / "sensitivity_analysis" / 
-                         "all_sensitivity_results.csv").exists())
+                        "all_sensitivity_results.csv").exists())
             ),
+            
             
             # --- Result Analysis and Evaluation ---
             (

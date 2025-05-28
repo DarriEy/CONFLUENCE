@@ -70,7 +70,7 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, HYPE, FLASH, MESH 
 ROUTING_MODEL: mizuRoute                                       # Routing model, options: mizuRoute
 
-### ============================================= 4.1 Model Specific settings: SUMMA 
+### 4.1 Model Specific settings: SUMMA 
 
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
@@ -144,12 +144,9 @@ SUMMA_DECISION_OPTIONS:                                        # Select which SU
   astability:                                                  # Atmospheric stability function, Options: standard (Monin-Obukhov), louisinv (Louis 1979 inverse), mahrtexp (Mahrt 1987 exponential)
     - louisinv
 
-### ============================================= 4.2 Model Specific settings: FUSE 
+###  4.2 Model Specific settings: FUSE 
 
-# FUSE settings
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
-FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
-
 FUSE_DECISION_OPTIONS:
     RFERR:                                                     # Rainfall error model, Options: additive_e (additive error), multiplc_e (multiplicative error)
       - additive_e
@@ -173,22 +170,19 @@ FUSE_DECISION_OPTIONS:
       - temp_index
       - no_snowmod
 
-### ============================================= 4.3 Model Specific settings: GR 
+###  4.3 Model Specific settings: GR 
 
-# GR settings
 GR_EXE: GR.r                                                   # Name of GR executable script
-GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
 
-### ============================================= 4.4 Model Specific settings: Hype 
+###  4.4 Model Specific settings: HYPE 
 
-# HYPE settings
 HYPE_EXE: hype                                                 # Name of HYPE executable
 
-### ============================================= 4.5 Model Specific settings: MESH 
+###  4.5 Model Specific settings: MESH 
 
 MESH_EXE: mesh.exe                                             # Name of MESH executable
 
-### ============================================= 4.6 Model Specific settings: LSTM 
+###  4.6 Model Specific settings: LSTM 
 
 FLASH_LOAD: False                                              # Load existing flash model from storage. If false creates and trains new model.
 FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
@@ -203,7 +197,7 @@ FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularizati
 FLASH_USE_ATTENTION: True                                      # Use attention
 FLASH_USE_SNOW: False                                          # Use snow data
 
-### ============================================= 4.a Model Specific settings: MizuRoute 
+###  4.a Model Specific settings: MizuRoute 
 
 EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
@@ -217,6 +211,8 @@ SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing
 
 ### ============================================= 5. Evaluation settings: =================================================================
 
+# Analysis types to run
+ANALYSES: [benchmarking, decision]                                       # Options: sensitivity, decision, benchmarking
 SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 
 # Streamflow data settings
@@ -241,10 +237,9 @@ USGS_STATION: '06306300'                                        # USGS   station
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-
+OPTIMISATION_METHODS: [emulation, iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 # Single Site Emulation settings
-RUN_SINGLE_SITE_EMULATION: false                               # Whether to run large sample emulation (default: false)
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 22                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: lhs                                 # Sampling method (uniform, lhs, sobol)
@@ -258,31 +253,21 @@ EMULATION_SKIP_MIZUROUTE: false                                # Skip running mi
 EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
 EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs
 EMULATION_USE_ATTRIBUTES: False                                # Use attributes to train parameter emulator
-EMULATION_TARGET_METRIC: KGE                                   # or NSE, RMSE, PBIAS
-EMULATION_RF_N_ESTIMATORS: 100                                 # Set to a number of estimators
-EMULATION_RF_MAX_DEPTH: null                                   # Set to a number or leave as null for unlimited depth
-EMULATION_N_OPTIMIZATION_RUNS: 10                              # Number of runs
-EMULATION_ITERATIONS: 10                                       # Max numer of iterations
-EMULATION_STOP_CRITERIA: 0.01                                  # Stop criteria for emulation
 
 # Iterative optimisation settings
-RUN_ITERATIVE_OPTIMISATION: True
 ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 100                                           # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-
-# DDS specific settings
+  # DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
-
-# SCE-UA specific settings
+  # SCE-UA specific settings
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
 POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
 NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
 EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
 PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
-
-# PSO specific settings 
+  # PSO specific settings 
 SWRMSIZE: 40                                                   # Number of particles in the swarm
 PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
@@ -292,20 +277,8 @@ PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which i
 ### ============================================= 6.1 Attribute Analysis settings: ===============================================================
 
 PROCESS_CHARACTERISTIC_ATTRIBUTES: False  
-CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files after processing
 ATTRIBUTES_PROCESS_LUMPED: True                                # Process lumped catchment attributes even for distributed domains
 ATTRIBUTES_OVERWRITE_EXISTING: False                           # Whether to overwrite existing attribute files
-
-### ============================================= 7. Evaluation settings: ===============================================================
-
-# Sensitivity analysis settings
-RUN_SENSITIVITY_ANALYSIS: false                                 # Check to select whether to run a sensitivy analysis from the calibration output
-
-# Model decision analysis settings
-RUN_DECISION_ANALYSIS: false                                    # Check to select whether to run an analysis of model decisions 
-
-# Model benchmarking settings
-RUN_BENCHMARKING: false                                         # Check to select whether to run a benchmarking of basin predictability
 
 ### ============================================= 8. Data and Path Settings: =====================================================================
 
