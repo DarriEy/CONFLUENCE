@@ -72,7 +72,7 @@ class EmulationRunner:
         soil, topography, climate, and land cover properties, saving them to a
         standardized CSV file.
         """
-        if self.config.get('PROCESS_CHARACTERISTIC_ATTRIBUTES', False):
+        if 'attributes' in self.config.get('ANALYSES', []):
             self.logger.info("Processing catchment characteristics")
             
             try:
@@ -91,7 +91,7 @@ class EmulationRunner:
                 self.logger.error(f"Error during attribute processing: {str(e)}")
                 raise
         else:
-            self.logger.info("Attribute processing skipped (PROCESS_CHARACTERISTIC_ATTRIBUTES=False)")
+            self.logger.info("Attribute processing not performed (attributes not in self.config.get(ANALYSES))")
     
     def prepare_emulation_data(self) -> Optional[Path]:
         """
@@ -104,7 +104,7 @@ class EmulationRunner:
         self.logger.info("Starting large sample emulation")
         
         # Check if emulation is enabled in config
-        if not self.config.get('RUN_SINGE_SITE_EMULATION', False):
+        if not self.config.get('RUN_SINGLE_SITE_EMULATION', False):
             self.logger.info("Large sample emulation disabled in config. Skipping.")
             return None
         
@@ -122,29 +122,25 @@ class EmulationRunner:
             self.logger.info(f"Large sample emulation completed successfully. Output: {emulator_output}")
             
             # Analyze the parameter space
-            if self.config.get('EMULATION_ANALYZE_PARAMETERS', True):
-                self.logger.info("Analyzing parameter space")
-                param_analysis_dir = emulator.analyze_parameter_space(emulator_output)
-                if param_analysis_dir:
-                    self.logger.info(f"Parameter space analysis completed. Results saved to: {param_analysis_dir}")
+            self.logger.info("Analyzing parameter space")
+            param_analysis_dir = emulator.analyze_parameter_space(emulator_output)
+            if param_analysis_dir:
+                self.logger.info(f"Parameter space analysis completed. Results saved to: {param_analysis_dir}")
             
-            # Check if we should run the ensemble simulations
-            run_ensemble = self.config.get('EMULATION_RUN_ENSEMBLE', False)
+            # Run ensemble
+            self.logger.info("Starting ensemble simulations")
+            ensemble_results = emulator.run_ensemble_simulations()
+            success_count = sum(1 for _, success, _ in ensemble_results if success)
+            self.logger.info(f"Ensemble simulations completed with {success_count} successes out of {len(ensemble_results)}")
             
-            if run_ensemble:
-                self.logger.info("Starting ensemble simulations")
-                ensemble_results = emulator.run_ensemble_simulations()
-                success_count = sum(1 for _, success, _ in ensemble_results if success)
-                self.logger.info(f"Ensemble simulations completed with {success_count} successes out of {len(ensemble_results)}")
-                
-                # Analyze ensemble results if we had successful runs
-                if success_count > 0 and self.config.get('EMULATION_ANALYZE_ENSEMBLE', True):
-                    self.logger.info("Starting ensemble results analysis")
-                    analysis_dir = emulator.analyze_ensemble_results()
-                    if analysis_dir:
-                        self.logger.info(f"Ensemble analysis completed. Results saved to: {analysis_dir}")
-                    else:
-                        self.logger.warning("Ensemble analysis did not produce results.")
+            # Analyze ensemble results if we had successful runs
+            if success_count > 0:
+                self.logger.info("Starting ensemble results analysis")
+                analysis_dir = emulator.analyze_ensemble_results()
+                if analysis_dir:
+                    self.logger.info(f"Ensemble analysis completed. Results saved to: {analysis_dir}")
+                else:
+                    self.logger.warning("Ensemble analysis did not produce results.")
             
             return emulator_output
                 
