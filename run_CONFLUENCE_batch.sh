@@ -3,7 +3,7 @@
 #SBATCH --output=CONFLUENCE_single_%j.log
 #SBATCH --error=CONFLUENCE_single_%j.err
 #SBATCH --time=168:00:00
-#SBATCH --ntasks=1
+#SBATCH --ntasks=20
 #SBATCH --mem=50G
 
 # Load necessary modules (adjust as needed for your HPC environment)

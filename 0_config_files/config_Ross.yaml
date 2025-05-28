@@ -16,8 +16,8 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
-CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
+CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: "Ross"                                            # Name of experimental domain
@@ -37,7 +37,7 @@ POUR_POINT_SHP_PATH: default                                   # If 'default', u
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+DOMAIN_DEFINITION_METHOD: lumped                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                        # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
@@ -47,7 +47,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 500                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 300                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -147,7 +147,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 # SUMMA settings
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 1                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
-SETTINGS_SUMMA_TRIALPARAM_1: maxstep,900                       # Name of trial parameter and value to assign. Value assumed to be float.
+SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
 
 # SUMMMA Paths and filenames
 SETTINGS_SUMMA_PATH: default                                   # Path to SUMMA run settings, if default self.data_dir / settings / SUMMA
@@ -160,7 +160,7 @@ SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA o
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
-SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
+SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
@@ -222,27 +222,6 @@ FLASH_DROPOUT: 0.2                                             # LSTM Dropout ra
 FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularization
 FLASH_USE_ATTENTION: True                                      # Use attention
 FLASH_USE_SNOW: False                                          # Use snow data
-
-
-# Summaflow settings
-SUMMAFLOW: spatial                                             # SUMMA setup paradigm, options: spatial or stochastic
-UNIFY_SOIL: false                                              # Merge small soil areas
-MINIMUM_LAND_FRACTION: 0.01                                    # Minimum land cover classification fraction to include
-NUM_LAND_COVER: 20                                             # Number of land cover classes
-LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-GEOFABRIC_MAPPING:                                             
-    basinID: 
-      in_varname: 'GRU_ID'
-    nextDownID: 
-      in_varname: 'DSLINKO'
-    area: 
-      in_varname: 'HRU_area'
-      in_units: 'm^2'
-      out_units: 'm^2'
-    rivlen: 
-      in_varname: 'Length'
-      in_units: 'm'
-      out_units: 'm'
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings

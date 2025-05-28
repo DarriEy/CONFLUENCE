@@ -113,8 +113,25 @@ class DomainDiscretizer:
     def discretize_domain(self) -> Optional[Path]:
         """
         Discretize the domain based on the method specified in the configuration.
+        If CATCHMENT_SHP_NAME is provided and not 'default', it uses the provided shapefile instead.
         """
         start_time = time.time()
+        
+        # Check if a custom catchment shapefile is provided
+        catchment_name = self.config.get('CATCHMENT_SHP_NAME')
+        if catchment_name != 'default':
+            self.logger.info(f"Using provided catchment shapefile: {catchment_name}")
+            self.logger.info("Skipping discretization steps")
+            
+            # Just sort the existing shapefile
+            self.logger.info("Sorting provided catchment shape")
+            shp = self.sort_catchment_shape()
+            
+            elapsed_time = time.time() - start_time
+            self.logger.info(f"Catchment processing completed in {elapsed_time:.2f} seconds")
+            return shp
+        
+        # Regular discretization flow when no custom shapefile is provided
         discretization_method = self.config.get('DOMAIN_DISCRETIZATION').lower()
         self.logger.info(f"Starting domain discretization using method: {discretization_method}")
 
@@ -155,7 +172,7 @@ class DomainDiscretizer:
             if self.config.get('DELINEATE_COASTAL_WATERSHEDS') == True:
                 gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_with_coastal.shp")
         
-            elif self.config.get('SPATIAL_MODE') == "Point":
+            elif self.config.get('DOMAIN_DEFINITION_METHOD') == "point":
                 gru_shapefile = self._get_file_path("RIVER_BASINS_PATH", "shapefiles/river_basins", f"{self.domain_name}_riverBasins_point.shp")
             
         else:

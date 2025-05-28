@@ -50,7 +50,7 @@ class DomainManager:
             return None
         
         # Handle point mode
-        if self.config.get('SPATIAL_MODE') == 'Point':
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
             result = self.domain_delineator.delineate_point_buffer_shape()
             return result
         
@@ -164,7 +164,7 @@ class DomainManager:
         info = {
             'domain_name': self.domain_name,
             'domain_method': self.config.get('DOMAIN_DEFINITION_METHOD'),
-            'spatial_mode': self.config.get('SPATIAL_MODE'),
+            'spatial_mode': self.config.get('DOMAIN_DEFINITION_METHOD'),
             'discretization_method': self.config.get('DOMAIN_DISCRETIZATION'),
             'pour_point_coords': self.config.get('POUR_POINT_COORDS'),
             'bounding_box': self.config.get('BOUNDING_BOX_COORDS'),
@@ -210,14 +210,6 @@ class DomainManager:
         if domain_method not in valid_methods:
             self.logger.error(f"Invalid domain definition method: {domain_method}. Must be one of {valid_methods}")
             return False
-        
-        # Validate spatial mode if present
-        if self.config.get('SPATIAL_MODE'):
-            valid_modes = ['Point', 'Lumped', 'Distributed']
-            spatial_mode = self.config.get('SPATIAL_MODE')
-            if spatial_mode not in valid_modes:
-                self.logger.error(f"Invalid spatial mode: {spatial_mode}. Must be one of {valid_modes}")
-                return False
         
         # Validate bounding box format
         bbox = self.config.get('BOUNDING_BOX_COORDS', '')

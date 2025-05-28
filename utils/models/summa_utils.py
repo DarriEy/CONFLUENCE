@@ -250,66 +250,67 @@ class SummaPreProcessor:
         # Get forcing files
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
         forcing_files.sort()
-        self.logger.info(f"forcing files: {forcing_files}")
+        #self.logger.info(f"forcing files: {forcing_files}")
 
         # Prepare output directory
         self.forcing_summa_path.mkdir(parents=True, exist_ok=True)
 
-        # Specify column names
-        gru_id = f'S_1_{self.gruId}'
-        hru_id = f'S_1_{self.hruId}'
-        forcing_id = 'S_2_ID'
-        catchment_elev = 'S_1_elev_m'
-        forcing_elev = 'S_2_elev_m'
-        weights = 'weight'
-
-        # Define lapse rate
-        lapse_rate = float(self.config.get('LAPSE_RATE'))  # [K m-1]
-
-        # Calculate weighted lapse values for each HRU
-        topo_data['lapse_values'] = topo_data[weights] * lapse_rate * (topo_data[forcing_elev] - topo_data[catchment_elev])
-
-        # Find total lapse value per basin
-        if gru_id == hru_id:
-            lapse_values = topo_data.groupby([hru_id]).lapse_values.sum().reset_index()
-        else:
-            lapse_values = topo_data.groupby([gru_id, hru_id]).lapse_values.sum().reset_index()
-
-        # Sort and set hruID as the index variable
-        lapse_values = lapse_values.sort_values(hru_id).set_index(hru_id)
 
         # Process each forcing file
         for file in forcing_files:
             output_file = self.forcing_summa_path / file
 
             with xr.open_dataset(self.forcing_basin_path / file) as dat:
-                # Find which HRU IDs exist in the forcing data but not in the lapse values
-                valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
-                
-                # Log the HRUs that will be removed
-                if not np.all(valid_hru_mask):
-                    missing_hrus = dat['hruId'].values[~valid_hru_mask]
-                    self.logger.warning(f"Removing {len(missing_hrus)} HRU IDs that don't have lapse values")
-                    self.logger.debug(f"Removed HRU IDs: {missing_hrus}")
-                    
-                    # Filter the dataset to only include valid HRUs
-                    dat = dat.sel(hru=valid_hru_mask)
-                    
-                    if len(dat.hru) == 0:
-                        self.logger.error("No valid HRUs remain after filtering. Cannot proceed.")
-                        raise ValueError("No valid HRUs found after filtering out those without lapse values")
-                
                 # Apply datastep
                 dat['data_step'] = self.data_step
-                dat.data_step.attrs['long_name'] = 'data step length in seconds'
-                dat.data_step.attrs['units'] = 's'
-
                 if 'pptrate' in dat:
                     # Keep the values unchanged but update the unit attribute
                     dat.pptrate.attrs['units'] = 'mm/s'
                     dat.pptrate.attrs['long_name'] = 'Mean total precipitation rate'
 
                 if self.config.get('APPLY_LAPSE_RATE') == True:
+                    # Specify column names
+                    gru_id = f'S_1_{self.gruId}'
+                    hru_id = f'S_1_{self.hruId}'
+                    forcing_id = 'S_2_ID'
+                    catchment_elev = 'S_1_elev_m'
+                    forcing_elev = 'S_2_elev_m'
+                    weights = 'weight'
+
+                    # Define lapse rate
+                    lapse_rate = float(self.config.get('LAPSE_RATE'))  # [K m-1]
+                    #self.logger.info(topo_data)
+                    # Calculate weighted lapse values for each HRU
+                    topo_data['lapse_values'] = topo_data[weights] * lapse_rate * (topo_data[forcing_elev] - topo_data[catchment_elev])
+
+                    # Find total lapse value per basin
+                    if gru_id == hru_id:
+                        lapse_values = topo_data.groupby([hru_id]).lapse_values.sum().reset_index()
+                    else:
+                        lapse_values = topo_data.groupby([gru_id, hru_id]).lapse_values.sum().reset_index()
+
+                    # Sort and set hruID as the index variable
+                    lapse_values = lapse_values.sort_values(hru_id).set_index(hru_id)
+                    # Find which HRU IDs exist in the forcing data but not in the lapse values
+                    valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
+                    
+                    # Log the HRUs that will be removed
+                    if not np.all(valid_hru_mask):
+                        missing_hrus = dat['hruId'].values[~valid_hru_mask]
+                        self.logger.warning(f"Removing {len(missing_hrus)} HRU IDs that don't have lapse values")
+                        self.logger.debug(f"Removed HRU IDs: {missing_hrus}")
+                        
+                        # Filter the dataset to only include valid HRUs
+                        dat = dat.sel(hru=valid_hru_mask)
+                        
+                        if len(dat.hru) == 0:
+                            self.logger.error("No valid HRUs remain after filtering. Cannot proceed.")
+                            raise ValueError("No valid HRUs found after filtering out those without lapse values")
+                    
+                    dat.data_step.attrs['long_name'] = 'data step length in seconds'
+                    dat.data_step.attrs['units'] = 's'
+
+
                     # Get lapse values for the HRUs
                     lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
                     addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), 
@@ -403,15 +404,20 @@ class SummaPreProcessor:
         num_hru = len(forcing_hruIds)
 
         # Define the dimensions and fill values
-        nSoil = 8
         nSnow = 0
         midSoil = 8
         midToto = 8
         ifcToto = midToto + 1
         scalarv = 1
 
-        mLayerDepth = np.asarray([0.025, 0.075, 0.15, 0.25, 0.5, 0.5, 1, 1.5])
-        iLayerHeight = np.asarray([0, 0.025, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 4])
+        mLayerDepth  = np.asarray([0.025, 0.075, 0.15, 0.25, 0.5, 0.5, 1, 1.5])
+        nSoil = len(mLayerDepth)
+
+        # Calculate corresponding interface heights (cumulative depths)
+        iLayerHeight = np.zeros(ifcToto)
+        iLayerHeight[0] = 0  # Surface
+        for i in range(len(mLayerDepth)):
+            iLayerHeight[i+1] = iLayerHeight[i] + mLayerDepth[i]
 
         # States
         states = {
@@ -1073,8 +1079,6 @@ class SummaRunner:
         This method selects the appropriate run mode (parallel, serial, or point)
         based on configuration settings and executes the SUMMA model accordingly.
         """
-        #if self.config.get('SPATIAL_MODE') == 'Point':
-            #self.run_summa_point()
         if self.config.get('SETTINGS_SUMMA_USE_PARALLEL_SUMMA', False):
             self.run_summa_parallel()
         else:

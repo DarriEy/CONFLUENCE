@@ -15,7 +15,7 @@ class DomainVisualizer:
     
     def plot_domain(self) -> Optional[Path]:
         """Plot the domain visualization."""
-        if self.config.get('SPATIAL_MODE') == 'Point':
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
             self.logger.info("Spatial mode: Point simulations, no domain to plot")
             return None
         
@@ -29,7 +29,7 @@ class DomainVisualizer:
     
     def plot_discretized_domain(self) -> Optional[Path]:
         """Plot the discretized domain visualization."""
-        if self.config.get('SPATIAL_MODE') == 'Point':
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
             self.logger.info("Spatial mode: Point simulations, discretisation not required")
             return None
         

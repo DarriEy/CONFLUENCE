@@ -218,7 +218,7 @@ class VisualizationReporter:
             self.logger.error(traceback.format_exc())
             return None
 
-    def visualise_model_output(self):
+    def visualise_model_output(self, config_path):
         
         # Plot streamflow comparison
         self.logger.info('Starting model output visualisation')
@@ -305,7 +305,12 @@ class VisualizationReporter:
                         
                 else:
                     # For distributed model, use mizuRoute output as usual
-                    visualizer.update_sim_reach_id() # Find and update the sim reach id based on the project pour point
+                    # Only attempt to update SIM_REACH_ID if config_path is a string path
+                    if isinstance(config_path, str):
+                        visualizer.update_sim_reach_id(config_path)  # Find and update the sim reach id based on the project pour point
+                    else:
+                        # Just update in-memory config without updating file
+                        visualizer.update_sim_reach_id()
                     model_outputs = [
                         (f"{model}", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "mizuRoute" / f"{self.config['EXPERIMENT_ID']}*.nc"))
                     ]
@@ -313,7 +318,7 @@ class VisualizationReporter:
                         ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config.get('DOMAIN_NAME')}_streamflow_processed.csv"))
                     ]
                     plot_file = visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
-
+                    
             elif model == 'FUSE':
                 model_outputs = [
                     ("FUSE", str(self.project_dir / "simulations" / self.config['EXPERIMENT_ID'] / "FUSE" / f"{self.config['DOMAIN_NAME']}_{self.config['EXPERIMENT_ID']}_runs_best.nc"))
@@ -718,10 +723,13 @@ class VisualizationReporter:
         ax.set_xscale('log')
         ax.set_yscale('log')
 
-    def update_sim_reach_id(self, config_path):
+    def update_sim_reach_id(self, config_path=None):
         """
         Update the SIM_REACH_ID in both the config object and YAML file by finding the 
         nearest river segment to the pour point.
+        
+        Args:
+            config_path: Either a path to the config file or None. If None, will only update the in-memory config.
         """
         try:
             # Load the pour point shapefile
@@ -766,35 +774,39 @@ class VisualizationReporter:
 
             # Update the config object
             self.config['SIM_REACH_ID'] = reach_id
-
-            # Update the YAML config file
-            config_file_path = Path(config_path)
             
-            if not config_file_path.exists():
-                self.logger.error(f"Config file not found at {config_file_path}")
-                return None
+            # Update the YAML config file if a file path was provided
+            if config_path is not None and isinstance(config_path, (str, Path)):
+                config_file_path = Path(config_path)
+                
+                if not config_file_path.exists():
+                    self.logger.error(f"Config file not found at {config_file_path}")
+                    return None
 
-            # Read the current config file
-            with open(config_file_path, 'r') as f:
-                config_lines = f.readlines()
+                # Read the current config file
+                with open(config_file_path, 'r') as f:
+                    config_lines = f.readlines()
 
-            # Find and update the SIM_REACH_ID line
-            for i, line in enumerate(config_lines):
-                if line.strip().startswith('SIM_REACH_ID:'):
-                    config_lines[i] = f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n"
-                    break
-            else:
-                # If SIM_REACH_ID line not found, add it in the Simulation settings section
+                # Find and update the SIM_REACH_ID line
                 for i, line in enumerate(config_lines):
-                    if line.strip().startswith('## Simulation settings'):
-                        config_lines.insert(i + 1, f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n")
+                    if line.strip().startswith('SIM_REACH_ID:'):
+                        config_lines[i] = f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n"
                         break
+                else:
+                    # If SIM_REACH_ID line not found, add it in the Simulation settings section
+                    for i, line in enumerate(config_lines):
+                        if line.strip().startswith('## Simulation settings'):
+                            config_lines.insert(i + 1, f"SIM_REACH_ID: {reach_id}                                              # River reach ID used for streamflow evaluation and optimization\n")
+                            break
 
-            # Write the updated config back to file
-            with open(config_file_path, 'w') as f:
-                f.writelines(config_lines)
+                # Write the updated config back to file
+                with open(config_file_path, 'w') as f:
+                    f.writelines(config_lines)
 
-            self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in both config object and file: {config_file_path}")
+                self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in both config object and file: {config_file_path}")
+            else:
+                self.logger.info(f"Updated SIM_REACH_ID to {reach_id} in config object only (no file path provided or invalid path type)")
+            
             return reach_id
 
         except Exception as e:

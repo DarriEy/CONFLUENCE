@@ -86,10 +86,6 @@ class ProjectManager:
             for subdir in subdirs:
                 (main_path / subdir).mkdir(parents=True, exist_ok=True)
         
-        # If in point mode, update bounding box coordinates
-        #if self.config.get('SPATIAL_MODE') == 'Point':
-        #    self._update_bounding_box_for_point_mode()
-        
         self.logger.info(f"Project directory created at: {self.project_dir}")
         return self.project_dir
     

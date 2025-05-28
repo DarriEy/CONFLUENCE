@@ -15,23 +15,23 @@
 #E.g. '/home/user/non-default/path'
 
 ### ============================================= 1. Global settings: =====================================================================
-
 # Main paths
 CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff_distributed"                                           # Name of experimental domain
-EXPERIMENT_ID: distributed_tutorial                                     # Name of experiment
+DOMAIN_NAME: "CA-SCB"
+EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
-FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
-
+MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
+FORCE_RUN_ALL_STEPS: True                                      # Run all steps in the workflow and overwrite existing files
+SPATIAL_MODE: Point                                             # Spatial configuration of watershed, options: Lumped, Distributed, Semi-distributed, Point
+POINT_BUFFER_DISTANCE: 0.001                                    # Point buffer distance (0.01 degrees, approximately 1km at the equator)
 ### ============================================= 2. Geopsatial settings: =================================================================
 # Coordinate settings
-POUR_POINT_COORDS: 51.1722/-115.5717                          # Pour point coordinates lat/lon, if default use user provided shapefile. 
-BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
+POUR_POINT_COORDS: 61.3089/-121.2984
+BOUNDING_BOX_COORDS: 61.3589/-121.3484/61.258900000000004/-121.2484
 
 # Pour point shapefile path
 POUR_POINT_SHP_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/pour_point'.
@@ -40,7 +40,7 @@ POUR_POINT_SHP_NAME: default                                   # If 'default', u
 # Domain representation settings
 DOMAIN_DEFINITION_METHOD: delineate                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
-STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
+STREAM_THRESHOLD: 1500                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
@@ -48,7 +48,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: GRUs                                    # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -66,8 +66,8 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
 RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
-RIVER_BASIN_SHP_RM_GRUID: COMID                                # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: COMID                              # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
 RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
@@ -76,7 +76,7 @@ RIVER_NETWORK_SHP_NAME: default                                # Name of domain 
 RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
 RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
 RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
@@ -110,7 +110,7 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2008-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_START: 1950-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
@@ -119,8 +119,8 @@ DATA_ACQUIRE: HPC                                              # Where to acquir
 
 # Forcing data settings
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2011"                                     # Forcing start year
-FORCING_END_YEAR: "2012"                                       # Forcing end year 
+FORCING_START_YEAR: "2008"                                     # Forcing start year
+FORCING_END_YEAR: "2018"                                       # Forcing end year 
 FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -139,52 +139,6 @@ INTERSECT_DEM_PATH: default                                    # If 'default', u
 INTERSECT_DEM_NAME: catchment_with_dem.shp                     # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
 INTERSECT_LAND_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_routing'.
 INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the shapefile with intersection between hydrologic model catchments and routing model catchments.
-
-### ============================================= 6.1 Attribute Analysis settings: ===============================================================
-
-
-PROCESS_CHARACTERISTIC_ATTRIBUTES: True
-# Enable/disable attribute processing
-  
-# Processing parameters
-CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
-
-### Attribute Processing data settings
-# Base paths for attribute data
-ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
-
-# Soil attribute data paths
-ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
-ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
-
-# Topographic attribute data paths
-ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
-
-# Land cover attribute data paths
-ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
-ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
-
-# Climate attribute data paths
-ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
-ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
-
-# Geology attribute data paths (new)
-ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
-ATTRIBUTES_GROUNDWATER_PATH: default                          # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
-
-# Hydrology attribute data paths (new)
-ATTRIBUTES_STREAMFLOW_PATH: default                           # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
-HRU_GAUGE_MAPPING: {}                                         # Mapping between HRU IDs and gauge IDs for distributed domains
-
-# Open water attribute data paths (new)
-ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
-ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
-
-# Attribute processing settings
-ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
-ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
-ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files
-
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
@@ -213,11 +167,11 @@ SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
-SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
-SETTINGS_SUMMA_GRU_COUNT: 85                                  # Number of GRUs in SUMMA shapefile
-SETTINGS_SUMMA_GRU_PER_JOB: 5                                 # Number of GRUs per job
+SETTINGS_SUMMA_MEM: 0                                          # Requested memory for parallel SUMMA run
+SETTINGS_SUMMA_GRU_COUNT: 118                                  # Number of GRUs in SUMMA shapefile
+SETTINGS_SUMMA_GRU_PER_JOB: 10                                 # Number of GRUs per job
 SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
-SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA binary
+SETTINGS_SUMMA_PARALLEL_EXE: summa_actors.exe                  # Name of parallel SUMMA binary
 
 # Mizuroute settings
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
@@ -310,14 +264,12 @@ SIMULATIONS_PATH: default                                      # Path to streamf
 OBSERVATIONS_PATH: default                                     # Path to observed streamflow data for evaluation. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 
 # Observation data paths
-STREAMFLOW_DATA_PROVIDER: WSC                                 # Provider of streamflow data, current options: USGS, WSC, VI  
+STREAMFLOW_DATA_PROVIDER: USGS                                 # Provider of streamflow data, current options: USGS, WSC, VI  
 DOWNLOAD_USGS_DATA: True
-DOWNLOAD_WSC_DATA: True
-STATION_ID: 05BB001
+STATION_ID: 06719505
 STREAMFLOW_RAW_PATH: default                                   # Path to streamflow raw data
 STREAMFLOW_RAW_NAME: default                                   # Name of streamflow raw data file
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
-HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to HYDAT database      
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 # Optimization settings general
@@ -393,25 +345,46 @@ OPTIMIZATION_RESULTS_FILE: default                             # Path to optimiz
 ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
 
 
-# Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: false                              # Whether to run large sample emulation (default: false)
-EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
-EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
-EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
-EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
-EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
-EMULATION_MAX_PARALLEL_JOBS: 100                                # Maximum number of parallel jobs when running ensemble
-EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
-EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
-EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
-EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
-EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs
+### ============================================= 6.1 Attribute Analysis settings: ===============================================================
 
+PROCESS_CHARACTERISTIC_ATTRIBUTES: True
+# Enable/disable attribute processing
+  
+# Processing parameters
+CLEANUP_INTERMEDIATE_FILES: True                                  # Remove temporary files after processing
 
-# Add to configuration file
-RUN_RANDOM_FOREST_EMULATION: false
-EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
-EMULATION_RF_N_ESTIMATORS: 100
-EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth
-EMULATION_N_OPTIMIZATION_RUNS: 10
+### Attribute Processing data settings
+# Base paths for attribute data
+ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"                                  # Base directory for attribute data, if default uses data_dir/geospatial-data
+
+# Soil attribute data paths
+ATTRIBUTES_SOILGRIDS_PATH: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/soilgrids"  # Will use {data_dir}/geospatial-data/soilgrids
+ATTRIBUTES_PELLETIER_PATH: default  # Will use {data_dir}/geospatial-data/pelletier
+
+# Topographic attribute data paths
+ATTRIBUTES_MERIT_PATH: default # Will use {data_dir}/geospatial-data/merit
+
+# Land cover attribute data paths
+ATTRIBUTES_MODIS_PATH: default  # Will use {data_dir}/geospatial-data/modis
+ATTRIBUTES_GLCLU_PATH: default  # Will use {data_dir}/geospatial-data/glclu2019
+
+# Climate attribute data paths
+ATTRIBUTES_FOREST_HEIGHT_PATH: default  # Will use {data_dir}/geospatial-data/forest_height
+ATTRIBUTES_WORLDCLIM_PATH: default  # Will use {data_dir}/geospatial-data/worldclim
+
+# Geology attribute data paths (new)
+ATTRIBUTES_GLIM_PATH: default                                 # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
+ATTRIBUTES_GROUNDWATER_PATH: default                          # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
+
+# Hydrology attribute data paths (new)
+ATTRIBUTES_STREAMFLOW_PATH: default                           # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
+HRU_GAUGE_MAPPING: {}                                         # Mapping between HRU IDs and gauge IDs for distributed domains
+
+# Open water attribute data paths (new)
+ATTRIBUTES_GLWD_PATH: default                                 # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
+ATTRIBUTES_HYDROLAKES_PATH: default                           # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
+
+# Attribute processing settings
+ATTRIBUTES_PROCESS_LUMPED: true                               # Process lumped catchment attributes even for distributed domains
+ATTRIBUTES_OUTPUT_DIR: default                                # Output directory for processed attributes, if default uses project_dir/attributes
+ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overwrite existing attribute files

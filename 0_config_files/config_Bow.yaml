@@ -25,7 +25,7 @@ DOMAIN_NAME: "Bow_at_Banff"                                           # Name of 
 EXPERIMENT_ID: run_1                                     # Name of experiment
 
 # Computatational settings
-MPI_PROCESSES: 100w                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 1                                                # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geospatial settings: =================================================================
@@ -56,7 +56,7 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
-CATCHMENT_SHP_NAME: default                                    # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: bow_distributed_elevation_zone.shp                                    # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -65,18 +65,18 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
-RIVER_BASINS_NAME: default                                     # Name of river basin shapefile
-RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
-RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
+RIVER_BASINS_NAME: bow_distributed.shp                                     # Name of river basin shapefile
+RIVER_BASIN_SHP_RM_GRUID: COMID                               # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: hru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_AREA: area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
-RIVER_NETWORK_SHP_NAME: default                                # Name of domain river network shapefile 
-RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
-RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
-RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_NAME: bow_river_network_from_merit_hydro.shp                                # Name of domain river network shapefile 
+RIVER_NETWORK_SHP_LENGTH: length                               # Name of the segment length column. Length must be in units [m].
+RIVER_NETWORK_SHP_SEGID: COMID                                # Name of the segment ID column.
+RIVER_NETWORK_SHP_DOWNSEGID: NextDownID                          # Name of the downstream segment ID column.
+RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
@@ -110,20 +110,16 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2011-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 2009-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2023-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
 DATA_ACQUIRE: HPC                                              # Where to acquire data from, current options: HPC, supplied
 
 # Forcing data settings
-FORCING_DATASET: "RDRS"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2011"                                     # Forcing start year
-FORCING_END_YEAR: "2012"                                       # Forcing end year 
+FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
 FORCING_VARIABLES: default
-#FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
-#FORCING_VARIABLES: RDRS_v2.1_P_TT_1.5m,RDRS_v2.1_P_P0_SFC,RDRS_v2.1_P_HU_1.5m,RDRS_v2.1_P_UVC_10m,RDRS_v2.1_P_FI_SFC,RDRS_v2.1_P_FB_SFC,RDRS_v2.1_A_PR0_SFC  # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: False                                         # Flag for applying lapse rate options: True or False
