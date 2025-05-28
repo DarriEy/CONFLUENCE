@@ -6,7 +6,6 @@ from typing import Dict, Any, Optional, Union, Tuple
 
 from utils.geospatial.domain_utilities import DomainDelineator # type: ignore
 from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
-from utils.reporting.domain_visualization_utils import DomainVisualizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
 
 class DomainManager:
@@ -31,7 +30,6 @@ class DomainManager:
         
         # Initialize utility classes
         self.domain_delineator = DomainDelineator(self.config, self.logger)
-        self.domain_visualizer = DomainVisualizer(self.config, self.logger, self.reporter)
         self.domain_discretizer = None  # Initialized when needed
     
     def define_domain(self) -> Optional[Union[Path, Tuple[Path, Path]]]:
@@ -130,7 +128,7 @@ class DomainManager:
             Path to the created plot or None if failed
         """
         try:
-            plot_path = self.domain_visualizer.plot_domain()
+            plot_path = self.reporter.plot_domain()
             return plot_path
         except Exception as e:
             self.logger.error(f"Error visualizing domain: {str(e)}")
@@ -146,7 +144,9 @@ class DomainManager:
             Path to the created plot or None if failed
         """
         try:
-            plot_path = self.domain_visualizer.plot_discretized_domain()
+            discretization_method = self.config.get('DOMAIN_DISCRETIZATION')
+            self.logger.info("Creating discretization visualization...")
+            plot_path = self.reporter.plot_discretized_domain(discretization_method)
             return plot_path
         except Exception as e:
             self.logger.error(f"Error visualizing discretized domain: {str(e)}")
