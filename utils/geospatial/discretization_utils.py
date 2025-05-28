@@ -3,7 +3,7 @@ import numpy as np # type: ignore
 from typing import List, Dict, Any, Optional
 import rasterio # type: ignore
 from rasterio.mask import mask # type: ignore
-from shapely.geometry import Polygon, MultiPolygon, LineString, shape # type: ignore
+from shapely.geometry import Polygon, MultiPolygon, shape # type: ignore
 from shapely.ops import unary_union # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from concurrent.futures import ProcessPoolExecutor, as_completed

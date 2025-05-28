@@ -1,6 +1,5 @@
 # Load needed packages
 import xarray as xr
-import pint_xarray
 import pint
 import glob
 import netCDF4 as nc4
@@ -12,8 +11,7 @@ import numpy       as      np
 import geopandas   as      gpd
 import sys
 from   itertools   import  product
-import datetime
-from alive_progress import alive_bar #progress bar
+from alive_progress import alive_bar # type: ignore 
 import shutil
 
 # sort geodata from upstream to downstream

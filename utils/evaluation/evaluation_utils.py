@@ -18,7 +18,8 @@ import json
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
-from utils.models.model_utils import SummaRunner, MizuRouteRunner # type: ignore
+from utils.models.summa_utils import SummaRunner # type: ignore
+from utils.models.mizuroute_utils import MizuRouteRunner # type: ignore
 
 class SensitivityAnalyzer:
     def __init__(self, config, logger):

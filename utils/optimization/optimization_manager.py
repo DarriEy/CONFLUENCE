@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 
 # Optimizers
 from utils.optimization.dds_optimizer import DDSOptimizer # type: ignore

@@ -48,8 +48,8 @@ class MESHPreProcessor:
             self.rivers_name = f"{self.domain_name}_riverNetwork_delineate.shp"
 
     def run_preprocessing(self):
-        """Run the complete GR preprocessing workflow."""
-        self.logger.info("Starting GR preprocessing")
+        """Run the complete MESH preprocessing workflow."""
+        self.logger.info("Starting MESH preprocessing")
         try:
             self.create_directories()
             config = self.create_json()

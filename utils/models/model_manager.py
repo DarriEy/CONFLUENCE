@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 # Model preprocessors
 from utils.models.summa_utils import SummaPreProcessor # type: ignore

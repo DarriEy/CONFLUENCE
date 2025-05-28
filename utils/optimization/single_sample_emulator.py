@@ -12,7 +12,19 @@ import netCDF4 as nc4 # type: ignore
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Union, Tuple
+import pandas as pd
+import geopandas as gpd
+import logging
+from rasterstats import zonal_stats # type: ignore
+import rasterio # type: ignore
+from osgeo import gdal # type: ignore
+from scipy.stats import skew, kurtosis, circmean
+from shapely.geometry import box
+from rasterio.mask import mask # type: ignore
+import baseflow # type: ignore
+import matplotlib.pyplot as plt
+import seaborn as sns # type: ignore
 
 
 class SingleSampleEmulator:
@@ -126,12 +138,6 @@ class SingleSampleEmulator:
         self.logger.info("Starting parameter space analysis")
         
         try:
-            import pandas as pd
-            import numpy as np
-            import matplotlib.pyplot as plt
-            import seaborn as sns
-            from scipy import stats
-            
             # Set default path if not provided
             if consolidated_file_path is None:
                 consolidated_file_path = self.project_dir / "emulation" / f"parameter_sets_{self.experiment_id}.nc"
@@ -6466,22 +6472,6 @@ class RandomForestEmulator:
             self.logger.error(traceback.format_exc())
             raise
 
-
-from pathlib import Path
-import pandas as pd
-import numpy as np
-import geopandas as gpd
-import os
-import logging
-from typing import Dict, Any, List, Optional, Union, Tuple
-from rasterstats import zonal_stats
-import rasterio
-from osgeo import gdal
-
-from scipy.stats import skew, kurtosis, circmean, circstd
-from shapely.geometry import box
-from rasterio.mask import mask
-
 class attributeProcessor:
     """
     Simple attribute processor that calculates elevation, slope, and aspect 
@@ -8570,10 +8560,6 @@ class attributeProcessor:
             return results
         
         try:
-            # Read streamflow data
-            import pandas as pd
-            import baseflow
-            
             # Load streamflow data with pandas
             streamflow_df = pd.read_csv(streamflow_path, parse_dates=['date'])
             

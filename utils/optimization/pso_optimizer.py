@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
 import pandas as pd
 import netCDF4 as nc
@@ -12,11 +11,9 @@ from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
-from scipy import stats
-from typing import Dict, List, Any, Optional, Tuple, Union
-import pyswarms as ps
-from pyswarms.utils.plotters import plot_cost_history, plot_contour, plot_surface
-from pyswarms.utils.plotters.formatters import Mesher, Designer
+from typing import Dict, Any
+import pyswarms as ps # type: ignore
+
 
 class PSOOptimizer:
     """

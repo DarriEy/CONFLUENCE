@@ -1,19 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
 import pandas as pd
 import netCDF4 as nc
 import xarray as xr
-import matplotlib.pyplot as plt
 import subprocess
 from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
-from scipy import stats
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Dict, Any
 
 class SCEUAOptimizer:
     """

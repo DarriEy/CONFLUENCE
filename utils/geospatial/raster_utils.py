@@ -1,10 +1,12 @@
 # In utils/geospatial_utils/raster_utils.py
 
 import numpy as np
-import rasterio
+import rasterio # type: ignore
 from scipy import stats
-from pathlib import Path
-from typing import Union
+import glob
+import numpy as np
+import rasterio # type: ignore
+from scipy import stats
 
 
 def calculate_landcover_mode(input_dir, output_file, start_year, end_year, domain_name):
@@ -18,11 +20,6 @@ def calculate_landcover_mode(input_dir, output_file, start_year, end_year, domai
         end_year (int): End year for mode calculation
         domain_name (str): Name of the domain
     """
-    import os
-    import glob
-    import numpy as np
-    import rasterio
-    from scipy import stats
     
     # Create a list to store the data from each year
     yearly_data = []

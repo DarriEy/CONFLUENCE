@@ -30,6 +30,7 @@ from shapely.ops import unary_union # type: ignore
 import time
 import shapely # type: ignore
 import pandas as pd # type: ignore
+from pysheds.grid import Grid  # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
@@ -50,8 +51,6 @@ class GeofabricDelineator:
         self.taudem_dir = self.config.get('TAUDEM_DIR')
         if self.taudem_dir == "default":
             self.taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
-
-        #self.pour_point_path = self.project_dir / 'shapefiles' / 'pour_point' / f"{self.config['DOMAIN_NAME']}_pourPoint.shp"
 
     def _get_dem_path(self) -> Path:
         dem_path = self.config.get('DEM_PATH')
@@ -1642,7 +1641,6 @@ class LumpedWatershedDelineator:
             Optional[Path]: Path to the delineated watershed shapefile, or None if delineation fails.
         """
         try:
-            from pysheds.grid import Grid  # Import here to handle potential missing dependency
             
             self.logger.info(f"Delineating watershed using pysheds for {self.domain_name}")
             
