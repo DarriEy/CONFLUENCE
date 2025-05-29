@@ -263,7 +263,7 @@ NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolu
 EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
 PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
   # -- PSO specific settings 
-SWRMSIZE: 40                                                   # Number of particles in the swarm
+SWRMSIZE: 20                                                   # Number of particles in the swarm
 PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
 PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
