@@ -23,6 +23,11 @@ CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 # Experiment settings
 DOMAIN_NAME: "CAN_03QC002_lumped"
 EXPERIMENT_ID: run_1                                     # Name of experiment
+EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2010-01-01, 2022-12-31                     # start_date, end_date in format YYYY-MM-DD
+SPINUP_PERIOD: 1979-01-01, 1980-12-31
 
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
@@ -109,20 +114,10 @@ EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm"
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
-# Experiment settings
-EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
-EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
-
-# Data acquisition settings
-DATA_ACQUIRE: HPC                                              # Where to acquire data from, current options: HPC, supplied
-
 # Forcing data settings
 FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
-FORCING_START_YEAR: "2011"                                     # Forcing start year
-FORCING_END_YEAR: "2012"                                       # Forcing end year 
-FORCING_VARIABLES: longitude,latitude,time,LWRadAtm,SWRadAtm,pptrate,airpres,airtemp,spechum,windspd  # Forcing dataset variables to use or acquire                                                                    
-FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
+FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
+FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
@@ -163,6 +158,27 @@ SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA b
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
+
+DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
+  snowIncept: 
+    - lightSnow
+    - stickySnow
+  compaction: 
+    - consettl
+    - anderson
+  snowLayers:
+    - CLM_2010
+    - jrdn1991 
+  alb_method:
+    - conDecay
+    - varDecay
+  thCondSnow:
+    - tyen1965 
+    - melr1977 
+    - jrdn1991 
+    - smnv2000 
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
@@ -198,26 +214,6 @@ EXPERIMENT_OUTPUT_SUMMA: default                               # Path to SUMMA o
 EXPERIMENT_OUTPUT_MIZUROUTE: default                           # Path to mizuRoute output. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute'.
 EXPERIMENT_LOG_MIZUROUTE: default                              # Path to mizuRoute experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/SUMMA'/SUMMA_logs.
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute/mizuRoute_logs'
-
-# Summaflow settings
-SUMMAFLOW: spatial                                             # SUMMA setup paradigm, options: spatial or stochastic
-UNIFY_SOIL: false                                              # Merge small soil areas
-MINIMUM_LAND_FRACTION: 0.01                                    # Minimum land cover classification fraction to include
-NUM_LAND_COVER: 20                                             # Number of land cover classes
-LANDCOVER_YEAR: "2020"                                         # Year of land cover classification
-GEOFABRIC_MAPPING:                                             
-    basinID: 
-      in_varname: 'GRU_ID'
-    nextDownID: 
-      in_varname: 'DSLINKO'
-    area: 
-      in_varname: 'HRU_area'
-      in_units: 'm^2'
-      out_units: 'm^2'
-    rivlen: 
-      in_varname: 'Length'
-      in_units: 'm'
-      out_units: 'm'
 
 # FUSE settings
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
@@ -276,85 +272,39 @@ HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to 
 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
-# Optimization settings general
-CALIBRATION_PERIOD: 2012-01-01, 2014-12-31                     # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2014-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
-SPINUP_PERIOD: 2011-01-01, 2011-12-31
-PARAMS_TO_CALIBRATE: Fcapil,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,theta_mp,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
+
+OPTIMISATION_METHODS: [iteration, emulation]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+
+# Single Site Emulation settings
+EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
+EMULATION_SEED: 22                                             # Random seed for emulation to ensure reproducibility 
+EMULATION_SAMPLING_METHOD: lhs                                 # Sampling method (uniform, lhs, sobol)
+EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble simulations in parallel (requires MPI)
+EMULATION_MAX_PARALLEL_JOBS: 100                               # Maximum number of parallel jobs when running ensemble
+EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
+EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
+EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-OPTIMISATION_METHODS: [iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
-ITERATIVE_OPTIMIZATION_ALGORITHM: SCE-UA                       # Options DDS, PSO or SCE-UA
+ITERATIVE_OPTIMIZATION_ALGORITHM: DE                          # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 50                                           # Population size for genetic algorithms
+POPULATION_SIZE: 20                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-
-# DDS specific settings
-DDS_R:  0.2                                                    # DDS perturbation parameter
-
-# SCE-UA specific settings
+  # -- DDS specific settings
+DDS_R:  0.05                                                    # DDS perturbation parameter
+  # -- SCE-UA specific settings
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
 POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
 NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
 EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
 PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
-
-# PSO specific settings 
-SWRMSIZE: 40                                                   # Number of particles in the swarm
+  # -- PSO specific settings 
+SWRMSIZE: 20                                                   # Number of particles in the swarm
 PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
 PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
 PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
-
-# Model decision analysis settings
-RUN_DECISION_ANALYSIS: true                                    # Check to select whether to run an analysis of model decisions 
-DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
-  snowIncept: 
-    - lightSnow
-    - stickySnow
-  compaction: 
-    - consettl
-    - anderson
-  snowLayers:
-    - CLM_2010
-    - jrdn1991 
-  alb_method:
-    - conDecay
-    - varDecay
-  thCondSnow:
-    - tyen1965 
-    - melr1977 
-    - jrdn1991 
-    - smnv2000 
-
-# Optimisation paths and filenames
-OSTRICH_PATH: default                                          # Path to ostrich executable, if default, uses self.data_dir / installs / ostrich
-OSTRICH_EXE: OstrichMPI                                        # Name of Ostrich executable
-OSTRICH_OUTPUT_FILE: ostrich_output.txt                        # Name of Ostrich output file
-OPTIMIZATION_RESULTS_FILE: default                             # Path to optimization results file If 'default', uses self.project_dir / optimisation / optimization_results.csv
-ITERATION_RESULTS_FILE: default                                # Path to iteration results file. If 'default', uses self.project_dir / optimisation / iteration_results.csv
-
-
-# Large Sample Emulation settings
-RUN_LARGE_SAMPLE_EMULATION: true                              # Whether to run large sample emulation (default: false)
-EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
-EMULATION_SEED: 42                                             # Random seed for emulation to ensure reproducibility 
-EMULATION_SAMPLING_METHOD: uniform                             # Sampling method (uniform, lhs, sobol)
-EMULATION_CREATE_INDIVIDUAL_RUNS: true                         # Create individual run directories with parameter sets
-EMULATION_RUN_ENSEMBLE: true                                   # Automatically run ensemble simulations after setup
-EMULATION_PARALLEL_ENSEMBLE: true                              # Run ensemble simulations in parallel (requires MPI)
-EMULATION_MAX_PARALLEL_JOBS: 100                                # Maximum number of parallel jobs when running ensemble
-EMULATION_ANALYZE_PARAMETERS: true                             # Analyze parameter space and create visualizations
-EMULATION_ANALYZE_ENSEMBLE: true                               # Analyze ensemble results and create visualizations
-EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
-EMULATION_RETRY_FAILED_RUNS: true                              # Retry failed runs (with different settings)
-EMULATION_MAX_RETRIES: 3                                       # Maximum number of retries for failed runs
-
-
-# Add to configuration file
-RUN_RANDOM_FOREST_EMULATION: True
-EMULATION_TARGET_METRIC: KGE  # or NSE, RMSE, PBIAS
-EMULATION_RF_N_ESTIMATORS: 100
-EMULATION_RF_MAX_DEPTH: null  # Set to a number or leave as null for unlimited depth
-EMULATION_N_OPTIMIZATION_RUNS: 10
+  # -- DE specific settings
+DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
+DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set

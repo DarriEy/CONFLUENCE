@@ -112,7 +112,8 @@ class CONFLUENCE:
             self.workflow_orchestrator = WorkflowOrchestrator(
                 self.managers, 
                 self.config, 
-                self.logger
+                self.logger,
+                self.logging_manager 
             )
             
             # Validate system initialization
@@ -153,7 +154,7 @@ class CONFLUENCE:
                 'data': DataManager(self.config, self.logger),
                 'model': ModelManager(self.config, self.logger),
                 'analysis': AnalysisManager(self.config, self.logger),
-                'optimization': OptimizationManager(self.config, self.logger)
+                'optimization': OptimizationManager(self.config, self.logger),
             }
         except Exception as e:
             self.logger.error(f"Failed to initialize managers: {str(e)}")

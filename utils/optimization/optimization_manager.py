@@ -11,6 +11,7 @@ import numpy as np
 from utils.optimization.dds_optimizer import DDSOptimizer # type: ignore
 from utils.optimization.pso_optimizer import PSOOptimizer # type: ignore
 from utils.optimization.sce_ua_optimizer import SCEUAOptimizer # type: ignore
+from utils.optimization.de_optimizer import DEOptimizer # type: ignore
 
 # Emulation
 from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
@@ -95,14 +96,16 @@ class OptimizationManager:
         self.optimizers = {
             'PSO': PSOOptimizer,
             'SCE-UA': SCEUAOptimizer,
-            'DDS': DDSOptimizer
+            'DDS': DDSOptimizer,
+            'DE' : DEOptimizer
         }
         
         # Define optimizer run method names
         self.optimizer_methods = {
             'PSO': 'run_pso_optimization',
             'SCE-UA': 'run_sceua_optimization',
-            'DDS': 'run_dds_optimization'
+            'DDS': 'run_dds_optimization',
+            'DE': 'run_de_optimization'
         }
     
     def calibrate_model(self) -> Optional[Path]:

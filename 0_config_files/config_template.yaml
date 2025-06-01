@@ -24,11 +24,11 @@ CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
 # Experiment settings
 DOMAIN_NAME: "Bow_at_Banff"                                    # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
-CALIBRATION_PERIOD: 1982-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2012-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
-SPINUP_PERIOD: 1980-01-01, 1981-12-31                          # start_date, end_date in format YYYY-MM-DD
+EXPERIMENT_TIME_START: 1980-01-02 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2023-12-30 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+CALIBRATION_PERIOD: 1982-01-01, 1990-12-30                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2012-01-01, 2023-12-30                     # start_date, end_date in format YYYY-MM-DD
+SPINUP_PERIOD: 1980-01-02, 1981-12-31                          # start_date, end_date in format YYYY-MM-DD
 
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
@@ -56,9 +56,9 @@ RADIATION_CLASS_NUMBER: 5                                      # Number of radia
 
 ### ============================================= 3. Forcing data settings: =============================================================
 
-FORCING_DATASET: ERA5                                          # Forcing dataset to use
+FORCING_DATASET: CASR                                          # Forcing dataset to use
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
-FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
+FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
@@ -80,8 +80,8 @@ SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
 
 # Calibration settings 
-PARAMS_TO_CALIBRATE: Fcapil,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,theta_mp,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
 
 SUMMA_DECISION_OPTIONS:                                        # Select which SUMMA model decisions to use and analyse
   # Snow process decisions
@@ -143,6 +143,11 @@ SUMMA_DECISION_OPTIONS:                                        # Select which SU
     - liq_flux
   astability:                                                  # Atmospheric stability function, Options: standard (Monin-Obukhov), louisinv (Louis 1979 inverse), mahrtexp (Mahrt 1987 exponential)
     - louisinv
+
+# Soil depth calibration settings
+CALIBRATE_DEPTH: False                                       # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
 ###  4.2 Model Specific settings: FUSE 
 
@@ -212,7 +217,9 @@ SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing
 ### ============================================= 5. Evaluation settings: =================================================================
 
 # Analysis types to run
-ANALYSES: [benchmarking, decision]                             # Options: sensitivity, decision, benchmarking, attributes
+EVALUATION_DATA: [streamflow]                                  # Evaluation data to acquire. Options: streamflow, snow, ground_water, fluxnet
+ANALYSES: [benchmarking]                                       # Options: sensitivity, decision, benchmarking, attributes
+
 SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 
 # Streamflow data settings
@@ -237,7 +244,7 @@ USGS_STATION: '06306300'                                       # USGS   station 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration,emulation]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 # Single Site Emulation settings
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
@@ -248,14 +255,33 @@ EMULATION_MAX_PARALLEL_JOBS: 100                               # Maximum number 
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
+RUN_RANDOM_FOREST_EMULATION: False                             # Iterative refinement
+RUN_NEURAL_NETWORK_EMULATION: True                             # Iterative refinement
+EMULATION_TARGET_METRIC: 'KGE'                                 # Iterative refinement
+EMULATOR_IMPROVEMENT_THRESHOLD: 0.01                           # Only update if improvement > 1%
+
+# Strategic Gap Filling settings
+ENABLE_GAP_FILLING: True
+GAP_FILLING_SAMPLES: 50                                        # Total samples to add
+GAP_FILLING_METHODS: ['density', 'boundary', 'uncertainty', 'diversity']
+RUN_GAP_FILLING_SIMULATIONS: True                              # Set True for actual SUMMA runs
+GAP_DENSITY_THRESHOLD: 0.1                                     # Density percentile threshold
+GAP_BOUNDARY_MARGIN: 0.1                                       # Fraction of range for boundary sampling
+GAP_UNCERTAINTY_PERCENTILE: 90                                 # Uncertainty percentile for sampling
+
+# Neural Network settings  
+NN_HIDDEN_LAYERS: [100, 50]                                    # Uncertainty percentile for sampling
+NN_MAX_ITERATIONS: 1000                                        # Uncertainty percentile for sampling
+NN_LEARNING_RATE: 0.001                                        # Uncertainty percentile for sampling
+NN_VALIDATION_SPLIT: 0.2                                       # Uncertainty percentile for sampling 
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 100                                           # Population size for genetic algorithms
+ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE, PSO or SCE-UA
+NUMBER_OF_ITERATIONS: 100                                       # Number of iterations for calibration 
+POPULATION_SIZE: 30                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
-DDS_R:  0.2                                                    # DDS perturbation parameter
+DDS_R:  0.4                                                    # DDS perturbation parameter
   # -- SCE-UA specific settings
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
 POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
@@ -268,6 +294,10 @@ PSO_COGNITIVE_PARAM: 1.5                                       # Personal best i
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
 PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
 PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
+  # -- DE specific settings
+DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
+DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
 
 ### ============================================= 8. Data and Path Settings: =====================================================================
 
@@ -406,7 +436,6 @@ TOOL_CACHE: /home/darri.eythorsson/cache                       # Path to gistool
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/               # Path to easymore cache directory
 EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" # Path to easymore job config
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json # Path to cluster json config
-
 
 
 

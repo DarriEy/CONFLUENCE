@@ -104,12 +104,19 @@ class LoggingManager:
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = self.log_dir / f'confluence_general_{self.domain_name}_{current_time}.log'
         
-        # Create logger
-        logger = logging.getLogger('confluence_general')
+        # Disable the root logger to prevent interference
+        logging.getLogger().handlers = []
+        logging.getLogger().setLevel(logging.CRITICAL)
+        
+        # Create main logger
+        logger = logging.getLogger('confluence')
         logger.setLevel(getattr(logging, log_level.upper()))
         
         # Remove existing handlers to avoid duplicates
         logger.handlers.clear()
+        
+        # Prevent propagation to root logger to avoid duplicate messages
+        logger.propagate = False
         
         # Create formatters
         detailed_formatter = logging.Formatter(
@@ -117,8 +124,9 @@ class LoggingManager:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        simple_formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
+        # Enhanced console formatter for cleaner output
+        simple_formatter = self.EnhancedFormatter(
+            '%(asctime)s │ %(message)s',
             datefmt='%H:%M:%S'
         )
         
@@ -149,6 +157,49 @@ class LoggingManager:
         logger.info("=" * 60)
         
         return logger
+    
+    def format_step_header(self, step_num: int, total_steps: int, step_name: str) -> str:
+        """
+        Create a formatted header for workflow steps.
+        
+        Args:
+            step_num: Current step number
+            total_steps: Total number of steps
+            step_name: Name of the current step
+            
+        Returns:
+            Formatted header string
+        """
+        progress = f"[{step_num:2d}/{total_steps:2d}]"
+        separator = "─" * 50
+        return f"\n┌{separator}┐\n│ {progress} {step_name:<40} │\n└{separator}┘"
+    
+    def format_step_completion(self, step_name: str, duration: str, status: str = "✓") -> str:
+        """
+        Create a formatted completion message for workflow steps.
+        
+        Args:
+            step_name: Name of the completed step
+            duration: Time taken for the step
+            status: Status symbol (✓, ✗, →)
+            
+        Returns:
+            Formatted completion message
+        """
+        return f"{status} {step_name} │ {duration}"
+    
+    def format_section_header(self, section_name: str) -> str:
+        """
+        Create a formatted section header.
+        
+        Args:
+            section_name: Name of the section
+            
+        Returns:
+            Formatted section header
+        """
+        separator = "═" * 60
+        return f"\n{separator}\n║ {section_name:<56} ║\n{separator}"
     
     def log_configuration(self) -> Path:
         """
@@ -237,8 +288,9 @@ class LoggingManager:
             log_level = self.config.get(f'{module_name.upper()}_LOG_LEVEL', 
                                       self.config.get('LOG_LEVEL', 'INFO'))
         
-        # Create logger
-        logger = logging.getLogger(module_name)
+        # Create module logger as child of main logger
+        logger_name = f'confluence.{module_name}'
+        logger = logging.getLogger(logger_name)
         logger.setLevel(getattr(logging, log_level.upper()))
         logger.handlers.clear()
         
@@ -248,7 +300,7 @@ class LoggingManager:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # File handler
+        # File handler for module-specific logs
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
@@ -256,7 +308,7 @@ class LoggingManager:
         # Add handler
         logger.addHandler(file_handler)
         
-        # Also log to main log file
+        # Propagate to main confluence logger (not root)
         logger.propagate = True
         
         return logger
@@ -387,6 +439,60 @@ class LoggingManager:
             # Find module-specific log
             log_files = sorted(self.log_dir.glob(f'{log_type}_{self.domain_name}_*.log'))
             return log_files[-1] if log_files else None
+    
+    class EnhancedFormatter(logging.Formatter):
+        """
+        Enhanced formatter for console output with better visual formatting.
+        
+        This formatter provides clean, visually appealing output for different
+        types of log messages, including special formatting for step headers,
+        completions, and progress indicators.
+        """
+        
+        # ANSI color codes for different log levels
+        COLORS = {
+            'DEBUG': '\033[36m',    # Cyan
+            'INFO': '\033[32m',     # Green
+            'WARNING': '\033[33m',  # Yellow
+            'ERROR': '\033[31m',    # Red
+            'CRITICAL': '\033[35m', # Magenta
+        }
+        RESET = '\033[0m'
+        
+        def format(self, record):
+            """Format log record with enhanced visual styling."""
+            # Get the basic formatted message
+            formatted = super().format(record)
+            
+            # Add color coding for log levels (if terminal supports it)
+            if hasattr(sys.stdout, 'isatty') and sys.stdout.isatty():
+                level_color = self.COLORS.get(record.levelname, '')
+                if level_color:
+                    # Color the level indicator
+                    level_indicator = f"{level_color}●{self.RESET}"
+                else:
+                    level_indicator = "●"
+            else:
+                level_indicator = "●"
+            
+            # Special formatting for different message types
+            message = record.getMessage()
+            
+            # Step headers (messages starting with step numbers or containing "Step")
+            if "Step " in message and "/" in message:
+                return f"\n{formatted}"
+            
+            # Completion messages (messages with checkmarks or duration info)
+            elif any(symbol in message for symbol in ["✓", "✗", "→", "Duration:"]):
+                return f"{formatted}"
+            
+            # Section headers (messages with lots of = or -)
+            elif message.count("=") > 10 or message.count("─") > 10:
+                return f"\n{formatted}"
+            
+            # Regular messages
+            else:
+                return f"{record.asctime} {level_indicator} {message}"
     
     class ConsoleFilter(logging.Filter):
         """

@@ -28,8 +28,8 @@ canopyEmis                      difTrans        ! (18) choice of parameterizatio
 snowIncept                      lightSnow       ! (19) choice of parameterization for snow interception
 windPrfile                      logBelowCanopy  ! (20) choice of wind profile through the canopy
 astability                      louisinv        ! (21) choice of stability function
-canopySrad                      BeersLaw        ! (22) choice of canopy shortwave radiation method
-alb_method                      conDecay        ! (23) choice of albedo representation
+canopySrad                      CLM_2stream     ! (22) choice of canopy shortwave radiation method
+alb_method                      varDecay        ! (23) choice of albedo representation
 compaction                      anderson        ! (24) choice of compaction routine
 snowLayers                      CLM_2010        ! (25) choice of method to combine and sub-divide snow layers
 thCondSnow                      jrdn1991        ! (26) choice of thermal conductivity representation for snow

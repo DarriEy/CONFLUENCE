@@ -419,21 +419,23 @@ class SummaPreProcessor:
         for i in range(len(mLayerDepth)):
             iLayerHeight[i+1] = iLayerHeight[i] + mLayerDepth[i]
 
-        # States
+        field_capacity = 0.2000  #
+        
+        # More realistic initial states
         states = {
             'scalarCanopyIce': 0,
             'scalarCanopyLiq': 0,
             'scalarSnowDepth': 0,
             'scalarSWE': 0,
             'scalarSfcMeltPond': 0,
-            'scalarAquiferStorage': 0.4,
-            'scalarSnowAlbedo': 0,
-            'scalarCanairTemp': 283.16,
+            'scalarAquiferStorage': 0.2,     # Reduced from 0.4 - more realistic groundwater storage
+            'scalarSnowAlbedo': 0.8,         # Higher initial albedo (will decay with time)
+            'scalarCanairTemp': 283.16,      # Keep your temperature (adjust for your domain)
             'scalarCanopyTemp': 283.16,
             'mLayerTemp': 283.16,
             'mLayerVolFracIce': 0,
-            'mLayerVolFracLiq': 0.4,
-            'mLayerMatricHead': -1.0
+            'mLayerVolFracLiq': field_capacity,  # Use field capacity instead of 0.4
+            'mLayerMatricHead': -3.3         # Corresponding matric head for field capacity
         }
 
         coldstate_path = self.settings_path / self.coldstate_name
