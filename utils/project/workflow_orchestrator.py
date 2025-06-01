@@ -33,9 +33,10 @@ class WorkflowOrchestrator:
         domain_name (str): Name of the hydrological domain
         experiment_id (str): ID of the current experiment
         project_dir (Path): Path to the project directory
+        logging_manager: Reference to logging manager for enhanced formatting
     """
     
-    def __init__(self, managers: Dict[str, Any], config: Dict[str, Any], logger: logging.Logger):
+    def __init__(self, managers: Dict[str, Any], config: Dict[str, Any], logger: logging.Logger, logging_manager=None):
         """
         Initialize the workflow orchestrator.
         
@@ -48,6 +49,7 @@ class WorkflowOrchestrator:
                                       functional area (project, domain, data, etc.)
             config (Dict[str, Any]): Configuration dictionary with all settings
             logger (logging.Logger): Logger instance for recording operations
+            logging_manager: Reference to LoggingManager for enhanced formatting
             
         Raises:
             KeyError: If essential configuration values are missing
@@ -55,18 +57,20 @@ class WorkflowOrchestrator:
         self.managers = managers
         self.config = config
         self.logger = logger
+        self.logging_manager = logging_manager
         self.domain_name = config.get('DOMAIN_NAME')
         self.experiment_id = config.get('EXPERIMENT_ID')
         self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.domain_name}"
     
-    def define_workflow_steps(self) -> List[Tuple[Callable, Callable]]:
+    def define_workflow_steps(self) -> List[Tuple[Callable, Callable, str]]:
         """
-        Define the workflow steps and their output validation checks.
+        Define the workflow steps with their output validation checks and descriptions.
         
         This method establishes the complete sequence of operations for a CONFLUENCE
         modeling workflow. Each step consists of:
         1. A function to execute (typically a method from a manager component)
         2. A check function that verifies the step's output exists
+        3. A human-readable description of what the step does
         
         The workflow follows a logical progression through five main phases:
         1. Project initialization
@@ -75,113 +79,132 @@ class WorkflowOrchestrator:
         4. Model-specific processing and execution
         5. Optimization, emulation, and analysis
         
-        The check functions enable the orchestrator to skip steps that have already
-        been completed, facilitating restart capabilities and efficient execution.
-        
         Returns:
-            List[Tuple[Callable, Callable]]: List of (function, check_function) pairs
-                defining the workflow steps and their validation checks
+            List[Tuple[Callable, Callable, str]]: List of (function, check_function, description) tuples
         """
+
+        # Get configured analyses
+        analyses = self.config.get('ANALYSES', [])
+        optimisations = self.config.get('OPTIMISATION_METHODS', []) 
+
         return [
             # --- Project Initialization ---
             (
                 self.managers['project'].setup_project,
-                lambda: (self.project_dir / 'shapefiles_').exists()
+                lambda: (self.project_dir / 'shapefiles_').exists(),
+                "Setting up project structure and directories"
             ),
             
             # --- Geospatial Domain Definition and Analysis ---
             (
                 self.managers['project'].create_pour_point,
                 lambda: (self.project_dir / "shapefiles" / "pour_point" / 
-                        f"{self.domain_name}_pourPoint.shp").exists()
+                        f"{self.domain_name}_pourPoint.shp").exists(),
+                "Creating watershed pour point"
             ),
             (
                 self.managers['data'].acquire_attributes,
                 lambda: (self.project_dir / "attributes" / "soilclass" / 
-                        f"domain_{self.domain_name}_soil_classes.tif").exists()
+                        f"domain_{self.domain_name}_soil_classes.tif").exists(),
+                "Acquiring geospatial attributes and data"
             ),
             (
                 self.managers['domain'].define_domain,
                 lambda: (self.project_dir / "shapefiles" / "river_basins" / 
-                        f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists()
+                        f"{self.domain_name}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp").exists(),
+                "Defining hydrological domain boundaries"
             ),
             (
                 self.managers['domain'].discretize_domain,
                 lambda: (self.project_dir / "shapefiles" / "catchment" / 
-                        f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists()
+                        f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists(),
+                "Discretizing domain into hydrological response units"
             ),
             
             # --- Model Agnostic Data Pre-Processing ---
             (
                 self.managers['data'].process_observed_data,
                 lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / 
-                        f"{self.domain_name}_streamflow_processed.csv").exists()
+                        f"{self.domain_name}_streamflow_processed.csv").exists(),
+                "Processing observational data"
             ),
             (
                 self.managers['data'].acquire_forcings,
-                lambda: (self.project_dir / "forcing" / "raw_data").exists()
+                lambda: (self.project_dir / "forcing" / "raw_data").exists(),
+                "Acquiring meteorological forcing data"
             ),
             (
                 self.managers['data'].run_model_agnostic_preprocessing,
-                lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists()
+                lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists(),
+                "Processing forcing data for modeling"
             ),
             
             # --- Model Specific Processing and Initialization ---
             (
                 self.managers['model'].preprocess_models,
                 lambda: (self.project_dir / "forcing" / 
-                        f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists()
+                        f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists(),
+                "Preparing model-specific input files"
             ),
             (
                 self.managers['model'].run_models,
                 lambda: (self.project_dir / "simulations" / self.experiment_id / 
-                        f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists()
+                        f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists(),
+                "Running hydrological model simulations"
             ),
             
             # --- Optimization and Emulation Steps ---
             (
                 self.managers['optimization'].calibrate_model,
-                lambda: (self.config.get('RUN_ITERATIVE_OPTIMISATION', False) and 
+                lambda: ('optimization' in optimisations and 
                         (self.project_dir / "optimisation" / 
-                         f"{self.experiment_id}_parallel_iteration_results.csv").exists())
+                        f"{self.experiment_id}_parallel_iteration_results.csv").exists()),
+                "Calibrating model parameters"
             ),
+            
             (
                 self.managers['optimization'].run_emulation,
-                lambda: ((self.config.get('RUN_LARGE_SAMPLE_EMULATION', False) or 
-                         self.config.get('RUN_RANDOM_FOREST_EMULATION', False)) and
+                lambda: ('emulation' in optimisations and
                         (self.project_dir / "emulation" / self.experiment_id / 
-                         "rf_emulation" / "optimized_parameters.csv").exists())
+                        "rf_emulation" / "optimized_parameters.csv").exists()),
+                "Running parameter emulation analysis"
             ),
             
             # --- Analysis Steps ---
             (
                 self.managers['analysis'].run_benchmarking,
-                lambda: (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()
+                lambda: ('benchmarking' in analyses and
+                        (self.project_dir / "evaluation" / "benchmark_scores.csv").exists()),
+                "Running model benchmarking analysis"
             ),
-
+            
             (
                 self.managers['analysis'].run_decision_analysis,
-                lambda: (self.config.get('RUN_DECISION_ANALYSIS', False) and
+                lambda: ('decision' in analyses and
                         (self.project_dir / "optimisation" / 
-                         f"{self.experiment_id}_model_decisions_comparison.csv").exists())
+                        f"{self.experiment_id}_model_decisions_comparison.csv").exists()),
+                "Analyzing modeling decisions impact"
             ),
+            
             (
                 self.managers['analysis'].run_sensitivity_analysis,
-                lambda: (self.config.get('RUN_SENSITIVITY_ANALYSIS', False) and
+                lambda: ('sensitivity' in analyses and
                         (self.project_dir / "plots" / "sensitivity_analysis" / 
-                         "all_sensitivity_results.csv").exists())
+                        "all_sensitivity_results.csv").exists()),
+                "Running parameter sensitivity analysis"
             ),
             
             # --- Result Analysis and Evaluation ---
             (
                 self.managers['model'].postprocess_results,
-                lambda: (self.project_dir / "results" / "postprocessed.csv").exists()
+                lambda: (self.project_dir / "results" / "postprocessed.csv").exists(),
+                "Post-processing simulation results"
             ),
         ]
     
     def run_workflow(self) -> None:
         """
-        Execute the complete CONFLUENCE workflow.
+        Execute the complete CONFLUENCE workflow with enhanced logging.
         
         This method represents the main execution point of the CONFLUENCE system,
         running through all workflow steps in sequence. For each step, it:
@@ -191,26 +214,28 @@ class WorkflowOrchestrator:
         4. Handles any errors according to configuration settings
         
         The method provides detailed logging throughout the execution process and
-        generates a summary report upon completion. It respects the FORCE_RUN_ALL_STEPS
-        and STOP_ON_ERROR configuration settings to control execution behavior.
-        
-        Workflow execution follows a linear sequence defined by define_workflow_steps(),
-        with dependency management handled by the output validation checks.
-        
-        Raises:
-            RuntimeError: If a workflow step fails and STOP_ON_ERROR is True
-            Exception: For other errors during workflow execution
+        generates a summary report upon completion.
         """
-        self.logger.info("=" * 60)
-        self.logger.info(f"Starting CONFLUENCE workflow for domain: {self.domain_name}")
-        self.logger.info(f"Experiment ID: {self.experiment_id}")
-        self.logger.info(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self.logger.info("=" * 60)
+        # Log workflow header
+        if self.logging_manager:
+            header = self.logging_manager.format_section_header(
+                f"CONFLUENCE WORKFLOW │ {self.domain_name} │ {self.experiment_id}"
+            )
+            self.logger.info(header)
+        else:
+            self.logger.info("=" * 60)
+            self.logger.info(f"Starting CONFLUENCE workflow for domain: {self.domain_name}")
+            self.logger.info(f"Experiment ID: {self.experiment_id}")
+            self.logger.info("=" * 60)
+        
+        # Log start time and configuration
+        start_time = datetime.now()
+        self.logger.info(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Get force run setting
         force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
         if force_run:
-            self.logger.warning("FORCE_RUN_ALL_STEPS is enabled - all steps will be executed")
+            self.logger.info("⚠ FORCE_RUN_ALL_STEPS enabled - all steps will execute")
         
         # Get workflow steps
         workflow_steps = self.define_workflow_steps()
@@ -222,31 +247,61 @@ class WorkflowOrchestrator:
         failed_steps = 0
         
         # Execute workflow
-        for idx, (step_func, check_func) in enumerate(workflow_steps, 1):
+        for idx, (step_func, check_func, description) in enumerate(workflow_steps, 1):
             step_name = step_func.__name__
-            self.logger.info(f"\n{'=' * 40}")
-            self.logger.info(f"Step {idx}/{total_steps}: {step_name}")
-            self.logger.info(f"{'=' * 40}")
+            
+            # Log step header
+            if self.logging_manager:
+                step_header = self.logging_manager.format_step_header(idx, total_steps, description)
+                self.logger.info(step_header)
+            else:
+                self.logger.info(f"\n{'=' * 40}")
+                self.logger.info(f"Step {idx}/{total_steps}: {step_name}")
+                self.logger.info(f"{'=' * 40}")
             
             try:
                 if force_run or not check_func():
-                    self.logger.info(f"Executing: {step_name}")
-                    start_time = datetime.now()
+                    step_start_time = datetime.now()
+                    self.logger.info(f"Executing: {description}")
                     
                     step_func()
                     
-                    end_time = datetime.now()
-                    duration = end_time - start_time
+                    step_end_time = datetime.now()
+                    duration = step_end_time - step_start_time
                     
-                    self.logger.info(f"✓ Completed: {step_name} (Duration: {duration})")
+                    # Log completion
+                    if self.logging_manager:
+                        completion_msg = self.logging_manager.format_step_completion(
+                            description, str(duration), "✓"
+                        )
+                        self.logger.info(completion_msg)
+                    else:
+                        self.logger.info(f"✓ Completed: {step_name} (Duration: {duration})")
+                    
                     completed_steps += 1
                 else:
-                    self.logger.info(f"→ Skipping: {step_name} (Output already exists)")
+                    # Log skip
+                    if self.logging_manager:
+                        skip_msg = self.logging_manager.format_step_completion(
+                            description, "already exists", "→"
+                        )
+                        self.logger.info(skip_msg)
+                    else:
+                        self.logger.info(f"→ Skipping: {step_name} (Output already exists)")
+                    
                     skipped_steps += 1
                     
             except Exception as e:
-                self.logger.error(f"✗ Failed: {step_name}")
-                self.logger.error(f"Error: {str(e)}")
+                # Log failure
+                if self.logging_manager:
+                    error_msg = self.logging_manager.format_step_completion(
+                        description, f"ERROR: {str(e)}", "✗"
+                    )
+                    self.logger.error(error_msg)
+                else:
+                    self.logger.error(f"✗ Failed: {step_name}")
+                    self.logger.error(f"Error: {str(e)}")
+                
                 failed_steps += 1
                 
                 # Decide whether to continue or stop
@@ -254,23 +309,32 @@ class WorkflowOrchestrator:
                     self.logger.error("Workflow stopped due to error (STOP_ON_ERROR=True)")
                     raise
                 else:
-                    self.logger.warning("Continuing workflow despite error (STOP_ON_ERROR=False)")
+                    self.logger.warning("Continuing despite error (STOP_ON_ERROR=False)")
         
         # Summary report
-        self.logger.info("\n" + "=" * 60)
-        self.logger.info("CONFLUENCE Workflow Summary")
-        self.logger.info("=" * 60)
-        self.logger.info(f"Total steps: {total_steps}")
-        self.logger.info(f"Completed: {completed_steps}")
-        self.logger.info(f"Skipped: {skipped_steps}")
-        self.logger.info(f"Failed: {failed_steps}")
-        self.logger.info(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        end_time = datetime.now()
+        total_duration = end_time - start_time
+        
+        if self.logging_manager:
+            summary_header = self.logging_manager.format_section_header("WORKFLOW SUMMARY")
+            self.logger.info(summary_header)
+        else:
+            self.logger.info("\n" + "=" * 60)
+            self.logger.info("CONFLUENCE Workflow Summary")
+            self.logger.info("=" * 60)
+        
+        self.logger.info(f"Total execution time: {total_duration}")
+        self.logger.info(f"Steps completed: {completed_steps}/{total_steps}")
+        self.logger.info(f"Steps skipped: {skipped_steps}")
         
         if failed_steps > 0:
-            self.logger.warning(f"Workflow completed with {failed_steps} failures")
+            self.logger.warning(f"Steps failed: {failed_steps}")
+            self.logger.warning("Workflow completed with errors")
         else:
-            self.logger.info("Workflow completed successfully")
-        self.logger.info("=" * 60)
+            self.logger.info("✓ Workflow completed successfully")
+        
+        if self.logging_manager:
+            self.logger.info("═" * 60)
     
     def validate_workflow_prerequisites(self) -> bool:
         """
@@ -349,7 +413,7 @@ class WorkflowOrchestrator:
             'step_details': []
         }
         
-        for step_func, check_func in workflow_steps:
+        for step_func, check_func, description in workflow_steps:
             step_name = step_func.__name__
             is_complete = check_func()
             
@@ -360,6 +424,7 @@ class WorkflowOrchestrator:
             
             status['step_details'].append({
                 'name': step_name,
+                'description': description,
                 'complete': is_complete
             })
         

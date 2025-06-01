@@ -261,12 +261,7 @@ class DataManager:
             Exception: For other errors during data acquisition
         """
         self.logger.info("Starting forcing data acquisition")
-        
-        # Check if data should be supplied rather than acquired
-        if self.config.get('SPATIAL_MODE') == 'Point' and self.config.get('DATA_ACQUIRE') == 'supplied':
-            self.logger.info("Spatial mode: Point simulations, data supplied")
-            return None
-        
+                
         # Initialize datatool runner
         dr = datatoolRunner(self.config, self.logger)
         

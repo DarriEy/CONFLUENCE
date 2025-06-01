@@ -1,19 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
 import pandas as pd
 import netCDF4 as nc
 import xarray as xr
-import matplotlib.pyplot as plt
 import subprocess
 from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
-from scipy import stats
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Dict, Any
 
 class SCEUAOptimizer:
     """
@@ -667,7 +664,7 @@ class SCEUAOptimizer:
                             
                             # Assign to GRU dimension
                             param_var[:] = param_values_array
-                            self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
+                            #self.logger.info(f"Added {param_name} at GRU level with values: {param_values_array}")
                         else:
                             # Regular parameter at HRU level
                             param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
@@ -700,7 +697,7 @@ class SCEUAOptimizer:
                     output_ds.history = f"Created on {datetime.now().isoformat()}"
                     output_ds.confluence_experiment_id = self.experiment_id
                 
-                self.logger.info(f"Trial parameters file generated: {trial_params_path}")
+                #self.logger.info(f"Trial parameters file generated: {trial_params_path}")
                 return trial_params_path
                 
         except Exception as e:
@@ -1322,7 +1319,7 @@ class SCEUAOptimizer:
                 if total_area <= 0 or total_area > 1e12:  # Suspicious if > 1 million km²
                     self.logger.warning(f"Area from attribute {area_col} seems unrealistic: {total_area} m². Calculating geometrically.")
                 else:
-                    self.logger.info(f"Found catchment area from attribute: {total_area} m²")
+                    #self.logger.info(f"Found catchment area from attribute: {total_area} m²")
                     return total_area
             
             # If area column not found or value is suspicious, calculate area from geometry

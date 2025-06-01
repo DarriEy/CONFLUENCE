@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 # Model preprocessors
 from utils.models.summa_utils import SummaPreProcessor # type: ignore
@@ -192,8 +192,8 @@ class ModelManager:
                 
                 # Special handling for SUMMA routing (MizuRoute)
                 if model == 'SUMMA':
-                    spatial_mode = self.config.get('SPATIAL_MODE', '')
-                    if spatial_mode not in ['Point', 'Lumped']:
+                    spatial_mode = self.config.get('DOMAIN_DEFINITION_METHOD', '')
+                    if spatial_mode not in ['point', 'lumped']:
                         self.logger.info("Initializing MizuRoute preprocessor")
                         mp = MizuRoutePreProcessor(self.config, self.logger)
                         mp.run_preprocessing()
@@ -263,9 +263,8 @@ class ModelManager:
                 # Special handling for SUMMA routing (MizuRoute)
                 if model == 'SUMMA':
                     domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', '')
-                    spatial_mode = self.config.get('SPATIAL_MODE', '')
                     
-                    if domain_method != 'lumped' and spatial_mode != 'Point':
+                    if domain_method != 'lumped' and domain_method != 'point':
                         mizuroute_runner = MizuRouteRunner(self.config, self.logger)
                         mizuroute_runner.run_mizuroute()
                 
@@ -334,7 +333,7 @@ class ModelManager:
                     visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
                 else:
                     # For distributed model, use MizuRoute output
-                    visualizer.update_sim_reach_id(self.config)
+                    visualizer.update_sim_reach_id()
                     model_outputs = [
                         (model, str(self.project_dir / "simulations" / self.experiment_id / 
                                   "mizuRoute" / f"{self.experiment_id}*.nc"))

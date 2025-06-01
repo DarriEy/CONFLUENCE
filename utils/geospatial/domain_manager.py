@@ -4,10 +4,10 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, Union, Tuple
 
-from utils.geospatial.domain_utilities import DomainDelineator # type: ignore
 from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
-from utils.reporting.domain_visualization_utils import DomainVisualizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
+from utils.geospatial.geofabric_utils import GeofabricSubsetter, GeofabricDelineator, LumpedWatershedDelineator # type: ignore
+
 
 class DomainManager:
     """Manages all domain-related operations including definition, discretization, and visualization."""
@@ -30,8 +30,11 @@ class DomainManager:
         self.reporter = VisualizationReporter(self.config, self.logger)
         
         # Initialize utility classes
-        self.domain_delineator = DomainDelineator(self.config, self.logger)
-        self.domain_visualizer = DomainVisualizer(self.config, self.logger, self.reporter)
+        self.delineator = GeofabricDelineator(self.config, self.logger)
+        self.lumped_delineator = LumpedWatershedDelineator(self.config, self.logger)
+        self.subsetter = GeofabricSubsetter(self.config, self.logger)
+        
+
         self.domain_discretizer = None  # Initialized when needed
     
     def define_domain(self) -> Optional[Union[Path, Tuple[Path, Path]]]:
@@ -50,15 +53,15 @@ class DomainManager:
             return None
         
         # Handle point mode
-        if self.config.get('SPATIAL_MODE') == 'Point':
-            result = self.domain_delineator.delineate_point_buffer_shape()
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
+            result = self.delineator.delineate_point_buffer_shape()
             return result
         
         # Map of domain methods to their corresponding functions
         domain_methods = {
-            'subset': self.domain_delineator.subset_geofabric,
-            'lumped': self.domain_delineator.delineate_lumped_watershed,
-            'delineate': self.domain_delineator.delineate_geofabric
+            'subset': self.subsetter.subset_geofabric,
+            'lumped': self.lumped_delineator.delineate_lumped_watershed,
+            'delineate': self.delineator.delineate_geofabric
         }
         
         # Execute the appropriate domain method
@@ -68,7 +71,7 @@ class DomainManager:
             
             # Handle coastal watersheds if needed
             if domain_method == 'delineate' and self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                coastal_result = self.domain_delineator.delineate_coastal()
+                coastal_result = self.delineator.delineate_coastal()
                 self.logger.info(f"Coastal delineation completed: {coastal_result}")
                 
             self.logger.info(f"Domain definition completed using method: {domain_method}")
@@ -130,7 +133,7 @@ class DomainManager:
             Path to the created plot or None if failed
         """
         try:
-            plot_path = self.domain_visualizer.plot_domain()
+            plot_path = self.reporter.plot_domain()
             return plot_path
         except Exception as e:
             self.logger.error(f"Error visualizing domain: {str(e)}")
@@ -146,7 +149,9 @@ class DomainManager:
             Path to the created plot or None if failed
         """
         try:
-            plot_path = self.domain_visualizer.plot_discretized_domain()
+            discretization_method = self.config.get('DOMAIN_DISCRETIZATION')
+            self.logger.info("Creating discretization visualization...")
+            plot_path = self.reporter.plot_discretized_domain(discretization_method)
             return plot_path
         except Exception as e:
             self.logger.error(f"Error visualizing discretized domain: {str(e)}")
@@ -164,7 +169,7 @@ class DomainManager:
         info = {
             'domain_name': self.domain_name,
             'domain_method': self.config.get('DOMAIN_DEFINITION_METHOD'),
-            'spatial_mode': self.config.get('SPATIAL_MODE'),
+            'spatial_mode': self.config.get('DOMAIN_DEFINITION_METHOD'),
             'discretization_method': self.config.get('DOMAIN_DISCRETIZATION'),
             'pour_point_coords': self.config.get('POUR_POINT_COORDS'),
             'bounding_box': self.config.get('BOUNDING_BOX_COORDS'),
@@ -210,14 +215,6 @@ class DomainManager:
         if domain_method not in valid_methods:
             self.logger.error(f"Invalid domain definition method: {domain_method}. Must be one of {valid_methods}")
             return False
-        
-        # Validate spatial mode if present
-        if self.config.get('SPATIAL_MODE'):
-            valid_modes = ['Point', 'Lumped', 'Distributed']
-            spatial_mode = self.config.get('SPATIAL_MODE')
-            if spatial_mode not in valid_modes:
-                self.logger.error(f"Invalid spatial mode: {spatial_mode}. Must be one of {valid_modes}")
-                return False
         
         # Validate bounding box format
         bbox = self.config.get('BOUNDING_BOX_COORDS', '')

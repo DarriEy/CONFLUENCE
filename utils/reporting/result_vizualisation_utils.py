@@ -1,6 +1,6 @@
 # results_utils.py
 import sys
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import pandas as pd # type: ignore
 import numpy as np # type: ignore
@@ -11,7 +11,7 @@ import matplotlib.gridspec as gridspec # type: ignore
 import matplotlib.dates as mdates # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
+from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
 
 class resultMapper:
     def __init__(self, config, logger):
