@@ -46,6 +46,15 @@ class VariableHandler:
             'RDRS_v2.1_P_FB_SFC': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
             'RDRS_v2.1_A_PR0_SFC': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
         },
+        'CASR': {
+            'CaSR_v3.1_A_TT_1.5m': {'standard_name': 'air_temperature', 'units': 'K'},
+            'CaSR_v3.1_P_P0_SFC': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
+            'CaSR_v3.1_P_HU_1.5m': {'standard_name': 'specific_humidity', 'units': '1'},
+            'CaSR_v3.1_P_UVC_10m': {'standard_name': 'wind_speed', 'units': 'm/s'},
+            'CaSR_v3.1_P_FI_SFC': {'standard_name': 'surface_downwelling_longwave_flux', 'units': 'W/m^2'},
+            'CaSR_v3.1_P_FB_SFC': {'standard_name': 'surface_downwelling_shortwave_flux', 'units': 'W/m^2'},
+            'CaSR_v3.1_P_PR0_SFC': {'standard_name': 'precipitation_flux', 'units': 'm'}
+        },
         'DayMet': {
             'pr': {'standard_name': 'precipitation_flux', 'units': 'mm/s'},
             'dayl': {'standard_name': 'day_length', 'units': 's/day'},

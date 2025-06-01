@@ -17,6 +17,7 @@ import rasterstats # type: ignore
 from shapely.geometry import Polygon # type: ignore
 import shutil
 import rasterio # type: ignore
+import psutil # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -204,33 +205,483 @@ class SummaPreProcessor:
             self.logger.error(f"Unexpected error in create_file_manager: {str(e)}")
             raise
 
+    def _process_single_file_comprehensive_fix(self, file: str, lapse_values: pd.DataFrame, lapse_rate: float):
+        """
+        Process a single forcing file with comprehensive fixes for SUMMA compatibility.
+        
+        Fixes:
+        1. Time coordinate format (convert to seconds since reference)
+        2. NaN values in forcing data (interpolation)
+        3. Data validation and quality checks
+        
+        Args:
+            file (str): Filename to process
+            lapse_values (pd.DataFrame): Pre-calculated lapse values
+            lapse_rate (float): Lapse rate value
+        """
+        input_path = self.forcing_basin_path / file
+        output_path = self.forcing_summa_path / file
+        
+        self.logger.debug(f"Processing file: {file}")
+        
+        # Use context manager and process efficiently
+        with xr.open_dataset(input_path) as dat:
+            # Create a copy to avoid modifying the original
+            dat = dat.copy()
+            
+            # 1. FIX TIME COORDINATE FIRST
+            dat = self._fix_time_coordinate_comprehensive(dat, file)
+            
+            # Find which HRU IDs exist in the forcing data but not in the lapse values
+            valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
+            
+            # Log and filter invalid HRUs
+            if not np.all(valid_hru_mask):
+                missing_hrus = dat['hruId'].values[~valid_hru_mask]
+                if len(missing_hrus) <= 10:
+                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values: {missing_hrus}")
+                else:
+                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values")
+                
+                # Filter the dataset
+                dat = dat.sel(hru=valid_hru_mask)
+                
+                if len(dat.hru) == 0:
+                    raise ValueError(f"File {file}: No valid HRUs found after filtering")
+            
+            # 2. FIX NaN VALUES IN FORCING DATA
+            dat = self._fix_nan_values(dat, file)
+            
+            # 3. VALIDATE DATA RANGES
+            dat = self._validate_and_fix_data_ranges(dat, file)
+            
+            # Apply data step (memory efficient - in-place operation)
+            dat['data_step'] = self.data_step
+            dat.data_step.attrs.update({
+                'long_name': 'data step length in seconds',
+                'units': 's'
+            })
+
+            # Update precipitation units if present
+            if 'pptrate' in dat:
+                dat.pptrate.attrs.update({
+                    'units': 'mm/s',
+                    'long_name': 'Mean total precipitation rate'
+                })
+
+            # Apply lapse rate correction efficiently if enabled
+            if self.config.get('APPLY_LAPSE_RATE') == True:
+                # Get lapse values for the HRUs (vectorized operation)
+                hru_lapse_values = lapse_values.loc[dat['hruId'].values, 'lapse_values'].values
+                
+                # Create correction array more efficiently
+                n_time, n_hru = len(dat['time']), len(dat['hru'])
+                lapse_correction = np.broadcast_to(hru_lapse_values[np.newaxis, :], (n_time, n_hru))
+                
+                # Store original attributes
+                tmp_units = dat['airtemp'].attrs.get('units', 'K')
+                
+                # Apply correction (in-place operation)
+                dat['airtemp'].values += lapse_correction
+                dat.airtemp.attrs['units'] = tmp_units
+                
+                # Clean up temporary arrays
+                del hru_lapse_values, lapse_correction
+
+            # 4. FINAL VALIDATION BEFORE SAVING
+            self._final_validation(dat, file)
+
+            # Prepare encoding with time coordinate fix
+            encoding = {
+                var: {'zlib': True, 'complevel': 1, 'shuffle': True} 
+                for var in dat.data_vars
+            }
+            
+            # Ensure time coordinate is properly encoded for SUMMA
+            encoding['time'] = {
+                'dtype': 'float64',
+                'zlib': True,
+                'complevel': 1,
+                '_FillValue': None
+            }
+            
+            dat.to_netcdf(output_path, encoding=encoding)
+            
+            # Explicit cleanup
+            dat.close()
+            del dat
+
+    def _fix_time_coordinate_comprehensive(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
+        """
+        Comprehensive fix for time coordinate to ensure SUMMA compatibility.
+        Creates IDENTICAL time coordinates across ALL files to prevent SUMMA mismatches.
+        
+        Args:
+            dataset (xr.Dataset): Input dataset
+            filename (str): Filename for logging
+            
+        Returns:
+            xr.Dataset: Dataset with corrected time coordinate
+        """
+        try:
+            time_coord = dataset.time
+            
+            self.logger.debug(f"File {filename}: Original time dtype: {time_coord.dtype}")
+            
+            # Convert any time format to pandas datetime first
+            if time_coord.dtype.kind == 'M':  # datetime64
+                pd_times = pd.to_datetime(time_coord.values)
+            elif np.issubdtype(time_coord.dtype, np.number):
+                if 'units' in time_coord.attrs and 'since' in time_coord.attrs['units']:
+                    pd_times = pd.to_datetime(time_coord.values, unit='s', origin=time_coord.attrs['units'].split('since ')[1])
+                else:
+                    pd_times = pd.to_datetime(time_coord.values, unit='s')
+            else:
+                pd_times = pd.to_datetime(time_coord.values)
+            
+            # CRITICAL: Extract date from filename to determine the exact day this file represents
+            # This ensures we create the same time coordinate for files representing the same period
+            import re
+            
+            # Try to extract date from filename (adjust pattern for your CASR files)
+            date_patterns = [
+                r'(\d{4})(\d{2})(\d{2})(\d{2})',  # YYYYMMDDHH
+                r'(\d{4})-(\d{2})-(\d{2})',       # YYYY-MM-DD
+                r'(\d{4})(\d{3})',                # YYYYDDD (day of year)
+            ]
+            
+            file_date = None
+            for pattern in date_patterns:
+                match = re.search(pattern, filename)
+                if match:
+                    try:
+                        if len(match.groups()) == 4:  # YYYYMMDDHH
+                            year, month, day, hour = match.groups()
+                            file_date = pd.Timestamp(f"{year}-{month}-{day}")
+                            break
+                        elif len(match.groups()) == 3:  # YYYY-MM-DD
+                            year, month, day = match.groups()
+                            file_date = pd.Timestamp(f"{year}-{month}-{day}")
+                            break
+                        elif len(match.groups()) == 2:  # YYYYDDD
+                            year, doy = match.groups()
+                            file_date = pd.Timestamp(f"{year}-01-01") + pd.Timedelta(days=int(doy)-1)
+                            break
+                    except:
+                        continue
+            
+            if file_date is None:
+                # Fallback: use the first time from the data
+                file_date = pd_times[0].normalize()  # Start of day
+                self.logger.warning(f"File {filename}: Could not extract date from filename, using data start date: {file_date}")
+            
+            # Create STANDARDIZED time coordinate that will be IDENTICAL across all files
+            time_step_seconds = int(self.config.get('FORCING_TIME_STEP_SIZE', 3600))
+            num_steps = len(pd_times)
+            
+            # Force all files to start at midnight of their respective days
+            standard_start_time = file_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # Create exact time series from the standardized start time
+            time_deltas_seconds = np.arange(0, num_steps * time_step_seconds, time_step_seconds)
+            pd_times_standard = standard_start_time + pd.to_timedelta(time_deltas_seconds, unit='s')
+            
+            self.logger.debug(f"File {filename}: Standardized to start at: {standard_start_time}")
+            self.logger.debug(f"File {filename}: Time steps: {num_steps}, Step size: {time_step_seconds}s")
+            
+            # Convert to SUMMA's expected format: seconds since 1990-01-01 00:00:00
+            reference_date = pd.Timestamp('1990-01-01 00:00:00')
+            seconds_since_ref = (pd_times_standard - reference_date).total_seconds().values
+            
+            # Ensure perfect integer seconds to avoid floating point precision issues
+            seconds_since_ref = np.round(seconds_since_ref).astype(np.int64).astype(np.float64)
+            
+            # Replace the time coordinate
+            dataset = dataset.assign_coords(time=seconds_since_ref)
+            
+            # Set proper attributes for SUMMA
+            dataset.time.attrs = {
+                'units': 'seconds since 1990-01-01 00:00:00',
+                'calendar': 'standard',
+                'long_name': 'time',
+                'axis': 'T'
+            }
+            
+            self.logger.debug(f"File {filename}: Final time range: {seconds_since_ref[0]:.0f} to {seconds_since_ref[-1]:.0f} seconds")
+            
+            # Validate the conversion
+            if len(seconds_since_ref) == 0:
+                raise ValueError(f"Empty time coordinate after conversion")
+            
+            if np.any(np.isnan(seconds_since_ref)):
+                raise ValueError(f"NaN values in converted time coordinate")
+            
+            # Verify exact time step consistency
+            time_diffs = np.diff(seconds_since_ref)
+            if not np.all(time_diffs == time_step_seconds):
+                inconsistent_count = np.sum(time_diffs != time_step_seconds)
+                self.logger.warning(f"File {filename}: {inconsistent_count} inconsistent time steps - forcing consistency")
+                
+                # Force perfectly consistent time steps
+                consistent_times = np.arange(
+                    seconds_since_ref[0],
+                    seconds_since_ref[0] + num_steps * time_step_seconds,
+                    time_step_seconds
+                )
+                dataset = dataset.assign_coords(time=consistent_times)
+                self.logger.info(f"File {filename}: Enforced perfectly consistent time steps")
+            
+            return dataset
+            
+        except Exception as e:
+            self.logger.error(f"File {filename}: Error fixing time coordinate: {str(e)}")
+            raise ValueError(f"Cannot fix time coordinate in file {filename}: {str(e)}")
+        
+    def _fix_nan_values(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
+        """
+        Fix NaN values in forcing data through interpolation and filling.
+        Handles CASR data pattern where only every 3rd temperature value is valid.
+        
+        Args:
+            dataset (xr.Dataset): Input dataset
+            filename (str): Filename for logging
+            
+        Returns:
+            xr.Dataset: Dataset with NaN values filled
+        """
+        forcing_vars = ['airtemp', 'airpres', 'spechum', 'windspd', 'pptrate', 'LWRadAtm', 'SWRadAtm']
+        
+        for var in forcing_vars:
+            if var not in dataset:
+                continue
+                
+            var_data = dataset[var]
+            
+            # Count NaN values
+            nan_count = np.isnan(var_data.values).sum()
+            total_count = var_data.size
+            
+            if nan_count > 0:
+                nan_percentage = (nan_count / total_count) * 100
+                #self.logger.warning(f"File {filename}: Variable {var} has {nan_count}/{total_count} "
+                #                f"NaN values ({nan_percentage:.1f}%)")
+                
+                # Apply interpolation strategy based on variable type
+                if var == 'pptrate':
+                    # For precipitation, fill NaN with 0 (no precipitation)
+                    filled_data = var_data.fillna(0.0)
+                    self.logger.debug(f"File {filename}: Filled {var} NaN values with 0")
+                    
+                elif var in ['SWRadAtm']:
+                    # For solar radiation, interpolate during day, zero at night
+                    filled_data = var_data.interpolate_na(dim='time', method='linear')
+                    filled_data = filled_data.fillna(method='ffill').fillna(method='bfill')
+                    filled_data = filled_data.fillna(0.0)
+                    self.logger.debug(f"File {filename}: Interpolated {var} NaN values")
+                    
+                elif var == 'airtemp' and nan_percentage > 50:
+                    # Special handling for CASR temperature pattern (high NaN percentage)
+                    #self.logger.info(f"File {filename}: Detected CASR pattern in {var} - applying specialized interpolation")
+                    
+                    # Use scipy cubic interpolation for better results with sparse temperature data
+                    try:
+                        from scipy import interpolate # type: ignore
+                        filled_data = var_data.copy()
+                        
+                        # Process each HRU separately
+                        for hru_idx in range(var_data.shape[-1] if len(var_data.shape) == 2 else 1):
+                            if len(var_data.shape) == 2:
+                                temp_values = var_data.values[:, hru_idx]
+                            else:
+                                temp_values = var_data.values
+                            
+                            # Find valid (non-NaN) indices
+                            valid_mask = ~np.isnan(temp_values)
+                            valid_indices = np.where(valid_mask)[0]
+                            valid_values = temp_values[valid_mask]
+                            
+                            if len(valid_values) >= 2:
+                                # Use cubic for smooth interpolation if enough points, otherwise linear
+                                kind = 'cubic' if len(valid_values) >= 4 else 'linear'
+                                
+                                f = interpolate.interp1d(
+                                    valid_indices, 
+                                    valid_values, 
+                                    kind=kind, 
+                                    bounds_error=False, 
+                                    fill_value='extrapolate'
+                                )
+                                
+                                # Interpolate all time steps
+                                all_indices = np.arange(len(temp_values))
+                                interpolated_values = f(all_indices)
+                                
+                                # Update the data
+                                if len(var_data.shape) == 2:
+                                    filled_data.values[:, hru_idx] = interpolated_values
+                                else:
+                                    filled_data.values[:] = interpolated_values
+                            else:
+                                # Not enough valid values, use default
+                                if len(var_data.shape) == 2:
+                                    filled_data.values[:, hru_idx] = 273.15  # 0°C
+                                else:
+                                    filled_data.values[:] = 273.15
+                        
+                        # Clip to reasonable temperature range
+                        filled_data = filled_data.clip(min=200.0, max=350.0)
+                        
+                    except ImportError:
+                        self.logger.warning(f"File {filename}: scipy not available, using xarray interpolation")
+                        filled_data = var_data.interpolate_na(dim='time', method='linear')
+                        filled_data = filled_data.fillna(method='ffill').fillna(method='bfill')
+                        filled_data = filled_data.fillna(273.15)
+                        filled_data = filled_data.clip(min=200.0, max=350.0)
+                    
+                    self.logger.debug(f"File {filename}: Applied CASR temperature interpolation")
+                    
+                elif nan_percentage > 80:  # Only reject if >80% NaN for non-temperature variables
+                    self.logger.error(f"File {filename}: Too many NaN values in {var} ({nan_percentage:.1f}%)")
+                    raise ValueError(f"Variable {var} has too many NaN values to interpolate reliably")
+                    
+                else:
+                    # Standard interpolation for other variables
+                    filled_data = var_data.interpolate_na(dim='time', method='linear')
+                    filled_data = filled_data.fillna(method='ffill').fillna(method='bfill')
+                    
+                    # If still NaN, use reasonable defaults
+                    if np.any(np.isnan(filled_data.values)):
+                        if var == 'airtemp':
+                            default_val = 273.15  # 0°C in Kelvin
+                        elif var == 'airpres':
+                            default_val = 101325.0  # Standard pressure in Pa
+                        elif var == 'spechum':
+                            default_val = 0.005  # Reasonable specific humidity
+                        elif var == 'windspd':
+                            default_val = 2.0  # Light wind in m/s
+                        elif var == 'LWRadAtm':
+                            default_val = 300.0  # Reasonable longwave radiation
+                        else:
+                            default_val = 0.0
+                        
+                        filled_data = filled_data.fillna(default_val)
+                        self.logger.warning(f"File {filename}: Used default value {default_val} for remaining {var} NaN values")
+                    
+                    self.logger.debug(f"File {filename}: Interpolated {var} NaN values")
+                
+                # Replace the variable in dataset
+                dataset[var] = filled_data
+                
+                # Verify no NaN values remain
+                remaining_nans = np.isnan(dataset[var].values).sum()
+                if remaining_nans > 0:
+                    self.logger.error(f"File {filename}: Still have {remaining_nans} NaN values in {var} after fixing")
+                    raise ValueError(f"Failed to remove all NaN values from {var}")
+        
+        return dataset
+
+    def _validate_and_fix_data_ranges(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
+        """
+        Validate and fix unrealistic data ranges that could cause SUMMA to fail.
+        
+        Args:
+            dataset (xr.Dataset): Input dataset
+            filename (str): Filename for logging
+            
+        Returns:
+            xr.Dataset: Dataset with validated data ranges
+        """
+        # Define reasonable ranges for variables
+        valid_ranges = {
+            'airtemp': (200.0, 350.0),      # -73°C to 77°C
+            'airpres': (50000.0, 110000.0), # 50-110 kPa
+            'spechum': (0.0, 0.1),          # 0-100 g/kg
+            'windspd': (0.0, 100.0),        # 0-100 m/s
+            'pptrate': (0.0, 0.1),          # 0-360 mm/hr in mm/s
+            'LWRadAtm': (50.0, 600.0),      # Longwave radiation W/m²
+            'SWRadAtm': (0.0, 1500.0)       # Shortwave radiation W/m²
+        }
+        
+        for var, (min_val, max_val) in valid_ranges.items():
+            if var not in dataset:
+                continue
+                
+            var_data = dataset[var]
+            
+            # Check for out-of-range values
+            below_min = (var_data < min_val).sum()
+            above_max = (var_data > max_val).sum()
+            
+            if below_min > 0 or above_max > 0:
+                self.logger.warning(f"File {filename}: Variable {var} has {below_min} values below {min_val} "
+                                f"and {above_max} values above {max_val}")
+                
+                # Clip to valid range
+                clipped_data = var_data.clip(min=min_val, max=max_val)
+                dataset[var] = clipped_data
+                
+                self.logger.debug(f"File {filename}: Clipped {var} to range [{min_val}, {max_val}]")
+        
+        return dataset
+
+    def _final_validation(self, dataset: xr.Dataset, filename: str):
+        """
+        Final validation to ensure dataset is ready for SUMMA.
+        
+        Args:
+            dataset (xr.Dataset): Dataset to validate
+            filename (str): Filename for logging
+        """
+        # Check time coordinate
+        time_coord = dataset.time
+        
+        if not np.issubdtype(time_coord.dtype, np.number):
+            raise ValueError(f"File {filename}: Time coordinate is not numeric after fixing")
+        
+        if 'units' not in time_coord.attrs or 'since' not in time_coord.attrs['units']:
+            raise ValueError(f"File {filename}: Time coordinate missing proper units")
+        
+        # Check for any remaining NaN values in critical variables
+        critical_vars = ['airtemp', 'airpres', 'spechum', 'windspd']
+        for var in critical_vars:
+            if var in dataset:
+                nan_count = np.isnan(dataset[var].values).sum()
+                if nan_count > 0:
+                    raise ValueError(f"File {filename}: Variable {var} still has {nan_count} NaN values")
+        
+        # Check that all arrays have consistent shapes
+        expected_shape = (len(dataset.time), len(dataset.hru))
+        for var in dataset.data_vars:
+            if var not in ['data_step', 'latitude', 'longitude', 'hruId'] and hasattr(dataset[var], 'shape'):
+                if dataset[var].shape != expected_shape:
+                    self.logger.warning(f"File {filename}: Variable {var} has unexpected shape {dataset[var].shape}, "
+                                    f"expected {expected_shape}")
+        
+        self.logger.debug(f"File {filename}: Passed final validation for SUMMA compatibility")
+
     def apply_datastep_and_lapse_rate(self):
         """
-        Apply temperature lapse rate corrections to the forcing data.
-
-        This method performs the following steps:
-        1. Load area-weighted information for each basin
-        2. Calculate lapse rate corrections for each HRU
-        3. Apply lapse rate corrections to temperature data in each forcing file
-        4. Save the corrected forcing data
-
-        The lapse rate is applied based on the elevation difference between the forcing data
-        grid cells and the mean elevation of each HRU.
-
-        Raises:
-            FileNotFoundError: If required input files are missing.
-            ValueError: If there are issues with data processing or lapse rate application.
-            IOError: If there are issues reading or writing data files.
+        Apply temperature lapse rate corrections to the forcing data with improved memory efficiency.
+        
+        This optimized version:
+        - Processes files in batches to control memory usage
+        - Uses explicit garbage collection
+        - Minimizes intermediate object creation
+        - Provides progress monitoring and memory usage tracking
         """
+        import gc
+        import psutil
+        import os
+        from typing import List
 
-        self.logger.info("Starting to apply temperature lapse rate and add data step")
+        self.logger.info("Starting memory-efficient temperature lapse rate and data step application")
 
         # Find intersection file
         intersect_base = f"{self.domain_name}_{self.config.get('FORCING_DATASET')}_intersected_shapefile"
         intersect_csv = self.intersect_path / f"{intersect_base}.csv"
         intersect_shp = self.intersect_path / f"{intersect_base}.shp"
 
-        # If CSV doesn't exist but shapefile does, convert shapefile to CSV
+        # Handle shapefile to CSV conversion if needed
         if not intersect_csv.exists() and intersect_shp.exists():
             self.logger.info(f"Converting {intersect_shp} to CSV format")
             try:
@@ -238,95 +689,338 @@ class SummaPreProcessor:
                 shp_df['weight'] = shp_df['AP1']
                 shp_df.to_csv(intersect_csv, index=False)
                 self.logger.info(f"Successfully created {intersect_csv}")
+                del shp_df  # Explicit cleanup
+                gc.collect()
             except Exception as e:
                 self.logger.error(f"Failed to convert shapefile to CSV: {str(e)}")
                 raise
         elif not intersect_csv.exists() and not intersect_shp.exists():
             raise FileNotFoundError(f"Neither {intersect_csv} nor {intersect_shp} exist")
 
-        # Continue with existing code using the CSV file
-        topo_data = pd.read_csv(intersect_csv)
+        # Load topology data efficiently
+        self.logger.info("Loading topology data...")
+        try:
+            # Use chunked reading for very large CSV files
+            topo_data = pd.read_csv(intersect_csv, dtype={
+                f'S_1_{self.gruId}': 'int32',
+                f'S_1_{self.hruId}': 'int32', 
+                'S_2_ID': 'int32',
+                'S_1_elev_m': 'float32',
+                'S_2_elev_m': 'float32',
+                'weight': 'float32'
+            })
+            self.logger.info(f"Loaded topology data: {len(topo_data)} rows, {topo_data.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        except Exception as e:
+            self.logger.error(f"Error loading topology data: {str(e)}")
+            raise
 
-        # Get forcing files
-        forcing_files = [f for f in os.listdir(self.forcing_basin_path) if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
+        # Get forcing files and log memory info
+        forcing_files = [f for f in os.listdir(self.forcing_basin_path) 
+                        if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
         forcing_files.sort()
-        self.logger.info(f"forcing files: {forcing_files}")
+        
+        total_files = len(forcing_files)
+        self.logger.info(f"Found {total_files} forcing files to process")
+        
+        if total_files == 0:
+            raise FileNotFoundError(f"No forcing files found in {self.forcing_basin_path}")
 
         # Prepare output directory
         self.forcing_summa_path.mkdir(parents=True, exist_ok=True)
 
-        # Specify column names
+        # Define column names and lapse rate
         gru_id = f'S_1_{self.gruId}'
         hru_id = f'S_1_{self.hruId}'
         forcing_id = 'S_2_ID'
         catchment_elev = 'S_1_elev_m'
         forcing_elev = 'S_2_elev_m'
         weights = 'weight'
-
-        # Define lapse rate
         lapse_rate = float(self.config.get('LAPSE_RATE'))  # [K m-1]
 
-        # Calculate weighted lapse values for each HRU
+        # Pre-calculate lapse values efficiently
+        self.logger.info("Pre-calculating lapse rate corrections...")
         topo_data['lapse_values'] = topo_data[weights] * lapse_rate * (topo_data[forcing_elev] - topo_data[catchment_elev])
 
-        # Find total lapse value per basin
+        # Calculate weighted lapse values for each HRU
         if gru_id == hru_id:
-            lapse_values = topo_data.groupby([hru_id]).lapse_values.sum().reset_index()
+            lapse_values = topo_data.groupby([hru_id])['lapse_values'].sum().reset_index()
         else:
-            lapse_values = topo_data.groupby([gru_id, hru_id]).lapse_values.sum().reset_index()
+            lapse_values = topo_data.groupby([gru_id, hru_id])['lapse_values'].sum().reset_index()
 
-        # Sort and set hruID as the index variable
+        # Sort and set hruID as index
         lapse_values = lapse_values.sort_values(hru_id).set_index(hru_id)
+        
+        # Clean up topology data to free memory
+        del topo_data
+        gc.collect()
+        self.logger.info(f"Prepared lapse corrections for {len(lapse_values)} HRUs")
 
-        # Process each forcing file
-        for file in forcing_files:
-            output_file = self.forcing_summa_path / file
+        # Determine batch size based on available memory and file count
+        batch_size = self._determine_batch_size(total_files)
+        self.logger.info(f"Processing files in batches of {batch_size}")
 
-            with xr.open_dataset(self.forcing_basin_path / file) as dat:
-                # Find which HRU IDs exist in the forcing data but not in the lapse values
-                valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
+        # Process files in batches
+        for batch_start in range(0, total_files, batch_size):
+            batch_end = min(batch_start + batch_size, total_files)
+            batch_files = forcing_files[batch_start:batch_end]
+            
+            #self.logger.info(f"Processing batch {batch_start//batch_size + 1}/{(total_files-1)//batch_size + 1}: "
+            #                f"files {batch_start+1}-{batch_end} of {total_files}")
+            
+            # Log memory usage before batch
+            memory_before = psutil.Process().memory_info().rss / 1024**2
+            self.logger.debug(f"Memory usage before batch: {memory_before:.1f} MB")
+            
+            # Process each file in the batch
+            for i, file in enumerate(batch_files):
+                try:
+                    self._process_single_file_comprehensive_fix(file, lapse_values, lapse_rate)
+                    
+                    # Log progress every 10 files or for small batches
+                    if (i + 1) % 10 == 0 or batch_size <= 10:
+                        files_processed = batch_start + i + 1
+                        #self.logger.info(f"Processed {files_processed}/{total_files} files "
+                        #                f"({files_processed/total_files*100:.1f}%)")
+                        
+                except Exception as e:
+                    self.logger.error(f"Error processing file {file}: {str(e)}")
+                    raise
+            
+            # Force garbage collection after each batch
+            gc.collect()
+            
+            # Log memory usage after batch
+            memory_after = psutil.Process().memory_info().rss / 1024**2
+            self.logger.debug(f"Memory usage after batch: {memory_after:.1f} MB "
+                            f"(delta: {memory_after - memory_before:+.1f} MB)")
+
+        # Final cleanup
+        del lapse_values
+        gc.collect()
+        
+        self.logger.info(f"Completed processing of {total_files} {self.forcing_dataset.upper()} forcing files with temperature lapsing")
+
+    def _determine_batch_size(self, total_files: int) -> int:
+        """
+        Determine optimal batch size based on available memory and file count.
+        
+        Args:
+            total_files (int): Total number of files to process
+            
+        Returns:
+            int: Optimal batch size
+        """
+        try:
+            # Get available memory in MB
+            available_memory = psutil.virtual_memory().available / 1024**2
+            
+            # Conservative estimate: assume each file uses ~50MB during processing
+            # (this includes temporary arrays, xarray overhead, etc.)
+            estimated_memory_per_file = 50
+            
+            # Use at most 70% of available memory for batch processing
+            max_memory_for_batch = available_memory * 0.7
+            
+            # Calculate batch size based on memory constraint
+            memory_based_batch_size = max(1, int(max_memory_for_batch / estimated_memory_per_file))
+            
+            # Set reasonable bounds
+            min_batch_size = 1
+            max_batch_size = min(100, total_files)  # Don't exceed 100 files per batch
+            
+            # Choose the most conservative estimate
+            batch_size = max(min_batch_size, min(memory_based_batch_size, max_batch_size))
+            
+            self.logger.debug(f"Batch size calculation: available_memory={available_memory:.1f}MB, "
+                            f"memory_based_size={memory_based_batch_size}, "
+                            f"chosen_size={batch_size}")
+            
+            return batch_size
+            
+        except Exception as e:
+            self.logger.warning(f"Could not determine optimal batch size: {str(e)}. Using default.")
+            return min(10, total_files)  # Conservative fallback
+
+    def _process_single_file(self, file: str, lapse_values: pd.DataFrame, lapse_rate: float):
+        """
+        Process a single forcing file with memory-efficient operations and SUMMA-compatible time formatting.
+        
+        Args:
+            file (str): Filename to process
+            lapse_values (pd.DataFrame): Pre-calculated lapse values
+            lapse_rate (float): Lapse rate value
+        """
+        input_path = self.forcing_basin_path / file
+        output_path = self.forcing_summa_path / file
+        
+        # Use context manager and process efficiently
+        with xr.open_dataset(input_path) as dat:
+            # Create a copy to avoid modifying the original
+            dat = dat.copy()
+            
+            # Fix time coordinate for SUMMA compatibility
+            dat = self._fix_time_coordinate(dat, file)
+            
+            # Find which HRU IDs exist in the forcing data but not in the lapse values
+            valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
+            
+            # Log and filter invalid HRUs
+            if not np.all(valid_hru_mask):
+                missing_hrus = dat['hruId'].values[~valid_hru_mask]
+                if len(missing_hrus) <= 10:  # Only log first 10 to avoid spam
+                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values: {missing_hrus}")
+                else:
+                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values")
                 
-                # Log the HRUs that will be removed
-                if not np.all(valid_hru_mask):
-                    missing_hrus = dat['hruId'].values[~valid_hru_mask]
-                    self.logger.warning(f"Removing {len(missing_hrus)} HRU IDs that don't have lapse values")
-                    self.logger.debug(f"Removed HRU IDs: {missing_hrus}")
-                    
-                    # Filter the dataset to only include valid HRUs
-                    dat = dat.sel(hru=valid_hru_mask)
-                    
-                    if len(dat.hru) == 0:
-                        self.logger.error("No valid HRUs remain after filtering. Cannot proceed.")
-                        raise ValueError("No valid HRUs found after filtering out those without lapse values")
+                # Filter the dataset
+                dat = dat.sel(hru=valid_hru_mask)
                 
-                # Apply datastep
-                dat['data_step'] = self.data_step
-                dat.data_step.attrs['long_name'] = 'data step length in seconds'
-                dat.data_step.attrs['units'] = 's'
+                if len(dat.hru) == 0:
+                    raise ValueError(f"File {file}: No valid HRUs found after filtering")
+            
+            # Apply data step (memory efficient - in-place operation)
+            dat['data_step'] = self.data_step
+            dat.data_step.attrs.update({
+                'long_name': 'data step length in seconds',
+                'units': 's'
+            })
 
-                if 'pptrate' in dat:
-                    # Keep the values unchanged but update the unit attribute
-                    dat.pptrate.attrs['units'] = 'mm/s'
-                    dat.pptrate.attrs['long_name'] = 'Mean total precipitation rate'
+            # Update precipitation units if present
+            if 'pptrate' in dat:
+                dat.pptrate.attrs.update({
+                    'units': 'mm/s',
+                    'long_name': 'Mean total precipitation rate'
+                })
 
-                if self.config.get('APPLY_LAPSE_RATE') == True:
-                    # Get lapse values for the HRUs
-                    lapse_values_sorted = lapse_values['lapse_values'].loc[dat['hruId'].values]
-                    addThis = xr.DataArray(np.tile(lapse_values_sorted.values, (len(dat['time']), 1)), 
-                                        dims=('time', 'hru'))
+            # Apply lapse rate correction efficiently if enabled
+            if self.config.get('APPLY_LAPSE_RATE') == True:
+                # Get lapse values for the HRUs (vectorized operation)
+                hru_lapse_values = lapse_values.loc[dat['hruId'].values, 'lapse_values'].values
+                
+                # Create correction array more efficiently
+                n_time, n_hru = len(dat['time']), len(dat['hru'])
+                lapse_correction = np.broadcast_to(hru_lapse_values[np.newaxis, :], (n_time, n_hru))
+                
+                # Store original attributes
+                tmp_units = dat['airtemp'].attrs.get('units', 'K')
+                
+                # Apply correction (in-place operation)
+                dat['airtemp'].values += lapse_correction
+                dat.airtemp.attrs['units'] = tmp_units
+                
+                # Clean up temporary arrays
+                del hru_lapse_values, lapse_correction
 
-                    # Get air temperature attributes
-                    tmp_units = dat['airtemp'].units
+            # Prepare encoding with time coordinate fix
+            encoding = {
+                var: {'zlib': True, 'complevel': 1, 'shuffle': True} 
+                for var in dat.data_vars
+            }
+            
+            # Ensure time coordinate is properly encoded
+            encoding['time'] = {
+                'dtype': 'float64',
+                'zlib': True,
+                'complevel': 1,
+                '_FillValue': None
+            }
+            
+            dat.to_netcdf(output_path, encoding=encoding)
+            
+            # Explicit cleanup
+            dat.close()
+            del dat
+
+    def _fix_time_coordinate(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
+        """
+        Fix time coordinate to ensure SUMMA compatibility.
+        
+        Args:
+            dataset (xr.Dataset): Input dataset with potentially problematic time coordinate
+            filename (str): Filename for logging purposes
+            
+        Returns:
+            xr.Dataset: Dataset with corrected time coordinate
+        """
+        try:
+            # Check current time coordinate
+            time_coord = dataset.time
+            
+            # If time is already numeric (seconds since reference), check the format
+            if np.issubdtype(time_coord.dtype, np.number):
+                # Ensure proper time attributes for SUMMA
+                if 'units' not in time_coord.attrs or 'since' not in time_coord.attrs.get('units', ''):
+                    self.logger.debug(f"File {filename}: Fixing time coordinate attributes")
                     
-                    # Apply lapse rate correction
-                    dat['airtemp'] = dat['airtemp'] + addThis
-                    dat.airtemp.attrs['units'] = tmp_units
-
-                # Save to file in new location
-                dat.to_netcdf(output_file)
-
-        self.logger.info(f"Completed processing of {self.forcing_dataset.upper()} forcing files with temperature lapsing")
-
+                    # Convert to pandas datetime to understand the time range
+                    try:
+                        time_values = pd.to_datetime(time_coord.values)
+                        
+                        # Use a standard reference date for SUMMA
+                        reference_date = pd.Timestamp('1990-01-01 00:00:00')
+                        
+                        # Calculate seconds since reference
+                        seconds_since_ref = (time_values - reference_date).total_seconds().values
+                        
+                        # Update the time coordinate
+                        dataset = dataset.assign_coords(time=seconds_since_ref)
+                        
+                        # Set proper attributes
+                        dataset.time.attrs = {
+                            'units': 'seconds since 1990-01-01 00:00:00',
+                            'calendar': 'standard',
+                            'long_name': 'time',
+                            'axis': 'T'
+                        }
+                        
+                    except Exception as e:
+                        self.logger.warning(f"File {filename}: Could not parse existing time coordinate: {str(e)}")
+            
+            else:
+                # Time coordinate is not numeric, need to convert
+                self.logger.debug(f"File {filename}: Converting non-numeric time coordinate")
+                
+                try:
+                    # Convert to pandas datetime first
+                    time_values = pd.to_datetime(dataset.time.values)
+                    
+                    # Use a standard reference date for SUMMA
+                    reference_date = pd.Timestamp('1990-01-01 00:00:00')
+                    
+                    # Calculate seconds since reference
+                    seconds_since_ref = (time_values - reference_date).total_seconds().values
+                    
+                    # Replace the time coordinate
+                    dataset = dataset.assign_coords(time=seconds_since_ref)
+                    
+                    # Set proper attributes for SUMMA
+                    dataset.time.attrs = {
+                        'units': 'seconds since 1990-01-01 00:00:00',
+                        'calendar': 'standard',
+                        'long_name': 'time',
+                        'axis': 'T'
+                    }
+                    
+                    self.logger.debug(f"File {filename}: Successfully converted time coordinate to seconds since reference")
+                    
+                except Exception as e:
+                    self.logger.error(f"File {filename}: Failed to convert time coordinate: {str(e)}")
+                    raise ValueError(f"Cannot convert time coordinate in file {filename}: {str(e)}")
+            
+            # Validate the time coordinate
+            if len(dataset.time) == 0:
+                raise ValueError(f"File {filename}: Empty time coordinate after conversion")
+            
+            # Check for any NaN values in time
+            if np.any(np.isnan(dataset.time.values)):
+                raise ValueError(f"File {filename}: NaN values found in time coordinate")
+            
+            return dataset
+            
+        except Exception as e:
+            self.logger.error(f"File {filename}: Error fixing time coordinate: {str(e)}")
+            raise
+        
     def create_forcing_file_list(self):
         """
         Create a list of forcing files for SUMMA.
@@ -350,23 +1044,26 @@ class SummaPreProcessor:
         forcing_path = self.project_dir / 'forcing/SUMMA_input'
         file_list_path = self.summa_setup_dir / self.config.get('SETTINGS_SUMMA_FORCING_LIST')
 
-        if forcing_dataset == 'CARRA':
-            forcing_files = [f for f in os.listdir(forcing_path) if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')]
-        elif forcing_dataset == 'ERA5':
-            forcing_files = [f for f in os.listdir(forcing_path) if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')]
-        elif forcing_dataset == 'RDRS':
-            forcing_files = [f for f in os.listdir(forcing_path) if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')]
+        # Define file patterns for different forcing datasets
+        if forcing_dataset.upper() in ['CARRA', 'ERA5', 'RDRS', 'CASR']:
+            forcing_files = [f for f in os.listdir(forcing_path) 
+                            if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')]
         else:
             self.logger.error(f"Unsupported forcing dataset: {forcing_dataset}")
             raise ValueError(f"Unsupported forcing dataset: {forcing_dataset}")
 
+        if not forcing_files:
+            self.logger.error(f"No {forcing_dataset} forcing files found in {forcing_path}")
+            raise FileNotFoundError(f"No {forcing_dataset} forcing files found in {forcing_path}")
+
         forcing_files.sort()
+        self.logger.info(f"Found {len(forcing_files)} {forcing_dataset} forcing files")
 
         with open(file_list_path, 'w') as f:
             for file in forcing_files:
                 f.write(f"{file}\n")
 
-        self.logger.info(f"Forcing file list created at {file_list_path}")
+        self.logger.info(f"Forcing file list created at {file_list_path} with {len(forcing_files)} files")
 
 
     def create_initial_conditions(self):
