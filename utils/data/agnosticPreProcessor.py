@@ -1,13 +1,15 @@
 import os
 from pathlib import Path
 import easymore # type: ignore
+import numpy as np # type: ignore
 import pandas as pd # type: ignore
 import xarray as xr # type: ignore
 import geopandas as gpd # type: ignore
 import shutil
+from rasterio.mask import mask # type: ignore
 from shapely.geometry import Polygon # type: ignore
 import rasterstats # type: ignore
-from pyproj import Transformer # type: ignore
+from pyproj import CRS, Transformer # type: ignore
 import pyproj # type: ignore
 import rasterio # type: ignore
 from rasterstats import zonal_stats # type: ignore
