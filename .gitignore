@@ -37,6 +37,7 @@ env/
 0_config_files/norswe/
 0_config_files/nz/
 0_config_files/camels_spat/
+0_config_files/hydroclimate_points/
 
 # IDE
 .idea/
