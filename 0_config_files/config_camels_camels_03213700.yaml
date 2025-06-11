@@ -53,7 +53,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -161,8 +161,8 @@ SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA b
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,aquiferScaleFactor,aquiferBaseflowExp,aquiferBaseflowRate,qSurfScale # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
   snowIncept: 
     - lightSnow
@@ -181,6 +181,10 @@ DECISION_OPTIONS:                                              # Select which SU
     - melr1977 
     - jrdn1991 
     - smnv2000 
+# Soil depth calibration settings
+CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel

@@ -3,6 +3,9 @@
 from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, Union, Tuple
+import geopandas as gpd
+from shapely.geometry import Polygon
+import pandas as pd
 
 from utils.geospatial.discretization_utils import DomainDiscretizer # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
@@ -34,8 +37,82 @@ class DomainManager:
         self.lumped_delineator = LumpedWatershedDelineator(self.config, self.logger)
         self.subsetter = GeofabricSubsetter(self.config, self.logger)
         
-
         self.domain_discretizer = None  # Initialized when needed
+        
+        # Create point domain shapefile if method is 'point'
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
+            self.create_point_domain_shapefile()
+    
+    def create_point_domain_shapefile(self) -> Optional[Path]:
+        """
+        Create a square basin shapefile from bounding box coordinates for point modelling.
+        
+        This method creates a rectangular polygon from the BOUNDING_BOX_COORDS and saves it
+        as a shapefile for point-based modelling approaches.
+        
+        Returns:
+            Path to the created shapefile or None if failed
+        """
+        try:
+            self.logger.info("Creating point domain shapefile from bounding box coordinates")
+            
+            # Parse bounding box coordinates
+            bbox_coords = self.config.get('BOUNDING_BOX_COORDS', '')
+            if not bbox_coords:
+                self.logger.error("BOUNDING_BOX_COORDS not found in configuration")
+                return None
+            
+            # Parse coordinates: lat_max/lon_min/lat_min/lon_max
+            try:
+                lat_max, lon_min, lat_min, lon_max = map(float, bbox_coords.split('/'))
+            except ValueError:
+                self.logger.error(f"Invalid bounding box format: {bbox_coords}. Expected format: lat_max/lon_min/lat_min/lon_max")
+                return None
+            
+            # Create rectangular polygon from bounding box
+            # Coordinates in (lon, lat) order for shapely
+            coords = [
+                (lon_min, lat_min),  # Bottom-left
+                (lon_max, lat_min),  # Bottom-right
+                (lon_max, lat_max),  # Top-right
+                (lon_min, lat_max),  # Top-left
+                (lon_min, lat_min)   # Close polygon
+            ]
+            
+            polygon = Polygon(coords)
+            
+            # Calculate area in square degrees (approximate)
+            area_deg2 = polygon.area
+            
+            # Create GeoDataFrame
+            gdf = gpd.GeoDataFrame({
+                'GRU_ID': [1],
+                'GRU_area': [area_deg2],  # Area in square degrees
+                'basin_name': [self.domain_name],
+                'domain_method': ['point']
+            }, geometry=[polygon], crs='EPSG:4326')
+            
+            # Create output directory
+            output_dir = self.project_dir / "shapefiles" / "river_basins"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Define output path
+            output_path = output_dir / f"{self.domain_name}_riverBasins_point.shp"
+            
+            # Save shapefile
+            gdf.to_file(output_path)
+            
+            self.logger.info(f"Point domain shapefile created successfully: {output_path}")
+            self.logger.info(f"Bounding box: lat_min={lat_min}, lat_max={lat_max}, lon_min={lon_min}, lon_max={lon_max}")
+            self.logger.info(f"Area: {area_deg2:.6f} square degrees")
+            
+            return output_path
+            
+        except Exception as e:
+            self.logger.error(f"Error creating point domain shapefile: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
     
     def define_domain(self) -> Optional[Union[Path, Tuple[Path, Path]]]:
         """
@@ -52,32 +129,38 @@ class DomainManager:
             self.logger.info('Shapefile provided, skipping domain definition')
             return None
         
-        # Handle point mode
-        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'point':
-            result = self.delineator.delineate_point_buffer_shape()
-            return result
-        
-        # Map of domain methods to their corresponding functions
-        domain_methods = {
-            'subset': self.subsetter.subset_geofabric,
-            'lumped': self.lumped_delineator.delineate_lumped_watershed,
-            'delineate': self.delineator.delineate_geofabric
-        }
-        
-        # Execute the appropriate domain method
-        method_function = domain_methods.get(domain_method)
-        if method_function:
-            result = method_function()
-            
-            # Handle coastal watersheds if needed
-            if domain_method == 'delineate' and self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
-                coastal_result = self.delineator.delineate_coastal()
-                self.logger.info(f"Coastal delineation completed: {coastal_result}")
-                
-            self.logger.info(f"Domain definition completed using method: {domain_method}")
+        # Handle point mode - shapefile already created in __init__
+        if domain_method == 'point':
+            output_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_point.shp"
+            if output_path.exists():
+                self.logger.info(f"Point domain shapefile already exists: {output_path}")
+                result = output_path
+            else:
+                self.logger.warning("Point domain shapefile not found, creating it now")
+                result = self.create_point_domain_shapefile()
         else:
-            self.logger.error(f"Unknown domain definition method: {domain_method}")
-            result = None
+            # Map of domain methods to their corresponding functions
+            domain_methods = {
+                'subset': self.subsetter.subset_geofabric,
+                'lumped': self.lumped_delineator.delineate_lumped_watershed,
+                'delineate': self.delineator.delineate_geofabric
+            }
+            
+            # Execute the appropriate domain method
+            method_function = domain_methods.get(domain_method)
+            if method_function:
+                result = method_function()
+                
+                # Handle coastal watersheds if needed
+                if domain_method == 'delineate' and self.config.get('DELINEATE_COASTAL_WATERSHEDS'):
+                    coastal_result = self.delineator.delineate_coastal()
+                    self.logger.info(f"Coastal delineation completed: {coastal_result}")
+            else:
+                self.logger.error(f"Unknown domain definition method: {domain_method}")
+                result = None
+        
+        if result:
+            self.logger.info(f"Domain definition completed using method: {domain_method}")
         
         # Visualize the domain after definition
         self.visualize_domain()
@@ -194,7 +277,6 @@ class DomainManager:
         
         Returns:
             True if configuration is valid, False otherwise
-        */
         """
         required_settings = [
             'DOMAIN_NAME',
@@ -210,7 +292,7 @@ class DomainManager:
                 return False
         
         # Validate domain definition method
-        valid_methods = ['subset', 'lumped', 'delineate']
+        valid_methods = ['subset', 'lumped', 'delineate', 'point']  # Added 'point' to valid methods
         domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
         if domain_method not in valid_methods:
             self.logger.error(f"Invalid domain definition method: {domain_method}. Must be one of {valid_methods}")

@@ -103,7 +103,7 @@ class DataManager:
         
         # Get lat and lon limits from bounding box
         bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
-        latlims = f"{bbox[2]},{bbox[0]}"
+        latlims = f"{bbox[0]},{bbox[2]}"
         lonlims = f"{bbox[1]},{bbox[3]}"
         
         try:

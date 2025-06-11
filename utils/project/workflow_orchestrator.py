@@ -117,7 +117,7 @@ class WorkflowOrchestrator:
             (
                 self.managers['domain'].discretize_domain,
                 lambda: (self.project_dir / "shapefiles" / "catchment" / 
-                        f"{self.domain_name}_HRUs_{self.config.get('DOMAIN_DISCRETIZATION')}.shp").exists(),
+                        f"{self.domain_name}_HRUs_{str(self.config['DOMAIN_DISCRETIZATION']).replace(',','_')}.shp").exists(),
                 "Discretizing domain into hydrological response units"
             ),
             

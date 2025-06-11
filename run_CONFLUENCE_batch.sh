@@ -14,7 +14,6 @@ module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86
 #module restore confluence_modules
 module load netcdf-fortran/4.6.1
 module load openblas/0.3.27
-module load hdf/4.3.0
 module load hdf5/1.14.3
 module load gdal/3.9.2
 module load netlib-lapack/3.11.0

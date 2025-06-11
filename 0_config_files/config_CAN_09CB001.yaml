@@ -22,7 +22,7 @@ CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: "CAN_09CB001_lumped"
-EXPERIMENT_ID: run_1                                     # Name of experiment
+EXPERIMENT_ID: run_1_elevation                                 # Name of experiment
 EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
@@ -47,13 +47,13 @@ DOMAIN_DEFINITION_METHOD: lumped
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
-CLEANUP_INTERMEDIATE_FILES: False                               # Remove temporary files from delieation
+CLEANUP_INTERMEDIATE_FILES: False                              # Remove temporary files from delieation
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
 MOVE_OUTLETS_MAX_DISTANCE: 100                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -145,8 +145,8 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
   snowIncept: 
@@ -166,6 +166,10 @@ DECISION_OPTIONS:                                              # Select which SU
     - melr1977 
     - jrdn1991 
     - smnv2000 
+# Soil depth calibration settings
+CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
 # SUMMMA Paths and filenames
 SETTINGS_SUMMA_PATH: default                                   # Path to SUMMA run settings, if default self.data_dir / settings / SUMMA

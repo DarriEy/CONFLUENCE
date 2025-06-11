@@ -53,7 +53,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -162,8 +162,9 @@ SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA b
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
+
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
   snowIncept: 
     - lightSnow
@@ -182,6 +183,10 @@ DECISION_OPTIONS:                                              # Select which SU
     - melr1977 
     - jrdn1991 
     - smnv2000 
+# Soil depth calibration settings
+CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
@@ -292,7 +297,7 @@ EMULATION_MAX_ITERATIONS': 3                                   # Iterative refin
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 20                                            # Population size for genetic algorithms
+POPULATION_SIZE: 50                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
@@ -311,4 +316,3 @@ PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which i
   # -- DE specific settings
 DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
 DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
-POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set

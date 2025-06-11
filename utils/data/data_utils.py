@@ -12,7 +12,6 @@ from rasterstats import zonal_stats # type: ignore
 from shapely.geometry import Point # type: ignore
 import csv
 from datetime import datetime
-import xarray as xr # type: ignore
 import time
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -1609,12 +1608,12 @@ class gistoolRunner:
         if self.tool_cache == 'default':
             self.tool_cache = '$HOME/cache_dir/'
 
-        #Import required CONFLUENCE utils
-        sys.path.append(str(self.code_dir))
-        from utils.config.config_utils import get_default_path # type: ignore
-
         #Get the path to the directory containing the gistool script
-        self.gistool_path = get_default_path(self.config, self.data_dir, self.config['GISTOOL_PATH'], 'installs/gistool', self.logger)
+        self.gistool_path = self.config['GISTOOL_PATH']
+        if self.gistool_path == 'default':
+            self.gistool_path = Path(self.config['CONFLUENCE_DATA_DIR']) / 'installs/gistool'
+        else: 
+            self.gistool_path = self.config['GISTOOL_PATH']
     
     def create_gistool_command(self, dataset, output_dir, lat_lims, lon_lims, variables, start_date=None, end_date=None):
         dataset_dir = dataset
@@ -1630,11 +1629,11 @@ class gistoolRunner:
             f"--lon-lims={lon_lims}",
             f"--variable={variables}",
             f"--prefix=domain_{self.domain_name}_",
-            f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
+            #f"--lib-path={self.config['GISTOOL_LIB_PATH']}"
             #"--submit-job",
             "--print-geotiff=true",
             f"--cache={self.tool_cache}_{self.domain_name}",
-            #f"--account={self.config['TOOL_ACCOUNT']}"
+            f"--cluster={self.config['CLUSTER_JSON']}"
         ] 
         
         if start_date and end_date:
@@ -1668,12 +1667,12 @@ class datatoolRunner:
         if self.tool_cache == 'default':
             self.tool_cache = '$HOME/cache_dir/'
 
-        #Import required CONFLUENCE utils
-        sys.path.append(str(self.code_dir))
-        from utils.config.config_utils import get_default_path # type: ignore
-
-        #Get the path to the directory containing the gistool script
-        self.datatool_path = get_default_path(self.config, self.data_dir, self.config['DATATOOL_PATH'], 'installs/datatool', self.logger)
+        #Get the path to the directory containing the datatool script
+        self.datatool_path = self.config['DATATOOL_PATH']
+        if self.datatool_path == 'default':
+            self.datatool_path = Path(self.config['CONFLUENCE_DATA_DIR']) / 'installs/datatool'
+        else: 
+            self.datatool_path = self.config['DATATOOL_PATH']
     
     def create_datatool_command(self, dataset, output_dir, start_date, end_date, lat_lims, lon_lims, variables):
         dataset_dir = dataset
@@ -1681,6 +1680,9 @@ class datatoolRunner:
             dataset_dir = 'era5'
         elif dataset == "RDRS":
             dataset_dir = 'rdrsv2.1'
+        elif dataset == "CASR":
+            dataset_dir = 'casrv3.1'
+            dataset = 'casr'
 
         datatool_command = [
         f"{self.datatool_path}/extract-dataset.sh",

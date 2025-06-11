@@ -132,7 +132,7 @@ winterSAI                 |       1.0000 |       0.0100 |       3.0000
 summerLAI                 |       3.0000 |       0.0100 |      10.0000
 rootScaleFactor1          |       2.0000 |       1.0000 |      10.0000
 rootScaleFactor2          |       5.0000 |       1.0000 |      10.0000
-rootingDepth              |       3.0000 |       0.1000 |       4.0000
+rootingDepth              |       2.0000 |       0.1000 |       6.0000
 rootDistExp               |       1.0000 |       0.0100 |       1.0000
 plantWiltPsi              |    -150.0000 |    -500.0000 |       0.0000
 soilStressParam           |       5.8000 |       4.3600 |       6.3700
@@ -170,8 +170,8 @@ theta_res                 |       0.0500 |       0.0010 |       0.0800
 vGn_alpha                 |      -0.8400 |      -1.0000 |      -0.0100
 vGn_n                     |       1.5000 |       1.2000 |       4.0000
 mpExp                     |       5.0000 |       1.0000 |      10.0000
-k_soil                    |      7.5d-06 |       1.d-08 |       1.d-04
-k_macropore               |      1.0d-03 |       1.d-07 |       1.d-02
+k_soil                    |      7.5d-06 |       1.d-08 |       1.d-02
+k_macropore               |      1.0d-03 |       1.d-08 |       1.d-02
 kAnisotropic              |       1.0000 |       0.0001 |      10.0000
 zScale_TOPMODEL           |       2.5000 |       1.0000 |      10.0000
 compactedDepth            |       1.0000 |       0.0000 |       1.0000
