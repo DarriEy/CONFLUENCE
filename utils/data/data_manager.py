@@ -3,6 +3,15 @@
 from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, List
+import shutil
+from datetime import datetime, timedelta
+import calendar
+import xarray as xr
+import geopandas as gpd
+from rasterstats import zonal_stats # type: ignore
+import rasterio # type: ignore
+import numpy as np
+import pandas as pd 
 
 from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatoolRunner # type: ignore 
 from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
@@ -24,6 +33,7 @@ class DataManager:
     - Downloading meteorological forcing data
     - Processing observed streamflow data
     - Performing model-agnostic preprocessing (basin averaging, resampling)
+    - Supplementing forcing data with EM-Earth precipitation and temperature
     - Validating data availability and integrity
     - Managing input/output variable transformations
     
@@ -252,6 +262,9 @@ class DataManager:
         The data is clipped to the domain's bounding box and the specified time period,
         and saved in the project's forcing directory.
         
+        If SUPPLEMENT_FORCING is enabled, also acquires EM-Earth precipitation and
+        temperature data for supplementing the primary forcing dataset.
+        
         Returns:
             None: If data is user-supplied for point simulations
             
@@ -292,14 +305,289 @@ class DataManager:
             )
             dr.execute_datatool_command(datatool_command)
             
-            self.logger.info("Forcing data acquisition completed successfully")
+            self.logger.info("Primary forcing data acquisition completed successfully")
+            
+            # Acquire EM-Earth data if supplementation is enabled
+            if self.config.get('SUPPLEMENT_FORCING', False):
+                self.logger.info("SUPPLEMENT_FORCING enabled - acquiring EM-Earth data")
+                self.acquire_em_earth_forcings()
             
         except Exception as e:
             self.logger.error(f"Error during forcing data acquisition: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             raise
-    
+
+    def acquire_em_earth_forcings(self):
+        """
+        Acquire EM-Earth precipitation and temperature data for supplementing primary forcing.
+        
+        This method downloads and processes EM-Earth data to supplement the primary forcing
+        dataset with higher quality precipitation and temperature observations. The EM-Earth
+        data is clipped to the domain's bounding box and time period, then stored in a 
+        separate directory for later integration during preprocessing.
+        
+        The method:
+        1. Creates output directory for EM-Earth data
+        2. Determines the time range and file patterns needed
+        3. Processes EM-Earth files for the specified bounding box
+        4. Saves processed data in NetCDF format for later integration
+        
+        Raises:
+            FileNotFoundError: If EM-Earth data sources cannot be accessed
+            ValueError: If coordinate bounds or time period are invalid
+            Exception: For other errors during EM-Earth data acquisition
+        """
+        self.logger.info("Starting EM-Earth forcing data acquisition")
+        
+        try:
+            # Create output directory for EM-Earth data
+            em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
+            em_earth_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Get EM-Earth data paths from configuration
+            em_earth_prcp_dir = self.config.get('EM_EARTH_PRCP_DIR', 
+                '/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica')
+            em_earth_tmean_dir = self.config.get('EM_EARTH_TMEAN_DIR',
+                '/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica')
+            
+            # Check if EM-Earth directories exist
+            if not Path(em_earth_prcp_dir).exists():
+                raise FileNotFoundError(f"EM-Earth precipitation directory not found: {em_earth_prcp_dir}")
+            if not Path(em_earth_tmean_dir).exists():
+                raise FileNotFoundError(f"EM-Earth temperature directory not found: {em_earth_tmean_dir}")
+            
+            # Get bounding box from configuration
+            bbox = self.config['BOUNDING_BOX_COORDS']  # format: lat_max/lon_min/lat_min/lon_max
+            
+            # Parse time range
+            start_date = datetime.strptime(self.config['EXPERIMENT_TIME_START'], '%Y-%m-%d %H:%M')
+            end_date = datetime.strptime(self.config['EXPERIMENT_TIME_END'], '%Y-%m-%d %H:%M')
+            
+            self.logger.info(f"Processing EM-Earth data for period: {start_date} to {end_date}")
+            self.logger.info(f"Bounding box: {bbox}")
+            
+            # Generate list of year-month combinations to process
+            year_months = self._generate_year_month_list(start_date, end_date)
+            
+            self.logger.info(f"Processing {len(year_months)} month(s) of EM-Earth data")
+            
+            # Process each month of EM-Earth data
+            processed_files = []
+            for year_month in year_months:
+                try:
+                    processed_file = self._process_em_earth_month(
+                        year_month, em_earth_prcp_dir, em_earth_tmean_dir, em_earth_dir, bbox
+                    )
+                    if processed_file:
+                        processed_files.append(processed_file)
+                        self.logger.info(f"Successfully processed EM-Earth data for {year_month}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to process EM-Earth data for {year_month}: {str(e)}")
+                    continue
+            
+            if not processed_files:
+                raise ValueError("No EM-Earth data files were successfully processed")
+            
+            self.logger.info(f"EM-Earth forcing data acquisition completed successfully")
+            self.logger.info(f"Processed {len(processed_files)} EM-Earth files")
+            
+        except Exception as e:
+            self.logger.error(f"Error during EM-Earth forcing data acquisition: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+
+    def _generate_year_month_list(self, start_date: datetime, end_date: datetime) -> List[str]:
+        """
+        Generate list of YYYYMM strings for the date range.
+        
+        Args:
+            start_date: Start date of the experiment
+            end_date: End date of the experiment
+            
+        Returns:
+            List of YYYYMM strings covering the date range
+        """
+        year_months = []
+        current_date = start_date.replace(day=1)  # Start from beginning of month
+        
+        while current_date <= end_date:
+            year_month = current_date.strftime('%Y%m')
+            year_months.append(year_month)
+            
+            # Move to next month
+            if current_date.month == 12:
+                current_date = current_date.replace(year=current_date.year + 1, month=1)
+            else:
+                current_date = current_date.replace(month=current_date.month + 1)
+        
+        return year_months
+
+    def _process_em_earth_month(self, year_month: str, prcp_dir: str, tmean_dir: str, 
+                               output_dir: Path, bbox: str) -> Optional[Path]:
+        """
+        Process a single month of EM-Earth data.
+        
+        Args:
+            year_month: Year-month string in YYYYMM format
+            prcp_dir: Directory containing EM-Earth precipitation files
+            tmean_dir: Directory containing EM-Earth temperature files
+            output_dir: Output directory for processed files
+            bbox: Bounding box string (lat_max/lon_min/lat_min/lon_max)
+            
+        Returns:
+            Path to processed file, or None if processing failed
+        """
+        # Find input files for this month
+        prcp_pattern = f"EM_Earth_deterministic_hourly_NorthAmerica_{year_month}.nc"
+        tmean_pattern = f"EM_Earth_deterministic_hourly_NorthAmerica_{year_month}.nc"
+        
+        prcp_file = Path(prcp_dir) / prcp_pattern
+        tmean_file = Path(tmean_dir) / tmean_pattern
+        
+        if not prcp_file.exists():
+            self.logger.warning(f"EM-Earth precipitation file not found: {prcp_file}")
+            return None
+        if not tmean_file.exists():
+            self.logger.warning(f"EM-Earth temperature file not found: {tmean_file}")
+            return None
+        
+        # Define output file
+        output_file = output_dir / f"watershed_subset_{year_month}.nc"
+        
+        # Skip if output already exists and not forcing rerun
+        if output_file.exists() and not self.config.get('FORCE_RUN_ALL_STEPS', False):
+            self.logger.info(f"EM-Earth file already exists, skipping: {output_file}")
+            return output_file
+        
+        # Process the EM-Earth data
+        try:
+            self._process_em_earth_data(str(prcp_file), str(tmean_file), str(output_file), bbox)
+            return output_file
+        except Exception as e:
+            self.logger.error(f"Error processing EM-Earth data for {year_month}: {str(e)}")
+            return None
+
+    def _process_em_earth_data(self, prcp_file: str, tmean_file: str, output_file: str, bbox: str):
+        """
+        Process EM-Earth precipitation and temperature data for a specific bounding box.
+        
+        This method replicates the functionality of the EM-Earth processing script,
+        subsetting the data to the specified bounding box and merging precipitation
+        and temperature variables into a single file.
+        
+        Args:
+            prcp_file: Path to EM-Earth precipitation NetCDF file
+            tmean_file: Path to EM-Earth temperature NetCDF file
+            output_file: Path for output merged NetCDF file
+            bbox: Bounding box string (lat_max/lon_min/lat_min/lon_max)
+        """
+        import xarray as xr
+        import numpy as np
+        
+        # Parse bounding box
+        bbox_parts = bbox.split('/')
+        if len(bbox_parts) != 4:
+            raise ValueError(f"Invalid bounding box format: {bbox}. Expected lat_max/lon_min/lat_min/lon_max")
+        
+        lat_max, lon_min, lat_min, lon_max = map(float, bbox_parts)
+        
+        self.logger.info(f"Processing EM-Earth data with bounding box: {lat_min}-{lat_max}°N, {lon_min}-{lon_max}°E")
+        
+        # Open datasets
+        try:
+            prcp_ds = xr.open_dataset(prcp_file)
+            tmean_ds = xr.open_dataset(tmean_file)
+        except Exception as e:
+            raise ValueError(f"Error opening EM-Earth files: {str(e)}")
+        
+        # Subset to bounding box
+        try:
+            # Handle longitude wrapping if necessary
+            if lon_min > lon_max:  # Crossing 180° meridian
+                prcp_subset = prcp_ds.where(
+                    (prcp_ds.lat >= lat_min) & (prcp_ds.lat <= lat_max) &
+                    ((prcp_ds.lon >= lon_min) | (prcp_ds.lon <= lon_max)), drop=True
+                )
+                tmean_subset = tmean_ds.where(
+                    (tmean_ds.lat >= lat_min) & (tmean_ds.lat <= lat_max) &
+                    ((tmean_ds.lon >= lon_min) | (tmean_ds.lon <= lon_max)), drop=True
+                )
+            else:  # Normal case
+                prcp_subset = prcp_ds.where(
+                    (prcp_ds.lat >= lat_min) & (prcp_ds.lat <= lat_max) &
+                    (prcp_ds.lon >= lon_min) & (prcp_ds.lon <= lon_max), drop=True
+                )
+                tmean_subset = tmean_ds.where(
+                    (tmean_ds.lat >= lat_min) & (tmean_ds.lat <= lat_max) &
+                    (tmean_ds.lon >= lon_min) & (tmean_ds.lon <= lon_max), drop=True
+                )
+            
+            # Check if we have any data after subsetting
+            if prcp_subset.sizes['lat'] == 0 or prcp_subset.sizes['lon'] == 0:
+                raise ValueError("No precipitation data found within the specified bounding box")
+            if tmean_subset.sizes['lat'] == 0 or tmean_subset.sizes['lon'] == 0:
+                raise ValueError("No temperature data found within the specified bounding box")
+            
+        except Exception as e:
+            raise ValueError(f"Error subsetting EM-Earth data: {str(e)}")
+        
+        # Merge datasets
+        try:
+            # Create merged dataset with all variables
+            merged_ds = xr.Dataset()
+            
+            # Copy coordinates from precipitation dataset
+            merged_ds = merged_ds.assign_coords({
+                'lat': prcp_subset.lat,
+                'lon': prcp_subset.lon,
+                'time': prcp_subset.time
+            })
+            
+            # Add precipitation variables
+            for var in prcp_subset.data_vars:
+                if 'prcp' in var:
+                    merged_ds[var] = prcp_subset[var]
+            
+            # Add temperature variables (interpolate to precipitation grid if needed)
+            for var in tmean_subset.data_vars:
+                if 'tmean' in var or 'temp' in var:
+                    # Interpolate temperature to precipitation grid
+                    temp_interp = tmean_subset[var].interp(
+                        lat=prcp_subset.lat, 
+                        lon=prcp_subset.lon, 
+                        method='linear'
+                    )
+                    merged_ds[var] = temp_interp
+            
+            # Add metadata
+            merged_ds.attrs.update({
+                'Dataset': 'EM-Earth: Ensemble Meteorological Dataset for Planet Earth',
+                'Developer': 'Guoqiang Tang et al. in Center for Hydrology, Coldwater Lab, University of Saskatchewan',
+                'Type': 'Deterministic station-reanalysis merged estimates',
+                'subset_bounding_box': bbox,
+                'subset_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'processing_script': 'CONFLUENCE EM-Earth subset and merge',
+                'merged_variables': f"prcp: {list(prcp_subset.data_vars.keys())}, tmean: {list(tmean_subset.data_vars.keys())}"
+            })
+            
+            # Save merged dataset
+            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+            merged_ds.to_netcdf(output_file)
+            
+            self.logger.info(f"Successfully created merged EM-Earth file: {output_file}")
+            self.logger.info(f"Spatial dimensions: {merged_ds.sizes['lat']} x {merged_ds.sizes['lon']}")
+            self.logger.info(f"Time dimension: {merged_ds.sizes['time']}")
+            
+        except Exception as e:
+            raise ValueError(f"Error merging EM-Earth datasets: {str(e)}")
+        
+        finally:
+            # Close datasets
+            prcp_ds.close()
+            tmean_ds.close()
+
     def process_observed_data(self):
         """
         Process observed streamflow data.
@@ -340,7 +628,6 @@ class DataManager:
             # Process FLUXNET data
             observed_data_processor.process_usgs_groundwater_data()
 
-
             self.logger.info("Observed data processing completed successfully")
             
         except Exception as e:
@@ -364,6 +651,8 @@ class DataManager:
         2. Forcing resampling: Temporal and spatial resampling of meteorological forcing
            data to match the model's requirements, including basin averaging for lumped
            models
+        3. EM-Earth integration: If SUPPLEMENT_FORCING is enabled, integrates EM-Earth
+           precipitation and temperature data with the primary forcing dataset
         
         The method creates the necessary directory structure and delegates the actual
         processing to specialized classes (geospatialStatistics and forcingResampler).
@@ -393,6 +682,11 @@ class DataManager:
             fr = forcingResampler(self.config, self.logger)
             fr.run_resampling()
             
+            # Integrate EM-Earth data if supplementation is enabled
+            if self.config.get('SUPPLEMENT_FORCING', False):
+                self.logger.info("SUPPLEMENT_FORCING enabled - integrating EM-Earth data")
+                self._integrate_em_earth_data()
+            
             # Run MAF Orchestrator if needed (currently commented out)
             # hydrological_models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
             # if 'MESH' in hydrological_models or 'HYPE' in hydrological_models:
@@ -406,6 +700,379 @@ class DataManager:
             self.logger.error(f"Error during model-agnostic preprocessing: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
+            raise
+
+    def _integrate_em_earth_data(self):
+        """
+        Integrate EM-Earth precipitation and temperature data with primary forcing dataset.
+        
+        This method:
+        1. Remaps EM-Earth data to the same grid as the primary forcing dataset
+        2. Replaces precipitation and temperature variables in the basin-averaged data
+        3. Ensures temporal alignment and unit consistency
+        
+        The integration preserves all other meteorological variables from the primary
+        dataset while using EM-Earth's higher quality precipitation and temperature.
+        """
+        self.logger.info("Starting EM-Earth data integration")
+        
+        try:
+            # Check if EM-Earth data exists
+            em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
+            if not em_earth_dir.exists():
+                self.logger.warning("EM-Earth data directory not found, skipping integration")
+                return
+            
+            # Find EM-Earth files
+            em_earth_files = list(em_earth_dir.glob("watershed_subset_*.nc"))
+            if not em_earth_files:
+                self.logger.warning("No EM-Earth files found, skipping integration")
+                return
+            
+            self.logger.info(f"Found {len(em_earth_files)} EM-Earth files for integration")
+            
+            # Process and remap EM-Earth data
+            self._remap_em_earth_to_basin_grid()
+            
+            # Replace precipitation and temperature in basin-averaged data
+            self._replace_forcing_variables_with_em_earth()
+            
+            self.logger.info("EM-Earth data integration completed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error during EM-Earth data integration: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+
+    def _remap_em_earth_to_basin_grid(self):
+        """
+        Remap EM-Earth data to match the basin grid used by the primary forcing dataset.
+        
+        This method uses spatial averaging to convert the EM-Earth gridded data to
+        basin-averaged values that match the structure of the primary forcing data.
+        """
+        self.logger.info("Remapping EM-Earth data to basin grid")
+        
+        try:
+            import xarray as xr
+            import numpy as np
+            
+            # Get basin shapefile for remapping
+            subbasins_name = self.config.get('RIVER_BASINS_NAME')
+            if subbasins_name == 'default':
+                subbasins_name = f"{self.config['DOMAIN_NAME']}_riverBasins_{self.config['DOMAIN_DEFINITION_METHOD']}.shp"
+            
+            basin_shapefile = self.project_dir / "shapefiles/river_basins" / subbasins_name
+            
+            if not basin_shapefile.exists():
+                raise FileNotFoundError(f"Basin shapefile not found: {basin_shapefile}")
+            
+            # Create output directory for remapped EM-Earth data
+            remapped_dir = self.project_dir / 'forcing' / 'em_earth_remapped'
+            remapped_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Find EM-Earth files
+            em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
+            em_earth_files = sorted(em_earth_dir.glob("watershed_subset_*.nc"))
+            
+            # Process each EM-Earth file
+            for em_file in em_earth_files:
+                output_file = remapped_dir / f"remapped_{em_file.name}"
+                
+                # Skip if output already exists and not forcing rerun
+                if output_file.exists() and not self.config.get('FORCE_RUN_ALL_STEPS', False):
+                    continue
+                
+                self.logger.info(f"Remapping {em_file.name}")
+                
+                # Use easymore or similar tool for remapping
+                # For now, implement a simple spatial averaging approach
+                self._remap_single_em_earth_file(em_file, output_file, basin_shapefile)
+            
+        except Exception as e:
+            self.logger.error(f"Error remapping EM-Earth data: {str(e)}")
+            raise
+
+    def _remap_single_em_earth_file(self, input_file: Path, output_file: Path, basin_shapefile: Path):
+        """
+        Remap a single EM-Earth file to basin-averaged values.
+        
+        Args:
+            input_file: Path to EM-Earth NetCDF file
+            output_file: Path for output remapped file
+            basin_shapefile: Path to basin shapefile for spatial averaging
+        """
+        try:
+            
+            # Read EM-Earth data
+            em_ds = xr.open_dataset(input_file)
+            
+            # Read basin shapefile
+            basins_gdf = gpd.read_file(basin_shapefile)
+            
+            # Get basin ID column
+            basin_id_col = self.config.get('RIVER_BASIN_SHP_RM_GRUID', 'GRU_ID')
+            
+            if basin_id_col not in basins_gdf.columns:
+                raise ValueError(f"Basin ID column '{basin_id_col}' not found in shapefile")
+            
+            # Create output dataset structure
+            basin_ids = sorted(basins_gdf[basin_id_col].unique())
+            
+            # Initialize output dataset
+            output_ds = xr.Dataset()
+            
+            # Add dimensions and coordinates
+            output_ds = output_ds.assign_coords({
+                'time': em_ds.time,
+                'hru': basin_ids
+            })
+            
+            # Process each variable
+            for var_name in em_ds.data_vars:
+                if var_name in ['prcp', 'prcp_corrected', 'tmean']:
+                    self.logger.info(f"Processing variable: {var_name}")
+                    
+                    # Get variable data
+                    var_data = em_ds[var_name]
+                    
+                    # Create basin-averaged values for each time step
+                    basin_values = np.full((len(em_ds.time), len(basin_ids)), np.nan)
+                    
+                    for t_idx, time_val in enumerate(em_ds.time):
+                        # Get data for this time step
+                        time_data = var_data.isel(time=t_idx)
+                        
+                        # Create temporary raster for zonal statistics
+                        transform = rasterio.transform.from_bounds(
+                            float(em_ds.lon.min()), float(em_ds.lat.min()),
+                            float(em_ds.lon.max()), float(em_ds.lat.max()),
+                            len(em_ds.lon), len(em_ds.lat)
+                        )
+                        
+                        # Calculate zonal statistics for each basin
+                        stats = zonal_stats(
+                            basins_gdf.geometry,
+                            time_data.values,
+                            affine=transform,
+                            stats=['mean'],
+                            nodata=np.nan
+                        )
+                        
+                        # Store basin-averaged values
+                        for b_idx, basin_id in enumerate(basin_ids):
+                            basin_row = basins_gdf[basins_gdf[basin_id_col] == basin_id].iloc[0]
+                            geom_idx = basins_gdf.index[basins_gdf[basin_id_col] == basin_id].tolist()[0]
+                            
+                            if geom_idx < len(stats) and stats[geom_idx]['mean'] is not None:
+                                basin_values[t_idx, b_idx] = stats[geom_idx]['mean']
+                    
+                    # Add to output dataset
+                    output_ds[var_name] = xr.DataArray(
+                        basin_values,
+                        dims=['time', 'hru'],
+                        coords={'time': em_ds.time, 'hru': basin_ids},
+                        attrs=var_data.attrs
+                    )
+            
+            # Add metadata
+            output_ds.attrs.update({
+                'remapped_from': str(input_file),
+                'remapping_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'remapping_method': 'Zonal statistics with basin shapefile',
+                'basin_shapefile': str(basin_shapefile)
+            })
+            
+            # Save remapped dataset
+            output_ds.to_netcdf(output_file)
+            
+            self.logger.info(f"Successfully remapped {input_file.name} to basin grid")
+            
+            # Close datasets
+            em_ds.close()
+            output_ds.close()
+            
+        except Exception as e:
+            self.logger.error(f"Error remapping {input_file.name}: {str(e)}")
+            raise
+
+    def _replace_forcing_variables_with_em_earth(self):
+        """
+        Replace precipitation and temperature variables in basin-averaged data with EM-Earth values.
+        
+        This method merges the remapped EM-Earth data with the existing basin-averaged
+        forcing data, replacing precipitation and temperature while preserving other variables.
+        """
+        self.logger.info("Replacing forcing variables with EM-Earth data")
+        
+        try:
+            import xarray as xr
+            import numpy as np
+            
+            # Find basin-averaged forcing files
+            basin_data_dir = self.project_dir / 'forcing' / 'basin_averaged_data'
+            if not basin_data_dir.exists():
+                raise FileNotFoundError(f"Basin-averaged data directory not found: {basin_data_dir}")
+            
+            # Find remapped EM-Earth files
+            remapped_dir = self.project_dir / 'forcing' / 'em_earth_remapped'
+            if not remapped_dir.exists():
+                raise FileNotFoundError(f"Remapped EM-Earth directory not found: {remapped_dir}")
+            
+            # Find forcing files that need updating
+            forcing_files = list(basin_data_dir.glob("*.nc"))
+            em_earth_files = list(remapped_dir.glob("remapped_watershed_subset_*.nc"))
+            
+            if not forcing_files:
+                self.logger.warning("No basin-averaged forcing files found")
+                return
+            
+            if not em_earth_files:
+                self.logger.warning("No remapped EM-Earth files found")
+                return
+            
+            self.logger.info(f"Found {len(forcing_files)} forcing files and {len(em_earth_files)} EM-Earth files")
+            
+            # Create EM-Earth lookup by time period
+            em_earth_lookup = {}
+            for em_file in em_earth_files:
+                # Extract year-month from filename
+                year_month = em_file.name.split('_')[-1].replace('.nc', '')
+                em_earth_lookup[year_month] = em_file
+            
+            # Process each forcing file
+            for forcing_file in forcing_files:
+                try:
+                    self._update_single_forcing_file(forcing_file, em_earth_lookup)
+                except Exception as e:
+                    self.logger.warning(f"Failed to update {forcing_file.name}: {str(e)}")
+                    continue
+            
+            self.logger.info("Successfully replaced forcing variables with EM-Earth data")
+            
+        except Exception as e:
+            self.logger.error(f"Error replacing forcing variables: {str(e)}")
+            raise
+
+    def _update_single_forcing_file(self, forcing_file: Path, em_earth_lookup: Dict[str, Path]):
+        """
+        Update a single forcing file with EM-Earth precipitation and temperature data.
+        
+        Args:
+            forcing_file: Path to forcing file to update
+            em_earth_lookup: Dictionary mapping year-month to EM-Earth file paths
+        """
+        try:
+            
+            # Open forcing dataset
+            forcing_ds = xr.open_dataset(forcing_file)
+            
+            # Determine which EM-Earth files cover the time period
+            start_time = forcing_ds.time.min().values
+            end_time = forcing_ds.time.max().values
+            
+            # Convert to datetime for processing
+            start_dt = pd.to_datetime(start_time)
+            end_dt = pd.to_datetime(end_time)
+            
+            # Find overlapping EM-Earth files
+            em_datasets = []
+            for year_month, em_file in em_earth_lookup.items():
+                # Check if this EM-Earth file overlaps with forcing time period
+                year = int(year_month[:4])
+                month = int(year_month[4:])
+                
+                em_start = datetime(year, month, 1)
+                em_end = datetime(year, month, calendar.monthrange(year, month)[1])
+                
+                if (em_start <= end_dt.to_pydatetime() and em_end >= start_dt.to_pydatetime()):
+                    em_ds = xr.open_dataset(em_file)
+                    em_datasets.append(em_ds)
+            
+            if not em_datasets:
+                self.logger.warning(f"No matching EM-Earth data for {forcing_file.name}")
+                return
+            
+            # Concatenate EM-Earth datasets
+            em_combined = xr.concat(em_datasets, dim='time')
+            
+            # Align time coordinates
+            em_combined = em_combined.sel(time=slice(start_time, end_time))
+            
+            # Replace precipitation and temperature variables
+            updated_ds = forcing_ds.copy(deep=True)
+            
+            # Map EM-Earth variables to forcing variables
+            variable_mapping = {
+                'prcp': ['pcp', 'precipitation', 'PRCP', 'prcp'],
+                'prcp_corrected': ['pcp', 'precipitation', 'PRCP', 'prcp'],  # Use corrected if available
+                'tmean': ['tmp', 'temperature', 'TEMP', 'tmean', 'tas']
+            }
+            
+            # Update variables
+            for em_var, forcing_vars in variable_mapping.items():
+                if em_var in em_combined.data_vars:
+                    # Find corresponding variable in forcing dataset
+                    for forcing_var in forcing_vars:
+                        if forcing_var in updated_ds.data_vars:
+                            self.logger.info(f"Replacing {forcing_var} with EM-Earth {em_var}")
+                            
+                            # Interpolate EM-Earth data to forcing time grid
+                            em_data_interp = em_combined[em_var].interp(time=forcing_ds.time)
+                            
+                            # Convert units if necessary
+                            if em_var in ['prcp', 'prcp_corrected']:
+                                # EM-Earth is in mm/hour, check if forcing expects different units
+                                if 'kg m-2 s-1' in str(updated_ds[forcing_var].attrs.get('units', '')):
+                                    # Convert mm/hour to kg/m²/s (mm/hour / 3.6)
+                                    em_data_interp = em_data_interp / 3.6
+                                    self.logger.info(f"Converted precipitation from mm/hour to kg/m²/s")
+                            
+                            elif em_var == 'tmean':
+                                # EM-Earth is in Celsius, check if forcing expects Kelvin
+                                if 'K' in str(updated_ds[forcing_var].attrs.get('units', '')):
+                                    # Convert Celsius to Kelvin
+                                    em_data_interp = em_data_interp + 273.15
+                                    self.logger.info(f"Converted temperature from Celsius to Kelvin")
+                            
+                            # Update the forcing variable
+                            updated_ds[forcing_var] = em_data_interp
+                            
+                            # Update attributes
+                            updated_ds[forcing_var].attrs.update({
+                                'source': f'EM-Earth {em_var}',
+                                'replacement_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                            
+                            break
+            
+            # Add global attributes about EM-Earth replacement
+            updated_ds.attrs.update({
+                'em_earth_replacement': True,
+                'em_earth_replacement_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'em_earth_variables_replaced': 'precipitation, temperature'
+            })
+            
+            # Save updated dataset (create backup first)
+            backup_file = forcing_file.with_suffix('.nc.backup')
+            if not backup_file.exists():
+                shutil.copy2(forcing_file, backup_file)
+                self.logger.info(f"Created backup: {backup_file}")
+            
+            # Save updated file
+            updated_ds.to_netcdf(forcing_file)
+            
+            self.logger.info(f"Successfully updated {forcing_file.name} with EM-Earth data")
+            
+            # Close datasets
+            forcing_ds.close()
+            updated_ds.close()
+            for em_ds in em_datasets:
+                em_ds.close()
+            
+        except Exception as e:
+            self.logger.error(f"Error updating {forcing_file.name}: {str(e)}")
             raise
     
     def validate_data_directories(self) -> bool:
@@ -464,6 +1131,8 @@ class DataManager:
                 - forcings_acquired: Whether forcing data acquisition is complete
                 - forcings_preprocessed: Whether forcing preprocessing is complete
                 - observed_data_processed: Whether observed data processing is complete
+                - em_earth_acquired: Whether EM-Earth data has been acquired
+                - em_earth_integrated: Whether EM-Earth data has been integrated
                 - dem_exists: Whether DEM data exists
                 - soilclass_exists: Whether soil class data exists
                 - landclass_exists: Whether land cover data exists
@@ -480,5 +1149,13 @@ class DataManager:
         status['dem_exists'] = (self.project_dir / 'attributes' / 'elevation' / 'dem').exists()
         status['soilclass_exists'] = (self.project_dir / 'attributes' / 'soilclass').exists()
         status['landclass_exists'] = (self.project_dir / 'attributes' / 'landclass').exists()
+        
+        # Check EM-Earth status if supplementation is enabled
+        if self.config.get('SUPPLEMENT_FORCING', False):
+            status['em_earth_acquired'] = (self.project_dir / 'forcing' / 'raw_data_em_earth').exists()
+            status['em_earth_integrated'] = (self.project_dir / 'forcing' / 'em_earth_remapped').exists()
+        else:
+            status['em_earth_acquired'] = False
+            status['em_earth_integrated'] = False
         
         return status

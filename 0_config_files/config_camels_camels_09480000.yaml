@@ -53,7 +53,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2

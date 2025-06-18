@@ -21,8 +21,8 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff"                                           # Name of experimental domain
-EXPERIMENT_ID: run_1                                     # Name of experiment
+DOMAIN_NAME: "Bow_at_Banff_elevation"                                     # Name of experimental domain
+EXPERIMENT_ID: run_1                                            # Name of experiment
 
 # Computatational settings
 MPI_PROCESSES: 1                                                # Number of parallel processes allowed, based on your system's capabilities
@@ -47,16 +47,18 @@ DELINEATE_BY_POURPOINT: True                                   # Delineate water
 MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
+
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
-COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
+DOMAIN_DISCRETIZATION: elevation                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
+ASPECT_CLASS_NUMBER: 8                                         # Number of aspect classes for discretisation (4, 8, or custom number)
+ASPECT_PATH: default                                           # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
-CATCHMENT_SHP_NAME: bow_distributed_elevation_zone.shp                                    # Name of domain catchment shapefile used in data acquisition and modelling 
+CATCHMENT_SHP_NAME: default                                    # Name of domain catchment shapefile used in data acquisition and modelling 
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
 CATCHMENT_SHP_LON: center_lon                                  # Name of the longitude column. Should be a value representative for the HRU. Typically the centroid.
 CATCHMENT_SHP_AREA: HRU_area                                   # Name of the catchment area column. Area must be in units [m^2]
@@ -65,18 +67,18 @@ CATCHMENT_SHP_GRUID: GRU_ID                                    # GRU ID column i
 
 # Shapefile settings - Basins shape (GRUs from watershed delineation)
 RIVER_BASINS_PATH: default                                     # Path to delineated river basins shapefile. If default, uses self.data_dir / shapefiles / river_basins
-RIVER_BASINS_NAME: bow_distributed.shp                                     # Name of river basin shapefile
-RIVER_BASIN_SHP_RM_GRUID: COMID                               # GRU ID column in riverBasin shapefile
-RIVER_BASIN_SHP_HRU_TO_SEG: hru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
-RIVER_BASIN_SHP_AREA: area                                 # Name of the catchment area column. Area must be in units [m^2]
+RIVER_BASINS_NAME: default
+RIVER_BASIN_SHP_RM_GRUID: GRU_ID                               # GRU ID column in riverBasin shapefile
+RIVER_BASIN_SHP_HRU_TO_SEG: gru_to_seg                         # Name of the column that shows which river segment each HRU connects to.
+RIVER_BASIN_SHP_AREA: GRU_area                                 # Name of the catchment area column. Area must be in units [m^2]
 
 # Shapefile settings - River network shape 
 RIVER_NETWORK_SHP_PATH: default                                # Path to river network shapefile. If default, uses self.data_dir / shapefiles / river_network
-RIVER_NETWORK_SHP_NAME: bow_river_network_from_merit_hydro.shp                                # Name of domain river network shapefile 
-RIVER_NETWORK_SHP_LENGTH: length                               # Name of the segment length column. Length must be in units [m].
-RIVER_NETWORK_SHP_SEGID: COMID                                # Name of the segment ID column.
-RIVER_NETWORK_SHP_DOWNSEGID: NextDownID                          # Name of the downstream segment ID column.
-RIVER_NETWORK_SHP_SLOPE: slope                                 # Name of the slope column. Slope must be in in units [length/length].
+RIVER_NETWORK_SHP_NAME: default
+RIVER_NETWORK_SHP_LENGTH: Length                               # Name of the segment length column. Length must be in units [m].
+RIVER_NETWORK_SHP_SEGID: LINKNO                                # Name of the segment ID column.
+RIVER_NETWORK_SHP_DOWNSEGID: DSLINKNO                          # Name of the downstream segment ID column.
+RIVER_NETWORK_SHP_SLOPE: Slope                                 # Name of the slope column. Slope must be in in units [length/length].
 
 # Geospatial data paths
 OUTPUT_BASINS_PATH: default                                    # If 'default', uses 'root_path/domain_[name]/shapefiles/river_basins/[domain_name]_riverBasins.shp'
@@ -286,9 +288,9 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, PSO or SCE-UA
+ITERATIVE_OPTIMIZATION_ALGORITHM: DE                          # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 100                                           # Population size for genetic algorithms
+POPULATION_SIZE: 50                                           # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter

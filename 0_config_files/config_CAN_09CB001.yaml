@@ -22,12 +22,12 @@ CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: "CAN_09CB001_lumped"
-EXPERIMENT_ID: run_1_elevation                                 # Name of experiment
-EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_ID: run_1                                           # Name of experiment
+EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
 EVALUATION_PERIOD:  2010-01-01, 2022-12-31                     # start_date, end_date in format YYYY-MM-DD
-SPINUP_PERIOD: 1979-01-01, 1980-12-31
+SPINUP_PERIOD: 1980-01-01, 1980-12-31
 
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities

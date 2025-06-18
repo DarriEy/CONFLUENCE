@@ -65,6 +65,11 @@ LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
 
+# EM-Earth forcing supplementation settings
+SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
+EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
+EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
+
 ### ============================================= 4. Model Specific settings: =============================================================
 
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, HYPE, FLASH, MESH 
