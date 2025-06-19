@@ -31,6 +31,7 @@ class DEOptimizer:
       - shape_factor > 1: Deeper layers get proportionally thicker
       - shape_factor < 1: Shallower layers get proportionally thicker
       - shape_factor = 1: Uniform scaling
+
     """
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
@@ -138,7 +139,35 @@ class DEOptimizer:
         # Log optimization period
         opt_period = self._get_optimization_period_string()
         self.logger.info(f"Optimization period: {opt_period}")
-    
+
+        # Get spatial domain information early
+        self.attr_file_path = self.optimization_settings_dir / self.config.get('SETTINGS_SUMMA_ATTRIBUTES', 'attributes.nc')
+        self.num_hrus, self.num_grus = self._get_spatial_dimensions()
+        
+        # Define which parameters should vary spatially
+        self.spatial_params = self.local_params  # All local parameters vary spatially
+        self.basin_level_params = self.basin_params + self.depth_params  # These remain uniform
+        
+        # Log the spatial parameter strategy
+        self.logger.info(f"Spatially varied parameters: {len(self.spatial_params)} parameters × {self.num_hrus} HRUs = {len(self.spatial_params) * self.num_hrus} spatial parameters")
+        self.logger.info(f"Basin-level parameters: {len(self.basin_level_params)} parameters")
+        total_param_count = len(self.spatial_params) * self.num_hrus + len(self.basin_level_params)
+        self.logger.info(f"Total parameter space: {total_param_count} parameters")
+
+    def _get_spatial_dimensions(self):
+        """Get number of HRUs and GRUs from attributes file"""
+        try:
+            with xr.open_dataset(self.attr_file_path) as ds:
+                num_hrus = ds.sizes.get('hru', 1)
+                num_grus = ds.sizes.get('gru', 1)
+                self.logger.info(f"Domain has {num_hrus} HRUs and {num_grus} GRUs")
+                return num_hrus, num_grus
+        except Exception as e:
+            self.logger.error(f"Could not read spatial dimensions: {str(e)}")
+            self.logger.warning("Defaulting to 1 HRU and 1 GRU")
+            return 1, 1
+
+
     def _get_original_depths(self):
         """
         Get original soil depths from coldState.nc file.
@@ -254,11 +283,7 @@ class DEOptimizer:
     
     def _load_existing_optimized_parameters(self):
         """
-        Load existing optimized parameters from the default settings directory.
-        Enhanced to handle depth parameters.
-        
-        Returns:
-            Dict: Dictionary with parameter values if found, None otherwise
+        MODIFIED: Load existing parameters and expand them spatially if needed
         """
         if not self.default_trial_params_path.exists():
             self.logger.info("No existing optimized parameters found - will start from scratch")
@@ -267,42 +292,55 @@ class DEOptimizer:
         try:
             self.logger.info(f"Loading existing optimized parameters from: {self.default_trial_params_path}")
             
-            # Get all parameters to extract (excluding depth parameters)
-            all_params = self.local_params + self.basin_params
-            
             with xr.open_dataset(self.default_trial_params_path) as ds:
-                # Check which parameters are available
-                available_params = [param for param in all_params if param in ds.variables]
-                
-                if not available_params:
-                    self.logger.warning("No calibration parameters found in existing trialParams file")
-                    return None
-                
-                self.logger.info(f"Found {len(available_params)} out of {len(all_params)} parameters in existing file")
-                
-                # Extract parameter values
                 param_values = {}
                 
-                for param in available_params:
-                    var = ds[param]
-                    values = var.values
-                    
-                    # Ensure values is a numpy array
-                    param_values[param] = np.atleast_1d(values)
-                    self.logger.debug(f"Loaded {param}: {len(param_values[param])} values")
+                # Load spatial parameters
+                for param_name in self.spatial_params:
+                    if param_name in ds.variables:
+                        values = ds[param_name].values
+                        
+                        if len(values) == self.num_hrus:
+                            # Already spatially distributed
+                            param_values[param_name] = values
+                            self.logger.debug(f"Loaded spatially distributed {param_name}: {len(values)} HRU values")
+                        elif len(values) == 1:
+                            # Single value - expand to all HRUs with small random variation
+                            base_value = values[0]
+                            # Add ±5% random variation to create initial spatial diversity
+                            variations = np.random.normal(1.0, 0.05, self.num_hrus)
+                            param_values[param_name] = base_value * variations
+                            self.logger.info(f"Expanded uniform {param_name} to spatial with ±5% variation")
+                        else:
+                            # Different size - interpolate or replicate
+                            self.logger.warning(f"Parameter {param_name} has {len(values)} values, need {self.num_hrus}")
+                            if len(values) > self.num_hrus:
+                                param_values[param_name] = values[:self.num_hrus]
+                            else:
+                                # Replicate with small variations
+                                base_values = np.tile(values, int(np.ceil(self.num_hrus / len(values))))[:self.num_hrus]
+                                variations = np.random.normal(1.0, 0.02, self.num_hrus)
+                                param_values[param_name] = base_values * variations
                 
-                # Add default depth parameters if depth calibration is enabled
+                # Load basin-level parameters
+                for param_name in self.basin_level_params:
+                    if param_name in ds.variables:
+                        values = ds[param_name].values
+                        param_values[param_name] = np.atleast_1d(values)
+                        self.logger.debug(f"Loaded basin parameter {param_name}: {values}")
+                
+                # Add default depth parameters if needed
                 if self.calibrate_depth:
-                    param_values['total_mult'] = np.array([1.0])  # Default: no depth scaling
-                    param_values['shape_factor'] = np.array([1.0])  # Default: uniform scaling
-                    self.logger.info("Added default depth parameters: total_mult=1.0, shape_factor=1.0")
+                    if 'total_mult' not in param_values:
+                        param_values['total_mult'] = np.array([1.0])
+                    if 'shape_factor' not in param_values:
+                        param_values['shape_factor'] = np.array([1.0])
                 
-                self.logger.info(f"Successfully loaded existing optimized parameters for {len(param_values)} parameters")
+                self.logger.info(f"Successfully loaded existing parameters for {len(param_values)} parameter types")
                 return param_values
                 
         except Exception as e:
             self.logger.error(f"Error loading existing optimized parameters: {str(e)}")
-            self.logger.error("Will proceed with parameter extraction instead")
             return None
     
     def _save_best_parameters_to_default_settings(self, best_params):
@@ -516,40 +554,49 @@ class DEOptimizer:
         Parse parameter bounds from SUMMA parameter info files.
         Enhanced to include depth parameter bounds.
         
-        Returns:
-            Dict: Dictionary with parameter names as keys and bound dictionaries as values
+        Returns expanded bounds dictionary with entries like:
+        {'k_soil_HRU1': {'min': 1e-6, 'max': 1e-3}, 'k_soil_HRU2': {'min': 1e-6, 'max': 1e-3}, ...}
         """
-        self.logger.info("Parsing parameter bounds from parameter info files")
+        self.logger.info("Parsing parameter bounds with spatial expansion")
         
-        bounds = {}
+        # Get base bounds from parameter info files
+        base_bounds = {}
         
         # Parse local parameter bounds
-        if self.local_params:
-            local_bounds = self._parse_param_info_file(self.local_param_info_path, self.local_params)
-            bounds.update(local_bounds)
+        if self.spatial_params:
+            local_bounds = self._parse_param_info_file(self.local_param_info_path, self.spatial_params)
+            base_bounds.update(local_bounds)
         
-        # Parse basin parameter bounds
+        # Parse basin parameter bounds 
         if self.basin_params:
             basin_bounds = self._parse_param_info_file(self.basin_param_info_path, self.basin_params)
-            bounds.update(basin_bounds)
+            base_bounds.update(basin_bounds)
         
-        # Add depth parameter bounds if depth calibration is enabled
+        # Add depth parameter bounds if enabled
         if self.calibrate_depth:
-            # Get depth bounds from config or use defaults
             total_mult_bounds = self.config.get('DEPTH_TOTAL_MULT_BOUNDS', [0.1, 5.0])
             shape_factor_bounds = self.config.get('DEPTH_SHAPE_FACTOR_BOUNDS', [0.1, 3.0])
-            
-            bounds['total_mult'] = {'min': total_mult_bounds[0], 'max': total_mult_bounds[1]}
-            bounds['shape_factor'] = {'min': shape_factor_bounds[0], 'max': shape_factor_bounds[1]}
-            
-            self.logger.info(f"Added depth parameter bounds: total_mult={total_mult_bounds}, shape_factor={shape_factor_bounds}")
+            base_bounds['total_mult'] = {'min': total_mult_bounds[0], 'max': total_mult_bounds[1]}
+            base_bounds['shape_factor'] = {'min': shape_factor_bounds[0], 'max': shape_factor_bounds[1]}
         
-        if not bounds:
-            self.logger.error("No parameter bounds found")
-            raise ValueError("No parameter bounds found")
+        # Expand bounds for spatial parameters
+        expanded_bounds = {}
         
-        self.logger.info(f"Found bounds for {len(bounds)} parameters")
-        return bounds
+        # Spatially varied parameters - create bounds for each HRU
+        for param_name in self.spatial_params:
+            if param_name in base_bounds:
+                base_bound = base_bounds[param_name]
+                for hru_idx in range(self.num_hrus):
+                    expanded_param_name = f"{param_name}_HRU{hru_idx + 1}"
+                    expanded_bounds[expanded_param_name] = base_bound.copy()
+        
+        # Basin-level parameters - keep as single entries
+        for param_name in self.basin_level_params:
+            if param_name in base_bounds:
+                expanded_bounds[param_name] = base_bounds[param_name]
+        
+        self.logger.info(f"Expanded {len(base_bounds)} base parameters to {len(expanded_bounds)} spatial parameters")
+        return expanded_bounds
     
     def _parse_param_info_file(self, file_path, param_names):
         """
@@ -603,47 +650,80 @@ class DEOptimizer:
         Denormalize an individual's parameters from [0,1] range to original parameter ranges.
         Enhanced to handle depth parameters.
         
+            
         Args:
-            normalized_individual: Array of normalized parameter values for one individual
+            normalized_individual: Array of normalized parameter values [0,1]
             
         Returns:
-            Dict: Parameter dictionary with denormalized values
+            Dict: Parameter dictionary organized by original parameter names with HRU arrays
         """
         params = {}
-        
-        # Get parameter names and bounds
         param_names = self.param_names
         param_bounds = self.param_bounds
         
-        if param_bounds is None:
-            self.logger.error("Parameter bounds not initialized")
+        if param_bounds is None or len(normalized_individual) != len(param_names):
+            self.logger.error(f"Parameter bounds or individual size mismatch: {len(normalized_individual)} vs {len(param_names)}")
             return params
         
-        for i, param_name in enumerate(param_names):
-            if param_name in param_bounds:
+        # Create arrays for spatial parameters
+        for base_param in self.spatial_params:
+            params[base_param] = np.zeros(self.num_hrus)
+        
+        # Process the normalized individual
+        param_idx = 0
+        
+        # First, handle spatially varied parameters
+        for base_param in self.spatial_params:
+            if base_param not in param_bounds:
+                # Skip if bounds not found, but create array
+                for hru_idx in range(self.num_hrus):
+                    param_idx += 1
+                continue
+                
+            for hru_idx in range(self.num_hrus):
+                expanded_param_name = f"{base_param}_HRU{hru_idx + 1}"
+                
+                if expanded_param_name in param_bounds:
+                    bounds = param_bounds[expanded_param_name]
+                    min_val = bounds['min']
+                    max_val = bounds['max']
+                    
+                    # Denormalize this HRU's parameter value
+                    denorm_value = min_val + normalized_individual[param_idx] * (max_val - min_val)
+                    params[base_param][hru_idx] = denorm_value
+                
+                param_idx += 1
+        
+        # Then, handle basin-level parameters
+        for param_name in self.basin_level_params:
+            if param_name in param_bounds and param_idx < len(normalized_individual):
                 bounds = param_bounds[param_name]
                 min_val = bounds['min']
                 max_val = bounds['max']
                 
-                # Denormalize value
-                denorm_value = min_val + normalized_individual[i] * (max_val - min_val)
+                # Denormalize basin-level parameter
+                denorm_value = min_val + normalized_individual[param_idx] * (max_val - min_val)
                 
-                # Special handling for depth parameters
+                # Handle different parameter types
                 if param_name in self.depth_params:
-                    # Depth parameters are scalar values
+                    # Depth parameters are scalar
                     params[param_name] = np.array([denorm_value])
-                elif param_name in self.basin_params:
-                    # Basin/GRU level parameter - single value
-                    params[param_name] = np.array([denorm_value])
+                elif param_name in ['routingGammaShape', 'routingGammaScale']:
+                    # Routing parameters at GRU level
+                    params[param_name] = np.full(self.num_grus, denorm_value)
                 else:
-                    # Local/HRU level parameter - may need multiple values
-                    # For simplicity, use the same value for all HRUs
-                    with xr.open_dataset(self.attr_file_path) as ds:
-                        if 'hru' in ds.dims:
-                            num_hrus = ds.sizes['hru']
-                            params[param_name] = np.full(num_hrus, denorm_value)
-                        else:
-                            params[param_name] = np.array([denorm_value])
+                    # Other basin parameters as scalars
+                    params[param_name] = np.array([denorm_value])
+                
+                param_idx += 1
+        
+        # Log parameter summary for debugging
+        self.logger.debug(f"Denormalized {param_idx} parameters:")
+        for param_name, values in params.items():
+            if param_name in self.spatial_params:
+                self.logger.debug(f"  {param_name}: {len(values)} HRU values, range [{np.min(values):.6f}, {np.max(values):.6f}]")
+            else:
+                self.logger.debug(f"  {param_name}: {len(values)} value(s) = {values}")
         
         return params
     
@@ -732,8 +812,20 @@ class DEOptimizer:
 
     @property
     def param_names(self):
-        """Get list of all parameter names including depth parameters if enabled."""
-        return self.local_params + self.basin_params + self.depth_params
+        """
+        Returns list like: ['k_soil_HRU1', 'k_soil_HRU2', ..., 'theta_sat_HRU1', ..., 'routingGammaShape', 'total_mult']
+        """
+        expanded_names = []
+        
+        # Add spatially varied parameters (one per HRU)
+        for param_name in self.spatial_params:
+            for hru_idx in range(self.num_hrus):
+                expanded_names.append(f"{param_name}_HRU{hru_idx + 1}")
+        
+        # Add basin-level parameters (single values)
+        expanded_names.extend(self.basin_level_params)
+
+        return expanded_names
     
     def _get_param_bounds(self):
         """Get parameter bounds including depth parameters if enabled."""
@@ -854,7 +946,7 @@ class DEOptimizer:
         
         # Copy mizuRoute settings if they exist
         self._copy_mizuroute_settings()
-    
+
     def _initialize_optimization(self, initial_params, param_bounds):
         """
         Initialize optimization variables for DE.
@@ -864,47 +956,32 @@ class DEOptimizer:
             initial_params: Dictionary with initial parameter values
             param_bounds: Dictionary with parameter bounds
         """
-        self.logger.info("Initializing DE optimization")
-        
         # Store parameter bounds and names
         self.param_bounds = param_bounds
-        param_names = self.param_names  # Use the property
+        param_names = self.param_names
         num_params = len(param_names)
         
-        self.logger.info(f"Initializing population of {self.population_size} individuals with {num_params} parameters")
-        if self.calibrate_depth:
-            self.logger.info(f"Including {len(self.depth_params)} depth parameters: {self.depth_params}")
+        # Adjust population size for larger parameter space
+        original_pop_size = self.population_size
+        if self.population_size is None:
+            # Use larger population for spatial parameters
+            min_pop_size = max(20, 2 * num_params)  # At least 2x parameter count
+            max_pop_size = min(200, 10 * num_params)  # Cap at reasonable size
+            self.population_size = min(max_pop_size, max(min_pop_size, 50))
+        
+        self.logger.info(f"Initializing spatially varied DE optimization:")
+        self.logger.info(f"  📊 Parameter space: {num_params} parameters")
+        self.logger.info(f"  👥 Population size: {self.population_size} (was {original_pop_size})")
+        self.logger.info(f"  🗺️  Spatial parameters: {len(self.spatial_params)} × {self.num_hrus} HRUs = {len(self.spatial_params) * self.num_hrus}")
+        self.logger.info(f"  🏔️  Basin parameters: {len(self.basin_level_params)}")
         
         # Initialize population in normalized parameter space [0,1]
         self.population = np.random.random((self.population_size, num_params))
         self.population_scores = np.full(self.population_size, np.nan)
         
-        # Initialize with any known good parameter values if available
+        # Initialize with existing parameter values if available
         if initial_params:
-            # Try to use initial values for the first individual
-            for i, param_name in enumerate(param_names):
-                if param_name in initial_params:
-                    # Get bounds
-                    bounds = param_bounds[param_name]
-                    min_val = bounds['min']
-                    max_val = bounds['max']
-                    
-                    # Get initial values
-                    initial_values = initial_params[param_name]
-                    
-                    # Use mean value if multiple values (like for HRU-level parameters)
-                    if isinstance(initial_values, np.ndarray) and len(initial_values) > 1:
-                        initial_value = np.mean(initial_values)
-                    else:
-                        initial_value = initial_values[0] if isinstance(initial_values, np.ndarray) else initial_values
-                    
-                    # Normalize and store
-                    normalized_value = (initial_value - min_val) / (max_val - min_val)
-                    # Clip to valid range
-                    normalized_value = np.clip(normalized_value, 0, 1)
-                    
-                    # Set the first individual to use these values
-                    self.population[0, i] = normalized_value
+            self._initialize_first_individual_with_existing_params(initial_params, param_names, param_bounds)
         
         # Evaluate initial population
         self.logger.info("Evaluating initial population...")
@@ -918,8 +995,66 @@ class DEOptimizer:
         self.logger.info(f"Initial population evaluated. Best score: {self.best_score:.6f}")
         
         # Record initial state
-        self._record_generation(0)
-    
+        self._record_generation(0)    
+
+    def _initialize_first_individual_with_existing_params(self, initial_params, param_names, param_bounds):
+        """
+        Initialize first individual using existing parameter values
+        """
+        self.logger.info("Initializing first individual with existing parameter values")
+        
+        param_idx = 0
+        
+        # Handle spatial parameters
+        for base_param in self.spatial_params:
+            if base_param in initial_params:
+                param_values = initial_params[base_param]
+                
+                for hru_idx in range(self.num_hrus):
+                    expanded_param_name = f"{base_param}_HRU{hru_idx + 1}"
+                    
+                    if expanded_param_name in param_bounds:
+                        bounds = param_bounds[expanded_param_name]
+                        min_val = bounds['min']
+                        max_val = bounds['max']
+                        
+                        # Get value for this HRU
+                        if len(param_values) > hru_idx:
+                            initial_value = param_values[hru_idx]
+                        else:
+                            initial_value = param_values[0]  # Use first value if not enough
+                        
+                        # Normalize and clip to valid range
+                        normalized_value = (initial_value - min_val) / (max_val - min_val)
+                        normalized_value = np.clip(normalized_value, 0, 1)
+                        
+                        self.population[0, param_idx] = normalized_value
+                    
+                    param_idx += 1
+            else:
+                # Skip parameters we don't have initial values for
+                param_idx += self.num_hrus
+        
+        # Handle basin-level parameters
+        for param_name in self.basin_level_params:
+            if param_name in initial_params and param_idx < len(param_names):
+                if param_name in param_bounds:
+                    bounds = param_bounds[param_name]
+                    min_val = bounds['min']
+                    max_val = bounds['max']
+                    
+                    initial_values = initial_params[param_name]
+                    initial_value = initial_values[0] if len(initial_values) > 0 else 1.0
+                    
+                    normalized_value = (initial_value - min_val) / (max_val - min_val)
+                    normalized_value = np.clip(normalized_value, 0, 1)
+                    
+                    self.population[0, param_idx] = normalized_value
+                
+                param_idx += 1
+        
+        self.logger.info(f"Initialized first individual with {param_idx} parameter values")
+
     def _evaluate_population(self):
         """Evaluate all individuals in the population."""
         for i in range(self.population_size):
@@ -2216,35 +2351,24 @@ class DEOptimizer:
 
     def _save_parameter_evaluation_history(self):
         """
-        Save all parameter evaluations to CSV files for analysis.
-        Enhanced to include depth parameters.
-        
-        Creates detailed files with:
-        1. All parameter sets evaluated and their scores
-        2. Best parameters over time
-        3. Population statistics over generations
+        History saving with spatial parameter information
         """
-        self.logger.info("Saving parameter evaluation history to files")
+        self.logger.info("Saving spatially varied parameter evaluation history")
         
         try:
-            # Create detailed evaluation records
             all_evaluations = []
             generation_summaries = []
             
             for gen_idx, gen_stats in enumerate(self.iteration_history):
                 generation = gen_stats['generation']
                 
-                # Extract population data for this generation
                 if 'population_scores' in gen_stats and hasattr(self, 'population'):
                     pop_scores = gen_stats['population_scores']
                     
-                    # Get parameter values for this generation's population
                     for individual_idx in range(len(pop_scores)):
                         if individual_idx < len(self.population):
-                            # Denormalize this individual's parameters
                             individual_params = self._denormalize_individual(self.population[individual_idx])
                             
-                            # Create evaluation record
                             eval_record = {
                                 'generation': generation,
                                 'individual': individual_idx,
@@ -2254,20 +2378,30 @@ class DEOptimizer:
                                 'timestamp': datetime.now().isoformat()
                             }
                             
-                            # Add parameter values
+                            # Add spatial parameter statistics
                             for param_name, param_values in individual_params.items():
-                                if len(param_values) == 1:
-                                    eval_record[param_name] = param_values[0]
-                                else:
-                                    # For multi-value parameters, store statistics
+                                if param_name in self.spatial_params and len(param_values) > 1:
+                                    # Spatial parameter - save statistics
                                     eval_record[f"{param_name}_mean"] = np.mean(param_values)
                                     eval_record[f"{param_name}_min"] = np.min(param_values)
                                     eval_record[f"{param_name}_max"] = np.max(param_values)
                                     eval_record[f"{param_name}_std"] = np.std(param_values)
+                                    eval_record[f"{param_name}_range"] = np.max(param_values) - np.min(param_values)
+                                    
+                                    # Also save individual HRU values (for detailed analysis)
+                                    for hru_idx, value in enumerate(param_values):
+                                        eval_record[f"{param_name}_HRU{hru_idx + 1}"] = value
+                                        
+                                elif len(param_values) == 1:
+                                    # Scalar parameter
+                                    eval_record[param_name] = param_values[0]
+                                else:
+                                    # Multiple values but not spatial
+                                    eval_record[f"{param_name}_mean"] = np.mean(param_values)
                             
                             all_evaluations.append(eval_record)
                 
-                # Create generation summary
+                # Generation summary
                 gen_summary = {
                     'generation': generation,
                     'best_score': gen_stats.get('best_score'),
@@ -2278,85 +2412,51 @@ class DEOptimizer:
                     'total_individuals': self.population_size
                 }
                 
-                # Add best parameters for this generation
+                # Add best parameter statistics
                 if gen_stats.get('best_params'):
                     for param_name, param_values in gen_stats['best_params'].items():
-                        if len(param_values) == 1:
-                            gen_summary[f"best_{param_name}"] = param_values[0]
-                        else:
+                        if param_name in self.spatial_params and len(param_values) > 1:
                             gen_summary[f"best_{param_name}_mean"] = np.mean(param_values)
+                            gen_summary[f"best_{param_name}_std"] = np.std(param_values)
+                            gen_summary[f"best_{param_name}_range"] = np.max(param_values) - np.min(param_values)
+                        else:
+                            gen_summary[f"best_{param_name}"] = param_values[0] if len(param_values) > 0 else param_values
                 
                 generation_summaries.append(gen_summary)
             
-            # Save all evaluations to CSV
+            # Save files (same as before but with enhanced data)
             if all_evaluations:
                 eval_df = pd.DataFrame(all_evaluations)
-                eval_csv_path = self.output_dir / "all_parameter_evaluations.csv"
+                eval_csv_path = self.output_dir / "all_parameter_evaluations_spatial.csv"
                 eval_df.to_csv(eval_csv_path, index=False)
-                self.logger.info(f"💾 Saved {len(all_evaluations)} parameter evaluations to: {eval_csv_path}")
+                self.logger.info(f"💾 Saved {len(all_evaluations)} spatial parameter evaluations to: {eval_csv_path}")
             
-            # Save generation summaries to CSV
             if generation_summaries:
                 summary_df = pd.DataFrame(generation_summaries)
-                summary_csv_path = self.output_dir / "generation_summaries.csv"
+                summary_csv_path = self.output_dir / "generation_summaries_spatial.csv"
                 summary_df.to_csv(summary_csv_path, index=False)
                 self.logger.info(f"📊 Saved {len(generation_summaries)} generation summaries to: {summary_csv_path}")
             
-            # Save optimization metadata
-            metadata = {
-                'algorithm': 'Differential Evolution',
-                'total_generations': self.max_iterations,
-                'population_size': self.population_size,
-                'F': self.F,
-                'CR': self.CR,
-                'target_metric': self.target_metric,
-                'parameters_calibrated': self.local_params + self.basin_params + self.depth_params,
-                'depth_calibration_enabled': self.calibrate_depth,
-                'total_evaluations': len(all_evaluations),
-                'experiment_id': self.experiment_id,
-                'domain_name': self.domain_name,
-                'optimization_period': self._get_optimization_period_string(),
-                'completed_at': datetime.now().isoformat()
+            # Save spatial parameter metadata
+            spatial_metadata = {
+                'parameter_strategy': 'spatially_varied',
+                'num_hrus': self.num_hrus,
+                'num_grus': self.num_grus,
+                'spatial_parameters': self.spatial_params,
+                'basin_parameters': self.basin_level_params,
+                'total_spatial_params': len(self.spatial_params) * self.num_hrus,
+                'total_basin_params': len(self.basin_level_params),
+                'total_parameter_space': len(self.param_names),
+                'depth_calibration_enabled': self.calibrate_depth
             }
             
-            metadata_df = pd.DataFrame([metadata])
-            metadata_csv_path = self.output_dir / "optimization_metadata.csv"
+            metadata_df = pd.DataFrame([spatial_metadata])
+            metadata_csv_path = self.output_dir / "spatial_parameter_metadata.csv"
             metadata_df.to_csv(metadata_csv_path, index=False)
-            self.logger.info(f"ℹ️ Saved optimization metadata to: {metadata_csv_path}")
-            
-            # Create a summary statistics file
-            if all_evaluations:
-                eval_df = pd.DataFrame(all_evaluations)
-                valid_scores = eval_df[eval_df['is_valid'] == True]['score']
-                
-                if len(valid_scores) > 0:
-                    summary_stats = {
-                        'total_evaluations': len(all_evaluations),
-                        'valid_evaluations': len(valid_scores),
-                        'success_rate': len(valid_scores) / len(all_evaluations) * 100,
-                        'best_score': valid_scores.max(),
-                        'worst_score': valid_scores.min(),
-                        'mean_score': valid_scores.mean(),
-                        'median_score': valid_scores.median(),
-                        'std_score': valid_scores.std(),
-                        'score_range': valid_scores.max() - valid_scores.min()
-                    }
-                    
-                    # Add parameter statistics
-                    param_cols = [col for col in eval_df.columns if col not in ['generation', 'individual', 'score', 'is_valid', 'is_best_in_generation', 'timestamp']]
-                    for param_col in param_cols:
-                        if eval_df[param_col].dtype in ['float64', 'int64']:
-                            summary_stats[f"{param_col}_explored_min"] = eval_df[param_col].min()
-                            summary_stats[f"{param_col}_explored_max"] = eval_df[param_col].max()
-                            summary_stats[f"{param_col}_explored_range"] = eval_df[param_col].max() - eval_df[param_col].min()
-                    
-                    stats_df = pd.DataFrame([summary_stats])
-                    stats_csv_path = self.output_dir / "optimization_statistics.csv"
-                    stats_df.to_csv(stats_csv_path, index=False)
-                    self.logger.info(f"📈 Saved optimization statistics to: {stats_csv_path}")
+            self.logger.info(f"ℹ️ Saved spatial parameter metadata to: {metadata_csv_path}")
             
         except Exception as e:
-            self.logger.error(f"Error saving parameter evaluation history: {str(e)}")
+            self.logger.error(f"Error saving spatial parameter history: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
 
