@@ -14,13 +14,13 @@ from typing import Dict, Any
 
 class DEOptimizer:
     """
-    Enhanced Differential Evolution (DE) Optimizer for CONFLUENCE with soil depth calibration.
+    Differential Evolution (DE) Optimizer for CONFLUENCE with soil depth calibration.
     
     This class performs parameter optimization using the Differential Evolution algorithm,
     which is a population-based stochastic optimization technique that's particularly
     effective for continuous optimization problems like watershed model calibration.
     
-    Enhanced with:
+    Features:
     - Parameter persistence (uses existing optimized parameters as starting point)
     - Soil depth profile calibration using the "shape" method
     - Combined hydraulic and depth parameter optimization
