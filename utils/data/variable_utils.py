@@ -47,7 +47,7 @@ class VariableHandler:
             'RDRS_v2.1_A_PR0_SFC': {'standard_name': 'precipitation_flux', 'units': 'mm/s'}
         },
         'CASR': {
-            'CaSR_v3.1_A_TT_1.5m': {'standard_name': 'air_temperature', 'units': 'K'},
+            'CaSR_v3.1_P_TT_1.5m': {'standard_name': 'air_temperature', 'units': 'K'},
             'CaSR_v3.1_P_P0_SFC': {'standard_name': 'surface_air_pressure', 'units': 'Pa'},
             'CaSR_v3.1_P_HU_1.5m': {'standard_name': 'specific_humidity', 'units': '1'},
             'CaSR_v3.1_P_UVC_10m': {'standard_name': 'wind_speed', 'units': 'm/s'},
