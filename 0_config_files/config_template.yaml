@@ -69,6 +69,8 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
 EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
 EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
+EM_EARTH_MIN_BBOX_SIZE: 0.1                                   # Minimum bounding box size in degrees for EM-Earth extraction (~10km)
+EM_EARTH_MAX_EXPANSION: 0.2                                   # Maximum expansion for small watersheds in degrees (~20km)
 
 ### ============================================= 4. Model Specific settings: =============================================================
 

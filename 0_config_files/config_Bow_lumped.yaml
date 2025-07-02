@@ -21,8 +21,8 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff_lumped"                                           # Name of experimental domain
-EXPERIMENT_ID: run_1                                          # Name of experiment
+DOMAIN_NAME: "Bow_at_Banff_lumped_elevation"                   # Name of experimental domain
+EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1979-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD

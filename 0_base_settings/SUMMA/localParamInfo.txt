@@ -175,9 +175,9 @@ k_macropore               |      1.0d-03 |       1.d-08 |       1.d-02
 kAnisotropic              |       1.0000 |       0.0001 |      10.0000
 zScale_TOPMODEL           |       2.5000 |       1.0000 |      10.0000
 compactedDepth            |       1.0000 |       0.0000 |       1.0000
-aquiferBaseflowRate       |       0.1000 |       0.0000 |       0.1000
-aquiferScaleFactor        |       0.3500 |       0.1000 |      10.0000
-aquiferBaseflowExp        |       2.0000 |       1.0000 |      10.0000
+aquiferBaseflowRate       |       1.0d-7 |       1.0d-9 |       1.0d-5
+aquiferScaleFactor        |       0.3500 |       0.1000 |       0.5000
+aquiferBaseflowExp        |       2.0000 |       1.0000 |       5.0000
 qSurfScale                |      50.0000 |       1.0000 |     100.0000
 specificYield             |       0.2000 |       0.1000 |       0.3000
 specificStorage           |       1.d-06 |       1.d-07 |       1.d-05

@@ -17,6 +17,7 @@ from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatool
 from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
 from utils.data.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
+from utils.data.archive_utils import tar_directory # type: ignore
 
 class DataManager:
     """
@@ -326,17 +327,6 @@ class DataManager:
         dataset with higher quality precipitation and temperature observations. The EM-Earth
         data is clipped to the domain's bounding box and time period, then stored in a 
         separate directory for later integration during preprocessing.
-        
-        The method:
-        1. Creates output directory for EM-Earth data
-        2. Determines the time range and file patterns needed
-        3. Processes EM-Earth files for the specified bounding box
-        4. Saves processed data in NetCDF format for later integration
-        
-        Raises:
-            FileNotFoundError: If EM-Earth data sources cannot be accessed
-            ValueError: If coordinate bounds or time period are invalid
-            Exception: For other errors during EM-Earth data acquisition
         """
         self.logger.info("Starting EM-Earth forcing data acquisition")
         
@@ -357,40 +347,77 @@ class DataManager:
             if not Path(em_earth_tmean_dir).exists():
                 raise FileNotFoundError(f"EM-Earth temperature directory not found: {em_earth_tmean_dir}")
             
-            # Get bounding box from configuration
+            # Get bounding box and check size
             bbox = self.config['BOUNDING_BOX_COORDS']  # format: lat_max/lon_min/lat_min/lon_max
+            bbox_parts = bbox.split('/')
+            lat_max, lon_min, lat_min, lon_max = map(float, bbox_parts)
+            lat_range = lat_max - lat_min
+            lon_range = lon_max - lon_min
+            
+            # Log watershed characteristics
+            self.logger.info(f"Watershed bounding box: {bbox}")
+            self.logger.info(f"Watershed size: {lat_range:.4f}° x {lon_range:.4f}° (~{lat_range*111:.1f}km x {lon_range*111:.1f}km)")
+            
+            # Check if watershed is very small
+            min_bbox_size = self.config.get('EM_EARTH_MIN_BBOX_SIZE', 0.1)
+            if lat_range < min_bbox_size or lon_range < min_bbox_size:
+                self.logger.warning(f"Very small watershed detected. EM-Earth processing will use spatial averaging.")
+                self.logger.info(f"Minimum bounding box size: {min_bbox_size}° (~{min_bbox_size*111:.1f}km)")
             
             # Parse time range
-            start_date = datetime.strptime(self.config['EXPERIMENT_TIME_START'], '%Y-%m-%d %H:%M')
-            end_date = datetime.strptime(self.config['EXPERIMENT_TIME_END'], '%Y-%m-%d %H:%M')
+            try:
+                start_date = datetime.strptime(self.config['EXPERIMENT_TIME_START'], '%Y-%m-%d %H:%M')
+                end_date = datetime.strptime(self.config['EXPERIMENT_TIME_END'], '%Y-%m-%d %H:%M')
+            except ValueError as e:
+                raise ValueError(f"Invalid date format in configuration: {str(e)}")
             
             self.logger.info(f"Processing EM-Earth data for period: {start_date} to {end_date}")
-            self.logger.info(f"Bounding box: {bbox}")
             
             # Generate list of year-month combinations to process
             year_months = self._generate_year_month_list(start_date, end_date)
+            
+            if not year_months:
+                raise ValueError("No valid year-month combinations found for the specified time period")
             
             self.logger.info(f"Processing {len(year_months)} month(s) of EM-Earth data")
             
             # Process each month of EM-Earth data
             processed_files = []
-            for year_month in year_months:
+            failed_months = []
+            
+            for i, year_month in enumerate(year_months, 1):
                 try:
+                    self.logger.info(f"Processing month {i}/{len(year_months)}: {year_month}")
                     processed_file = self._process_em_earth_month(
                         year_month, em_earth_prcp_dir, em_earth_tmean_dir, em_earth_dir, bbox
                     )
                     if processed_file:
                         processed_files.append(processed_file)
-                        self.logger.info(f"Successfully processed EM-Earth data for {year_month}")
+                        self.logger.info(f"✓ Successfully processed EM-Earth data for {year_month}")
+                    else:
+                        failed_months.append(year_month)
+                        self.logger.warning(f"✗ Failed to process EM-Earth data for {year_month}")
+                        
                 except Exception as e:
-                    self.logger.warning(f"Failed to process EM-Earth data for {year_month}: {str(e)}")
+                    failed_months.append(year_month)
+                    self.logger.warning(f"✗ Failed to process EM-Earth data for {year_month}: {str(e)}")
                     continue
             
+            # Check results
             if not processed_files:
                 raise ValueError("No EM-Earth data files were successfully processed")
             
-            self.logger.info(f"EM-Earth forcing data acquisition completed successfully")
-            self.logger.info(f"Processed {len(processed_files)} EM-Earth files")
+            success_rate = len(processed_files) / len(year_months) * 100
+            self.logger.info(f"EM-Earth forcing data acquisition completed")
+            self.logger.info(f"Success rate: {success_rate:.1f}% ({len(processed_files)}/{len(year_months)} months)")
+            
+            if failed_months:
+                self.logger.warning(f"Failed to process {len(failed_months)} months: {failed_months[:5]}{'...' if len(failed_months) > 5 else ''}")
+                
+                # If too many failures, consider it a critical issue
+                if success_rate < 50:
+                    raise ValueError(f"EM-Earth processing success rate too low ({success_rate:.1f}%). "
+                                f"This may indicate the watershed is outside EM-Earth coverage or files are missing.")
             
         except Exception as e:
             self.logger.error(f"Error during EM-Earth forcing data acquisition: {str(e)}")
@@ -493,45 +520,133 @@ class DataManager:
         
         lat_max, lon_min, lat_min, lon_max = map(float, bbox_parts)
         
+        # Calculate bounding box size for diagnostics
+        lat_range = lat_max - lat_min
+        lon_range = lon_max - lon_min
+        
         self.logger.info(f"Processing EM-Earth data with bounding box: {lat_min}-{lat_max}°N, {lon_min}-{lon_max}°E")
+        self.logger.info(f"Bounding box size: {lat_range:.4f}° x {lon_range:.4f}° (~{lat_range*111:.1f}km x {lon_range*111:.1f}km)")
+        
+        # For very small watersheds, expand the bounding box slightly to ensure we capture EM-Earth data
+        min_bbox_size = 0.1  # Minimum bounding box size in degrees (~10km)
+        original_bbox = (lat_min, lat_max, lon_min, lon_max)
+        
+        if lat_range < min_bbox_size or lon_range < min_bbox_size:
+            self.logger.warning(f"Very small watershed detected (lat: {lat_range:.4f}°, lon: {lon_range:.4f}°)")
+            self.logger.info(f"Expanding bounding box to minimum size of {min_bbox_size}° to capture EM-Earth data")
+            
+            # Expand around the center
+            lat_center = (lat_min + lat_max) / 2
+            lon_center = (lon_min + lon_max) / 2
+            
+            # Ensure minimum size
+            lat_expand = max(0, (min_bbox_size - lat_range) / 2)
+            lon_expand = max(0, (min_bbox_size - lon_range) / 2)
+            
+            lat_min_expanded = lat_center - min_bbox_size/2
+            lat_max_expanded = lat_center + min_bbox_size/2
+            lon_min_expanded = lon_center - min_bbox_size/2
+            lon_max_expanded = lon_center + min_bbox_size/2
+            
+            self.logger.info(f"Expanded bounding box: {lat_min_expanded:.4f}-{lat_max_expanded:.4f}°N, {lon_min_expanded:.4f}-{lon_max_expanded:.4f}°E")
+            
+            # Use expanded coordinates for data extraction
+            lat_min_extract, lat_max_extract = lat_min_expanded, lat_max_expanded
+            lon_min_extract, lon_max_extract = lon_min_expanded, lon_max_expanded
+        else:
+            lat_min_extract, lat_max_extract = lat_min, lat_max
+            lon_min_extract, lon_max_extract = lon_min, lon_max
         
         # Open datasets
         try:
             prcp_ds = xr.open_dataset(prcp_file)
             tmean_ds = xr.open_dataset(tmean_file)
+            
+            # Log EM-Earth grid information
+            self.logger.info(f"EM-Earth grid - Lat range: {float(prcp_ds.lat.min()):.4f} to {float(prcp_ds.lat.max()):.4f}")
+            self.logger.info(f"EM-Earth grid - Lon range: {float(prcp_ds.lon.min()):.4f} to {float(prcp_ds.lon.max()):.4f}")
+            self.logger.info(f"EM-Earth grid - Resolution: ~{float(prcp_ds.lat.diff('lat').mean()):.4f}° lat, ~{float(prcp_ds.lon.diff('lon').mean()):.4f}° lon")
+            
         except Exception as e:
             raise ValueError(f"Error opening EM-Earth files: {str(e)}")
         
-        # Subset to bounding box
+        # Subset to bounding box (use expanded box for extraction)
         try:
             # Handle longitude wrapping if necessary
-            if lon_min > lon_max:  # Crossing 180° meridian
+            if lon_min_extract > lon_max_extract:  # Crossing 180° meridian
                 prcp_subset = prcp_ds.where(
-                    (prcp_ds.lat >= lat_min) & (prcp_ds.lat <= lat_max) &
-                    ((prcp_ds.lon >= lon_min) | (prcp_ds.lon <= lon_max)), drop=True
+                    (prcp_ds.lat >= lat_min_extract) & (prcp_ds.lat <= lat_max_extract) &
+                    ((prcp_ds.lon >= lon_min_extract) | (prcp_ds.lon <= lon_max_extract)), drop=True
                 )
                 tmean_subset = tmean_ds.where(
-                    (tmean_ds.lat >= lat_min) & (tmean_ds.lat <= lat_max) &
-                    ((tmean_ds.lon >= lon_min) | (tmean_ds.lon <= lon_max)), drop=True
+                    (tmean_ds.lat >= lat_min_extract) & (tmean_ds.lat <= lat_max_extract) &
+                    ((tmean_ds.lon >= lon_min_extract) | (tmean_ds.lon <= lon_max_extract)), drop=True
                 )
             else:  # Normal case
                 prcp_subset = prcp_ds.where(
-                    (prcp_ds.lat >= lat_min) & (prcp_ds.lat <= lat_max) &
-                    (prcp_ds.lon >= lon_min) & (prcp_ds.lon <= lon_max), drop=True
+                    (prcp_ds.lat >= lat_min_extract) & (prcp_ds.lat <= lat_max_extract) &
+                    (prcp_ds.lon >= lon_min_extract) & (prcp_ds.lon <= lon_max_extract), drop=True
                 )
                 tmean_subset = tmean_ds.where(
-                    (tmean_ds.lat >= lat_min) & (tmean_ds.lat <= lat_max) &
-                    (tmean_ds.lon >= lon_min) & (tmean_ds.lon <= lon_max), drop=True
+                    (tmean_ds.lat >= lat_min_extract) & (tmean_ds.lat <= lat_max_extract) &
+                    (tmean_ds.lon >= lon_min_extract) & (tmean_ds.lon <= lon_max_extract), drop=True
                 )
             
             # Check if we have any data after subsetting
-            if prcp_subset.sizes['lat'] == 0 or prcp_subset.sizes['lon'] == 0:
-                raise ValueError("No precipitation data found within the specified bounding box")
-            if tmean_subset.sizes['lat'] == 0 or tmean_subset.sizes['lon'] == 0:
-                raise ValueError("No temperature data found within the specified bounding box")
+            if prcp_subset.sizes.get('lat', 0) == 0 or prcp_subset.sizes.get('lon', 0) == 0:
+                # Try even larger expansion for very sparse grids
+                self.logger.warning("No precipitation data found with initial expansion, trying larger expansion")
+                
+                # Expand to 0.2 degrees
+                larger_expand = 0.2
+                lat_center = (original_bbox[0] + original_bbox[1]) / 2
+                lon_center = (original_bbox[2] + original_bbox[3]) / 2
+                
+                lat_min_large = lat_center - larger_expand
+                lat_max_large = lat_center + larger_expand
+                lon_min_large = lon_center - larger_expand
+                lon_max_large = lon_center + larger_expand
+                
+                self.logger.info(f"Trying larger expansion: {lat_min_large:.4f}-{lat_max_large:.4f}°N, {lon_min_large:.4f}-{lon_max_large:.4f}°E")
+                
+                prcp_subset = prcp_ds.where(
+                    (prcp_ds.lat >= lat_min_large) & (prcp_ds.lat <= lat_max_large) &
+                    (prcp_ds.lon >= lon_min_large) & (prcp_ds.lon <= lon_max_large), drop=True
+                )
+                tmean_subset = tmean_ds.where(
+                    (tmean_ds.lat >= lat_min_large) & (tmean_ds.lat <= lat_max_large) &
+                    (tmean_ds.lon >= lon_min_large) & (tmean_ds.lon <= lon_max_large), drop=True
+                )
+            
+            # Final check
+            if prcp_subset.sizes.get('lat', 0) == 0 or prcp_subset.sizes.get('lon', 0) == 0:
+                raise ValueError("No precipitation data found within the expanded bounding box. The watershed may be too small or outside the EM-Earth coverage area.")
+            if tmean_subset.sizes.get('lat', 0) == 0 or tmean_subset.sizes.get('lon', 0) == 0:
+                raise ValueError("No temperature data found within the expanded bounding box. The watershed may be too small or outside the EM-Earth coverage area.")
+            
+            self.logger.info(f"Successfully extracted EM-Earth data - Prcp grid: {prcp_subset.sizes['lat']} x {prcp_subset.sizes['lon']}")
+            self.logger.info(f"Successfully extracted EM-Earth data - Temp grid: {tmean_subset.sizes['lat']} x {tmean_subset.sizes['lon']}")
             
         except Exception as e:
             raise ValueError(f"Error subsetting EM-Earth data: {str(e)}")
+        
+        # If we used an expanded bounding box, spatially average to represent the original small watershed
+        if (lat_min_extract, lat_max_extract, lon_min_extract, lon_max_extract) != original_bbox:
+            self.logger.info("Computing spatial average over expanded area to represent the small watershed")
+            
+            # For small watersheds, take spatial mean over the extracted area
+            # This gives us a single representative value for the watershed
+            prcp_subset = prcp_subset.mean(dim=['lat', 'lon'], keep_attrs=True)
+            tmean_subset = tmean_subset.mean(dim=['lat', 'lon'], keep_attrs=True)
+            
+            # Add dummy spatial dimensions to maintain structure
+            prcp_subset = prcp_subset.expand_dims({'lat': [original_bbox[0] + (original_bbox[1] - original_bbox[0])/2]})
+            prcp_subset = prcp_subset.expand_dims({'lon': [original_bbox[2] + (original_bbox[3] - original_bbox[2])/2]})
+            
+            tmean_subset = tmean_subset.expand_dims({'lat': [original_bbox[0] + (original_bbox[1] - original_bbox[0])/2]})
+            tmean_subset = tmean_subset.expand_dims({'lon': [original_bbox[2] + (original_bbox[3] - original_bbox[2])/2]})
+            
+            self.logger.info("Applied spatial averaging for small watershed representation")
         
         # Merge datasets
         try:
@@ -561,14 +676,22 @@ class DataManager:
                     )
                     merged_ds[var] = temp_interp
             
-            # Add metadata
+            # Add metadata (convert booleans to integers for NetCDF compatibility)
+            is_small_watershed = lat_range < min_bbox_size or lon_range < min_bbox_size
+            is_spatially_averaged = (lat_min_extract, lat_max_extract, lon_min_extract, lon_max_extract) != original_bbox
+            
             merged_ds.attrs.update({
                 'Dataset': 'EM-Earth: Ensemble Meteorological Dataset for Planet Earth',
                 'Developer': 'Guoqiang Tang et al. in Center for Hydrology, Coldwater Lab, University of Saskatchewan',
                 'Type': 'Deterministic station-reanalysis merged estimates',
-                'subset_bounding_box': bbox,
+                'original_bounding_box': '/'.join(map(str, original_bbox)),
+                'extraction_bounding_box': f"{lat_min_extract}/{lon_min_extract}/{lat_max_extract}/{lon_max_extract}",
+                'small_watershed_processing': int(is_small_watershed),  # Convert boolean to int
+                'spatial_averaging_applied': int(is_spatially_averaged),  # Convert boolean to int
+                'watershed_size_deg': f"{lat_range:.6f}x{lon_range:.6f}",
+                'watershed_size_km': f"{lat_range*111:.2f}x{lon_range*111:.2f}",
                 'subset_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'processing_script': 'CONFLUENCE EM-Earth subset and merge',
+                'processing_script': 'CONFLUENCE EM-Earth subset and merge with small watershed handling',
                 'merged_variables': f"prcp: {list(prcp_subset.data_vars.keys())}, tmean: {list(tmean_subset.data_vars.keys())}"
             })
             
@@ -577,7 +700,7 @@ class DataManager:
             merged_ds.to_netcdf(output_file)
             
             self.logger.info(f"Successfully created merged EM-Earth file: {output_file}")
-            self.logger.info(f"Spatial dimensions: {merged_ds.sizes['lat']} x {merged_ds.sizes['lon']}")
+            self.logger.info(f"Final spatial dimensions: {merged_ds.sizes['lat']} x {merged_ds.sizes['lon']}")
             self.logger.info(f"Time dimension: {merged_ds.sizes['time']}")
             
         except Exception as e:
@@ -587,7 +710,7 @@ class DataManager:
             # Close datasets
             prcp_ds.close()
             tmean_ds.close()
-
+            
     def process_observed_data(self):
         """
         Process observed streamflow data.
@@ -693,7 +816,54 @@ class DataManager:
             #     from utils.data.data_utils import DataAcquisitionProcessor
             #     dap = DataAcquisitionProcessor(self.config, self.logger)
             #     dap.run_data_acquisition()
-            
+
+            # Archive raw forcing data to save storage space
+            self.logger.info("Archiving raw forcing data to save storage space")
+            try:
+                raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+                if raw_data_dir.exists():
+                    success = tar_directory(
+                        raw_data_dir, 
+                        "raw_forcing_data.tar.gz",
+                        remove_original=True,
+                        logger=self.logger
+                    )
+                    if success:
+                        self.logger.info("Raw forcing data archived successfully")
+                    else:
+                        self.logger.warning("Failed to archive raw forcing data")
+                
+                # Also archive EM-Earth raw data if it exists
+                if self.config.get('SUPPLEMENT_FORCING', False):
+                    em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
+                    if em_earth_dir.exists():
+                        success = tar_directory(
+                            em_earth_dir,
+                            "raw_em_earth_data.tar.gz", 
+                            remove_original=True,
+                            logger=self.logger
+                        )
+                        if success:
+                            self.logger.info("Raw EM-Earth data archived successfully")
+                        else:
+                            self.logger.warning("Failed to archive raw EM-Earth data")
+                        
+                        # Also archive remapped EM-Earth data if it exists
+                        remapped_dir = self.project_dir / 'forcing' / 'em_earth_remapped'
+                        if remapped_dir.exists():
+                            success = tar_directory(
+                                remapped_dir,
+                                "remapped_em_earth_data.tar.gz",
+                                remove_original=True, 
+                                logger=self.logger
+                            )
+                            if success:
+                                self.logger.info("Remapped EM-Earth data archived successfully")
+                
+            except Exception as e:
+                self.logger.warning(f"Error during raw data archiving: {str(e)}")
+
+                # Continue execution even if archiving fails
             self.logger.info("Model-agnostic preprocessing completed successfully")
             
         except Exception as e:
@@ -804,7 +974,6 @@ class DataManager:
             basin_shapefile: Path to basin shapefile for spatial averaging
         """
         try:
-            
             # Read EM-Earth data
             em_ds = xr.open_dataset(input_file)
             
@@ -829,65 +998,265 @@ class DataManager:
                 'hru': basin_ids
             })
             
-            # Process each variable
-            for var_name in em_ds.data_vars:
-                if var_name in ['prcp', 'prcp_corrected', 'tmean']:
-                    self.logger.info(f"Processing variable: {var_name}")
+            # Check if this is a spatially averaged small watershed (single grid point)
+            is_single_point = (len(em_ds.lat) == 1 and len(em_ds.lon) == 1)
+            
+            # Debug: log the spatial dimensions and check for small watershed processing flag
+            self.logger.info(f"EM-Earth spatial dimensions: {len(em_ds.lat)} lat x {len(em_ds.lon)} lon")
+            self.logger.info(f"Lat values: {em_ds.lat.values}")
+            self.logger.info(f"Lon values: {em_ds.lon.values}")
+            
+            # Check for small watershed processing flag in attributes
+            small_watershed_flag = em_ds.attrs.get('small_watershed_processing', 0)
+            spatial_averaging_flag = em_ds.attrs.get('spatial_averaging_applied', 0)
+            
+            self.logger.info(f"Small watershed processing flag: {small_watershed_flag}")
+            self.logger.info(f"Spatial averaging applied flag: {spatial_averaging_flag}")
+            
+            # Use either dimension check or flag check
+            is_single_point = is_single_point or (small_watershed_flag == 1) or (spatial_averaging_flag == 1)
+            
+            self.logger.info(f"Final is_single_point decision: {is_single_point}")
+            
+            # Process variables - restart with single-point if multi-point fails
+            processing_attempt = 0
+            max_attempts = 2
+            
+            while processing_attempt < max_attempts:
+                processing_attempt += 1
+                
+                if is_single_point:
+                    self.logger.info("Processing spatially averaged small watershed - using direct value assignment")
                     
-                    # Get variable data
-                    var_data = em_ds[var_name]
-                    
-                    # Create basin-averaged values for each time step
-                    basin_values = np.full((len(em_ds.time), len(basin_ids)), np.nan)
-                    
-                    for t_idx, time_val in enumerate(em_ds.time):
-                        # Get data for this time step
-                        time_data = var_data.isel(time=t_idx)
-                        
-                        # Create temporary raster for zonal statistics
-                        transform = rasterio.transform.from_bounds(
-                            float(em_ds.lon.min()), float(em_ds.lat.min()),
-                            float(em_ds.lon.max()), float(em_ds.lat.max()),
-                            len(em_ds.lon), len(em_ds.lat)
-                        )
-                        
-                        # Calculate zonal statistics for each basin
-                        stats = zonal_stats(
-                            basins_gdf.geometry,
-                            time_data.values,
-                            affine=transform,
-                            stats=['mean'],
-                            nodata=np.nan
-                        )
-                        
-                        # Store basin-averaged values
-                        for b_idx, basin_id in enumerate(basin_ids):
-                            basin_row = basins_gdf[basins_gdf[basin_id_col] == basin_id].iloc[0]
-                            geom_idx = basins_gdf.index[basins_gdf[basin_id_col] == basin_id].tolist()[0]
+                    # For single point data, assign the same value to all basins
+                    for var_name in em_ds.data_vars:
+                        if var_name in ['prcp', 'prcp_corrected', 'tmean']:
+                            self.logger.info(f"Processing variable: {var_name}")
                             
-                            if geom_idx < len(stats) and stats[geom_idx]['mean'] is not None:
-                                basin_values[t_idx, b_idx] = stats[geom_idx]['mean']
+                            # Get variable data (single point for all times)
+                            var_data = em_ds[var_name]
+                            
+                            # Debug: log the shape of the data
+                            self.logger.info(f"Variable {var_name} shape: {var_data.shape}")
+                            self.logger.info(f"Variable {var_name} dimensions: {var_data.dims}")
+                            
+                            # Extract time series - handle different possible shapes
+                            self.logger.info(f"Time dimension location: {var_data.dims.index('time')}")
+                            
+                            if len(var_data.dims) == 3:  # (time, lat, lon) or (lon, lat, time) etc.
+                                time_dim_index = var_data.dims.index('time')
+                                self.logger.info(f"3D data with time at index {time_dim_index}")
+                                
+                                if time_dim_index == 0:  # (time, lat, lon)
+                                    time_series = var_data.values[:, 0, 0]
+                                    self.logger.info(f"Extracting as [:, 0, 0] from shape {var_data.shape}")
+                                elif time_dim_index == 1:  # (lat, time, lon) - unusual but possible
+                                    time_series = var_data.values[0, :, 0]
+                                    self.logger.info(f"Extracting as [0, :, 0] from shape {var_data.shape}")
+                                elif time_dim_index == 2:  # (lon, lat, time) or (lat, lon, time)
+                                    time_series = var_data.values[0, 0, :]
+                                    self.logger.info(f"Extracting as [0, 0, :] from shape {var_data.shape}")
+                                else:
+                                    raise ValueError(f"Unexpected time dimension index: {time_dim_index}")
+                                    
+                            elif len(var_data.dims) == 1:  # Already time series
+                                if var_data.dims[0] == 'time':
+                                    time_series = var_data.values
+                                    self.logger.info(f"Using 1D time series directly")
+                                else:
+                                    raise ValueError(f"1D data but dimension is not time: {var_data.dims}")
+                                    
+                            elif len(var_data.dims) == 2 and 'time' in var_data.dims:
+                                # Could be (time, lat) or (time, lon) or (lat, time) etc.
+                                time_dim_index = var_data.dims.index('time')
+                                self.logger.info(f"2D data with time at index {time_dim_index}")
+                                
+                                if time_dim_index == 0:
+                                    time_series = var_data.values[:, 0] if var_data.shape[1] > 0 else var_data.values.flatten()
+                                    self.logger.info(f"Extracting as [:, 0] from shape {var_data.shape}")
+                                else:
+                                    time_series = var_data.values[0, :] if var_data.shape[0] > 0 else var_data.values.flatten()
+                                    self.logger.info(f"Extracting as [0, :] from shape {var_data.shape}")
+                            else:
+                                self.logger.error(f"Unexpected variable dimensions: {var_data.dims}, shape: {var_data.shape}")
+                                raise ValueError(f"Cannot handle variable {var_name} with dimensions {var_data.dims}")
+                            
+                            # Additional debugging
+                            self.logger.info(f"Raw extraction result shape: {time_series.shape}")
+                            self.logger.info(f"Raw extraction result type: {type(time_series)}")
+                            if hasattr(time_series, 'ndim'):
+                                self.logger.info(f"Raw extraction result ndim: {time_series.ndim}")
+                            
+                            # Ensure it's a 1D array
+                            time_series = np.asarray(time_series).flatten()
+                            self.logger.info(f"After flattening shape: {time_series.shape}")
+                            
+                            self.logger.info(f"Extracted time series shape: {time_series.shape}")
+                            
+                            # Ensure we have the right number of time steps
+                            if len(time_series) != len(em_ds.time):
+                                self.logger.error(f"Time series length ({len(time_series)}) doesn't match time coordinate length ({len(em_ds.time)})")
+                                raise ValueError(f"Time dimension mismatch for variable {var_name}")
+                            
+                            # Create basin-averaged values by repeating the time series for all basins
+                            basin_values = np.tile(
+                                time_series.reshape(-1, 1),  # Ensure column vector shape (time, 1)
+                                (1, len(basin_ids))          # Repeat for each basin (time, hru)
+                            )
+                            
+                            self.logger.info(f"Basin values shape: {basin_values.shape}")
+                            self.logger.info(f"Expected shape: ({len(em_ds.time)}, {len(basin_ids)})")
+                            
+                            # Add to output dataset
+                            output_ds[var_name] = xr.DataArray(
+                                basin_values,
+                                dims=['time', 'hru'],
+                                coords={'time': em_ds.time, 'hru': basin_ids},
+                                attrs=var_data.attrs
+                            )
+                            
+                            # Update attributes to indicate single point processing
+                            output_ds[var_name].attrs.update({
+                                'spatial_processing': 'single_point_replication',
+                                'note': 'Single spatially-averaged value applied to all basins'
+                            })
                     
-                    # Add to output dataset
-                    output_ds[var_name] = xr.DataArray(
-                        basin_values,
-                        dims=['time', 'hru'],
-                        coords={'time': em_ds.time, 'hru': basin_ids},
-                        attrs=var_data.attrs
-                    )
+                    # Success - break out of retry loop
+                    break
+                
+                else:
+                    self.logger.info("Processing multi-point EM-Earth data - using zonal statistics")
+                    
+                    # Process each variable using zonal statistics (original approach)
+                    fallback_needed = False
+                    
+                    for var_name in em_ds.data_vars:
+                        if var_name in ['prcp', 'prcp_corrected', 'tmean']:
+                            self.logger.info(f"Processing variable: {var_name}")
+                            
+                            # Get variable data
+                            var_data = em_ds[var_name]
+                            
+                            # Create basin-averaged values for each time step
+                            basin_values = np.full((len(em_ds.time), len(basin_ids)), np.nan)
+                            
+                            # Create rasterio transform for zonal statistics
+                            try:
+                                # Check for valid spatial extent before creating transform
+                                lat_min, lat_max = float(em_ds.lat.min()), float(em_ds.lat.max())
+                                lon_min, lon_max = float(em_ds.lon.min()), float(em_ds.lon.max())
+                                
+                                self.logger.info(f"Spatial extent - Lat: {lat_min} to {lat_max}, Lon: {lon_min} to {lon_max}")
+                                
+                                # Check for zero extent (which would cause division by zero)
+                                lat_extent = lat_max - lat_min
+                                lon_extent = lon_max - lon_min
+                                
+                                if lat_extent == 0 or lon_extent == 0:
+                                    self.logger.warning(f"Zero spatial extent detected (lat: {lat_extent}, lon: {lon_extent})")
+                                    self.logger.warning("Falling back to single-point processing")
+                                    
+                                    # Force single-point processing
+                                    is_single_point = True
+                                    fallback_needed = True
+                                    break  # Break out of variable loop to restart with single-point logic
+                                
+                                transform = rasterio.transform.from_bounds(
+                                    lon_min, lat_min, lon_max, lat_max,
+                                    len(em_ds.lon), len(em_ds.lat)
+                                )
+                                
+                                self.logger.info(f"Created transform: {transform}")
+                                
+                            except Exception as e:
+                                self.logger.error(f"Failed to create rasterio transform: {str(e)}")
+                                self.logger.error(f"Lon range: {lon_min} to {lon_max}")
+                                self.logger.error(f"Lat range: {lat_min} to {lat_max}")
+                                self.logger.error(f"Grid size: {len(em_ds.lon)} x {len(em_ds.lat)}")
+                                
+                                # Fall back to single-point processing
+                                self.logger.warning("Falling back to single-point processing due to transform error")
+                                is_single_point = True
+                                fallback_needed = True
+                                break
+                            
+                            for t_idx, time_val in enumerate(em_ds.time):
+                                # Get data for this time step
+                                time_data = var_data.isel(time=t_idx)
+                                
+                                # Calculate zonal statistics for each basin
+                                try:
+                                    stats = zonal_stats(
+                                        basins_gdf.geometry,
+                                        time_data.values,
+                                        affine=transform,
+                                        stats=['mean'],
+                                        nodata=np.nan
+                                    )
+                                except Exception as e:
+                                    self.logger.error(f"Zonal statistics failed for time {t_idx}: {str(e)}")
+                                    raise
+                                
+                                # Store basin-averaged values
+                                for b_idx, basin_id in enumerate(basin_ids):
+                                    basin_row = basins_gdf[basins_gdf[basin_id_col] == basin_id].iloc[0]
+                                    geom_idx = basins_gdf.index[basins_gdf[basin_id_col] == basin_id].tolist()[0]
+                                    
+                                    if geom_idx < len(stats) and stats[geom_idx]['mean'] is not None:
+                                        basin_values[t_idx, b_idx] = stats[geom_idx]['mean']
+                            
+                            # Add to output dataset
+                            output_ds[var_name] = xr.DataArray(
+                                basin_values,
+                                dims=['time', 'hru'],
+                                coords={'time': em_ds.time, 'hru': basin_ids},
+                                attrs=var_data.attrs
+                            )
+                            
+                            # Update attributes
+                            output_ds[var_name].attrs.update({
+                                'spatial_processing': 'zonal_statistics',
+                                'note': 'Basin-averaged using zonal statistics'
+                            })
+                    
+                    if fallback_needed:
+                        # Clear output dataset and retry with single-point processing
+                        output_ds = xr.Dataset()
+                        output_ds = output_ds.assign_coords({
+                            'time': em_ds.time,
+                            'hru': basin_ids
+                        })
+                        continue  # Restart the while loop
+                    else:
+                        # Success - break out of retry loop
+                        break
+            
+            # Check if processing was successful
+            if not output_ds.data_vars:
+                if processing_attempt >= max_attempts:
+                    raise ValueError("Failed to process EM-Earth data after multiple attempts")
+                else:
+                    raise ValueError("No variables were successfully processed from EM-Earth data")
+            
+            self.logger.info(f"Successfully processed {len(output_ds.data_vars)} variables from EM-Earth data")
             
             # Add metadata
+            processing_method = 'single_point_replication' if is_single_point else 'zonal_statistics'
+            
             output_ds.attrs.update({
                 'remapped_from': str(input_file),
                 'remapping_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'remapping_method': 'Zonal statistics with basin shapefile',
-                'basin_shapefile': str(basin_shapefile)
+                'remapping_method': processing_method,
+                'basin_shapefile': str(basin_shapefile),
+                'input_grid_size': f"{len(em_ds.lat)}x{len(em_ds.lon)}",
+                'output_basins': len(basin_ids),
+                'small_watershed_processing': int(is_single_point)
             })
             
             # Save remapped dataset
             output_ds.to_netcdf(output_file)
             
-            self.logger.info(f"Successfully remapped {input_file.name} to basin grid")
+            self.logger.info(f"Successfully remapped {input_file.name} to basin grid using {processing_method}")
             
             # Close datasets
             em_ds.close()

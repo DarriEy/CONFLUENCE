@@ -34,6 +34,8 @@ from utils.models.flash_utils import FLASHPostProcessor # type: ignore
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
 from utils.reporting.result_vizualisation_utils import TimeseriesVisualizer # type: ignore
 
+# Data management
+from utils.data.archive_utils import tar_directory # type: ignore
 
 class ModelManager:
     """
@@ -203,7 +205,26 @@ class ModelManager:
                 import traceback
                 self.logger.error(traceback.format_exc())
                 raise
-                
+
+        # Archive basin-averaged forcing data to save storage space
+        self.logger.info("Archiving basin-averaged forcing data to save storage space")
+        try:
+            basin_data_dir = self.project_dir / 'forcing' / 'basin_averaged_data'
+            if basin_data_dir.exists():
+                success = tar_directory(
+                    basin_data_dir,
+                    "basin_averaged_forcing_data.tar.gz",
+                    remove_original=True,
+                    logger=self.logger
+                )
+                if success:
+                    self.logger.info("Basin-averaged forcing data archived successfully")
+                else:
+                    self.logger.warning("Failed to archive basin-averaged forcing data")
+        except Exception as e:
+            self.logger.warning(f"Error during basin-averaged data archiving: {str(e)}")
+            # Continue execution even if archiving fails
+
         self.logger.info("Model-specific preprocessing completed")
     
     def run_models(self):

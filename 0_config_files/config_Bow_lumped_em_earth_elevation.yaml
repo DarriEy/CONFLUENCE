@@ -21,7 +21,7 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: Bow_at_Banff_lumped_casr                          # Name of experimental domain
+DOMAIN_NAME: Bow_at_Banff_lumped_em_earth_elevation                          # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
@@ -53,7 +53,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
+DOMAIN_DISCRETIZATION: elevation                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
 COMBINED_DISCRETIZATION_METHODS:                               # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -118,7 +118,7 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 ### ============================================= 3. Model Agnostic settings: =============================================================
 
 # Forcing data settings
-FORCING_DATASET: CASR                                          # Forcing dataset to use
+FORCING_DATASET: ERA5                                          # Forcing dataset to use
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -127,6 +127,11 @@ LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
 FORCING_PATH: default                                          # If default, uses, self.project_dir / forcing / raw_data
+
+# EM-Earth forcing supplementation settings
+SUPPLEMENT_FORCING: True                                      # Supplement forcing data with precip and temperature from EM-EARTH
+EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
+EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
 
 # Intersection paths (for zonal statistics)
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.
