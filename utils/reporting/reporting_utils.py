@@ -841,7 +841,7 @@ class VisualizationReporter:
             
             # Check if we need to load river network (not needed for lumped domains)
             domain_method = self.config.get('DOMAIN_DEFINITION_METHOD')
-            load_river_network = domain_method != 'lumped'
+            load_river_network = domain_method not in ['lumped', 'point']
             
             # River network - only load if not lumped
             if load_river_network:

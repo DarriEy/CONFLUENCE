@@ -89,7 +89,7 @@ class DomainManager:
                 'GRU_ID': [1],
                 'GRU_area': [area_deg2],  # Area in square degrees
                 'basin_name': [self.domain_name],
-                'domain_method': ['point']
+                'method': ['point']
             }, geometry=[polygon], crs='EPSG:4326')
             
             # Create output directory
