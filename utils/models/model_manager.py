@@ -141,29 +141,10 @@ class ModelManager:
             'FLASH': 'run_flash',
             'MESH': 'run_MESH',
         }
-    
+                
     def preprocess_models(self):
         """
         Process the forcing data into model-specific formats.
-        
-        This method converts the model-agnostic forcing data into formats required
-        by each specific hydrological model. For each configured model, it:
-        1. Creates the model-specific input directory
-        2. Loads the appropriate preprocessor based on the model type
-        3. Executes the preprocessing operations
-        
-        Special handling is provided for SUMMA when used with the MizuRoute
-        routing model, which requires additional preprocessing for distributed
-        and semi-distributed simulations.
-        
-        The method iterates through all models specified in the HYDROLOGICAL_MODEL
-        configuration parameter, which can be a comma-separated list for multi-model
-        simulations.
-        
-        Raises:
-            FileNotFoundError: If required input files cannot be found
-            ValueError: If preprocessing parameters are invalid
-            Exception: For other model-specific preprocessing errors
         """
         self.logger.info("Starting model-specific preprocessing")
         
@@ -192,10 +173,15 @@ class ModelManager:
                 preprocessor = preprocessor_class(self.config, self.logger)
                 preprocessor.run_preprocessing()
                 
-                # Special handling for SUMMA routing (MizuRoute)
+                # Enhanced routing logic for SUMMA
                 if model == 'SUMMA':
-                    spatial_mode = self.config.get('DOMAIN_DEFINITION_METHOD', '')
-                    if spatial_mode not in ['point', 'lumped']:
+                    routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+                    domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+                    
+                    # Determine if we need mizuRoute
+                    needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+                    
+                    if needs_mizuroute:
                         self.logger.info("Initializing MizuRoute preprocessor")
                         mp = MizuRoutePreProcessor(self.config, self.logger)
                         mp.run_preprocessing()
@@ -206,7 +192,7 @@ class ModelManager:
                 self.logger.error(traceback.format_exc())
                 raise
 
-        # Archive basin-averaged forcing data to save storage space
+        # Archive basin-averaged forcing data
         self.logger.info("Archiving basin-averaged forcing data to save storage space")
         try:
             basin_data_dir = self.project_dir / 'forcing' / 'basin_averaged_data'
@@ -223,36 +209,12 @@ class ModelManager:
                     self.logger.warning("Failed to archive basin-averaged forcing data")
         except Exception as e:
             self.logger.warning(f"Error during basin-averaged data archiving: {str(e)}")
-            # Continue execution even if archiving fails
 
         self.logger.info("Model-specific preprocessing completed")
-    
+
     def run_models(self):
         """
         Run all configured hydrological models.
-        
-        This method executes the simulation for each hydrological model specified
-        in the configuration. For each model, it:
-        1. Loads the appropriate runner class
-        2. Creates a runner instance
-        3. Executes the model-specific run method
-        4. Handles any routing operations (e.g., MizuRoute for SUMMA)
-        
-        After all models have been executed, the method calls visualize_outputs()
-        to generate standardized visualizations of the simulation results.
-        
-        The method supports multiple models through the HYDROLOGICAL_MODEL 
-        configuration parameter, which can be a comma-separated list for multi-model
-        simulations and comparisons.
-        
-        Special handling is provided for SUMMA when used with spatially distributed
-        configurations, which requires the MizuRoute routing model to route runoff
-        through the stream network.
-        
-        Raises:
-            FileNotFoundError: If model executable or input files cannot be found
-            RuntimeError: If model execution fails
-            Exception: For other model-specific execution errors
         """
         self.logger.info("Starting model runs")
         
@@ -281,11 +243,21 @@ class ModelManager:
                     self.logger.error(f"Runner method not found for model: {model}")
                     continue
                 
-                # Special handling for SUMMA routing (MizuRoute)
+                # Enhanced routing logic for SUMMA
                 if model == 'SUMMA':
-                    domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', '')
+                    routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+                    domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
                     
-                    if domain_method != 'lumped' and domain_method != 'point':
+                    # Determine if we need mizuRoute
+                    needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+                    
+                    if needs_mizuroute:
+                        # Handle lumped-to-distributed conversion if needed
+                        if domain_method == 'lumped' and routing_delineation == 'river_network':
+                            self.logger.info("Converting lumped SUMMA output for distributed routing")
+                            self._convert_lumped_to_distributed_routing()
+                        
+                        # Run mizuRoute
                         mizuroute_runner = MizuRouteRunner(self.config, self.logger)
                         mizuroute_runner.run_mizuroute()
                 
@@ -299,31 +271,250 @@ class ModelManager:
         # After all models run, visualize outputs
         self.visualize_outputs()
         self.logger.info("Model runs completed")
-    
+
+    def _needs_mizuroute_routing(self, domain_method: str, routing_delineation: str) -> bool:
+        """
+        Determine if mizuRoute routing is needed based on domain and routing configuration.
+        
+        Args:
+            domain_method (str): Domain definition method
+            routing_delineation (str): Routing delineation method
+            
+        Returns:
+            bool: True if mizuRoute routing is needed
+        """
+        # Original logic: distributed domain always needs routing
+        if domain_method not in ['point', 'lumped']:
+            return True
+        
+        # New logic: lumped domain with river network routing
+        if domain_method == 'lumped' and routing_delineation == 'river_network':
+            return True
+        
+        # Point simulations never need routing
+        # Lumped domain with lumped routing doesn't need mizuRoute
+        return False
+
+    def _convert_lumped_to_distributed_routing(self):
+        """
+        Convert lumped SUMMA output to distributed mizuRoute forcing.
+        
+        This method replicates the functionality from the manual script,
+        broadcasting the single lumped runoff to all routing segments.
+        Creates mizuRoute-compatible files with proper naming and variables.
+        Only processes the timestep file for mizuRoute routing.
+        """
+        self.logger.info("Converting lumped SUMMA output for distributed routing")
+        
+        try:
+            # Import required modules
+            import xarray as xr
+            import numpy as np
+            import pandas as pd
+            import netCDF4 as nc4
+            import shutil
+            import tempfile
+            
+            experiment_id = self.config.get('EXPERIMENT_ID')
+            
+            # Paths
+            summa_output_dir = self.project_dir / "simulations" / experiment_id / "SUMMA"
+            mizuroute_settings_dir = self.project_dir / "settings" / "mizuRoute"
+            
+            # Only process the timestep file for mizuRoute
+            summa_timestep_file = summa_output_dir / f"{experiment_id}_timestep.nc"
+            
+            if not summa_timestep_file.exists():
+                raise FileNotFoundError(f"SUMMA timestep output file not found: {summa_timestep_file}")
+            
+            # Load mizuRoute topology to get segment information
+            topology_file = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+            
+            if not topology_file.exists():
+                raise FileNotFoundError(f"mizuRoute topology file not found: {topology_file}")
+            
+            with xr.open_dataset(topology_file) as mizuTopology:
+                # Use SEGMENT IDs from topology (these are the routing elements we broadcast to)
+                # This matches the original manual script approach
+                seg_ids = mizuTopology['segId'].values
+                n_segments = len(seg_ids)
+                
+                # Also get HRU info for context
+                hru_ids = mizuTopology['hruId'].values if 'hruId' in mizuTopology else []
+                n_hrus = len(hru_ids)
+            
+            self.logger.info(f"Broadcasting to {n_segments} routing segments ({n_hrus} HRUs in topology)")
+            
+            # Check if we actually have a distributed routing network
+            if n_segments <= 1:
+                self.logger.warning(f"Only {n_segments} routing segment(s) found in topology. Distributed routing may not be beneficial.")
+                self.logger.warning("Consider using ROUTING_DELINEATION: lumped instead")
+            
+            # Get the routing variable name from config (updated defaults for new SUMMA versions)
+            routing_var = self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+            
+            self.logger.info(f"Processing {summa_timestep_file.name}")
+            
+            # Load SUMMA output with time decoding disabled to avoid conversion issues
+            summa_output = xr.open_dataset(summa_timestep_file, decode_times=False)
+            
+            try:
+                # Create mizuRoute forcing dataset with proper structure
+                mizuForcing = xr.Dataset()
+                
+                # Handle time coordinate properly - copy original time values and attributes
+                original_time = summa_output['time']
+                
+                # Use the original time values and attributes directly
+                # This preserves whatever format SUMMA created
+                mizuForcing['time'] = xr.DataArray(
+                    original_time.values,
+                    dims=('time',),
+                    attrs=dict(original_time.attrs)  # Copy all original attributes
+                )
+                
+                # Clean up the time units if needed (remove 'T' separator)
+                if 'units' in mizuForcing['time'].attrs:
+                    time_units = mizuForcing['time'].attrs['units']
+                    if 'T' in time_units:
+                        mizuForcing['time'].attrs['units'] = time_units.replace('T', ' ')
+                
+                self.logger.info(f"Preserved original time coordinate: {mizuForcing['time'].attrs.get('units', 'no units')}")
+                
+                # Create GRU dimension using SEGMENT IDs (this is the key fix!)
+                # This matches the original script: mizuTopology['segId'].values.flatten()
+                mizuForcing['gru'] = xr.DataArray(
+                    seg_ids, 
+                    dims=('gru',),
+                    attrs={'long_name': 'Index of GRU', 'units': '-'}
+                )
+                
+                # GRU ID variable (use segment IDs as GRU IDs for routing)
+                mizuForcing['gruId'] = xr.DataArray(
+                    seg_ids, 
+                    dims=('gru',),
+                    attrs={'long_name': 'ID of grouped response unit', 'units': '-'}
+                )
+                
+                # Copy global attributes from SUMMA output
+                mizuForcing.attrs.update(summa_output.attrs)
+                
+                # Find the best variable to broadcast (updated for new SUMMA variable names)
+                source_var = None
+                available_vars = list(summa_output.variables.keys())
+                
+                # Check for exact match first
+                if routing_var in summa_output:
+                    source_var = routing_var
+                    self.logger.info(f"Using configured routing variable: {routing_var}")
+                else:
+                    # Try fallback variables in order of preference (updated for new naming)
+                    fallback_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'averageRoutedRunoff_mean', 'basin__TotalRunoff_mean']
+                    for var in fallback_vars:
+                        if var in summa_output:
+                            source_var = var
+                            self.logger.info(f"Routing variable {routing_var} not found, using: {source_var}")
+                            break
+                
+                if source_var is None:
+                    runoff_vars = [v for v in available_vars 
+                                if 'runoff' in v.lower() or 'discharge' in v.lower()]
+                    self.logger.error(f"No suitable runoff variable found.")
+                    self.logger.error(f"Available variables: {available_vars}")
+                    self.logger.error(f"Runoff-related variables: {runoff_vars}")
+                    raise ValueError(f"No suitable runoff variable found. Available: {runoff_vars}")
+                
+                # Extract the lumped runoff (should be single value per time step)
+                lumped_runoff = summa_output[source_var].values
+                
+                # Handle different shapes (time,) or (time, 1) or (time, n_gru)
+                if len(lumped_runoff.shape) == 1:
+                    # Already correct shape (time,)
+                    pass
+                elif len(lumped_runoff.shape) == 2:
+                    if lumped_runoff.shape[1] == 1:
+                        # Shape (time, 1) - flatten to (time,)
+                        lumped_runoff = lumped_runoff.flatten()
+                    else:
+                        # Multiple GRUs - take the first one (lumped should only have 1)
+                        lumped_runoff = lumped_runoff[:, 0]
+                        self.logger.warning(f"Multiple GRUs found in lumped simulation, using first GRU")
+                else:
+                    raise ValueError(f"Unexpected runoff data shape: {lumped_runoff.shape}")
+                
+                # Tile to all SEGMENTS: (time,) -> (time, n_segments)
+                # This is the key fix - broadcast to segments, not HRUs
+                tiled_data = np.tile(lumped_runoff[:, np.newaxis], (1, n_segments))
+                
+                # Create the routing variable with the expected name
+                mizuForcing[routing_var] = xr.DataArray(
+                    tiled_data,
+                    dims=('time', 'gru'),
+                    attrs={
+                        'long_name': 'Broadcast runoff for distributed routing',
+                        'units': 'm/s'
+                    }
+                )
+                
+                self.logger.info(f"Broadcast {source_var} -> {routing_var} to {n_segments} segments")
+                
+                # Close the original dataset to release the file
+                summa_output.close()
+                
+                # Backup original file before overwriting
+                backup_file = summa_output_dir / f"{summa_timestep_file.stem}_original.nc"
+                if not backup_file.exists():
+                    shutil.copy2(summa_timestep_file, backup_file)
+                    self.logger.info(f"Backed up original SUMMA output to {backup_file.name}")
+                
+                # Write to temporary file first, then move to final location
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.nc', dir=summa_output_dir) as tmp_file:
+                    temp_path = tmp_file.name
+                
+                # Save with explicit format but let xarray handle time encoding
+                mizuForcing.to_netcdf(temp_path, format='NETCDF4')
+                mizuForcing.close()
+                
+                # Move temporary file to final location
+                shutil.move(temp_path, summa_timestep_file)
+                
+                self.logger.info(f"Created mizuRoute forcing: {summa_timestep_file}")
+                
+            except Exception as e:
+                # Make sure to close the summa_output dataset
+                summa_output.close()
+                raise
+            
+            self.logger.info("Lumped-to-distributed conversion completed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error converting lumped output: {str(e)}")
+            raise
+
+    def _fix_mizuroute_time_units(self, nc_file_path, nc4_module):
+        """
+        Fix time units in mizuRoute forcing file to ensure compatibility.
+        
+        Args:
+            nc_file_path (Path): Path to the NetCDF file to fix
+            nc4_module: The netCDF4 module reference
+        """
+        try:
+            with nc4_module.Dataset(str(nc_file_path), 'r+') as ncid:
+                # Access the 'units' attribute and replace 'T' with a space
+                if 'time' in ncid.variables and hasattr(ncid['time'], 'units'):
+                    units_attribute = ncid['time'].units
+                    units_attribute = units_attribute.replace('T', ' ')
+                    ncid['time'].setncattr('units', units_attribute)
+            
+            self.logger.debug(f"Fixed time units in {nc_file_path}")
+            
+        except Exception as e:
+            self.logger.warning(f"Could not fix time units in {nc_file_path}: {str(e)}")
+        
     def visualize_outputs(self):
         """
         Visualize model outputs.
-        
-        This method creates standardized visualizations of the simulation results
-        for each hydrological model. It handles different visualization approaches
-        based on the model type and spatial configuration (lumped vs. distributed).
-        
-        The visualizations include:
-        - Time series plots of streamflow (simulated vs. observed)
-        - Model-specific state and flux variables
-        - Performance metrics
-        
-        For SUMMA, special handling is provided based on the domain configuration:
-        - For lumped models, SUMMA output is used directly
-        - For distributed models, MizuRoute output is used for streamflow
-        
-        The method uses the VisualizationReporter to create the plots, which are
-        saved in the project's plots directory.
-        
-        Raises:
-            FileNotFoundError: If model output or observation files cannot be found
-            ValueError: If visualization parameters are invalid
-            Exception: For other visualization errors
         """
         self.logger.info('Starting model output visualisation')
         
@@ -339,36 +530,41 @@ class ModelManager:
                 # Define observation files
                 obs_files = [
                     ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / 
-                                   f"{self.domain_name}_streamflow_processed.csv"))
+                                f"{self.domain_name}_streamflow_processed.csv"))
                 ]
                 
+                # Determine output source based on routing configuration
                 domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', '')
+                routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
                 
-                if domain_method == 'lumped':
-                    # For lumped model, use SUMMA output directly
-                    summa_output_file = str(self.project_dir / "simulations" / self.experiment_id / 
-                                          "SUMMA" / f"{self.experiment_id}_timestep.nc")
-                    model_outputs = [(model, summa_output_file)]
-                    
-                    self.logger.info(f"Using lumped model output from {summa_output_file}")
-                    visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
-                else:
-                    # For distributed model, use MizuRoute output
+                # Check if mizuRoute was used
+                uses_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+                
+                if uses_mizuroute:
+                    # Use MizuRoute output for visualization
+                    self.logger.info("Using mizuRoute output for visualization")
                     visualizer.update_sim_reach_id()
                     model_outputs = [
                         (model, str(self.project_dir / "simulations" / self.experiment_id / 
-                                  "mizuRoute" / f"{self.experiment_id}*.nc"))
+                                "mizuRoute" / f"{self.experiment_id}*.nc"))
                     ]
                     visualizer.plot_streamflow_simulations_vs_observations(model_outputs, obs_files)
-                    
+                else:
+                    # Use SUMMA output directly for lumped visualization
+                    self.logger.info("Using lumped SUMMA output for visualization")
+                    summa_output_file = str(self.project_dir / "simulations" / self.experiment_id / 
+                                        "SUMMA" / f"{self.experiment_id}_timestep.nc")
+                    model_outputs = [(model, summa_output_file)]
+                    visualizer.plot_lumped_streamflow_simulations_vs_observations(model_outputs, obs_files)
+                        
             elif model == 'FUSE':
                 model_outputs = [
                     ("FUSE", str(self.project_dir / "simulations" / self.experiment_id / 
-                               "FUSE" / f"{self.domain_name}_{self.experiment_id}_runs_best.nc"))
+                            "FUSE" / f"{self.domain_name}_{self.experiment_id}_runs_best.nc"))
                 ]
                 obs_files = [
                     ('Observed', str(self.project_dir / "observations" / "streamflow" / "preprocessed" / 
-                                   f"{self.domain_name}_streamflow_processed.csv"))
+                                f"{self.domain_name}_streamflow_processed.csv"))
                 ]
                 visualizer.plot_fuse_streamflow_simulations_vs_observations(model_outputs, obs_files)
                 

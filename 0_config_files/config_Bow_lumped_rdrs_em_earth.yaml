@@ -21,12 +21,12 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                          # Name of experimental domain
+DOMAIN_NAME: Bow_at_Banff_lumped_rdrs_em_earth                 # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2010-01-01, 2022-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2010-01-01, 2018-12-31                     # start_date, end_date in format YYYY-MM-DD
 SPINUP_PERIOD: 1980-01-01, 1980-12-31
 
 # Computatational settings
@@ -118,7 +118,7 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 ### ============================================= 3. Model Agnostic settings: =============================================================
 
 # Forcing data settings
-FORCING_DATASET: ERA5                                          # Forcing dataset to use
+FORCING_DATASET: RDRS                                          # Forcing dataset to use
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -152,8 +152,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip,Fcapil,k_snow,heightCanopyBottom
-
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip,Fcapil,k_snow,heightCanopyBottom # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse

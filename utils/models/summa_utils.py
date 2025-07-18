@@ -339,8 +339,6 @@ class SummaPreProcessor:
             else:
                 pd_times = pd.to_datetime(time_coord.values)
             
-            # CRITICAL: Extract date from filename to determine the exact day this file represents
-            # This ensures we create the same time coordinate for files representing the same period
             import re
             
             # Try to extract date from filename (adjust pattern for your CASR files)
@@ -373,7 +371,7 @@ class SummaPreProcessor:
             if file_date is None:
                 # Fallback: use the first time from the data
                 file_date = pd_times[0].normalize()  # Start of day
-                self.logger.warning(f"File {filename}: Could not extract date from filename, using data start date: {file_date}")
+                #self.logger.warning(f"File {filename}: Could not extract date from filename, using data start date: {file_date}")
             
             # Create STANDARDIZED time coordinate that will be IDENTICAL across all files
             time_step_seconds = int(self.config.get('FORCING_TIME_STEP_SIZE', 3600))

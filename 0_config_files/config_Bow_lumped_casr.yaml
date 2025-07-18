@@ -147,7 +147,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip # Local parameters to calibrate
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip,Fcapil,k_snow,heightCanopyBottom
 BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
@@ -286,8 +286,8 @@ EMULATION_MAX_ITERATIONS': 3                                   # Iterative refin
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 20                                            # Population size for genetic algorithms
-OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
+OPTIMIZATION_METRIC: NSE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
   # -- SCE-UA specific settings
@@ -305,4 +305,3 @@ PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which i
   # -- DE specific settings
 DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
 DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
-POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set

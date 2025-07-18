@@ -14,17 +14,11 @@ from typing import Dict, Any
 
 class DEOptimizer:
     """
-    Differential Evolution (DE) Optimizer for CONFLUENCE with soil depth calibration.
+    Differential Evolution (DE) Optimizer for CONFLUENCE 
     
     This class performs parameter optimization using the Differential Evolution algorithm,
-    which is a population-based stochastic optimization technique that's particularly
-    effective for continuous optimization problems like watershed model calibration.
-    
-    Features:
-    - Parameter persistence (uses existing optimized parameters as starting point)
-    - Soil depth profile calibration using the "shape" method
-    - Combined hydraulic and depth parameter optimization
-    
+    which is a population-based stochastic optimization technique.
+
     The soil depth calibration uses two parameters:
     - total_mult: Overall depth multiplier (0.1-5.0)
     - shape_factor: Controls depth profile shape (0.1-3.0)
@@ -100,6 +94,23 @@ class DEOptimizer:
             self.depth_params = ['total_mult', 'shape_factor']
             self.logger.info("Added soil depth parameters: total_mult, shape_factor")
         
+        # Add mizuRoute parameters if routing calibration is enabled
+        self.mizuroute_params = []
+        if self.config.get('CALIBRATE_MIZUROUTE', False):
+            # Get mizuRoute parameters to calibrate from config
+            mizuroute_params_str = self.config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', 'velo,diff')
+            self.mizuroute_params = [p.strip() for p in mizuroute_params_str.split(',') if p.strip()] if mizuroute_params_str else ['velo', 'diff']
+            self.logger.info(f"Added mizuRoute parameters for calibration: {self.mizuroute_params}")
+        
+        # Check if mizuRoute settings exist
+        self.mizuroute_settings_dir = self.project_dir / "settings" / "mizuRoute"
+        self.mizuroute_param_file = self.mizuroute_settings_dir / "param.nml.default"
+        if self.mizuroute_params and not self.mizuroute_param_file.exists():
+            self.logger.warning(f"mizuRoute parameter file not found: {self.mizuroute_param_file}")
+            self.logger.warning("mizuRoute calibration may fail without this file")
+        elif self.mizuroute_params:
+            self.logger.info(f"mizuRoute parameter file found: {self.mizuroute_param_file}")
+        
         # Get performance metric settings
         self.target_metric = self.config.get('OPTIMIZATION_METRIC', 'KGE')
         
@@ -130,14 +141,255 @@ class DEOptimizer:
             self.population_size = max(15, min(4 * total_params, 50))  # 4*D, between 15-50
         
         # Logging
-        self.logger.info(f"DE Optimizer initialized with {len(self.local_params)} local, {len(self.basin_params)} basin, and {len(self.depth_params)} depth parameters")
+        self.logger.info(f"DE Optimizer initialized with {len(self.local_params)} local, {len(self.basin_params)} basin, {len(self.depth_params)} depth, and {len(self.mizuroute_params)} mizuRoute parameters")
         self.logger.info(f"Maximum generations: {self.max_iterations}, population size: {self.population_size}")
         self.logger.info(f"DE parameters: F={self.F}, CR={self.CR}")
         self.logger.info(f"Optimization simulations will run in: {self.summa_sim_dir}")
         
+        # Check routing configuration
+        routing_info = self._check_routing_configuration()
+        self.logger.info(f"Routing configuration: {routing_info}")
+        
         # Log optimization period
         opt_period = self._get_optimization_period_string()
         self.logger.info(f"Optimization period: {opt_period}")
+    
+    def _check_routing_configuration(self):
+        """
+        Check the routing configuration and log relevant information.
+        
+        Returns:
+            str: Description of the routing configuration
+        """
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+        routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+        
+        needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+        
+        if domain_method == 'lumped' and routing_delineation == 'river_network':
+            return f"Lumped SUMMA + Distributed mizuRoute (needs conversion and routing: {needs_mizuroute})"
+        elif domain_method != 'lumped':
+            return f"Distributed SUMMA + mizuRoute (needs routing: {needs_mizuroute})"
+        else:
+            return f"Lumped SUMMA only (needs routing: {needs_mizuroute})"
+    
+    def _needs_mizuroute_routing(self, domain_method: str, routing_delineation: str) -> bool:
+        """
+        Determine if mizuRoute routing is needed based on domain and routing configuration.
+        This mirrors the logic from model_manager.py.
+        
+        Args:
+            domain_method (str): Domain definition method
+            routing_delineation (str): Routing delineation method
+            
+        Returns:
+            bool: True if mizuRoute routing is needed
+        """
+        # Original logic: distributed domain always needs routing
+        if domain_method not in ['point', 'lumped']:
+            return True
+        
+        # New logic: lumped domain with river network routing
+        if domain_method == 'lumped' and routing_delineation == 'river_network':
+            return True
+        
+        # Point simulations never need routing
+        # Lumped domain with lumped routing doesn't need mizuRoute
+        return False
+    
+    def _convert_lumped_to_distributed_routing(self):
+        """
+        Convert lumped SUMMA output to distributed mizuRoute forcing.
+        This mirrors the functionality from model_manager.py.
+        
+        This method replicates the functionality from the manual script,
+        broadcasting the single lumped runoff to all routing segments.
+        Creates mizuRoute-compatible files with proper naming and variables.
+        Only processes the timestep file for mizuRoute routing.
+        """
+        self.logger.info("Converting lumped SUMMA output for distributed routing")
+        
+        try:
+            # Import required modules
+            import tempfile
+            
+            # Paths - use DE optimization directories
+            summa_output_dir = self.summa_sim_dir
+            mizuroute_settings_dir = self.optimization_dir / "settings" / "mizuRoute"
+            
+            # Find the most recent DE optimization timestep file
+            summa_timestep_files = list(summa_output_dir.glob("run_de_opt_*timestep.nc"))
+            
+            if not summa_timestep_files:
+                # Fallback: look for any timestep files
+                summa_timestep_files = list(summa_output_dir.glob("*timestep.nc"))
+            
+            if not summa_timestep_files:
+                raise FileNotFoundError(f"No SUMMA timestep output files found in: {summa_output_dir}")
+            
+            # Use the most recent file
+            summa_timestep_file = max(summa_timestep_files, key=lambda x: x.stat().st_mtime)
+            self.logger.debug(f"Using SUMMA timestep file: {summa_timestep_file}")
+            
+            # Load mizuRoute topology to get segment information
+            topology_file = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+            
+            if not topology_file.exists():
+                raise FileNotFoundError(f"mizuRoute topology file not found: {topology_file}")
+            
+            with xr.open_dataset(topology_file) as mizuTopology:
+                # Use SEGMENT IDs from topology (these are the routing elements we broadcast to)
+                seg_ids = mizuTopology['segId'].values
+                n_segments = len(seg_ids)
+                
+                # Also get HRU info for context
+                hru_ids = mizuTopology['hruId'].values if 'hruId' in mizuTopology else []
+                n_hrus = len(hru_ids)
+            
+            self.logger.info(f"Broadcasting to {n_segments} routing segments ({n_hrus} HRUs in topology)")
+            
+            # Check if we actually have a distributed routing network
+            if n_segments <= 1:
+                self.logger.warning(f"Only {n_segments} routing segment(s) found in topology. Distributed routing may not be beneficial.")
+                self.logger.warning("Consider using ROUTING_DELINEATION: lumped instead")
+            
+            # Get the routing variable name from config
+            routing_var = self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+            
+            self.logger.info(f"Processing {summa_timestep_file.name}")
+            
+            # Load SUMMA output with time decoding disabled to avoid conversion issues
+            summa_output = xr.open_dataset(summa_timestep_file, decode_times=False)
+            
+            try:
+                # Create mizuRoute forcing dataset with proper structure
+                mizuForcing = xr.Dataset()
+                
+                # Handle time coordinate properly - copy original time values and attributes
+                original_time = summa_output['time']
+                
+                # Use the original time values and attributes directly
+                mizuForcing['time'] = xr.DataArray(
+                    original_time.values,
+                    dims=('time',),
+                    attrs=dict(original_time.attrs)  # Copy all original attributes
+                )
+                
+                # Clean up the time units if needed (remove 'T' separator)
+                if 'units' in mizuForcing['time'].attrs:
+                    time_units = mizuForcing['time'].attrs['units']
+                    if 'T' in time_units:
+                        mizuForcing['time'].attrs['units'] = time_units.replace('T', ' ')
+                
+                self.logger.info(f"Preserved original time coordinate: {mizuForcing['time'].attrs.get('units', 'no units')}")
+                
+                # Create GRU dimension using SEGMENT IDs
+                mizuForcing['gru'] = xr.DataArray(
+                    seg_ids, 
+                    dims=('gru',),
+                    attrs={'long_name': 'Index of GRU', 'units': '-'}
+                )
+                
+                # GRU ID variable (use segment IDs as GRU IDs for routing)
+                mizuForcing['gruId'] = xr.DataArray(
+                    seg_ids, 
+                    dims=('gru',),
+                    attrs={'long_name': 'ID of grouped response unit', 'units': '-'}
+                )
+                
+                # Copy global attributes from SUMMA output
+                mizuForcing.attrs.update(summa_output.attrs)
+                
+                # Find the best variable to broadcast
+                source_var = None
+                available_vars = list(summa_output.variables.keys())
+                
+                # Check for exact match first
+                if routing_var in summa_output:
+                    source_var = routing_var
+                    self.logger.info(f"Using configured routing variable: {routing_var}")
+                else:
+                    # Try fallback variables in order of preference
+                    fallback_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'averageRoutedRunoff_mean', 'basin__TotalRunoff_mean']
+                    for var in fallback_vars:
+                        if var in summa_output:
+                            source_var = var
+                            self.logger.info(f"Routing variable {routing_var} not found, using: {source_var}")
+                            break
+                
+                if source_var is None:
+                    runoff_vars = [v for v in available_vars 
+                                if 'runoff' in v.lower() or 'discharge' in v.lower()]
+                    self.logger.error(f"No suitable runoff variable found.")
+                    self.logger.error(f"Available variables: {available_vars}")
+                    self.logger.error(f"Runoff-related variables: {runoff_vars}")
+                    raise ValueError(f"No suitable runoff variable found. Available: {runoff_vars}")
+                
+                # Extract the lumped runoff (should be single value per time step)
+                lumped_runoff = summa_output[source_var].values
+                
+                # Handle different shapes (time,) or (time, 1) or (time, n_gru)
+                if len(lumped_runoff.shape) == 1:
+                    # Already correct shape (time,)
+                    pass
+                elif len(lumped_runoff.shape) == 2:
+                    if lumped_runoff.shape[1] == 1:
+                        # Shape (time, 1) - flatten to (time,)
+                        lumped_runoff = lumped_runoff.flatten()
+                    else:
+                        # Multiple GRUs - take the first one (lumped should only have 1)
+                        lumped_runoff = lumped_runoff[:, 0]
+                        self.logger.warning(f"Multiple GRUs found in lumped simulation, using first GRU")
+                else:
+                    raise ValueError(f"Unexpected runoff data shape: {lumped_runoff.shape}")
+                
+                # Tile to all SEGMENTS: (time,) -> (time, n_segments)
+                tiled_data = np.tile(lumped_runoff[:, np.newaxis], (1, n_segments))
+                
+                # Create the routing variable with the expected name
+                mizuForcing[routing_var] = xr.DataArray(
+                    tiled_data,
+                    dims=('time', 'gru'),
+                    attrs={
+                        'long_name': 'Broadcast runoff for distributed routing',
+                        'units': 'm/s'
+                    }
+                )
+                
+                self.logger.info(f"Broadcast {source_var} -> {routing_var} to {n_segments} segments")
+                
+                # Close the original dataset to release the file
+                summa_output.close()
+                
+                # Backup original file before overwriting
+                backup_file = summa_output_dir / f"{summa_timestep_file.stem}_original.nc"
+                if not backup_file.exists():
+                    shutil.copy2(summa_timestep_file, backup_file)
+                    self.logger.info(f"Backed up original SUMMA output to {backup_file.name}")
+                
+                # Write to temporary file first, then move to final location
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.nc', dir=summa_output_dir) as tmp_file:
+                    temp_path = tmp_file.name
+                
+                # Save with explicit format but let xarray handle time encoding
+                mizuForcing.to_netcdf(temp_path, format='NETCDF4')
+                mizuForcing.close()
+                
+                # Move temporary file to final location
+                shutil.move(temp_path, summa_timestep_file)
+                
+                self.logger.info(f"Created mizuRoute forcing: {summa_timestep_file}")
+                
+            except Exception as e:
+                # Make sure to close the summa_output dataset
+                summa_output.close()
+                raise
+            
+            self.logger.info("Lumped-to-distributed conversion completed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error converting lumped output: {str(e)}")
+            raise
     
     def _get_original_depths(self):
         """
@@ -297,6 +549,19 @@ class DEOptimizer:
                     param_values['shape_factor'] = np.array([1.0])  # Default: uniform scaling
                     self.logger.info("Added default depth parameters: total_mult=1.0, shape_factor=1.0")
                 
+                # Add mizuRoute parameters if routing calibration is enabled
+                if self.mizuroute_params:
+                    # Try to load from existing mizuRoute parameter file
+                    mizuroute_values = self._load_existing_mizuroute_parameters()
+                    if mizuroute_values:
+                        param_values.update(mizuroute_values)
+                        self.logger.info(f"Loaded existing mizuRoute parameters: {list(mizuroute_values.keys())}")
+                    else:
+                        # Use default values if no existing parameters
+                        for param in self.mizuroute_params:
+                            param_values[param] = self._get_default_mizuroute_value(param)
+                        self.logger.info("Added default mizuRoute parameters")
+                
                 self.logger.info(f"Successfully loaded existing optimized parameters for {len(param_values)} parameters")
                 return param_values
                 
@@ -405,10 +670,89 @@ class DEOptimizer:
                     self.logger.error("Failed to calculate new soil depths")
                     success = False
             
+            # Step 3: Save mizuRoute parameters if they were calibrated
+            if self.mizuroute_params and any(param in best_params for param in self.mizuroute_params):
+                mizuroute_success = self._save_mizuroute_parameters_to_default(best_params)
+                if mizuroute_success:
+                    self.logger.info("✅ Successfully saved optimized mizuRoute parameters")
+                else:
+                    self.logger.warning("⚠️ Failed to save mizuRoute parameters to default settings")
+                    success = False
+            
             return success
                 
         except Exception as e:
             self.logger.error(f"Error saving best parameters to default settings: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def _save_mizuroute_parameters_to_default(self, best_params):
+        """
+        Save optimized mizuRoute parameters to default settings directory.
+        
+        Args:
+            best_params: Dictionary with the best parameter values
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self.mizuroute_param_file.exists():
+                self.logger.error(f"Default mizuRoute parameter file not found: {self.mizuroute_param_file}")
+                return False
+            
+            # Backup existing file
+            backup_file = self.mizuroute_settings_dir / f"param.nml.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copy2(self.mizuroute_param_file, backup_file)
+            self.logger.info(f"Backed up mizuRoute parameters to: {backup_file}")
+            
+            # Read and update the file
+            with open(self.mizuroute_param_file, 'r') as f:
+                content = f.read()
+            
+            # Update parameter values using regex replacement
+            import re
+            updated_content = content
+            
+            for param_name in self.mizuroute_params:
+                if param_name in best_params:
+                    param_value = best_params[param_name]
+                    
+                    # Create regex pattern to find and replace parameter
+                    pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
+                    
+                    # Format the replacement value
+                    if param_name in ['tscale']:
+                        replacement = rf'\g<1>{int(param_value)}'
+                    else:
+                        replacement = rf'\g<1>{param_value:.6f}'
+                    
+                    # Perform the replacement
+                    new_content = re.sub(pattern, replacement, updated_content)
+                    
+                    if new_content != updated_content:
+                        updated_content = new_content
+                        self.logger.info(f"Updated default {param_name} = {param_value}")
+                    else:
+                        self.logger.warning(f"Could not find parameter {param_name} in default mizuRoute file")
+            
+            # Write updated file
+            with open(self.mizuroute_param_file, 'w') as f:
+                f.write(updated_content)
+            
+            self.logger.info(f"Updated default mizuRoute parameters in: {self.mizuroute_param_file}")
+            
+            # Also save a copy with experiment ID for tracking
+            experiment_copy = self.mizuroute_settings_dir / f"param.nml.optimized_{self.experiment_id}"
+            with open(experiment_copy, 'w') as f:
+                f.write(updated_content)
+            self.logger.info(f"Created experiment-specific mizuRoute copy: {experiment_copy}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error saving mizuRoute parameters to default settings: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             return False
@@ -544,11 +888,51 @@ class DEOptimizer:
             
             self.logger.info(f"Added depth parameter bounds: total_mult={total_mult_bounds}, shape_factor={shape_factor_bounds}")
         
+        # Add mizuRoute parameter bounds if routing calibration is enabled
+        if self.mizuroute_params:
+            mizuroute_bounds = self._get_mizuroute_parameter_bounds()
+            bounds.update(mizuroute_bounds)
+            self.logger.info(f"Added mizuRoute parameter bounds for {len(mizuroute_bounds)} parameters")
+        
         if not bounds:
             self.logger.error("No parameter bounds found")
             raise ValueError("No parameter bounds found")
         
         self.logger.info(f"Found bounds for {len(bounds)} parameters")
+        return bounds
+    
+    def _get_mizuroute_parameter_bounds(self):
+        """
+        Define parameter bounds for mizuRoute parameters.
+        
+        Returns:
+            Dict: Dictionary with mizuRoute parameter bounds
+        """
+        # Default bounds based on physical constraints and literature
+        default_bounds = {
+            'velo': {'min': 0.1, 'max': 5.0},        # Channel velocity [m/s]
+            'diff': {'min': 100.0, 'max': 5000.0},   # Diffusion [m²/s] 
+            'mann_n': {'min': 0.01, 'max': 0.1},     # Manning's roughness [-]
+            'wscale': {'min': 0.0001, 'max': 0.01},  # Width scaling [-]
+            'fshape': {'min': 1.0, 'max': 5.0},      # Shape parameter [-]
+            'tscale': {'min': 3600, 'max': 172800}   # Time scale [s] (1h to 48h)
+        }
+        
+        bounds = {}
+        for param in self.mizuroute_params:
+            if param in default_bounds:
+                # Check if user provided custom bounds
+                custom_bounds_key = f'MIZUROUTE_{param.upper()}_BOUNDS'
+                if custom_bounds_key in self.config:
+                    custom_bounds = self.config[custom_bounds_key]
+                    bounds[param] = {'min': custom_bounds[0], 'max': custom_bounds[1]}
+                    self.logger.info(f"Using custom bounds for {param}: {custom_bounds}")
+                else:
+                    bounds[param] = default_bounds[param]
+                    self.logger.info(f"Using default bounds for {param}: {default_bounds[param]}")
+            else:
+                self.logger.warning(f"Unknown mizuRoute parameter: {param}. Available: {list(default_bounds.keys())}")
+        
         return bounds
     
     def _parse_param_info_file(self, file_path, param_names):
@@ -635,6 +1019,9 @@ class DEOptimizer:
                 elif param_name in self.basin_params:
                     # Basin/GRU level parameter - single value
                     params[param_name] = np.array([denorm_value])
+                elif param_name in self.mizuroute_params:
+                    # mizuRoute parameters are scalar values
+                    params[param_name] = denorm_value
                 else:
                     # Local/HRU level parameter - may need multiple values
                     # For simplicity, use the same value for all HRUs
@@ -650,7 +1037,7 @@ class DEOptimizer:
     def _evaluate_parameters(self, params):
         """
         Evaluate a parameter set by running SUMMA and calculating performance metrics.
-        Enhanced to handle depth parameter updates.
+        Enhanced to handle depth parameter updates and routing configurations.
         
         Args:
             params: Dictionary with parameter values
@@ -678,8 +1065,16 @@ class DEOptimizer:
                     self.logger.debug("❌ Failed to calculate new soil depths")
                     return None
             
-            # Generate trial parameters file (excluding depth parameters)
-            hydraulic_params = {k: v for k, v in params.items() if k not in self.depth_params}
+            # Update mizuRoute parameters if routing calibration is enabled
+            if self.mizuroute_params:
+                mizuroute_success = self._update_mizuroute_parameters(params)
+                if not mizuroute_success:
+                    self.logger.debug("❌ Failed to update mizuRoute parameters")
+                    return None
+            
+            # Generate trial parameters file (excluding depth and mizuRoute parameters)
+            hydraulic_params = {k: v for k, v in params.items() 
+                              if k not in self.depth_params and k not in self.mizuroute_params}
             trial_params_path = self._generate_trial_params_file(hydraulic_params)
             if not trial_params_path:
                 self.logger.debug("❌ Failed to generate trial parameters file")
@@ -691,8 +1086,19 @@ class DEOptimizer:
                 self.logger.debug("❌ SUMMA simulation failed")
                 return None
             
+            # Check if mizuRoute routing is needed based on configuration
+            domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+            needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+            
             # Run mizuRoute if needed
-            if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+            if needs_mizuroute:
+                # Handle lumped-to-distributed conversion if needed
+                if domain_method == 'lumped' and routing_delineation == 'river_network':
+                    self.logger.debug("Converting lumped SUMMA output for distributed routing")
+                    self._convert_lumped_to_distributed_routing()
+                
+                # Run mizuRoute
                 mizuroute_success = self._run_mizuroute_simulation()
                 if not mizuroute_success:
                     self.logger.debug("❌ mizuRoute simulation failed")
@@ -732,8 +1138,8 @@ class DEOptimizer:
 
     @property
     def param_names(self):
-        """Get list of all parameter names including depth parameters if enabled."""
-        return self.local_params + self.basin_params + self.depth_params
+        """Get list of all parameter names including depth and mizuRoute parameters if enabled."""
+        return self.local_params + self.basin_params + self.depth_params + self.mizuroute_params
     
     def _get_param_bounds(self):
         """Get parameter bounds including depth parameters if enabled."""
@@ -781,21 +1187,29 @@ class DEOptimizer:
                 extracted_params['shape_factor'] = np.array([1.0])  # Default: uniform scaling
                 self.logger.info("Added default depth parameters to extraction results")
             
+            # Add mizuRoute parameters if routing calibration is enabled
+            if self.mizuroute_params and extracted_params:
+                for param in self.mizuroute_params:
+                    extracted_params[param] = self._get_default_mizuroute_value(param)
+                self.logger.info("Added default mizuRoute parameters to extraction results")
+            
             return extracted_params
         else:
             self.logger.warning("Parameter extraction run failed, will use default parameter ranges")
-            # Return default depth parameters if depth calibration is enabled
+            # Return default parameters if extraction failed
+            default_params = {}
             if self.calibrate_depth:
-                return {
-                    'total_mult': np.array([1.0]),
-                    'shape_factor': np.array([1.0])
-                }
-            return None
+                default_params['total_mult'] = np.array([1.0])
+                default_params['shape_factor'] = np.array([1.0])
+            if self.mizuroute_params:
+                for param in self.mizuroute_params:
+                    default_params[param] = self._get_default_mizuroute_value(param)
+            return default_params if default_params else None
     
     def _setup_optimization_environment(self):
         """
         Set up the optimization-specific directory structure and copy settings files.
-        Enhanced to handle depth calibration files.
+        Enhanced to handle depth calibration files and mizuRoute settings.
         """
         self.logger.info("Setting up optimization environment")
         
@@ -852,8 +1266,15 @@ class DEOptimizer:
         # Update fileManager.txt for optimization runs (not final run)
         self._update_file_manager_for_optimization(is_final_run=False)
         
-        # Copy mizuRoute settings if they exist
+        # Copy and update mizuRoute settings if they exist
         self._copy_mizuroute_settings()
+        
+        # Update mizuRoute control file for optimization runs
+        if self._needs_mizuroute_routing(
+            self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped'),
+            self.config.get('ROUTING_DELINEATION', 'lumped')
+        ):
+            self._update_mizuroute_control_for_optimization(is_final_run=False)
     
     def _initialize_optimization(self, initial_params, param_bounds):
         """
@@ -1494,6 +1915,7 @@ class DEOptimizer:
     def _run_mizuroute_simulation(self):
         """
         Run mizuRoute with the current SUMMA outputs using optimization-specific settings.
+        Enhanced with detailed debugging.
         
         Returns:
             bool: True if the run was successful, False otherwise
@@ -1512,24 +1934,86 @@ class DEOptimizer:
         # Use optimization-specific control file
         control_file = self.optimization_dir / "settings" / "mizuRoute" / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
         
+        # Enhanced debugging
+        self.logger.debug(f"mizuRoute executable: {mizu_exe}")
+        self.logger.debug(f"mizuRoute control file: {control_file}")
+        self.logger.debug(f"Executable exists: {mizu_exe.exists()}")
+        self.logger.debug(f"Control file exists: {control_file.exists()}")
+        
+        if not mizu_exe.exists():
+            self.logger.error(f"mizuRoute executable not found: {mizu_exe}")
+            return False
+        
         if not control_file.exists():
             self.logger.error(f"Optimization mizuRoute control file not found: {control_file}")
             return False
         
+        # Check if input files exist
+        expected_input_file = self.summa_sim_dir / f"run_de_opt_{self.experiment_id}_timestep.nc"
+        self.logger.debug(f"Expected input file: {expected_input_file}")
+        self.logger.debug(f"Input file exists: {expected_input_file.exists()}")
+        
+        if not expected_input_file.exists():
+            self.logger.error(f"Expected SUMMA input file not found: {expected_input_file}")
+            # List what files ARE in the directory
+            summa_files = list(self.summa_sim_dir.glob("*.nc"))
+            self.logger.error(f"Available SUMMA files: {[f.name for f in summa_files]}")
+            return False
+        
+        # Make sure output directory exists
+        self.mizuroute_sim_dir.mkdir(parents=True, exist_ok=True)
+        self.logger.debug(f"mizuRoute output directory: {self.mizuroute_sim_dir}")
+        
         # Create command
         mizu_command = f"{mizu_exe} {control_file}"
+        self.logger.info(f"Running mizuRoute command: {mizu_command}")
         
         # Create log file in optimization logs directory
         log_file = self.mizuroute_sim_dir / "logs" / f"mizuroute_de_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         
         try:
+            self.logger.info(f"Starting mizuRoute simulation, logs: {log_file}")
+            
             with open(log_file, 'w') as f:
-                process = subprocess.run(mizu_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+                process = subprocess.run(
+                    mizu_command, 
+                    shell=True, 
+                    stdout=f, 
+                    stderr=subprocess.STDOUT, 
+                    check=True,
+                    cwd=str(control_file.parent)  # Run from control file directory
+                )
+            
+            # Check if output files were created
+            output_files = list(self.mizuroute_sim_dir.glob("*.nc"))
+            self.logger.info(f"mizuRoute simulation completed. Created {len(output_files)} output files:")
+            for f in output_files:
+                self.logger.info(f"  - {f.name}")
+            
+            if len(output_files) == 0:
+                self.logger.error("mizuRoute completed but no output files found!")
+                # Read and log the mizuRoute log file for debugging
+                try:
+                    with open(log_file, 'r') as f:
+                        log_content = f.read()
+                    self.logger.error(f"mizuRoute log content:\n{log_content}")
+                except Exception as e:
+                    self.logger.error(f"Could not read mizuRoute log: {str(e)}")
+                return False
             
             self.logger.debug("mizuRoute simulation completed successfully")
             return True
+            
         except subprocess.CalledProcessError as e:
-            self.logger.warning(f"mizuRoute simulation failed: {str(e)}")
+            self.logger.warning(f"mizuRoute simulation failed with exit code {e.returncode}")
+            # Read and log the error details
+            try:
+                with open(log_file, 'r') as f:
+                    log_content = f.read()
+                self.logger.error(f"mizuRoute error log:\n{log_content}")
+            except Exception as read_e:
+                self.logger.error(f"Could not read mizuRoute log: {str(read_e)}")
             return False
         except Exception as e:
             self.logger.error(f"Error during mizuRoute simulation: {str(e)}")
@@ -1538,17 +2022,18 @@ class DEOptimizer:
     def _calculate_performance_metrics(self):
         """
         Calculate performance metrics by comparing simulated to observed streamflow.
-        FIXED: Now reads from the DE optimization simulation directory.
-        
-        Returns:
-            Dict: Dictionary with performance metrics
+        Enhanced debugging version with support for both mizuRoute and direct SUMMA output.
         """
+        self.logger.debug("=== PERFORMANCE METRICS DEBUG ===")
         self.logger.debug("Calculating performance metrics from DE optimization simulation")
         
         # Get observed data path
         obs_path = self.config.get('OBSERVATIONS_PATH')
         if obs_path == 'default':
             obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.config['DOMAIN_NAME']}_streamflow_processed.csv"
+        
+        self.logger.debug(f"Looking for observed data at: {obs_path}")
+        self.logger.debug(f"Observed data exists: {obs_path.exists()}")
         
         if not obs_path.exists():
             self.logger.error(f"Observed streamflow file not found: {obs_path}")
@@ -1557,10 +2042,15 @@ class DEOptimizer:
         try:
             # Read observed data
             obs_df = pd.read_csv(obs_path)
+            self.logger.debug(f"Observed data shape: {obs_df.shape}")
+            self.logger.debug(f"Observed data columns: {obs_df.columns.tolist()}")
             
             # Identify date and flow columns
             date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
             flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower() or 'q_' in col.lower()), None)
+            
+            self.logger.debug(f"Date column: {date_col}")
+            self.logger.debug(f"Flow column: {flow_col}")
             
             if not date_col or not flow_col:
                 self.logger.error(f"Could not identify date or flow columns in observed data: {obs_df.columns.tolist()}")
@@ -1571,9 +2061,21 @@ class DEOptimizer:
             obs_df.set_index('DateTime', inplace=True)
             observed_flow = obs_df[flow_col]
             
-            # Get simulated data - USE DE OPTIMIZATION DIRECTORY
-            if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
-                # From mizuRoute output - USE DE OPTIMIZATION DIRECTORY
+            self.logger.debug(f"Observed flow time range: {observed_flow.index.min()} to {observed_flow.index.max()}")
+            self.logger.debug(f"Observed flow data points: {len(observed_flow)}")
+            self.logger.debug(f"Observed flow stats: min={observed_flow.min():.2f}, max={observed_flow.max():.2f}, mean={observed_flow.mean():.2f}")
+            
+            # Determine which output to use based on routing configuration
+            domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+            needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+            
+            self.logger.debug(f"Domain method: {domain_method}")
+            self.logger.debug(f"Routing delineation: {routing_delineation}")
+            self.logger.debug(f"Needs mizuRoute: {needs_mizuroute}")
+            
+            if needs_mizuroute:
+                # Use mizuRoute output - USE DE OPTIMIZATION DIRECTORY
                 sim_dir = self.mizuroute_sim_dir  # Points to run_de/mizuRoute
                 sim_files = list(sim_dir.glob("*.nc"))
                 
@@ -1584,92 +2086,190 @@ class DEOptimizer:
                     self.logger.error(f"No mizuRoute output files found in DE optimization directory: {sim_dir}")
                     return None
                 
-                sim_file = sim_files[0]  # Take the most recent/first file
+                sim_file = sim_files[0]  # Take the first file
                 self.logger.debug(f"Using mizuRoute file: {sim_file}")
+                self.logger.debug(f"File size: {sim_file.stat().st_size} bytes")
                 
-                # Open the file with xarray
-                with xr.open_dataset(sim_file) as ds:
-                    # Get reach ID
-                    sim_reach_id = self.config.get('SIM_REACH_ID')
-                    
-                    # Find the index for the reach ID
-                    if 'reachID' in ds.variables:
-                        reach_indices = np.where(ds['reachID'].values == int(sim_reach_id))[0]
+                # Open the file with xarray and examine its structure
+                try:
+                    with xr.open_dataset(sim_file) as ds:
+                        self.logger.debug(f"mizuRoute output variables: {list(ds.variables.keys())}")
+                        self.logger.debug(f"mizuRoute output dimensions: {dict(ds.sizes)}")
                         
-                        if len(reach_indices) > 0:
-                            reach_index = reach_indices[0]
+                        # Get reach ID
+                        sim_reach_id = self.config.get('SIM_REACH_ID')
+                        self.logger.debug(f"Looking for reach ID: {sim_reach_id}")
+                        
+                        # Check if reach variables exist
+                        if 'reachID' in ds.variables:
+                            reach_ids = ds['reachID'].values
+                            self.logger.debug(f"Available reach IDs: {reach_ids}")
                             
-                            # Try common variable names
-                            for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']:
-                                if var_name in ds.variables:
-                                    simulated_flow = ds[var_name].isel(seg=reach_index).to_pandas()
-                                    self.logger.debug(f"Extracted {var_name} from mizuRoute output")
-                                    break
+                            reach_indices = np.where(reach_ids == int(sim_reach_id))[0]
+                            self.logger.debug(f"Matching reach indices: {reach_indices}")
+                            
+                            if len(reach_indices) > 0:
+                                reach_index = reach_indices[0]
+                                self.logger.debug(f"Using reach index: {reach_index}")
+                                
+                                # Try to find streamflow variable
+                                streamflow_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff', 'instRunoff']
+                                found_var = None
+                                
+                                for var_name in streamflow_vars:
+                                    if var_name in ds.variables:
+                                        found_var = var_name
+                                        self.logger.debug(f"Found streamflow variable: {var_name}")
+                                        
+                                        # Get the variable info
+                                        var = ds[var_name]
+                                        self.logger.debug(f"Variable {var_name} dimensions: {var.dims}")
+                                        self.logger.debug(f"Variable {var_name} shape: {var.shape}")
+                                        
+                                        # Extract simulated flow
+                                        if 'seg' in var.dims:
+                                            simulated_flow = var.isel(seg=reach_index).to_pandas()
+                                        elif 'reachID' in var.dims:
+                                            simulated_flow = var.isel(reachID=reach_index).to_pandas()
+                                        else:
+                                            self.logger.error(f"Cannot determine how to index variable {var_name} with dimensions {var.dims}")
+                                            continue
+                                        
+                                        self.logger.debug(f"Extracted simulated flow shape: {simulated_flow.shape}")
+                                        self.logger.debug(f"Simulated flow time range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+                                        self.logger.debug(f"Simulated flow stats: min={simulated_flow.min():.2f}, max={simulated_flow.max():.2f}, mean={simulated_flow.mean():.2f}")
+                                        break
+                                
+                                if found_var is None:
+                                    self.logger.error("Could not find streamflow variable in mizuRoute output")
+                                    self.logger.error(f"Available variables: {list(ds.variables.keys())}")
+                                    return None
                             else:
-                                self.logger.error("Could not find streamflow variable in mizuRoute output")
+                                self.logger.error(f"Reach ID {sim_reach_id} not found in mizuRoute output")
                                 return None
                         else:
-                            self.logger.error(f"Reach ID {sim_reach_id} not found in mizuRoute output")
+                            self.logger.error("No reachID variable found in mizuRoute output")
+                            self.logger.error(f"Available variables: {list(ds.variables.keys())}")
                             return None
-                    else:
-                        self.logger.error("No reachID variable found in mizuRoute output")
-                        return None
+                        
+                except Exception as e:
+                    self.logger.error(f"Error reading mizuRoute file {sim_file}: {str(e)}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                    return None
+            
             else:
-                # From SUMMA output - USE DE OPTIMIZATION DIRECTORY
+                # Use SUMMA output directly for lumped simulations with lumped routing
                 sim_dir = self.summa_sim_dir  # Points to run_de/SUMMA
-                
-                # Look for DE optimization output files
-                sim_files = list(sim_dir.glob("run_de_opt_*timestep.nc"))
+                sim_files = list(sim_dir.glob("*.nc"))
                 
                 self.logger.debug(f"Looking for SUMMA files in: {sim_dir}")
                 self.logger.debug(f"Found {len(sim_files)} SUMMA files: {[f.name for f in sim_files]}")
                 
                 if not sim_files:
                     self.logger.error(f"No SUMMA output files found in DE optimization directory: {sim_dir}")
-                    # Try to find any .nc files as fallback
-                    all_nc_files = list(sim_dir.glob("*.nc"))
-                    if all_nc_files:
-                        self.logger.warning(f"Found {len(all_nc_files)} other .nc files: {[f.name for f in all_nc_files]}")
-                        sim_files = all_nc_files
-                    else:
-                        return None
+                    return None
                 
-                sim_file = sim_files[-1]  # Take the most recent file
+                # Look for timestep file (contains the averageRoutedRunoff we need)
+                timestep_files = [f for f in sim_files if 'timestep' in f.name]
+                if not timestep_files:
+                    self.logger.error("No SUMMA timestep files found for lumped routing")
+                    self.logger.error(f"Available SUMMA files: {[f.name for f in sim_files]}")
+                    return None
+                
+                sim_file = timestep_files[0]  # Take the first timestep file
                 self.logger.debug(f"Using SUMMA file: {sim_file}")
+                self.logger.debug(f"File size: {sim_file.stat().st_size} bytes")
                 
-                # Open the file with xarray
-                with xr.open_dataset(sim_file) as ds:
-                    self.logger.debug(f"SUMMA output variables: {list(ds.variables.keys())}")
-                    self.logger.debug(f"SUMMA output dimensions: {dict(ds.sizes)}")
-                    
-                    # Try to find streamflow variable
-                    for var_name in ['outflow', 'basRunoff', 'averageRoutedRunoff', 'totalRunoff']:
-                        if var_name in ds.variables:
-                            if 'gru' in ds[var_name].dims and ds.sizes['gru'] > 1:
-                                # Sum across GRUs if multiple
-                                simulated_flow = ds[var_name].sum(dim='gru').to_pandas()
-                                self.logger.debug(f"Extracted {var_name} (summed across {ds.sizes['gru']} GRUs)")
-                            else:
-                                # Single GRU or no gru dimension
-                                simulated_flow = ds[var_name].to_pandas()
-                                if isinstance(simulated_flow, pd.DataFrame):
-                                    simulated_flow = simulated_flow.iloc[:, 0]
-                                self.logger.debug(f"Extracted {var_name} from single GRU")
-                            break
-                    else:
-                        self.logger.error(f"Could not find streamflow variable in SUMMA output. Available variables: {list(ds.variables.keys())}")
-                        return None
-                    
-                    # Get catchment area for unit conversion
-                    catchment_area = self._get_catchment_area()
-                    if catchment_area is not None and catchment_area > 0:
-                        # Convert from m/s to m³/s
-                        simulated_flow = simulated_flow * catchment_area
-                        self.logger.debug(f"Converted from m/s to m³/s using catchment area: {catchment_area/1e6:.2f} km²")
+                # Get catchment area for unit conversion (m/s -> m³/s)
+                catchment_area = self._get_catchment_area()
+                if catchment_area is None:
+                    self.logger.error("Could not determine catchment area for unit conversion")
+                    return None
+                
+                self.logger.info(f"Using catchment area: {catchment_area:.2f} m² ({catchment_area/1e6:.2f} km²)")
+                
+                # Open the file and extract streamflow
+                try:
+                    with xr.open_dataset(sim_file) as ds:
+                        self.logger.debug(f"SUMMA output variables: {list(ds.variables.keys())}")
+                        self.logger.debug(f"SUMMA output dimensions: {dict(ds.sizes)}")
+                        
+                        # Try to find streamflow variable in SUMMA output
+                        streamflow_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'averageRoutedRunoff_mean']
+                        found_var = None
+                        
+                        for var_name in streamflow_vars:
+                            if var_name in ds.variables:
+                                found_var = var_name
+                                self.logger.debug(f"Found streamflow variable: {var_name}")
+                                
+                                # Get the variable info
+                                var = ds[var_name]
+                                self.logger.debug(f"Variable {var_name} dimensions: {var.dims}")
+                                self.logger.debug(f"Variable {var_name} shape: {var.shape}")
+                                
+                                # Extract simulated flow - for lumped case, should be single time series
+                                if len(var.shape) > 1:
+                                    # Multi-dimensional - take first spatial index (should be only one for lumped)
+                                    if 'hru' in var.dims:
+                                        simulated_flow = var.isel(hru=0).to_pandas()
+                                    elif 'gru' in var.dims:
+                                        simulated_flow = var.isel(gru=0).to_pandas()
+                                    else:
+                                        # Take first index of non-time dimension
+                                        non_time_dims = [dim for dim in var.dims if dim != 'time']
+                                        if non_time_dims:
+                                            simulated_flow = var.isel({non_time_dims[0]: 0}).to_pandas()
+                                        else:
+                                            simulated_flow = var.to_pandas()
+                                else:
+                                    # Already 1D time series
+                                    simulated_flow = var.to_pandas()
+                                
+                                # Convert from m/s to m³/s by multiplying by catchment area
+                                simulated_flow_original = simulated_flow.copy()
+                                simulated_flow = simulated_flow * catchment_area
+                                
+                                self.logger.debug(f"Unit conversion: {var_name} from m/s to m³/s")
+                                self.logger.debug(f"Original flow stats (m/s): min={simulated_flow_original.min():.6f}, max={simulated_flow_original.max():.6f}, mean={simulated_flow_original.mean():.6f}")
+                                self.logger.debug(f"Converted flow stats (m³/s): min={simulated_flow.min():.2f}, max={simulated_flow.max():.2f}, mean={simulated_flow.mean():.2f}")
+                                
+                                self.logger.debug(f"Extracted simulated flow shape: {simulated_flow.shape}")
+                                self.logger.debug(f"Simulated flow time range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+                                break
+                        
+                        if found_var is None:
+                            self.logger.error("Could not find streamflow variable in SUMMA output")
+                            self.logger.error(f"Available variables: {list(ds.variables.keys())}")
+                            return None
+                            
+                except Exception as e:
+                    self.logger.error(f"Error reading SUMMA file {sim_file}: {str(e)}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                    return None
             
-            # Log the time ranges for debugging
-            self.logger.debug(f"Observed flow time range: {observed_flow.index.min()} to {observed_flow.index.max()}")
-            self.logger.debug(f"Simulated flow time range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+            # Check if we have simulated_flow
+            if 'simulated_flow' not in locals():
+                self.logger.error("Failed to extract simulated flow data")
+                return None
+            
+            # Round time index to nearest hour for better matching
+            simulated_flow.index = simulated_flow.index.round('h')
+            self.logger.info(f'simulated flow: {simulated_flow}')
+
+            # Check time overlap
+            common_idx = observed_flow.index.intersection(simulated_flow.index)
+            self.logger.debug(f"Common time indices: {len(common_idx)}")
+            
+            if len(common_idx) == 0:
+                self.logger.error("No common time indices between observed and simulated data!")
+                self.logger.error(f"Observed time range: {observed_flow.index.min()} to {observed_flow.index.max()}")
+                self.logger.error(f"Simulated time range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+                return None
+            
+            self.logger.debug(f"Found {len(common_idx)} common time steps for metrics calculation")
             
             # Calculate metrics for calibration and evaluation periods
             metrics = {}
@@ -1735,8 +2335,7 @@ class DEOptimizer:
             # Log the calculated metrics for debugging
             for metric_name, value in metrics.items():
                 if not np.isnan(value):
-                    self.logger.debug(f"Calculated {metric_name}: {value:.6f}")
-            
+                    self.logger.debug(f"Calculated {metric_name}: {value:.6f}")         
             return metrics
             
         except Exception as e:
@@ -1788,8 +2387,7 @@ class DEOptimizer:
         kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
         
         # Mean Absolute Error (MAE)
-        mae = (observed - simulated).abs().mean()
-        
+        mae = (observed - simulated).abs().mean()        
         return {
             'KGE': kge,
             'NSE': nse,
@@ -1907,9 +2505,221 @@ class DEOptimizer:
             self.logger.error(traceback.format_exc())
             return None
 
+    def _update_mizuroute_parameters(self, params):
+        """
+        Update mizuRoute parameter file with new parameter values.
+        
+        Args:
+            params: Dictionary with parameter values including mizuRoute parameters
+            
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        try:
+            # Path to mizuRoute parameter file in optimization settings
+            mizuroute_settings_dir = self.optimization_dir / "settings" / "mizuRoute"
+            param_file = mizuroute_settings_dir / "param.nml.default"
+            
+            if not param_file.exists():
+                self.logger.error(f"mizuRoute parameter file not found: {param_file}")
+                return False
+            
+            # Read the original parameter file
+            with open(param_file, 'r') as f:
+                content = f.read()
+            
+            # Update parameter values using regex replacement
+            import re
+            updated_content = content
+            
+            for param_name in self.mizuroute_params:
+                if param_name in params:
+                    param_value = params[param_name]
+                    
+                    # Create regex pattern to find and replace parameter
+                    # Pattern matches: whitespace + param_name + whitespace + = + whitespace + number
+                    pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
+                    
+                    # Format the replacement value
+                    if param_name in ['tscale']:
+                        # Integer parameters
+                        replacement = rf'\g<1>{int(param_value)}'
+                    else:
+                        # Float parameters with appropriate precision
+                        replacement = rf'\g<1>{param_value:.6f}'
+                    
+                    # Perform the replacement
+                    new_content = re.sub(pattern, replacement, updated_content)
+                    
+                    if new_content != updated_content:
+                        updated_content = new_content
+                        self.logger.debug(f"Updated {param_name} = {param_value}")
+                    else:
+                        self.logger.warning(f"Could not find parameter {param_name} in mizuRoute file")
+            
+            # Write updated parameter file
+            with open(param_file, 'w') as f:
+                f.write(updated_content)
+            
+            self.logger.debug(f"Updated mizuRoute parameters in {param_file}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error updating mizuRoute parameters: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+
+    def _update_mizuroute_control_for_optimization(self, is_final_run=False):
+        """
+        Update the mizuRoute control file for DE optimization with proper paths and filenames.
+        
+        Args:
+            is_final_run (bool): If True, runs full experiment period for final evaluation.
+                            If False, runs only spinup + calibration period for optimization.
+        """
+        mizuroute_settings_dir = self.optimization_dir / "settings" / "mizuRoute"
+        control_file_path = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+        
+        if not control_file_path.exists():
+            self.logger.warning("mizuRoute control file not found in optimization settings")
+            return
+        
+        # Parse time periods from config
+        spinup_start, spinup_end = self._parse_date_range(self.config.get('SPINUP_PERIOD', ''))
+        calib_start, calib_end = self.calibration_period
+        experiment_start = self.config.get('EXPERIMENT_TIME_START', '')
+        experiment_end = self.config.get('EXPERIMENT_TIME_END', '')
+        
+        # Determine simulation period and filename prefix based on run type
+        if is_final_run:
+            # Final run: use full experiment period
+            sim_start = experiment_start
+            sim_end = experiment_end
+            run_prefix = f"run_de_final_{self.experiment_id}"
+            filename_prefix = f"run_de_final_{self.experiment_id}"
+            self.logger.info("Setting up mizuRoute for final run with full experiment period")
+        else:
+            # Optimization runs: use spinup start to calibration end
+            if spinup_start and calib_end:
+                sim_start = spinup_start.strftime('%Y-%m-%d %H:%M')
+                sim_end = calib_end.strftime('%Y-%m-%d %H:%M')
+            elif calib_start and calib_end:
+                # Fallback: just use calibration period if no spinup defined
+                sim_start = calib_start.strftime('%Y-%m-%d %H:%M')
+                sim_end = calib_end.strftime('%Y-%m-%d %H:%M')
+            else:
+                # Ultimate fallback: use experiment period
+                sim_start = experiment_start
+                sim_end = experiment_end
+                self.logger.warning("Could not parse spinup/calibration periods for mizuRoute, using full experiment period")
+            
+            run_prefix = f"run_de_opt_{self.experiment_id}"
+            filename_prefix = f"run_de_opt_{self.experiment_id}"
+            self.logger.info(f"Setting up mizuRoute optimization run from {sim_start} to {sim_end}")
+        
+        # Read the original control file
+        with open(control_file_path, 'r') as f:
+            lines = f.readlines()
+        
+        # Update paths and settings in control file
+        updated_lines = []
+        for line in lines:
+            if '<input_dir>' in line:
+                # Point to DE optimization SUMMA simulation directory
+                input_path = str(self.summa_sim_dir).replace('\\', '/')
+                updated_lines.append(f"<input_dir>             {input_path}/    ! Folder that contains runoff data from SUMMA \n")
+            elif '<output_dir>' in line:
+                # Point to DE optimization mizuRoute simulation directory
+                output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
+                updated_lines.append(f"<output_dir>            {output_path}/    ! Folder that will contain mizuRoute simulations \n")
+            elif '<ancil_dir>' in line:
+                # Point to DE optimization mizuRoute settings directory
+                ancil_path = str(mizuroute_settings_dir).replace('\\', '/')
+                updated_lines.append(f"<ancil_dir>             {ancil_path}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n")
+            elif '<case_name>' in line:
+                # Update case name for optimization runs
+                updated_lines.append(f"<case_name>             {run_prefix}    ! Simulation case name. This used for output netCDF, and restart netCDF name \n")
+            elif '<fname_qsim>' in line:
+                # Update input filename to match SUMMA output from optimization
+                updated_lines.append(f"<fname_qsim>            {filename_prefix}_timestep.nc    ! netCDF name for HM_HRU runoff \n")
+            elif '<sim_start>' in line:
+                # Update simulation start time
+                updated_lines.append(f"<sim_start>             {sim_start}    ! Time of simulation start. format: yyyy-mm-dd or yyyy-mm-dd hh:mm:ss \n")
+            elif '<sim_end>' in line:
+                # Update simulation end time
+                updated_lines.append(f"<sim_end>               {sim_end}    ! Time of simulation end. format: yyyy-mm-dd or yyyy-mm-dd hh:mm:ss \n")
+            else:
+                # Keep all other lines unchanged
+                updated_lines.append(line)
+        
+        # Write updated control file
+        with open(control_file_path, 'w') as f:
+            f.writelines(updated_lines)
+        
+        period_type = "final evaluation" if is_final_run else "optimization"
+        self.logger.info(f"Updated mizuRoute control file for {period_type} with period {sim_start} to {sim_end}")
+        self.logger.info(f"mizuRoute will read from: {self.summa_sim_dir}")
+        self.logger.info(f"mizuRoute will write to: {self.mizuroute_sim_dir}")
+        self.logger.info(f"Input filename: {filename_prefix}_timestep.nc")
+
+    def _load_existing_mizuroute_parameters(self):
+        """
+        Load existing mizuRoute parameters from parameter file.
+        
+        Returns:
+            Dict: Dictionary with existing mizuRoute parameter values, or None if not found
+        """
+        try:
+            if not self.mizuroute_param_file.exists():
+                return None
+            
+            param_values = {}
+            
+            with open(self.mizuroute_param_file, 'r') as f:
+                content = f.read()
+                
+                for param_name in self.mizuroute_params:
+                    # Look for parameter in file using regex
+                    import re
+                    pattern = rf'{param_name}\s*=\s*([0-9.-]+)'
+                    match = re.search(pattern, content)
+                    
+                    if match:
+                        param_values[param_name] = float(match.group(1))
+                        self.logger.debug(f"Found existing {param_name}: {param_values[param_name]}")
+            
+            return param_values if param_values else None
+            
+        except Exception as e:
+            self.logger.error(f"Error loading existing mizuRoute parameters: {str(e)}")
+            return None
+
+    def _get_default_mizuroute_value(self, param_name):
+        """
+        Get default value for a mizuRoute parameter.
+        
+        Args:
+            param_name: Name of the mizuRoute parameter
+            
+        Returns:
+            float: Default parameter value
+        """
+        defaults = {
+            'velo': 1.0,
+            'diff': 1000.0,
+            'mann_n': 0.025,
+            'wscale': 0.001,
+            'fshape': 2.5,
+            'tscale': 86400
+        }
+        
+        return defaults.get(param_name, 1.0)
+
     def _run_final_simulation(self, best_params):
         """
         Run a final simulation with the best parameters using the full experiment period.
+        Enhanced to handle routing configurations.
         
         Args:
             best_params: Dictionary with best parameter values
@@ -1935,8 +2745,15 @@ class DEOptimizer:
             else:
                 self.logger.warning("Could not calculate new soil depths for final run")
         
-        # Generate trial parameters file with best parameters (excluding depth parameters)
-        hydraulic_params = {k: v for k, v in best_params.items() if k not in self.depth_params}
+        # Update mizuRoute parameters if routing calibration was used
+        if self.mizuroute_params and any(param in best_params for param in self.mizuroute_params):
+            mizuroute_success = self._update_mizuroute_parameters(best_params)
+            if not mizuroute_success:
+                self.logger.warning("Could not update mizuRoute parameters for final run")
+        
+        # Generate trial parameters file with best parameters (excluding depth and mizuRoute parameters)
+        hydraulic_params = {k: v for k, v in best_params.items() 
+                          if k not in self.depth_params and k not in self.mizuroute_params}
         trial_params_path = self._generate_trial_params_file(hydraulic_params)
         if not trial_params_path:
             self.logger.warning("Could not generate trial parameters file for final run")
@@ -1970,9 +2787,20 @@ class DEOptimizer:
         # Run SUMMA with the best parameters (full period)
         summa_success = self._run_summa_simulation()
         
+        # Check if mizuRoute routing is needed
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+        routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+        needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+        
         # Run mizuRoute if needed
         mizuroute_success = True
-        if self.config.get('DOMAIN_DEFINITION_METHOD') != 'lumped':
+        if needs_mizuroute:
+            # Handle lumped-to-distributed conversion if needed
+            if domain_method == 'lumped' and routing_delineation == 'river_network':
+                self.logger.info("Converting lumped SUMMA output for distributed routing in final run")
+                self._convert_lumped_to_distributed_routing()
+            
+            # Run mizuRoute
             mizuroute_success = self._run_mizuroute_simulation()
         
         # Calculate final performance metrics for both calibration and evaluation periods
@@ -2310,8 +3138,10 @@ class DEOptimizer:
                 'F': self.F,
                 'CR': self.CR,
                 'target_metric': self.target_metric,
-                'parameters_calibrated': self.local_params + self.basin_params + self.depth_params,
+                'parameters_calibrated': self.local_params + self.basin_params + self.depth_params + self.mizuroute_params,
                 'depth_calibration_enabled': self.calibrate_depth,
+                'mizuroute_calibration_enabled': bool(self.mizuroute_params),
+                'routing_configuration': self._check_routing_configuration(),
                 'total_evaluations': len(all_evaluations),
                 'experiment_id': self.experiment_id,
                 'domain_name': self.domain_name,

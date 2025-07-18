@@ -284,10 +284,14 @@ NN_VALIDATION_SPLIT: 0.2                                       # Uncertainty per
 
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 100                                       # Number of iterations for calibration 
+NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 30                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-  # -- DDS specific settings
+  # -- DE specific settings
+DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
+DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
+# -- DDS specific settings
 DDS_R:  0.4                                                    # DDS perturbation parameter
   # -- SCE-UA specific settings
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
@@ -301,10 +305,7 @@ PSO_COGNITIVE_PARAM: 1.5                                       # Personal best i
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
 PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
 PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
-  # -- DE specific settings
-DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
-DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
-POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
+
 
 ### ============================================= 8. Data and Path Settings: =====================================================================
 

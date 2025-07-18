@@ -21,7 +21,7 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                          # Name of experimental domain
+DOMAIN_NAME: Bow_at_Banff_lumped_em_earth_dist_miz                          # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
@@ -44,6 +44,7 @@ POUR_POINT_SHP_NAME: default                                   # If 'default', u
 
 # Domain representation settings
 DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+ROUTING_DELINEATION: river_network                             # Routing approach: lumped, river_network
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 2500                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
@@ -53,7 +54,7 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
+DOMAIN_DISCRETIZATION: elevation                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
 COMBINED_DISCRETIZATION_METHODS:                               # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
@@ -179,6 +180,13 @@ CALIBRATE_DEPTH: True                                       # Enable soil depth 
 DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
 DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
+# Primary routing parameters to calibrate (IRF method)
+MIZUROUTE_PARAMS_TO_CALIBRATE: "velo,diff"
+
+# Parameter bounds
+MIZUROUTE_VELO_BOUNDS: [0.1, 3.0]      # Channel velocity [m/s]
+MIZUROUTE_DIFF_BOUNDS: [100, 3000]     # Diffusion [m²/s]
+
 # SUMMMA Paths and filenames
 SETTINGS_SUMMA_PATH: default                                   # Path to SUMMA run settings, if default self.data_dir / settings / SUMMA
 SETTINGS_SUMMA_FILEMANAGER: fileManager.txt                    # Name of SUMMA file manager
@@ -258,7 +266,7 @@ HYPE_EXE: hype                                                 # Name of HYPE ex
 
 ### ============================================= 5. Evaluation settings: =================================================================
 ## Simulation settings
-SIM_REACH_ID: 228                                              # River reach ID used for streamflow evaluation and optimization
+SIM_REACH_ID: 147                                              # River reach ID used for streamflow evaluation and optimization
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
 
 # Observation data settings

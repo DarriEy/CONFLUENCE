@@ -16,7 +16,8 @@ SWRadAtm              | 24
 ! -------------------
 !  model variables 
 ! -------------------
-averageRoutedRunoff   | 1   
+averageRoutedRunoff   | 1
+basin__TotalRunoff    | 1   
 scalarTotalRunoff     | 24   
 scalarSWE             | 24  
 scalarGroundSnowFraction | 24

@@ -1372,11 +1372,11 @@ class DataManager:
             # Replace precipitation and temperature variables
             updated_ds = forcing_ds.copy(deep=True)
             
-            # Map EM-Earth variables to forcing variables
+            # FIXED: Updated variable mapping to include CONFLUENCE variable names
             variable_mapping = {
-                'prcp': ['pcp', 'precipitation', 'PRCP', 'prcp'],
-                'prcp_corrected': ['pcp', 'precipitation', 'PRCP', 'prcp'],  # Use corrected if available
-                'tmean': ['tmp', 'temperature', 'TEMP', 'tmean', 'tas']
+                'prcp': ['pcp', 'precipitation', 'PRCP', 'prcp', 'pptrate'],  # Added pptrate
+                'prcp_corrected': ['pcp', 'precipitation', 'PRCP', 'prcp', 'pptrate'],  # Added pptrate
+                'tmean': ['tmp', 'temperature', 'TEMP', 'tmean', 'tas', 'airtemp']  # Added airtemp
             }
             
             # Update variables
@@ -1393,17 +1393,29 @@ class DataManager:
                             # Convert units if necessary
                             if em_var in ['prcp', 'prcp_corrected']:
                                 # EM-Earth is in mm/hour, check if forcing expects different units
-                                if 'kg m-2 s-1' in str(updated_ds[forcing_var].attrs.get('units', '')):
+                                current_units = str(updated_ds[forcing_var].attrs.get('units', ''))
+                                
+                                if 'kg m-2 s-1' in current_units or 'kg m**-2 s**-1' in current_units:
                                     # Convert mm/hour to kg/m²/s (mm/hour / 3.6)
-                                    em_data_interp = em_data_interp / 3.6
+                                    em_data_interp = em_data_interp / 3600
                                     self.logger.info(f"Converted precipitation from mm/hour to kg/m²/s")
+                                elif 'mm/s' in current_units or 'mm s-1' in current_units:
+                                    # Convert mm/hour to mm/s (mm/hour / 3600)
+                                    em_data_interp = em_data_interp / 3600
+                                    self.logger.info(f"Converted precipitation from mm/hour to mm/s")
+                                else:
+                                    self.logger.warning(f"Unknown precipitation units: {current_units}, using mm/hour")
                             
                             elif em_var == 'tmean':
                                 # EM-Earth is in Celsius, check if forcing expects Kelvin
-                                if 'K' in str(updated_ds[forcing_var].attrs.get('units', '')):
+                                current_units = str(updated_ds[forcing_var].attrs.get('units', ''))
+                                
+                                if 'K' in current_units and 'Celsius' not in current_units:
                                     # Convert Celsius to Kelvin
                                     em_data_interp = em_data_interp + 273.15
                                     self.logger.info(f"Converted temperature from Celsius to Kelvin")
+                                else:
+                                    self.logger.info(f"Temperature units: {current_units}, keeping Celsius")
                             
                             # Update the forcing variable
                             updated_ds[forcing_var] = em_data_interp
@@ -1417,28 +1429,48 @@ class DataManager:
                             break
             
             # Add global attributes about EM-Earth replacement
+            # Convert boolean to integer for NetCDF compatibility
             updated_ds.attrs.update({
-                'em_earth_replacement': True,
+                'em_earth_replacement': 1,  # Use integer instead of boolean
                 'em_earth_replacement_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'em_earth_variables_replaced': 'precipitation, temperature'
             })
             
-            # Save updated dataset (create backup first)
+            # Create backup first
             backup_file = forcing_file.with_suffix('.nc.backup')
             if not backup_file.exists():
                 shutil.copy2(forcing_file, backup_file)
                 self.logger.info(f"Created backup: {backup_file}")
             
-            # Save updated file
-            updated_ds.to_netcdf(forcing_file)
+            # FIXED: Use a safer file writing approach
+            # Write to a temporary file first, then replace the original
+            temp_file = forcing_file.with_suffix('.nc.temp')
             
-            self.logger.info(f"Successfully updated {forcing_file.name} with EM-Earth data")
-            
-            # Close datasets
-            forcing_ds.close()
-            updated_ds.close()
-            for em_ds in em_datasets:
-                em_ds.close()
+            try:
+                # Write updated dataset to temporary file
+                updated_ds.to_netcdf(temp_file)
+                
+                # Close datasets to release file handles
+                forcing_ds.close()
+                updated_ds.close()
+                for em_ds in em_datasets:
+                    em_ds.close()
+                
+                # Remove the original file and rename temp file
+                if forcing_file.exists():
+                    forcing_file.unlink()  # Remove original file
+                
+                temp_file.rename(forcing_file)  # Rename temp file to original name
+                
+                self.logger.info(f"Successfully updated {forcing_file.name} with EM-Earth data")
+                
+            except Exception as write_error:
+                # Clean up temp file if something went wrong
+                if temp_file.exists():
+                    temp_file.unlink()
+                
+                # Re-raise the error
+                raise write_error
             
         except Exception as e:
             self.logger.error(f"Error updating {forcing_file.name}: {str(e)}")

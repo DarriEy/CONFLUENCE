@@ -17,17 +17,17 @@
 ### ============================================= 1. Global settings: =====================================================================
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
-CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/anvil/scratch/x-deythorsson/CONFLUENCE_data/"
+CONFLUENCE_CODE_DIR: "/home/x-deythorsson/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                          # Name of experimental domain
+DOMAIN_NAME: "Bow_at_Banff_lumped"                    # Name of experimental domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
-EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
-CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
-EVALUATION_PERIOD:  2010-01-01, 2022-12-31                     # start_date, end_date in format YYYY-MM-DD
-SPINUP_PERIOD: 1980-01-01, 1980-12-31
+EXPERIMENT_TIME_START: 1981-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2019-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+CALIBRATION_PERIOD: 1984-01-01, 1994-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2010-01-01, 2019-12-31                     # start_date, end_date in format YYYY-MM-DD
+SPINUP_PERIOD: 1981-01-01, 1983-12-31
 
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
@@ -53,13 +53,11 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
-COMBINED_DISCRETIZATION_METHODS:                               # Combined methods to discretize modelling domains 
+DOMAIN_DISCRETIZATION: GRUs                               # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs, combined
+COMBINED_DISCRETIZATION_METHODS: elevation, radiation          # Combined methods to discretize modelling domains 
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
-ASPECT_CLASS_NUMBER: 8                                    # Number of aspect classes for discretisation (4, 8, or custom number)
-ASPECT_PATH: default                                      # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
@@ -105,20 +103,20 @@ RADIATION_PATH: default                                        # Path to radiati
 DATATOOL_PATH: default                                         # Path to datatool executable 
 GISTOOL_PATH: default                                          # Path to gistool executable
 EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
-DATATOOL_DATASET_ROOT: /work/comphyd_lab/data/meteorological-data/    # Path to datatool datasets root directory
-DATATOOL_CACHE: /home/darri.eythorsson                             # Cache directory used in datatool
+DATATOOL_DATASET_ROOT: /anvil/datasets/meteorological/    # Path to datatool datasets root directory
+DATATOOL_CACHE: /tmp/anvil/projects/x-ees240082/data/CONFLUENCE_data/cache/                             # Cache directory used in datatool
 TOOL_ACCOUNT: def-mclark                                   # HPC account for running datatool
-GISTOOL_DATASET_ROOT: /work/comphyd_lab/data/geospatial-data/         # Path to gistool datasets root directory
+GISTOOL_DATASET_ROOT: /anvil/datasets/geospatial/         # Path to gistool datasets root directory
 GISTOOL_LIB_PATH: /work/comphyd_lab/envs/r-env/                     # Path to gistool libraries
-TOOL_CACHE: /home/darri.eythorsson/cache                                      # Path to gistool cache directory
-EASYMORE_CACHE: /home/darri.eythorsson/easymore/                          # Path to easymore cache directory
+TOOL_CACHE: /tmp/anvil/projects/x-ees240082/data/CONFLUENCE_data/cache/                                      # Path to gistool cache directory
+EASYMORE_CACHE: /anvil/projects/x-ees240082/data/CONFLUENCE_data/cache/                          # Path to easymore cache directory
 EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" #Path to easymore job config
-CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
+CLUSTER_JSON: /home/x-deythorsson/data/CONFLUENCE_data/installs/datatool/etc/clusters/perdue-anvil.json
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 
 # Forcing data settings
-FORCING_DATASET: ERA5                                          # Forcing dataset to use
+FORCING_DATASET: "ERA5"                                        # Forcing dataset to use
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -152,8 +150,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip,Fcapil,k_snow,heightCanopyBottom
-
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
@@ -175,7 +172,7 @@ DECISION_OPTIONS:                                              # Select which SU
     - jrdn1991 
     - smnv2000 
 # Soil depth calibration settings
-CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
+CALIBRATE_DEPTH: False                                       # Enable soil depth profile calibration (True/False)
 DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
 DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
@@ -274,10 +271,9 @@ STREAMFLOW_RAW_NAME: default                                   # Name of streamf
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to HYDAT database      
 
-
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-OPTIMISATION_METHODS: [iteration, emulation]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: []                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 # Single Site Emulation settings
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
@@ -292,8 +288,8 @@ EMULATION_MAX_ITERATIONS': 3                                   # Iterative refin
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 30                                            # Population size for genetic algorithms
-OPTIMIZATION_METRIC: NSE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+POPULATION_SIZE: 50                                            # Population size for genetic algorithms
+OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
   # -- SCE-UA specific settings
@@ -311,3 +307,4 @@ PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which i
   # -- DE specific settings
 DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
 DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
