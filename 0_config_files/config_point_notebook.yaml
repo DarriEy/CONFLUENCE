@@ -327,5 +327,5 @@ TOOL_CACHE: /home/darri.eythorsson/cache
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/
 EASYMORE_JOB_CONF: installs/MAF/02_model_agnostic_component/easymore-job.slurm
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
-NOTEBOOK_CREATION_TIME: '2025-07-18T12:44:06.397643'
+NOTEBOOK_CREATION_TIME: '2025-07-18T14:25:28.776482'
 NOTEBOOK_CREATOR: CONFLUENCE_Tutorial_01a
