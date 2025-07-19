@@ -326,7 +326,7 @@ TOOL_CACHE: /home/darri.eythorsson/cache
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/
 EASYMORE_JOB_CONF: installs/MAF/02_model_agnostic_component/easymore-job.slurm
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
-NOTEBOOK_CREATION_TIME: '2025-07-18T17:02:46.643172'
+NOTEBOOK_CREATION_TIME: '2025-07-18T21:23:54.767095'
 NOTEBOOK_CREATOR: CONFLUENCE_Tutorial_02c
 SPATIAL_EVOLUTION: Semi-distributed to elevation-based HRU discretization
 SPATIAL_MODE: Distributed

@@ -1,40 +1,33 @@
+import geopandas as gpd # type: ignore
 import pandas as pd # type: ignore
 import os
-import yaml # type: ignore
 import subprocess
 from pathlib import Path
 import time
-import sys
 import re
 import glob
 import shutil
+from shapely.geometry import Point # type: ignore
 
-def setup_confluence_directory(watershed_id, basin_source_path, basin_filename, river_source_path, river_filename):
+def setup_confluence_directory(watershed_id, basin_source_path, basin_filename, scale_name, river_source_path=None, river_filename=None):
     """
     Set up the CONFLUENCE directory structure for a watershed and copy relevant shapefiles.
-    For CAMELS-SPAT implementation, adds GRU_area and sets gru_to_seg and GRU_ID to equal COMID.
-    Also ensures that river network shapefiles have the required fields for MizuRoute.
+    For CAMELS-SPAT implementation, uses lumped basins and distributed river networks.
+    Also ensures that shapefiles have the required fields for CONFLUENCE.
+    Now also processes CAMELS-SPAT observational streamflow data.
     
     Args:
         watershed_id: ID of the watershed
         basin_source_path: Path to the source basin shapefile directory
         basin_filename: Name of the basin shapefile
-        river_source_path: Path to the source river shapefile directory
-        river_filename: Name of the river shapefile
+        river_source_path: Path to the source river shapefile directory (optional)
+        river_filename: Name of the river shapefile (optional)
         
     Returns:
         Tuple of (basin_target_path, river_target_path)
-    """
-    try:
-        import geopandas as gpd # type: ignore
-        from shapely.geometry import LineString # type: ignore
-        import numpy as np # type: ignore
-    except ImportError:
-        print("Warning: geopandas or other required packages not installed. Cannot modify shapefile attributes.")
-        return None, None
-        
+    """        
     # Base CONFLUENCE data directory
-    confluence_data_dir = Path("/work/comphyd_lab/data/CONFLUENCE_data")
+    confluence_data_dir = Path("/anvil/scratch/x-deythorsson/CONFLUENCE_data")
     
     # Create the domain directory structure
     domain_dir = confluence_data_dir / "camels_spat" / f"domain_{watershed_id}"
@@ -49,6 +42,7 @@ def setup_confluence_directory(watershed_id, basin_source_path, basin_filename, 
     basin_source_base = str(Path(basin_source_path) / basin_filename).rsplit('.', 1)[0]
     basin_target_base = str(basin_target_dir / basin_filename).rsplit('.', 1)[0]
     
+
     # Copy all shapefile components (shp, shx, dbf, prj, cpg)
     for extension in ['shp', 'shx', 'dbf', 'prj', 'cpg']:
         # Copy basin files
@@ -58,31 +52,30 @@ def setup_confluence_directory(watershed_id, basin_source_path, basin_filename, 
             shutil.copy2(basin_source_file, basin_target_file)
             print(f"Copied {basin_source_file} to {basin_target_file}")
         
-        # For distributed case, use the river file
-        river_source_base = str(Path(river_source_path) / river_filename).rsplit('.', 1)[0]
-        river_target_base = str(river_target_dir / river_filename).rsplit('.', 1)[0]
-        river_source_file = f"{river_source_base}.{extension}"
-        
-        river_target_file = f"{river_target_base}.{extension}"
-        if os.path.exists(river_source_file):
-            shutil.copy2(river_source_file, river_target_file)
-            print(f"Copied {river_source_file} to {river_target_file}")
+        # Copy river files if they exist
+        if river_source_path and river_filename and isinstance(river_filename, str) and river_filename.strip():
+            #river_source_base = str(Path(river_source_path) / river_filename).rsplit('.', 1)[0]
+            #river_target_base = str(river_target_dir / river_filename).rsplit('.', 1)[0]
+            #river_source_file = f"{river_source_base}.{extension}"
+            #river_target_file = f"{river_target_base}.{extension}"
+            
+            #if os.path.exists(river_source_file):
+                #shutil.copy2(river_source_file, river_target_file)
+                #print(f"Copied {river_source_file} to {river_target_file}")
+            pass  # River file copying is currently disabled
     
     # Now modify the shapefiles to add required attributes
     try:
         # Read the basin shapefile
         basin_shp = gpd.read_file(f"{basin_target_base}.shp")
         
-        # Add GRU_ID and gru_to_seg fields based on COMID
-        if 'COMID' in basin_shp.columns:
-            basin_shp['GRU_ID'] = basin_shp['COMID']
-            basin_shp['gru_to_seg'] = basin_shp['COMID']
-            print(f"Set GRU_ID and gru_to_seg to match COMID values")
-        else:
-            # Fallback if COMID doesn't exist
-            basin_shp['GRU_ID'] = 1
-            basin_shp['gru_to_seg'] = 1
-            print(f"Warning: COMID column not found. Set GRU_ID and gru_to_seg to 1")
+        print(f"Original basin shapefile columns: {basin_shp.columns.tolist()}")
+        
+        # For CAMELS-SPAT lumped basins, we need to create a simple structure
+        # Add GRU_ID - for lumped basins, this should be 1
+        basin_shp['GRU_ID'] = 1
+        basin_shp['gru_to_seg'] = 1  # Points to a single outlet segment
+        print(f"Set GRU_ID and gru_to_seg to 1 for lumped basin")
         
         # Calculate GRU_area in square meters
         if basin_shp.crs is None:
@@ -92,95 +85,375 @@ def setup_confluence_directory(watershed_id, basin_source_path, basin_filename, 
         # Convert to equal area projection for accurate area calculation
         basin_shp_ea = basin_shp.to_crs('+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96')
         basin_shp['GRU_area'] = basin_shp_ea.geometry.area
-        print(f"Calculated GRU_area based on geometry")
+        print(f"Calculated GRU_area: {basin_shp['GRU_area'].iloc[0]:.2f} m²")
         
         # Save the modified basin shapefile
         basin_shp.to_file(f"{basin_target_base}.shp")
         print(f"Added GRU_ID, GRU_area, and gru_to_seg columns to {basin_filename}")
-        
-        # Now read and modify the river shapefile
-        river_shp = gpd.read_file(f"{river_target_base}.shp")
-        
-        # Check if CRS is defined
-        if river_shp.crs is None:
-            print(f"Warning: CRS not defined for {river_filename}. Trying to set to EPSG:4326 (WGS84).")
-            river_shp.set_crs(epsg=4326, inplace=True)
-        
-        # Get column mapping for source vs required columns
-        column_mappings = {
-            'Length': None,  # Will calculate if not found
-            'LINKNO': 'COMID' if 'COMID' in river_shp.columns else None,
-            'DSLINKNO': 'NextDownID' if 'NextDownID' in river_shp.columns else None,
-            'Slope': 'slope' if 'slope' in river_shp.columns else None
-        }
-        
-        print("River shapefile columns:", river_shp.columns.tolist())
-        
-        # Add missing fields based on mappings
-        for target_field, source_field in column_mappings.items():
-            if target_field in river_shp.columns:
-                print(f"Field {target_field} already exists in river shapefile")
-                continue
+
+
+        # Process river shapefile if it exists
+        if river_source_path and river_filename and isinstance(river_filename, str) and river_filename.strip():
+            river_target_base = str(river_target_dir / river_filename).rsplit('.', 1)[0]
+            river_target_file = f"{river_target_base}.shp"
+            
+            if os.path.exists(river_target_file):
+                print("Processing river shapefile...")
                 
-            if source_field and source_field in river_shp.columns:
-                # Copy from source field
-                river_shp[target_field] = river_shp[source_field]
-                print(f"Copied values from {source_field} to {target_field}")
-            else:
-                if target_field == 'LINKNO' and 'FEATUREID' in river_shp.columns:
-                    river_shp[target_field] = river_shp['FEATUREID']
-                    print(f"Copied values from FEATUREID to {target_field}")
-                elif target_field == 'DSLINKNO' and 'TO_NODE' in river_shp.columns:
-                    river_shp[target_field] = river_shp['TO_NODE']
-                    print(f"Copied values from TO_NODE to {target_field}")
-                else:
-                    # Initialize with a default value based on field type
-                    if target_field == 'Length':
-                        # Calculate length for rivers
-                        river_shp_proj = river_shp.to_crs('+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96')
-                        river_shp[target_field] = river_shp_proj.geometry.length
-                        print(f"Calculated {target_field} in meters from geometry")
-                    elif target_field == 'Slope':
-                        # Default to 0.001 slope (1 m/km) if not available
-                        river_shp[target_field] = 0.001
-                        print(f"Set default value 0.001 for {target_field}")
-                    elif target_field == 'LINKNO':
-                        # Create sequential ID if not available
-                        river_shp[target_field] = range(1, len(river_shp) + 1)
-                        print(f"Created sequential IDs for {target_field}")
-                    elif target_field == 'DSLINKNO':
-                        # Set to -1 (outlet) for all by default
-                        # A more sophisticated approach would use flow direction/network analysis
-                        river_shp[target_field] = -1
-                        print(f"Set default value -1 for {target_field} (indicating outlets)")
+                # Read the river shapefile
+                river_shp = gpd.read_file(river_target_file)
+                
+                print(f"Original river shapefile columns: {river_shp.columns.tolist()}")
+                
+                # Check if CRS is defined
+                if river_shp.crs is None:
+                    print(f"Warning: CRS not defined for {river_filename}. Trying to set to EPSG:4326 (WGS84).")
+                    river_shp.set_crs(epsg=4326, inplace=True)
+                
+                # Get column mapping for source vs required columns
+                column_mappings = {
+                    'Length': None,  # Will calculate if not found
+                    'LINKNO': None,  # Will look for alternatives
+                    'DSLINKNO': None,  # Will look for alternatives
+                    'Slope': None  # Will set default if not found
+                }
+                
+                # Try to map existing columns to required ones
+                existing_cols = river_shp.columns.tolist()
+                
+                # Look for LINKNO equivalents
+                linkno_candidates = ['LINKNO', 'COMID', 'segmentID', 'FID', 'OBJECTID', 'ID']
+                for candidate in linkno_candidates:
+                    if candidate in existing_cols:
+                        column_mappings['LINKNO'] = candidate
+                        break
+                
+                # Look for DSLINKNO equivalents
+                dslinkno_candidates = ['DSLINKNO', 'NextDownID', 'ToNode', 'DOWNSTREAM', 'TO_LINK']
+                for candidate in dslinkno_candidates:
+                    if candidate in existing_cols:
+                        column_mappings['DSLINKNO'] = candidate
+                        break
+                
+                # Look for Length equivalents
+                length_candidates = ['Length', 'LENGTH', 'SHAPE_Leng', 'Shape_Length']
+                for candidate in length_candidates:
+                    if candidate in existing_cols:
+                        column_mappings['Length'] = candidate
+                        break
+                
+                # Look for Slope equivalents
+                slope_candidates = ['Slope', 'SLOPE', 'slope', 'gradient']
+                for candidate in slope_candidates:
+                    if candidate in existing_cols:
+                        column_mappings['Slope'] = candidate
+                        break
+                
+                print("Column mappings found:", column_mappings)
+                
+                # Add missing fields based on mappings
+                for target_field, source_field in column_mappings.items():
+                    if target_field in river_shp.columns:
+                        print(f"Field {target_field} already exists in river shapefile")
+                        continue
                         
-                        # Attempt to infer downstream connectivity if possible
-                        # In many cases, this would require network analysis which is complex
-                        # For this example we'll just set it to -1 for outlets
-        
-        # Make sure the required columns have the right data types
-        river_shp['Length'] = river_shp['Length'].astype(float)
-        river_shp['LINKNO'] = river_shp['LINKNO'].astype(int)
-        river_shp['DSLINKNO'] = river_shp['DSLINKNO'].astype(int)
-        river_shp['Slope'] = river_shp['Slope'].astype(float)
-        
-        # Validate and fix data as needed
-        # Ensure Length is non-zero (replace zeros with 1 meter to avoid errors)
-        river_shp.loc[river_shp['Length'] == 0, 'Length'] = 1.0
-        
-        # Ensure Slope is non-zero (replace zeros with small value to avoid errors)
-        river_shp.loc[river_shp['Slope'] == 0, 'Slope'] = 0.0001
-        
-        # Save the modified river shapefile
-        river_shp.to_file(f"{river_target_base}.shp")
-        print(f"Modified river shapefile saved with all required fields at: {river_target_base}")
+                    if source_field and source_field in river_shp.columns:
+                        # Copy from source field
+                        river_shp[target_field] = river_shp[source_field]
+                        print(f"Copied values from {source_field} to {target_field}")
+                    else:
+                        # Initialize with default values
+                        if target_field == 'Length':
+                            # Calculate length for rivers
+                            river_shp_proj = river_shp.to_crs('+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96')
+                            river_shp[target_field] = river_shp_proj.geometry.length
+                            print(f"Calculated {target_field} in meters from geometry")
+                        elif target_field == 'Slope':
+                            # Default to 0.001 slope (1 m/km) if not available
+                            river_shp[target_field] = 0.001
+                            print(f"Set default value 0.001 for {target_field}")
+                        elif target_field == 'LINKNO':
+                            # Create sequential ID if not available
+                            river_shp[target_field] = range(1, len(river_shp) + 1)
+                            print(f"Created sequential IDs for {target_field}")
+                        elif target_field == 'DSLINKNO':
+                            # Set to -1 (outlet) for all by default
+                            # A more sophisticated approach would use flow direction/network analysis
+                            river_shp[target_field] = -1
+                            print(f"Set default value -1 for {target_field} (indicating outlets)")
+                            
+                            # For the last segment (presumably outlet), keep it as -1
+                            # For other segments, try to create a simple downstream connectivity
+                            if len(river_shp) > 1:
+                                # Simple approach: each segment drains to the next one, except the last
+                                for i in range(len(river_shp) - 1):
+                                    river_shp.loc[i, 'DSLINKNO'] = river_shp.loc[i+1, 'LINKNO']
+                                print(f"Created simple downstream connectivity")
+                
+                # Make sure the required columns have the right data types
+                river_shp['Length'] = river_shp['Length'].astype(float)
+                river_shp['LINKNO'] = river_shp['LINKNO'].astype(int)
+                river_shp['DSLINKNO'] = river_shp['DSLINKNO'].astype(int)
+                river_shp['Slope'] = river_shp['Slope'].astype(float)
+                
+                # Validate and fix data as needed
+                # Ensure Length is non-zero (replace zeros with 1 meter to avoid errors)
+                river_shp.loc[river_shp['Length'] == 0, 'Length'] = 1.0
+                
+                # Ensure Slope is non-zero (replace zeros with small value to avoid errors)
+                river_shp.loc[river_shp['Slope'] == 0, 'Slope'] = 0.0001
+                
+                # Save the modified river shapefile
+                river_shp.to_file(river_target_file)
+                print(f"Modified river shapefile saved with all required fields")
+
         
     except Exception as e:
         print(f"Error modifying shapefile attributes: {e}")
         import traceback
         print(traceback.format_exc())
     
+    # ========== NEW: Process CAMELS-SPAT Observational Data ==========
+    print(f"\nProcessing CAMELS-SPAT observational data for {watershed_id}...")
+    
+    try:
+        # Extract station ID from watershed_id (remove country prefix and scale suffix if present)
+        station_id = watershed_id
+        
+        # Remove country prefix (e.g., "USA_" or "CAN_")
+        if '_' in station_id:
+            parts = station_id.split('_')
+            if len(parts) >= 2 and parts[0] in ['USA', 'CAN']:
+                station_id = '_'.join(parts[1:])  # Remove country prefix
+        
+        # Remove scale suffix if present (e.g., "_meso", "_macro", "_headwater")
+        scale_suffixes = ['_meso', '_macro', '_headwater']
+        for suffix in scale_suffixes:
+            if station_id.endswith(suffix):
+                station_id = station_id[:-len(suffix)]
+                break
+        
+        print(f"Extracted station ID: {station_id}")
+        
+        # Process the observational data
+        output_file = process_camels_spat_observations(
+            station_id=station_id,
+            domain_name=watershed_id,
+            output_dir=domain_dir,
+            scale_name=scale_name,
+            camels_base_path=None,  # Use default path
+            logger=None  # Use default logging
+        )
+        
+        if output_file:
+            print(f"✓ Successfully processed observational data: {output_file}")
+        else:
+            print(f"⚠ Warning: Could not process observational data for station {station_id}")
+            
+    except Exception as e:
+        print(f"Error processing observational data: {e}")
+        import traceback
+        print(traceback.format_exc())
+    
+    # ================================================================
+    
     return basin_target_dir, river_target_dir
+
+def process_camels_spat_observations(station_id, domain_name, output_dir, scale_name, camels_base_path=None, logger=None):
+    """
+    Process CAMELS-spat observational streamflow data and convert to CONFLUENCE format.
+    
+    Args:
+        station_id (str): Station ID (e.g., '05BB001' or '02140991')
+        domain_name (str): Domain name for output file naming
+        output_dir (str or Path): Directory to save processed data
+        camels_base_path (str or Path, optional): Base path to CAMELS data. 
+            Defaults to "/work/comphyd_lab/data/_to-be-moved/camels-spat-upload/observations/meso-scale/obs-daily"
+        logger (logging.Logger, optional): Logger instance for messages
+    
+    Returns:
+        str: Path to the saved processed file, or None if processing failed
+    """
+    import xarray as xr
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+    
+    # Set up logging
+    if logger is None:
+        import logging
+        logger = logging.getLogger(__name__)
+    
+    # Set default CAMELS base path if not provided
+    if camels_base_path is None:
+        camels_base_path = Path(f"/home/x-deythorsson/data/camels-spat-upload/observations/{scale_name}/obs-daily")
+    else:
+        camels_base_path = Path(camels_base_path)
+    
+    # Convert output_dir to Path
+    output_dir = Path(output_dir)
+    
+    if not station_id:
+        logger.warning("No station_id provided - skipping observation processing")
+        return None
+    
+    # Determine country prefix based on station ID format
+    if station_id.isdigit():
+        country_prefix = 'USA'
+    else:
+        country_prefix = 'CAN'
+    
+    # Construct the expected filename
+    obs_filename = f"{country_prefix}_{station_id}_daily_flow_observations.nc"
+    obs_file_path = camels_base_path / obs_filename
+    
+    if not obs_file_path.exists():
+        logger.warning(f"Observation file not found: {obs_file_path}")
+        return None
+    
+    try:
+        logger.info(f"Processing observation data from: {obs_file_path}")
+        
+        # Load the NetCDF file
+        ds = xr.open_dataset(obs_file_path)
+        
+        # Extract streamflow data
+        q_obs = ds.q_obs.values  # Already in m³/s (same as cms)
+        time_daily = pd.to_datetime(ds.time.values)
+        
+        # Create daily DataFrame
+        df_daily = pd.DataFrame({
+            'datetime': time_daily,
+            'discharge_cms': q_obs
+        })
+        
+        # Remove any NaN values
+        df_daily = df_daily.dropna()
+        
+        if len(df_daily) == 0:
+            logger.warning("No valid data found after removing NaN values")
+            ds.close()
+            return None
+        
+        # Convert daily data to hourly through interpolation
+        # Create hourly time index
+        start_time = df_daily['datetime'].min()
+        end_time = df_daily['datetime'].max() + pd.Timedelta(days=1) - pd.Timedelta(hours=1)
+        hourly_index = pd.date_range(start=start_time, end=end_time, freq='h')
+        
+        # Interpolate to hourly values
+        df_daily_indexed = df_daily.set_index('datetime')
+        df_hourly = df_daily_indexed.reindex(
+            df_daily_indexed.index.union(hourly_index)
+        ).interpolate(method='time').reindex(hourly_index)
+        
+        # Reset index to get datetime as column
+        df_hourly = df_hourly.reset_index()
+        df_hourly.columns = ['datetime', 'discharge_cms']
+        
+        # Ensure proper datetime formatting
+        df_hourly['datetime'] = df_hourly['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Create output directory structure
+        streamflow_dir = output_dir / "observations" / "streamflow" / "preprocessed"
+        streamflow_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save processed data
+        output_file = streamflow_dir / f"{domain_name}_streamflow_processed.csv"
+        df_hourly.to_csv(output_file, index=False)
+        
+        logger.info(f"Processed observation data saved to: {output_file}")
+        logger.info(f"Data range: {df_hourly['datetime'].iloc[0]} to {df_hourly['datetime'].iloc[-1]}")
+        logger.info(f"Total records: {len(df_hourly)}")
+        
+        # Close the dataset
+        ds.close()
+        
+        return str(output_file)
+        
+    except Exception as e:
+        logger.error(f"Error processing observation data: {str(e)}")
+        if 'ds' in locals():
+            ds.close()
+        return None
+
+
+# Example usage function you can call from your main script
+def setup_camels_observations_for_confluence(config, project_dir, logger=None):
+    """
+    Wrapper function to process CAMELS observations using CONFLUENCE config.
+    
+    Args:
+        config (dict): CONFLUENCE configuration dictionary
+        project_dir (str or Path): Project directory path
+        logger (logging.Logger, optional): Logger instance
+    
+    Returns:
+        str: Path to processed file or None if failed
+    """
+    station_id = config.get('STATION_ID')
+    domain_name = config.get('DOMAIN_NAME')
+    
+    if not station_id or not domain_name:
+        if logger:
+            logger.warning("Missing STATION_ID or DOMAIN_NAME in config")
+        return None
+    
+    return process_camels_spat_observations(
+        station_id=station_id,
+        domain_name=domain_name,
+        output_dir=project_dir,
+        logger=logger
+    )
+
+def process_camels_spat_metadata(metadata_df):
+    """
+    Process CAMELS-SPAT metadata to create the expected columns for CONFLUENCE
+    
+    Args:
+        metadata_df: Raw CAMELS-SPAT metadata DataFrame
+        
+    Returns:
+        Processed metadata DataFrame with standardized columns
+    """
+    # Create a copy to avoid modifying the original
+    processed_metadata = metadata_df.copy()
+    
+    # Create ID column from Station_id
+    if 'Station_id' in processed_metadata.columns:
+        processed_metadata['ID'] = processed_metadata['Station_id'].astype(str)
+        print("Created ID column from Station_id")
+    else:
+        print("Warning: Station_id column not found in metadata")
+        return None
+    
+    # Create POUR_POINT_COORDS from Station_lat and Station_lon
+    if ('Station_lat' in processed_metadata.columns and 
+        'Station_lon' in processed_metadata.columns):
+        
+        # Create coordinate string in lat/lon format for all rows
+        pour_point_coords = []
+        valid_coords = 0
+        
+        for _, row in processed_metadata.iterrows():
+            if (not pd.isna(row['Station_lat']) and 
+                not pd.isna(row['Station_lon']) and
+                row['Station_lat'] != 0 and row['Station_lon'] != 0):
+                
+                coords = f"{row['Station_lat']}/{row['Station_lon']}"
+                pour_point_coords.append(coords)
+                valid_coords += 1
+            else:
+                pour_point_coords.append(None)
+        
+        processed_metadata['POUR_POINT_COORDS'] = pour_point_coords
+        print(f"Created POUR_POINT_COORDS from Station coordinates for {valid_coords}/{len(processed_metadata)} watersheds")
+        
+    else:
+        print("Warning: Station_lat and/or Station_lon columns not found in metadata")
+        processed_metadata['POUR_POINT_COORDS'] = None
+    
+    return processed_metadata
 
 def calculate_fresh_bounding_box(shapefile_path):
     """
@@ -192,9 +465,7 @@ def calculate_fresh_bounding_box(shapefile_path):
     Returns:
         String with bounding box in lat_max/lon_min/lat_min/lon_max format
     """
-    try:
-        import geopandas as gpd # type: ignore
-        
+    try:        
         # Read the shapefile
         gdf = gpd.read_file(shapefile_path)
         
@@ -270,7 +541,10 @@ def generate_distributed_config_file(template_path, output_path, domain_name, ba
     
     # Update the domain name using regex
     config_content = re.sub(r'DOMAIN_NAME:.*', f'DOMAIN_NAME: "{domain_name}"', config_content)
-    
+
+    # Update the data directory 
+    config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: /anvil/scratch/x-deythorsson/CONFLUENCE_data/camels_spat', config_content)
+
     # Update the river basin name
     config_content = re.sub(r'RIVER_BASINS_NAME:.*', f'RIVER_BASINS_NAME: "{basin_name}"', config_content)
     
@@ -278,7 +552,7 @@ def generate_distributed_config_file(template_path, output_path, domain_name, ba
     config_content = re.sub(r'RIVER_NETWORK_SHP_NAME:.*', f'RIVER_NETWORK_SHP_NAME: "{river_network_name}"', config_content)
     
     # Update domain definition method to use delineate
-    config_content = re.sub(r'DOMAIN_DEFINITION_METHOD:.*', f'DOMAIN_DEFINITION_METHOD: delineate', config_content)
+    config_content = re.sub(r'DOMAIN_DEFINITION_METHOD:.*', f'DOMAIN_DEFINITION_METHOD: lumped', config_content)
     
     # Update pour point coordinates if provided and valid
     if pour_point and str(pour_point).lower() != 'nan' and '/' in str(pour_point):
@@ -297,11 +571,6 @@ def generate_distributed_config_file(template_path, output_path, domain_name, ba
         data_provider = 'USGS'
         download_wsc = 'False'
         download_usgs = 'True'
-    else:
-        # Default case
-        data_provider = 'WSC'  # Default to WSC
-        download_wsc = 'True'
-        download_usgs = 'False'
     
     # Update the streamflow data provider
     config_content = re.sub(r'STREAMFLOW_DATA_PROVIDER:.*', f'STREAMFLOW_DATA_PROVIDER: {data_provider}', config_content)
@@ -346,7 +615,7 @@ def generate_distributed_config_file(template_path, output_path, domain_name, ba
         if re.search(r'SIM_REACH_ID:', config_content):
             config_content = re.sub(r'SIM_REACH_ID:.*', f'SIM_REACH_ID: {sim_reach_id}', config_content)
         else:
-            # Find the Evaluation settings section to add it
+           # Find the Evaluation settings section to add it
             if re.search(r'#+ *5\. Evaluation settings', config_content):
                 config_content = re.sub(
                     r'(#+ *5\. Evaluation settings.*?\n)',
@@ -398,7 +667,6 @@ def generate_distributed_config_file(template_path, output_path, domain_name, ba
     
     return output_path
 
-
 def find_closest_river_segment(river_shapefile_path, pour_point_coords):
     """
     Find the river segment ID closest to the pour point coordinates
@@ -410,11 +678,7 @@ def find_closest_river_segment(river_shapefile_path, pour_point_coords):
     Returns:
         Integer segment ID of the closest river segment, or None if not found
     """
-    try:
-        import geopandas as gpd
-        from shapely.geometry import Point
-        import numpy as np
-        
+    try:        
         # Validate pour point coordinates
         if not pour_point_coords or not validate_coords(pour_point_coords):
             print(f"Invalid pour point coordinates: {pour_point_coords}")
@@ -488,27 +752,15 @@ def run_confluence(config_path, watershed_name, dry_run=False):
 #SBATCH --job-name={watershed_name}
 #SBATCH --output=CONFLUENCE_{watershed_name}_%j.log
 #SBATCH --error=CONFLUENCE_{watershed_name}_%j.err
-#SBATCH --time=40:00:00
+#SBATCH --time=96:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem=10G
+#SBATCH --mem=5G
 
 # Load necessary modules
-. /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
-module unuse $MODULEPATH
-module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
-
-module load netcdf-fortran/4.6.1
-module load openblas/0.3.27
-module load hdf/4.3.0
-module load hdf5/1.14.3
-module load gdal/3.9.2
-module load netlib-lapack/3.11.0
-module load openmpi/4.1.6
-module load python/3.11.7
-module load r/4.4.1
+module restore confluence_modules
 
 # Activate Python environment
-source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
+conda activate confluence
 
 # Run CONFLUENCE with the specified config
 python ../CONFLUENCE/CONFLUENCE.py --config {config_path}
@@ -535,13 +787,14 @@ echo "CONFLUENCE job for {watershed_name} complete"
         print(f"Failed to submit job for {watershed_name}: {result.stderr}")
         return None
 
-def extract_shapefile_info(shapefile_dir):
+def extract_shapefile_info(shapefile_dir, scale_name):
     """
     Extract information about watershed shapefiles in the directory
     and calculate bounding box coordinates from shapefiles
     
     Args:
         shapefile_dir: Directory containing watershed shapefiles
+        scale_name: Name of the scale (e.g., 'meso', 'macro', 'headwater')
         
     Returns:
         DataFrame with information about each watershed
@@ -552,59 +805,56 @@ def extract_shapefile_info(shapefile_dir):
     try:
         import geopandas as gpd # type: ignore
         has_geopandas = True
-        print("Using geopandas to extract shapefile information")
+        print(f"Using geopandas to extract shapefile information for {scale_name} scale")
     except ImportError:
         has_geopandas = False
-        print("Geopandas not available. Will not calculate bounding boxes.")
+        print(f"Geopandas not available. Will not calculate bounding boxes for {scale_name} scale.")
     
     # Get all watershed folders
     watershed_folders = [f for f in os.listdir(shapefile_dir) if os.path.isdir(os.path.join(shapefile_dir, f))]
     
+    print(f"Found {len(watershed_folders)} watershed folders in {shapefile_dir}")
+    
     for folder in watershed_folders:
         folder_path = os.path.join(shapefile_dir, folder)
         
-        # Get basin shapefile
-        basin_files = glob.glob(os.path.join(folder_path, "*_basin.shp"))
-        # Get river shapefile
-        river_files = glob.glob(os.path.join(folder_path, "*_river.shp"))
+        # For CAMELS-SPAT, look for lumped shapefiles (these are the basin shapefiles)
+        basin_files = glob.glob(os.path.join(folder_path, "*_lumped.shp"))
         
-        if basin_files and river_files:
+        # For now, we'll assume no separate river shapefiles for CAMELS-SPAT lumped
+        # We'll need to create or find river network data separately
+        river_files = []
+        
+        # Check if we have a basin file
+        if basin_files:
             basin_file = os.path.basename(basin_files[0])
-            river_file = os.path.basename(river_files[0])
             
             # Extract gauge ID from folder name
             gauge_id = folder
             
             watershed_info = {
                 'ID': gauge_id,
+                'Scale': scale_name,  # Add scale information
                 'Basin_File': basin_file,
-                'River_File': river_file,
+                'River_File': None,  # No separate river file for lumped CAMELS-SPAT
                 'Basin_Path': os.path.dirname(basin_files[0]),
-                'River_Path': os.path.dirname(river_files[0])
+                'River_Path': None  # No separate river path for lumped CAMELS-SPAT
             }
+            
+            print(f"Processing watershed {gauge_id} with basin file {basin_file}")
             
             # Calculate bounding box and extract pour point if geopandas is available
             if has_geopandas:
                 try:
                     # Read basin shapefile
                     basin_gdf = gpd.read_file(basin_files[0])
-                    # Read river shapefile
-                    river_gdf = gpd.read_file(river_files[0])
                     
-                    # Ensure both are in the same CRS and use lat/lon (EPSG:4326)
-                    if basin_gdf.crs is None or basin_gdf.crs.to_epsg() != 4326:
-                        # Try to get the CRS from the river file if basin CRS is missing
-                        if basin_gdf.crs is None and river_gdf.crs is not None:
-                            basin_gdf.set_crs(river_gdf.crs, inplace=True)
-                        # Convert to EPSG:4326 (lat/lon)
+                    # Ensure it's in lat/lon (EPSG:4326)
+                    if basin_gdf.crs is None:
+                        print(f"Warning: No CRS defined for {gauge_id}. Assuming EPSG:4326 (WGS84).")
+                        basin_gdf.set_crs(epsg=4326, inplace=True)
+                    elif basin_gdf.crs.to_epsg() != 4326:
                         basin_gdf = basin_gdf.to_crs(epsg=4326)
-                    
-                    if river_gdf.crs is None or river_gdf.crs.to_epsg() != 4326:
-                        # Try to get the CRS from the basin file if river CRS is missing
-                        if river_gdf.crs is None and basin_gdf.crs is not None:
-                            river_gdf.set_crs(basin_gdf.crs, inplace=True)
-                        # Convert to EPSG:4326 (lat/lon)
-                        river_gdf = river_gdf.to_crs(epsg=4326)
                     
                     # Calculate basin bounding box
                     bounds = basin_gdf.total_bounds  # returns (minx, miny, maxx, maxy)
@@ -612,27 +862,6 @@ def extract_shapefile_info(shapefile_dir):
                     # Convert to CONFLUENCE bounding box format (lat_max/lon_min/lat_min/lon_max)
                     bounding_box = f"{bounds[3]}/{bounds[0]}/{bounds[1]}/{bounds[2]}"
                     watershed_info['BOUNDING_BOX_COORDS'] = bounding_box
-                    
-                    # Try to extract pour point (if the river shapefile has a pour point feature)
-                    # This is a simplified approach - might need custom logic depending on your data
-                    if 'LINKNO' in river_gdf.columns and 'DSLINKNO' in river_gdf.columns:
-                        try:
-                            # Find outlets (segments that don't drain to another segment within the basin)
-                            outlets = river_gdf[~river_gdf['DSLINKNO'].isin(river_gdf['LINKNO'])]
-                            
-                            if not outlets.empty:
-                                # Use the first outlet as the pour point (might need more sophisticated logic)
-                                pour_point_geom = outlets.iloc[0].geometry
-                                
-                                # Try to get the point at the end of the line
-                                if hasattr(pour_point_geom, 'coords') and len(list(pour_point_geom.coords)) > 0:
-                                    # Take the last point in the line
-                                    coords = list(pour_point_geom.coords)
-                                    last_point = coords[-1]
-                                    pour_point = f"{last_point[1]}/{last_point[0]}"  # lat/lon format
-                                    watershed_info['POUR_POINT_COORDS_shapefile'] = pour_point
-                        except Exception as e:
-                            print(f"Could not extract pour point for {gauge_id}: {e}")
                     
                     # Calculate centroid for visualization
                     centroid = basin_gdf.dissolve().centroid.iloc[0]
@@ -645,59 +874,79 @@ def extract_shapefile_info(shapefile_dir):
                     area_m2 = basin_gdf_ea.area.sum()
                     watershed_info['Area_km2'] = area_m2 / 1e6
                     
+                    # Check available columns in the shapefile
+                    available_columns = basin_gdf.columns.tolist()
+                    watershed_info['Available_Columns'] = str(available_columns)
+                    
+                    print(f"  Bounding box: {bounding_box}")
+                    print(f"  Area: {watershed_info['Area_km2']:.2f} km²")
+                    print(f"  Available columns: {available_columns}")
+                    
                 except Exception as e:
-                    print(f"Error extracting shapefile info for {gauge_id}: {e}")
+                    print(f"Error extracting shapefile info for {gauge_id} ({scale_name}): {e}")
+                    import traceback
+                    print(traceback.format_exc())
             
             watershed_data.append(watershed_info)
+        else:
+            print(f"Warning: No lumped shapefile found in {folder_path}")
     
+    print(f"Successfully processed {len(watershed_data)} watersheds in {scale_name} scale")
     return pd.DataFrame(watershed_data)
 
 def main():
     # Path to the template config file
-    template_config_path = "/home/darri.eythorsson/code/CONFLUENCE/0_config_files/config_distributed_basin_template.yaml"
+    template_config_path = "/home/x-deythorsson/code/CONFLUENCE/0_config_files/config_Bow_lumped.yaml"
     
     # Directory to store generated config files
-    config_dir = "/home/darri.eythorsson/code/CONFLUENCE/0_config_files/camels_spat"
+    config_dir = "/home/x-deythorsson/code/CONFLUENCE/0_config_files/camels_spat"
     
     # Create the config directory if it doesn't exist
     os.makedirs(config_dir, exist_ok=True)
     
-    # Directory containing CAMELS-SPAT distributed shapefiles
-    camels_spat_dir = "/work/comphyd_lab/data/_to-be-moved/camels-spat-upload/shapefiles/meso-scale/shapes-distributed"
+    # Directory paths for CAMELS-SPAT distributed shapefiles (all scales)
+    spatial_scheme = 'lumped'
     
+    meso_spat_dir = f"/home/x-deythorsson/data/camels-spat-upload/shapefiles/meso-scale/shapes-{spatial_scheme}/"
+    macro_spat_dir = f"/home/x-deythorsson/data/camels-spat-upload/shapefiles/macro-scale/shapes-{spatial_scheme}/"
+    head_spat_dir = f"/home/x-deythorsson/data/camels-spat-upload/shapefiles/headwater/shapes-{spatial_scheme}/"
+    
+    camels_spat_dirs = [
+        (meso_spat_dir, "meso"),
+        (macro_spat_dir, "macro"), 
+        (head_spat_dir, "headwater")
+    ]
+
     # Path to the CAMELS-SPAT metadata CSV file
     metadata_csv_path = "camels-spat-metadata.csv"
-    
+
     # Check if the metadata file exists
     metadata_df = None
     if os.path.exists(metadata_csv_path):
         print(f"Loading CAMELS-SPAT metadata from {metadata_csv_path}")
         try:
             # Try reading with default parameters first
-            metadata_df = pd.read_csv(metadata_csv_path)
+            raw_metadata_df = pd.read_csv(metadata_csv_path)
             
             # Clean column names and convert to string to prevent NaN issues
-            metadata_df.columns = [col.strip() for col in metadata_df.columns]
+            raw_metadata_df.columns = [col.strip() for col in raw_metadata_df.columns]
             
-            # Convert POUR_POINT_COORDS to string to ensure it's always accessible
-            if 'POUR_POINT_COORDS' in metadata_df.columns:
-                metadata_df['POUR_POINT_COORDS'] = metadata_df['POUR_POINT_COORDS'].astype(str)
+            print(f"Found metadata with {len(raw_metadata_df)} rows and columns: {raw_metadata_df.columns.tolist()}")
             
-            print(f"Found metadata with {len(metadata_df)} rows and columns: {metadata_df.columns.tolist()}")
+            # Process the metadata to create expected columns
+            metadata_df = process_camels_spat_metadata(raw_metadata_df)
             
-            # Check for required columns
-            required_columns = ['ID', 'POUR_POINT_COORDS']
-            missing_columns = [col for col in required_columns if col not in metadata_df.columns]
-            
-            if missing_columns:
-                print(f"Warning: Missing required columns in metadata: {missing_columns}")
-                print("Will attempt to extract information from shapefiles only.")
-                use_metadata = False
-            else:
+            if metadata_df is not None:
                 use_metadata = True
-                # Print first few rows of POUR_POINT_COORDS for verification
-                print("Sample POUR_POINT_COORDS values:")
-                print(metadata_df[['ID', 'POUR_POINT_COORDS']].head())
+                print(f"Successfully processed metadata with {len(metadata_df)} rows")
+                
+                # Print first few rows for verification
+                print("\nSample processed metadata:")
+                print(metadata_df[['ID', 'POUR_POINT_COORDS', 'POUR_POINT_SOURCE']].head())
+            else:
+                print("Failed to process metadata - will extract information from shapefiles only.")
+                use_metadata = False
+                
         except Exception as e:
             print(f"Error reading metadata file: {e}")
             metadata_df = None
@@ -708,29 +957,72 @@ def main():
         use_metadata = False
     
     # Check if we already have the watershed data in a CSV file
-    watersheds_csv_path = "camels_spat_watersheds.csv"
+    watersheds_csv_path = "camels_spat_watersheds_all_scales.csv"
     if os.path.exists(watersheds_csv_path):
         print(f"Found existing watershed information at {watersheds_csv_path}")
         reload_data = input("Do you want to reload the shapefile information? (y/n): ").lower().strip()
         
         if reload_data == 'y':
-            print(f"Extracting shapefile information from {camels_spat_dir}...")
-            watersheds = extract_shapefile_info(camels_spat_dir)
-            # Save watershed information to CSV for reference
-            watersheds.to_csv(watersheds_csv_path, index=False)
-            print(f"Saved updated watershed information to {watersheds_csv_path}")
+            print(f"Extracting shapefile information from all scales...")
+            
+            # Extract information from all directories
+            all_watersheds = []
+            for spat_dir, scale_name in camels_spat_dirs:
+                if os.path.exists(spat_dir):
+                    print(f"Processing {scale_name} scale from {spat_dir}...")
+                    scale_watersheds = extract_shapefile_info(spat_dir, scale_name)
+                    print(f"Found {len(scale_watersheds)} watersheds in {scale_name} scale")
+                    all_watersheds.append(scale_watersheds)
+                else:
+                    print(f"Warning: Directory not found: {spat_dir}")
+            
+            # Combine all watersheds
+            if all_watersheds:
+                watersheds = pd.concat(all_watersheds, ignore_index=True)
+                print(f"Total watersheds found across all scales: {len(watersheds)}")
+                
+                # Save watershed information to CSV for reference
+                watersheds.to_csv(watersheds_csv_path, index=False)
+                print(f"Saved updated watershed information to {watersheds_csv_path}")
+            else:
+                print("No watershed data found in any directory!")
+                return
         else:
             print(f"Loading watershed information from {watersheds_csv_path}...")
             watersheds = pd.read_csv(watersheds_csv_path)
     else:
-        # Extract shapefile information
-        print(f"Extracting shapefile information from {camels_spat_dir}...")
-        watersheds = extract_shapefile_info(camels_spat_dir)
+        # Extract shapefile information from all directories
+        print(f"Extracting shapefile information from all scales...")
         
-        # Save watershed information to CSV for reference
-        watersheds.to_csv(watersheds_csv_path, index=False)
-        print(f"Saved watershed information to {watersheds_csv_path}")
+        all_watersheds = []
+        for spat_dir, scale_name in camels_spat_dirs:
+            if os.path.exists(spat_dir):
+                print(f"Processing {scale_name} scale from {spat_dir}...")
+                scale_watersheds = extract_shapefile_info(spat_dir, scale_name)
+                print(f"Found {len(scale_watersheds)} watersheds in {scale_name} scale")
+                all_watersheds.append(scale_watersheds)
+            else:
+                print(f"Warning: Directory not found: {spat_dir}")
         
+        # Combine all watersheds
+        if all_watersheds:
+            watersheds = pd.concat(all_watersheds, ignore_index=True)
+            print(f"Total watersheds found across all scales: {len(watersheds)}")
+            
+            # Save watershed information to CSV for reference
+            watersheds.to_csv(watersheds_csv_path, index=False)
+            print(f"Saved watershed information to {watersheds_csv_path}")
+        else:
+            print("No watershed data found in any directory!")
+            return
+    
+    # Print summary by scale
+    print("\nWatershed count by scale:")
+    if 'Scale' in watersheds.columns:
+        scale_counts = watersheds['Scale'].value_counts()
+        for scale, count in scale_counts.items():
+            print(f"  {scale}: {count} watersheds")
+    
     # Merge metadata with watershed information if available
     if use_metadata and metadata_df is not None:
         print("Merging shapefile information with metadata...")
@@ -741,7 +1033,7 @@ def main():
         
         # Print sample of IDs for verification
         print("\nSample of watershed IDs:")
-        print(watersheds[['ID', 'Metadata_ID']].head())
+        print(watersheds[['ID', 'Metadata_ID', 'Scale']].head())
         
         # Print sample of metadata IDs for verification
         print("\nSample of metadata IDs:")
@@ -759,7 +1051,7 @@ def main():
         
         # Print sample of merged data to verify
         print("\nSample of merged data:")
-        print(watersheds[['ID', 'ID_metadata', 'POUR_POINT_COORDS']].head())
+        print(watersheds[['ID', 'Scale', 'ID_metadata', 'POUR_POINT_COORDS']].head())
         
         # Update columns with metadata where available, but keep shapefile data as backup
         # For columns like Lat, Lon, BOUNDING_BOX_COORDS, etc., prioritize shapefile-derived values
@@ -772,8 +1064,8 @@ def main():
             watersheds['Watershed_Name'] = watersheds['Station_name']
         
         # Save the merged information
-        watersheds.to_csv("camels_spat_watersheds_merged.csv", index=False)
-        print("Saved merged watershed information to camels_spat_watersheds_merged.csv")
+        watersheds.to_csv("camels_spat_watersheds_merged_all_scales.csv", index=False)
+        print("Saved merged watershed information to camels_spat_watersheds_merged_all_scales.csv")
     
     # Process each watershed for CONFLUENCE runs
     submitted_jobs = []
@@ -783,18 +1075,29 @@ def main():
     
     dry_run = (submit_jobs == 'dry')
     if submit_jobs == 'y' or dry_run:
+        # Ask which scales to process
+        available_scales = watersheds['Scale'].unique() if 'Scale' in watersheds.columns else ['all']
+        print(f"\nAvailable scales: {', '.join(available_scales)}")
+        selected_scales = input("Which scales to process? (comma-separated or 'all'): ").strip()
+        
+        if selected_scales.lower() == 'all':
+            watersheds_to_process = watersheds
+        else:
+            selected_scale_list = [s.strip() for s in selected_scales.split(',')]
+            watersheds_to_process = watersheds[watersheds['Scale'].isin(selected_scale_list)]
+            print(f"Selected {len(watersheds_to_process)} watersheds from scales: {selected_scale_list}")
+        
         # Ask how many watersheds to process (in case user wants to limit)
         max_watersheds = input("How many watersheds to process? (Enter a number or 'all'): ").strip()
         
-        if max_watersheds.lower() == 'all':
-            watersheds_to_process = watersheds
-        else:
+        if max_watersheds.lower() != 'all':
             try:
                 num_watersheds = int(max_watersheds)
-                watersheds_to_process = watersheds.head(num_watersheds)
+                watersheds_to_process = watersheds_to_process.head(num_watersheds)
             except ValueError:
-                print("Invalid input. Processing all watersheds.")
-                watersheds_to_process = watersheds
+                print("Invalid input. Processing all selected watersheds.")
+        
+        print(f"\nProcessing {len(watersheds_to_process)} watersheds...")
         
         for _, watershed in watersheds_to_process.iterrows():
             # Get watershed parameters
@@ -803,19 +1106,27 @@ def main():
             river_file = watershed['River_File']
             basin_path = watershed['Basin_Path']
             river_path = watershed['River_Path']
-            print(watershed)
+            scale = watershed.get('Scale', 'unknown')
             
+            print(f"\nProcessing {watershed_id} ({scale} scale)")
+            if scale == 'headwater':
+                scale_name = f"{scale}"
+            elif scale == 'meso':
+                scale_name = f"{scale}-scale"
+            elif scale == 'macro':
+                scale_name = f"{scale}-scale"
+
             # Get watershed name from metadata if available
             if 'Watershed_Name' in watershed and not pd.isna(watershed['Watershed_Name']):
                 watershed_name = watershed['Watershed_Name']
             else:
                 watershed_name = watershed_id
             
-            # Create a unique domain name
-            domain_name = f"{watershed_id}"
+            # Create a unique domain name including scale
+            domain_name = f"{watershed_id}_{scale}"
             
             # Check if the simulations directory already exists
-            simulation_dir = Path(f"/work/comphyd_lab/data/CONFLUENCE_data/camels_spat/domain_{domain_name}/")
+            simulation_dir = Path(f"/anvil/projects/x-ees240082/data/CONFLUENCE_data/camels_spat/domain_{domain_name}.tar.gz")
             
             if simulation_dir.exists():
                 print(f"Skipping {domain_name} - simulation directory already exists: {simulation_dir}")
@@ -827,9 +1138,10 @@ def main():
             # Set up CONFLUENCE directory and copy shapefiles
             print(f"Setting up CONFLUENCE directory for {domain_name}...")
             basin_target_dir, river_target_dir = setup_confluence_directory(
-                watershed_id, 
+                domain_name,  # Use domain_name that includes scale
                 basin_path, 
                 basin_file, 
+                scale_name,
                 river_path, 
                 river_file
             )
@@ -933,9 +1245,24 @@ def main():
                 print(f"Domain: {domain_name}, Job ID: {job_id}")
             
             print(f"\nTotal jobs submitted: {len(submitted_jobs)}")
+            
+            # Print summary by scale
+            if submitted_jobs:
+                scale_summary = {}
+                for domain_name, job_id in submitted_jobs:
+                    # Extract scale from domain name
+                    scale = domain_name.split('_')[-1]
+                    scale_summary[scale] = scale_summary.get(scale, 0) + 1
+                
+                print("\nJobs submitted by scale:")
+                for scale, count in scale_summary.items():
+                    print(f"  {scale}: {count} jobs")
     else:
         print("\nNo CONFLUENCE jobs submitted.")
         print(f"To run CONFLUENCE jobs later, use the config files generated in {config_dir}")
 
 if __name__ == "__main__":
     main()
+
+
+

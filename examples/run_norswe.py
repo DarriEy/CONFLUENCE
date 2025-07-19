@@ -214,27 +214,15 @@ def run_confluence(config_path, watershed_name):
 #SBATCH --job-name={watershed_name}
 #SBATCH --output=CONFLUENCE_{watershed_name}_%j.log
 #SBATCH --error=CONFLUENCE_{watershed_name}_%j.err
-#SBATCH --time=40:00:00
+#SBATCH --time=20:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem=10G
+#SBATCH --mem=1G
 
 # Load necessary modules
-. /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
-module unuse $MODULEPATH
-module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
-
-module load netcdf-fortran/4.6.1
-module load openblas/0.3.27
-module load hdf/4.3.0
-module load hdf5/1.14.3
-module load gdal/3.9.2
-module load netlib-lapack/3.11.0
-module load openmpi/4.1.6
-module load python/3.11.7
-module load r/4.4.1
+module restore confluence_modules
 
 # Activate Python environment
-source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
+conda activate confluence
 
 # Run CONFLUENCE with the specified config
 python ../CONFLUENCE/CONFLUENCE.py --config {config_path}
@@ -277,7 +265,7 @@ def main():
                         help='End year for filtering data')
     parser.add_argument('--no_submit', action='store_true',
                         help='Generate configs but don\'t submit jobs')
-    parser.add_argument('--base_path', type=str, default='/work/comphyd_lab/data/CONFLUENCE_data/norswe',
+    parser.add_argument('--base_path', type=str, default='/anvil/scratch/x-deythorsson/CONFLUENCE_data/norswe',
                         help='Base path for CONFLUENCE data directory')
     parser.add_argument('--force_reprocess', action='store_true',
                         help='Force reprocessing of station data even if CSV exists')
@@ -335,10 +323,17 @@ def main():
         domain_name = f"{station_name}"
         
         # Check if the simulations directory already exists
-        simulation_dir = Path(f"{args.base_path}/domain_{domain_name}/simulations/run_1/SUMMA/run_1_timestep.nc")
+        print(f"Checking if simulation exists in: {args.base_path}/domain_{domain_name}.tar.gz")
+        simulation_dir = Path(f"{args.base_path}/domain_{domain_name}.tar.gz")
+        sim_dir2 = Path(f"/anvil/scratch/x-deythorsson/CONFLUENCE_data/domain_{domain_name}/")
         
         if simulation_dir.exists():
             print(f"Skipping {domain_name} - simulation result already exists: {simulation_dir}")
+            skipped_jobs.append(domain_name)
+            continue
+
+        if sim_dir2.exists():
+            print(f"Skipping {domain_name} - simulation result already exists: {sim_dir2}")
             skipped_jobs.append(domain_name)
             continue
         
@@ -404,3 +399,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
