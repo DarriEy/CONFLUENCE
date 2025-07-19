@@ -10,17 +10,23 @@ longitude
 ! -----------
 pptrate            | 1  
 airtemp            | 1  
-SWRadAtm              | 24
 !
 !
 ! -------------------
 !  model variables 
 ! -------------------
-averageRoutedRunoff   | 1
-basin__TotalRunoff    | 1   
-scalarTotalRunoff     | 24   
+averageRoutedRunoff   | 1   
 scalarSWE             | 24  
 scalarGroundSnowFraction | 24
-
+scalarLatHeatTotal | 24
+scalarSenHeatTotal | 24
+scalarNetRadiation | 24
+scalarCanopyTranspiration | 24
+scalarCanopyEvaporation | 24
+scalarGroundEvaporation | 24
+scalarCanopySublimation | 24
+scalarSnowSublimation | 24
+mLayerDepth | 24
+mLayerVolFracLiq | 24
 
 
