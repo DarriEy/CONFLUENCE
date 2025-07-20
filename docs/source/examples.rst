@@ -7,23 +7,23 @@ This section provides comprehensive examples demonstrating CONFLUENCE applicatio
    All notebooks can be found in the ``jupyter_notebooks/`` folder of the CONFLUENCE repository. 
    You can run them interactively to follow along with the tutorials.
 
-Tutorial Series Overview
-------------------------
+**Tutorial Series Overview**
 
 CONFLUENCE examples showcase the framework's seamless scalability across different spatial scales and analytical approaches. Each tutorial builds systematically on previous concepts while introducing new spatial scales or methodological approaches.
 
-Spatial Scaling Series: Point to Continental Applications
-=========================================================
+**Spatial Scaling Series: Point to Continental Applications**
 
 The spatial scaling series demonstrates CONFLUENCE's capability to handle hydrological modeling across the complete spatial hierarchy, from detailed process validation at individual points to comprehensive continental water resources assessment.
 
-Point Scale Validation (Tutorial 01)
--------------------------------------
+**Point Scale Validation (Tutorial 01)**
 
 Point-scale simulations focus on detailed process validation at specific locations such as flux towers and weather stations, emphasizing vertical process representation without spatial discretization.
 
-Tutorial 01a: SNOTEL Snow and Soil Validation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 01a: SNOTEL Snow and Soil Validation*
+
+**Notebook**: ``01a_point_scale_snotel.ipynb``
+
+This tutorial demonstrates point-scale snow and soil moisture validation using Paradise SNOTEL station data.
 
 **Notebook**: ``01a_point_scale_snotel.ipynb``
 
@@ -76,20 +76,17 @@ This tutorial demonstrates point-scale snow and soil moisture validation using P
    nse = 1 - ((obs_valid - sim_valid) ** 2).sum() / ((obs_valid - obs_valid.mean()) ** 2).sum()
    kge = 1 - np.sqrt((kge_corr - 1)**2 + (kge_bias - 1)**2 + (kge_var - 1)**2)
 
-Tutorial 01b: FLUXNET Energy Balance Validation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 01b: FLUXNET Energy Balance Validation*
 
 **Notebook**: ``01b_point_scale_fluxnet.ipynb``
 
 This tutorial focuses on energy balance validation using FLUXNET eddy covariance tower data for evapotranspiration processes.
 
-Basin-Scale Modeling Progression (Tutorials 02a-02c)
-----------------------------------------------------
+**Basin-Scale Modeling Progression (Tutorials 02a-02c)**
 
 The Bow River at Banff case study demonstrates the complete progression of basin-scale modeling approaches within a consistent 2,600 km² watershed framework.
 
-Tutorial 02a: Lumped Basin Workflow
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 02a: Lumped Basin Workflow*
 
 **Notebook**: ``02a_basin_lumped.ipynb``
 
@@ -131,8 +128,7 @@ This tutorial establishes lumped modeling fundamentals using traditional single-
    nse = 1 - ((obs_valid - sim_valid) ** 2).sum() / ((obs_valid - obs_valid.mean()) ** 2).sum()
    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
 
-Tutorial 02b: Semi-Distributed Basin Workflow
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 02b: Semi-Distributed Basin Workflow*
 
 **Notebook**: ``02b_basin_semi_distributed.ipynb``
 
@@ -147,8 +143,7 @@ This tutorial advances to semi-distributed modeling with approximately 15 sub-ba
    STREAM_THRESHOLD: 5000                   # Creates multiple sub-basins
    DOMAIN_DISCRETIZATION: "GRUs"            # Multiple computational units
 
-Tutorial 02c: Elevation-Based HRU Discretization
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 02c: Elevation-Based HRU Discretization*
 
 **Notebook**: ``02c_basin_elevation_bands.ipynb``
 
@@ -162,11 +157,9 @@ This tutorial culminates with elevation-based HRU discretization that subdivides
    ELEVATION_BAND_SIZE: 200                 # 200m elevation bands
    MIN_HRU_SIZE: 4                          # Minimum HRU size in km²
 
-Regional and Continental Applications (Tutorials 03a-03b)
----------------------------------------------------------
+**Regional and Continental Applications (Tutorials 03a-03b)**
 
-Tutorial 03a: Regional Domain Modeling (Iceland)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 03a: Regional Domain Modeling (Iceland)*
 
 **Notebook**: ``03a_domain_regional.ipynb``
 
@@ -195,20 +188,17 @@ This tutorial demonstrates regional domain modeling using Iceland as a comprehen
    total_area = basins_gdf.geometry.area.sum() / 1e6  # Total coverage in km²
    watershed_count = len(basins_gdf)                   # Number of independent basins
 
-Tutorial 03b: Continental Domain Scale (North America)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 03b: Continental Domain Scale (North America)*
 
 **Notebook**: ``03b_domain_continental.ipynb``
 
 This tutorial extends to continental-scale modeling across North America, representing the ultimate computational challenge requiring high-performance computing infrastructure.
 
-Large-Sample Methodological Series
-==================================
+**Large-Sample Methodological Series**
 
 The large-sample series demonstrates CONFLUENCE's power for comparative hydrology and systematic model evaluation across diverse environmental conditions.
 
-Tutorial 04a: Multi-Site Energy Balance Validation (FLUXNET)
-------------------------------------------------------------
+*Tutorial 04a: Multi-Site Energy Balance Validation (FLUXNET)*
 
 **Notebook**: ``04a_large_sample_fluxnet.ipynb``
 
@@ -253,27 +243,23 @@ This tutorial demonstrates systematic energy balance validation across the globa
            climate_stats[climate] = {'correlations': [], 'rmses': [], 'biases': []}
        climate_stats[climate]['correlations'].append(site['correlation'])
 
-Tutorial 04b: Snow Process Validation (NorSWE)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 04b: Snow Process Validation (NorSWE)*
 
 **Notebook**: ``04b_large_sample_norswe.ipynb``
 
 This tutorial focuses on systematic snow hydrology validation across northern hemisphere environmental gradients using the NorSWE snow observation network.
 
-Tutorial 04c: Distributed Basin Comparison (CAMELS-Spat)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*Tutorial 04c: Distributed Basin Comparison (CAMELS-Spat)*
 
-**Notebook**: ``04c_large_sample_camels.ipynb**
+**Notebook**: ``04c_large_sample_camels.ipynb``
 
 This tutorial showcases large-sample distributed watershed modeling across hundreds of basins throughout the continental United States using CAMELS-Spat applications.
 
-Workflow Orchestration and Best Practices
-==========================================
+**Workflow Orchestration and Best Practices**
 
 All tutorials demonstrate key CONFLUENCE principles:
 
-Configuration Management
-------------------------
+**Configuration Management**
 
 .. code-block:: python
 
@@ -288,8 +274,7 @@ Configuration Management
    with open(temp_config_path, 'w') as f:
        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
 
-Workflow Orchestration
-----------------------
+**Workflow Orchestration**
 
 .. code-block:: python
 
@@ -304,8 +289,7 @@ Workflow Orchestration
    confluence.managers['model'].preprocess_models()
    confluence.managers['model'].run_models()
 
-Visualization and Analysis
---------------------------
+**Visualization and Analysis**
 
 .. code-block:: python
 
@@ -320,11 +304,9 @@ Visualization and Analysis
    metrics_text = f'NSE: {nse:.3f}\nKGE: {kge:.3f}\nBias: {pbias:+.1f}%'
    ax1.text(0.02, 0.95, metrics_text, transform=ax1.transAxes)
 
-Common Configuration Patterns
-=============================
+**Common Configuration Patterns**
 
-Point Scale Configuration
--------------------------
+**Point Scale Configuration**
 
 .. code-block:: yaml
 
@@ -333,8 +315,7 @@ Point Scale Configuration
    BOUNDING_BOX_COORDS: "lat_max/lon_min/lat_min/lon_max"
    POUR_POINT_COORDS: "lat/lon"
 
-Basin Scale Configuration
-------------------------
+**Basin Scale Configuration**
 
 .. code-block:: yaml
 
@@ -344,8 +325,7 @@ Basin Scale Configuration
    DOMAIN_DISCRETIZATION: "GRUs"       # or "elevation"
    STATION_ID: "gauge_station_id"
 
-Regional Scale Configuration
----------------------------
+**Regional Scale Configuration**
 
 .. code-block:: yaml
 
@@ -355,8 +335,7 @@ Regional Scale Configuration
    DELINEATE_BY_POURPOINT: False
    DELINEATE_COASTAL_WATERSHEDS: True
 
-Large Sample Configuration
---------------------------
+**Large Sample Configuration**
 
 .. code-block:: yaml
 
@@ -366,27 +345,22 @@ Large Sample Configuration
    FORCE_RUN_ALL_STEPS: False
    MPI_PROCESSES: 4
 
-Getting Started with Examples
-=============================
+**Getting Started with Examples**
 
-Prerequisites
--------------
-
+**Prerequisites:**
 - Complete CONFLUENCE installation with geospatial packages
 - Access to relevant datasets (SNOTEL, FLUXNET, streamflow data)
 - Computational resources appropriate for chosen tutorial scale
 - Python environment with Jupyter notebook support
 
-Tutorial Execution Sequence
----------------------------
+**Tutorial Execution Sequence:**
 
 1. **Start with Point Scale**: Begin with ``01a_point_scale_snotel.ipynb`` to understand fundamental concepts
 2. **Progress Through Basin Scale**: Follow tutorials 02a → 02b → 02c for complete basin modeling progression
 3. **Advance to Regional Scale**: Explore 03a for regional applications
 4. **Master Large Sample Methods**: Use 04a for comparative hydrology approaches
 
-Running the Notebooks
----------------------
+**Running the Notebooks**
 
 .. code-block:: bash
 
@@ -398,8 +372,7 @@ Running the Notebooks
    
    # Open desired tutorial and run cells sequentially
 
-Best Practices from Examples
-============================
+**Best Practices from Examples**
 
 The tutorials demonstrate several best practices:
 
@@ -419,23 +392,20 @@ The tutorials demonstrate several best practices:
        print("❌ Output generation failed")
        # Troubleshoot workflow
 
-Troubleshooting and Support
-===========================
+**Troubleshooting and Support**
 
 - **Configuration Issues**: Review template files and update paths
 - **Data Requirements**: Check tutorial-specific data availability
 - **Performance Issues**: Adjust computational settings for your system
 - **Workflow Errors**: Examine log files for detailed error information
 
-Learn More
-----------
+**Learn More**
 
 - Full notebook code: `jupyter_notebooks/ <https://github.com/DarriEy/CONFLUENCE/tree/main/jupyter_notebooks>`_
 - Configuration templates: `0_config_files/ <https://github.com/DarriEy/CONFLUENCE/tree/main/0_config_files>`_
 - Main documentation: :doc:`index`
 
-Next Steps
-----------
+**Next Steps**
 
 1. Run ``01a_point_scale_snotel.ipynb`` for comprehensive introduction
 2. Progress through basin-scale tutorials (02a-02c) for spatial modeling
