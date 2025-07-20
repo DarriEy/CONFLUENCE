@@ -16,8 +16,8 @@
 
 ### ============================================= 1. Global settings: =====================================================================
 # Main paths
-CONFLUENCE_DATA_DIR: "/anvil/scratch/x-deythorsson/CONFLUENCE_data/"
-CONFLUENCE_CODE_DIR: "/home/x-deythorsson/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
+CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: "Iceland"                                        # Name of experimental domain
@@ -127,7 +127,7 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 FORCING_PATH: default                                          # If default, uses, self.project_dir / forcing / raw_data
 
 # EM-Earth forcing supplementation settings
-SUPPLEMENT_FORCING: True                                      # Supplement forcing data with precip and temperature from EM-EARTH
+SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
 EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
 EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
 EM_PRCP: 'prcp_corrected'
@@ -175,7 +175,7 @@ SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA o
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
-SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
+SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: False                       # Run SUMMA in parallel

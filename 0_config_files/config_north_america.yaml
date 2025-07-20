@@ -152,8 +152,8 @@ ATTRIBUTES_OVERWRITE_EXISTING: false                          # Whether to overw
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+EXPERIMENT_TIME_START: 2018-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2018-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -203,7 +203,7 @@ SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA o
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
 SETTINGS_SUMMA_LOCAL_PARAMS_FILE: localParamInfo.txt           # Name of SUMMA basin parameters file
 SUMMA_INSTALL_PATH: default                                    # SUMMA installation path, if default, self.code_dir / installs / summa / bin
-SUMMA_EXE: summa.exe                                  # Name of SUMMA executable
+SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: False                       # Run SUMMA in parallel

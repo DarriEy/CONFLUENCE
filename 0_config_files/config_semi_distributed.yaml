@@ -326,6 +326,3 @@ TOOL_CACHE: /home/darri.eythorsson/cache
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/
 EASYMORE_JOB_CONF: installs/MAF/02_model_agnostic_component/easymore-job.slurm
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
-NOTEBOOK_CREATION_TIME: '2025-07-18T17:49:10.207721'
-NOTEBOOK_CREATOR: CONFLUENCE_Tutorial_02b
-SPATIAL_EVOLUTION: Lumped to semi-distributed watershed modeling

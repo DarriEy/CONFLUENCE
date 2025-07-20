@@ -548,7 +548,7 @@ class DataManager:
             lon_min_expanded = lon_center - min_bbox_size/2
             lon_max_expanded = lon_center + min_bbox_size/2
             
-            self.logger.info(f"Expanded bounding box: {lat_min_expanded:.4f}-{lat_max_expanded:.4f}°N, {lon_min_expanded:.4f}-{lon_max_expanded:.4f}°E")
+            #self.logger.info(f"Expanded bounding box: {lat_min_expanded:.4f}-{lat_max_expanded:.4f}°N, {lon_min_expanded:.4f}-{lon_max_expanded:.4f}°E")
             
             # Use expanded coordinates for data extraction
             lat_min_extract, lat_max_extract = lat_min_expanded, lat_max_expanded
@@ -563,9 +563,9 @@ class DataManager:
             tmean_ds = xr.open_dataset(tmean_file)
             
             # Log EM-Earth grid information
-            self.logger.info(f"EM-Earth grid - Lat range: {float(prcp_ds.lat.min()):.4f} to {float(prcp_ds.lat.max()):.4f}")
-            self.logger.info(f"EM-Earth grid - Lon range: {float(prcp_ds.lon.min()):.4f} to {float(prcp_ds.lon.max()):.4f}")
-            self.logger.info(f"EM-Earth grid - Resolution: ~{float(prcp_ds.lat.diff('lat').mean()):.4f}° lat, ~{float(prcp_ds.lon.diff('lon').mean()):.4f}° lon")
+            #self.logger.info(f"EM-Earth grid - Lat range: {float(prcp_ds.lat.min()):.4f} to {float(prcp_ds.lat.max()):.4f}")
+            #self.logger.info(f"EM-Earth grid - Lon range: {float(prcp_ds.lon.min()):.4f} to {float(prcp_ds.lon.max()):.4f}")
+            #self.logger.info(f"EM-Earth grid - Resolution: ~{float(prcp_ds.lat.diff('lat').mean()):.4f}° lat, ~{float(prcp_ds.lon.diff('lon').mean()):.4f}° lon")
             
         except Exception as e:
             raise ValueError(f"Error opening EM-Earth files: {str(e)}")
@@ -624,8 +624,8 @@ class DataManager:
             if tmean_subset.sizes.get('lat', 0) == 0 or tmean_subset.sizes.get('lon', 0) == 0:
                 raise ValueError("No temperature data found within the expanded bounding box. The watershed may be too small or outside the EM-Earth coverage area.")
             
-            self.logger.info(f"Successfully extracted EM-Earth data - Prcp grid: {prcp_subset.sizes['lat']} x {prcp_subset.sizes['lon']}")
-            self.logger.info(f"Successfully extracted EM-Earth data - Temp grid: {tmean_subset.sizes['lat']} x {tmean_subset.sizes['lon']}")
+            #self.logger.info(f"Successfully extracted EM-Earth data - Prcp grid: {prcp_subset.sizes['lat']} x {prcp_subset.sizes['lon']}")
+            #self.logger.info(f"Successfully extracted EM-Earth data - Temp grid: {tmean_subset.sizes['lat']} x {tmean_subset.sizes['lon']}")
             
         except Exception as e:
             raise ValueError(f"Error subsetting EM-Earth data: {str(e)}")
@@ -699,9 +699,9 @@ class DataManager:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
             merged_ds.to_netcdf(output_file)
             
-            self.logger.info(f"Successfully created merged EM-Earth file: {output_file}")
-            self.logger.info(f"Final spatial dimensions: {merged_ds.sizes['lat']} x {merged_ds.sizes['lon']}")
-            self.logger.info(f"Time dimension: {merged_ds.sizes['time']}")
+            #self.logger.info(f"Successfully created merged EM-Earth file: {output_file}")
+            #self.logger.info(f"Final spatial dimensions: {merged_ds.sizes['lat']} x {merged_ds.sizes['lon']}")
+            #self.logger.info(f"Time dimension: {merged_ds.sizes['time']}")
             
         except Exception as e:
             raise ValueError(f"Error merging EM-Earth datasets: {str(e)}")
@@ -818,6 +818,7 @@ class DataManager:
             #     dap.run_data_acquisition()
 
             # Archive raw forcing data to save storage space
+            """
             self.logger.info("Archiving raw forcing data to save storage space")
             try:
                 raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
@@ -862,6 +863,7 @@ class DataManager:
                 
             except Exception as e:
                 self.logger.warning(f"Error during raw data archiving: {str(e)}")
+            """
 
                 # Continue execution even if archiving fails
             self.logger.info("Model-agnostic preprocessing completed successfully")
@@ -899,7 +901,7 @@ class DataManager:
                 self.logger.warning("No EM-Earth files found, skipping integration")
                 return
             
-            self.logger.info(f"Found {len(em_earth_files)} EM-Earth files for integration")
+            #self.logger.info(f"Found {len(em_earth_files)} EM-Earth files for integration")
             
             # Process and remap EM-Earth data
             self._remap_em_earth_to_basin_grid()
@@ -954,7 +956,7 @@ class DataManager:
                 if output_file.exists() and not self.config.get('FORCE_RUN_ALL_STEPS', False):
                     continue
                 
-                self.logger.info(f"Remapping {em_file.name}")
+                #self.logger.info(f"Remapping {em_file.name}")
                 
                 # Use easymore or similar tool for remapping
                 # For now, implement a simple spatial averaging approach
@@ -1001,22 +1003,17 @@ class DataManager:
             # Check if this is a spatially averaged small watershed (single grid point)
             is_single_point = (len(em_ds.lat) == 1 and len(em_ds.lon) == 1)
             
-            # Debug: log the spatial dimensions and check for small watershed processing flag
-            self.logger.info(f"EM-Earth spatial dimensions: {len(em_ds.lat)} lat x {len(em_ds.lon)} lon")
-            self.logger.info(f"Lat values: {em_ds.lat.values}")
-            self.logger.info(f"Lon values: {em_ds.lon.values}")
-            
             # Check for small watershed processing flag in attributes
             small_watershed_flag = em_ds.attrs.get('small_watershed_processing', 0)
             spatial_averaging_flag = em_ds.attrs.get('spatial_averaging_applied', 0)
             
-            self.logger.info(f"Small watershed processing flag: {small_watershed_flag}")
-            self.logger.info(f"Spatial averaging applied flag: {spatial_averaging_flag}")
+            #self.logger.info(f"Small watershed processing flag: {small_watershed_flag}")
+            #self.logger.info(f"Spatial averaging applied flag: {spatial_averaging_flag}")
             
             # Use either dimension check or flag check
             is_single_point = is_single_point or (small_watershed_flag == 1) or (spatial_averaging_flag == 1)
             
-            self.logger.info(f"Final is_single_point decision: {is_single_point}")
+            #self.logger.info(f"Final is_single_point decision: {is_single_point}")
             
             # Process variables - restart with single-point if multi-point fails
             processing_attempt = 0
@@ -1031,67 +1028,54 @@ class DataManager:
                     # For single point data, assign the same value to all basins
                     for var_name in em_ds.data_vars:
                         if var_name in ['prcp', 'prcp_corrected', 'tmean']:
-                            self.logger.info(f"Processing variable: {var_name}")
+                            #self.logger.info(f"Processing variable: {var_name}")
                             
                             # Get variable data (single point for all times)
                             var_data = em_ds[var_name]
                             
-                            # Debug: log the shape of the data
-                            self.logger.info(f"Variable {var_name} shape: {var_data.shape}")
-                            self.logger.info(f"Variable {var_name} dimensions: {var_data.dims}")
-                            
                             # Extract time series - handle different possible shapes
-                            self.logger.info(f"Time dimension location: {var_data.dims.index('time')}")
+                            #self.logger.info(f"Time dimension location: {var_data.dims.index('time')}")
                             
                             if len(var_data.dims) == 3:  # (time, lat, lon) or (lon, lat, time) etc.
                                 time_dim_index = var_data.dims.index('time')
-                                self.logger.info(f"3D data with time at index {time_dim_index}")
+                                #self.logger.info(f"3D data with time at index {time_dim_index}")
                                 
                                 if time_dim_index == 0:  # (time, lat, lon)
                                     time_series = var_data.values[:, 0, 0]
-                                    self.logger.info(f"Extracting as [:, 0, 0] from shape {var_data.shape}")
+                                    #self.logger.info(f"Extracting as [:, 0, 0] from shape {var_data.shape}")
                                 elif time_dim_index == 1:  # (lat, time, lon) - unusual but possible
                                     time_series = var_data.values[0, :, 0]
-                                    self.logger.info(f"Extracting as [0, :, 0] from shape {var_data.shape}")
+                                    #self.logger.info(f"Extracting as [0, :, 0] from shape {var_data.shape}")
                                 elif time_dim_index == 2:  # (lon, lat, time) or (lat, lon, time)
                                     time_series = var_data.values[0, 0, :]
-                                    self.logger.info(f"Extracting as [0, 0, :] from shape {var_data.shape}")
+                                    #self.logger.info(f"Extracting as [0, 0, :] from shape {var_data.shape}")
                                 else:
                                     raise ValueError(f"Unexpected time dimension index: {time_dim_index}")
                                     
                             elif len(var_data.dims) == 1:  # Already time series
                                 if var_data.dims[0] == 'time':
                                     time_series = var_data.values
-                                    self.logger.info(f"Using 1D time series directly")
+                                    #self.logger.info(f"Using 1D time series directly")
                                 else:
                                     raise ValueError(f"1D data but dimension is not time: {var_data.dims}")
                                     
                             elif len(var_data.dims) == 2 and 'time' in var_data.dims:
                                 # Could be (time, lat) or (time, lon) or (lat, time) etc.
                                 time_dim_index = var_data.dims.index('time')
-                                self.logger.info(f"2D data with time at index {time_dim_index}")
+                                #self.logger.info(f"2D data with time at index {time_dim_index}")
                                 
                                 if time_dim_index == 0:
                                     time_series = var_data.values[:, 0] if var_data.shape[1] > 0 else var_data.values.flatten()
-                                    self.logger.info(f"Extracting as [:, 0] from shape {var_data.shape}")
+                                    #self.logger.info(f"Extracting as [:, 0] from shape {var_data.shape}")
                                 else:
                                     time_series = var_data.values[0, :] if var_data.shape[0] > 0 else var_data.values.flatten()
-                                    self.logger.info(f"Extracting as [0, :] from shape {var_data.shape}")
+                                    #self.logger.info(f"Extracting as [0, :] from shape {var_data.shape}")
                             else:
                                 self.logger.error(f"Unexpected variable dimensions: {var_data.dims}, shape: {var_data.shape}")
                                 raise ValueError(f"Cannot handle variable {var_name} with dimensions {var_data.dims}")
                             
-                            # Additional debugging
-                            self.logger.info(f"Raw extraction result shape: {time_series.shape}")
-                            self.logger.info(f"Raw extraction result type: {type(time_series)}")
-                            if hasattr(time_series, 'ndim'):
-                                self.logger.info(f"Raw extraction result ndim: {time_series.ndim}")
-                            
                             # Ensure it's a 1D array
                             time_series = np.asarray(time_series).flatten()
-                            self.logger.info(f"After flattening shape: {time_series.shape}")
-                            
-                            self.logger.info(f"Extracted time series shape: {time_series.shape}")
                             
                             # Ensure we have the right number of time steps
                             if len(time_series) != len(em_ds.time):
@@ -1102,10 +1086,9 @@ class DataManager:
                             basin_values = np.tile(
                                 time_series.reshape(-1, 1),  # Ensure column vector shape (time, 1)
                                 (1, len(basin_ids))          # Repeat for each basin (time, hru)
-                            )
-                            
-                            self.logger.info(f"Basin values shape: {basin_values.shape}")
-                            self.logger.info(f"Expected shape: ({len(em_ds.time)}, {len(basin_ids)})")
+                            )                            
+                            #self.logger.info(f"Basin values shape: {basin_values.shape}")
+                            #self.logger.info(f"Expected shape: ({len(em_ds.time)}, {len(basin_ids)})")
                             
                             # Add to output dataset
                             output_ds[var_name] = xr.DataArray(
@@ -1132,7 +1115,7 @@ class DataManager:
                     
                     for var_name in em_ds.data_vars:
                         if var_name in ['prcp', 'prcp_corrected', 'tmean']:
-                            self.logger.info(f"Processing variable: {var_name}")
+                            #self.logger.info(f"Processing variable: {var_name}")
                             
                             # Get variable data
                             var_data = em_ds[var_name]
@@ -1146,7 +1129,7 @@ class DataManager:
                                 lat_min, lat_max = float(em_ds.lat.min()), float(em_ds.lat.max())
                                 lon_min, lon_max = float(em_ds.lon.min()), float(em_ds.lon.max())
                                 
-                                self.logger.info(f"Spatial extent - Lat: {lat_min} to {lat_max}, Lon: {lon_min} to {lon_max}")
+                                #self.logger.info(f"Spatial extent - Lat: {lat_min} to {lat_max}, Lon: {lon_min} to {lon_max}")
                                 
                                 # Check for zero extent (which would cause division by zero)
                                 lat_extent = lat_max - lat_min
@@ -1238,7 +1221,7 @@ class DataManager:
                 else:
                     raise ValueError("No variables were successfully processed from EM-Earth data")
             
-            self.logger.info(f"Successfully processed {len(output_ds.data_vars)} variables from EM-Earth data")
+            #self.logger.info(f"Successfully processed {len(output_ds.data_vars)} variables from EM-Earth data")
             
             # Add metadata
             processing_method = 'single_point_replication' if is_single_point else 'zonal_statistics'
@@ -1301,7 +1284,7 @@ class DataManager:
                 self.logger.warning("No remapped EM-Earth files found")
                 return
             
-            self.logger.info(f"Found {len(forcing_files)} forcing files and {len(em_earth_files)} EM-Earth files")
+            #self.logger.info(f"Found {len(forcing_files)} forcing files and {len(em_earth_files)} EM-Earth files")
             
             # Create EM-Earth lookup by time period
             em_earth_lookup = {}
@@ -1385,7 +1368,7 @@ class DataManager:
                     # Find corresponding variable in forcing dataset
                     for forcing_var in forcing_vars:
                         if forcing_var in updated_ds.data_vars:
-                            self.logger.info(f"Replacing {forcing_var} with EM-Earth {em_var}")
+                            #self.logger.info(f"Replacing {forcing_var} with EM-Earth {em_var}")
                             
                             # Interpolate EM-Earth data to forcing time grid
                             em_data_interp = em_combined[em_var].interp(time=forcing_ds.time)
@@ -1398,11 +1381,11 @@ class DataManager:
                                 if 'kg m-2 s-1' in current_units or 'kg m**-2 s**-1' in current_units:
                                     # Convert mm/hour to kg/m²/s (mm/hour / 3.6)
                                     em_data_interp = em_data_interp / 3600
-                                    self.logger.info(f"Converted precipitation from mm/hour to kg/m²/s")
+                                    #self.logger.info(f"Converted precipitation from mm/hour to kg/m²/s")
                                 elif 'mm/s' in current_units or 'mm s-1' in current_units:
                                     # Convert mm/hour to mm/s (mm/hour / 3600)
                                     em_data_interp = em_data_interp / 3600
-                                    self.logger.info(f"Converted precipitation from mm/hour to mm/s")
+                                    #self.logger.info(f"Converted precipitation from mm/hour to mm/s")
                                 else:
                                     self.logger.warning(f"Unknown precipitation units: {current_units}, using mm/hour")
                             
@@ -1413,9 +1396,7 @@ class DataManager:
                                 if 'K' in current_units and 'Celsius' not in current_units:
                                     # Convert Celsius to Kelvin
                                     em_data_interp = em_data_interp + 273.15
-                                    self.logger.info(f"Converted temperature from Celsius to Kelvin")
-                                else:
-                                    self.logger.info(f"Temperature units: {current_units}, keeping Celsius")
+
                             
                             # Update the forcing variable
                             updated_ds[forcing_var] = em_data_interp
@@ -1436,13 +1417,6 @@ class DataManager:
                 'em_earth_variables_replaced': 'precipitation, temperature'
             })
             
-            # Create backup first
-            backup_file = forcing_file.with_suffix('.nc.backup')
-            if not backup_file.exists():
-                shutil.copy2(forcing_file, backup_file)
-                self.logger.info(f"Created backup: {backup_file}")
-            
-            # FIXED: Use a safer file writing approach
             # Write to a temporary file first, then replace the original
             temp_file = forcing_file.with_suffix('.nc.temp')
             

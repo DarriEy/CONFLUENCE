@@ -645,6 +645,7 @@ class DomainDiscretizer:
             self.logger.warning(f"Error creating HRU for combination {combination}: {str(e)}")
             return None
 
+
     def _use_grus_as_hrus(self):
         """
         Use Grouped Response Units (GRUs) as Hydrologic Response Units (HRUs) without further discretization.
@@ -676,12 +677,23 @@ class DomainDiscretizer:
         with rasterio.open(self.dem_path) as src:
             dem_data = src.read(1)
             dem_affine = src.transform
+            dem_nodata = src.nodata
 
-        # Use rasterstats to calculate zonal statistics
-        zs = rasterstats.zonal_stats(gru_gdf.geometry, dem_data, affine=dem_affine, stats=['mean'])
+        # Use rasterstats to calculate zonal statistics with explicit nodata
+        zs = rasterstats.zonal_stats(
+            gru_gdf.geometry, 
+            dem_data, 
+            affine=dem_affine, 
+            stats=['mean'],
+            nodata=dem_nodata if dem_nodata is not None else -9999
+        )
         gru_gdf['elev_mean'] = [item['mean'] for item in zs]
         
-        centroids_utm = gru_gdf.geometry.centroid
+        # Calculate centroids in projected CRS for accuracy
+        # Project to UTM for accurate centroid calculation
+        utm_crs = gru_gdf.estimate_utm_crs()
+        gru_gdf_utm = gru_gdf.to_crs(utm_crs)
+        centroids_utm = gru_gdf_utm.geometry.centroid
         centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
         
         gru_gdf['center_lon'] = centroids_wgs84.x
@@ -1462,9 +1474,16 @@ class DomainDiscretizer:
             with rasterio.open(self.dem_path) as src:
                 dem_data = src.read(1)
                 dem_affine = src.transform
+                dem_nodata = src.nodata
 
-            # Use rasterstats to calculate zonal statistics
-            zs = rasterstats.zonal_stats(hru_gdf.geometry, dem_data, affine=dem_affine, stats=['mean'])
+            # Use rasterstats to calculate zonal statistics with explicit nodata
+            zs = rasterstats.zonal_stats(
+                hru_gdf.geometry, 
+                dem_data, 
+                affine=dem_affine, 
+                stats=['mean'],
+                nodata=dem_nodata if dem_nodata is not None else -9999
+            )
             hru_gdf['elev_mean'] = [item['mean'] if item['mean'] is not None else -9999 for item in zs]
         except Exception as e:
             self.logger.error(f"Error calculating mean elevation: {str(e)}")

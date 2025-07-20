@@ -525,7 +525,7 @@ class ModelManager:
             visualizer = VisualizationReporter(self.config, self.logger)
             
             if model == 'SUMMA':
-                visualizer.plot_summa_outputs(self.experiment_id)
+                #visualizer.plot_summa_outputs(self.experiment_id)
                 
                 # Define observation files
                 obs_files = [

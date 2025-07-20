@@ -327,6 +327,3 @@ TOOL_CACHE: /home/darri.eythorsson/cache
 EASYMORE_CACHE: /home/darri.eythorsson/easymore/
 EASYMORE_JOB_CONF: installs/MAF/02_model_agnostic_component/easymore-job.slurm
 CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json
-NOTEBOOK_CREATION_TIME: '2025-07-18T15:14:59.068093'
-NOTEBOOK_CREATOR: CONFLUENCE_Tutorial_01b
-TARGET_PROCESSES: Energy balance, evapotranspiration, boreal forest dynamics

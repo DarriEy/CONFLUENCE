@@ -1,0 +1,47 @@
+analysis_scale: continental_watershed_gradients
+area_range: !!python/tuple
+- 10
+- 10000
+base_data_path: /anvil/scratch/x-deythorsson/CONFLUENCE_data/camels_spat
+batch_processing: true
+calibration_years: 5
+camelsspat_base_path: /home/x-deythorsson/data/camels-spat-upload/shapefiles
+camelsspat_script: ./run_watersheds_camelsspat-3.py
+comparison_metrics:
+- nse
+- kge
+- rmse
+- pbias
+- correlation
+config_output_dir: ../CONFLUENCE/0_config_files/camels_spat
+dry_run_mode: false
+end_year: 2015
+experiment_name: camelsspat_large_sample_tutorial
+experiment_type: multi_basin_streamflow_validation
+flow_signatures:
+- mean_flow
+- flow_variability
+- timing
+- duration_curves
+max_watersheds: 15
+metadata_csv: camels-spat-metadata.csv
+min_data_years: 5
+parallel_execution: true
+primary_variables:
+- streamflow
+- baseflow
+- peak_flows
+- low_flows
+regional_analysis:
+- climate_controls
+- landscape_controls
+- scale_effects
+scales_to_include:
+- meso
+- macro
+- headwater
+site_selection_strategy: climate_scale_diversity
+spatial_scheme: lumped
+start_year: 2005
+template_config: ../CONFLUENCE/0_config_files/config_Bow_lumped.yaml
+validation_years: 5

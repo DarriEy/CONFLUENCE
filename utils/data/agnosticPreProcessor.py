@@ -122,7 +122,7 @@ class forcingResampler:
                 ds['airtemp'].attrs.update({'units': 'K', 'long_name': 'air temperature', 'standard_name': 'air_temperature'})
             
             if 'pptrate' in ds:
-                ds['pptrate'] = ds['pptrate'] / 3600 * 1000
+                ds['pptrate'] = ds['pptrate'] / 3600
                 ds['pptrate'].attrs.update({'units': 'm s-1', 'long_name': 'precipitation rate', 'standard_name': 'precipitation_rate'})
             
             if 'windspd' in ds:
