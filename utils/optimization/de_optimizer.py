@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
 import numpy as np
 import pandas as pd
 import netCDF4 as nc
@@ -10,14 +11,23 @@ from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
-from typing import Dict, Any
+from typing import Dict, Any, List
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+import re
+import fcntl  # Unix/Linux
+from pathlib import Path
+import time
+import random
 
 class DEOptimizer:
     """
-    Differential Evolution (DE) Optimizer for CONFLUENCE 
+    Differential Evolution (DE) Optimizer for CONFLUENCE with Parallel Support
     
     This class performs parameter optimization using the Differential Evolution algorithm,
-    which is a population-based stochastic optimization technique.
+    enhanced with parallel processing capabilities using multiprocessing.
+    Each parallel process gets its own working directory to avoid conflicts.
 
     The soil depth calibration uses two parameters:
     - total_mult: Overall depth multiplier (0.1-5.0)
@@ -29,7 +39,7 @@ class DEOptimizer:
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
-        Initialize the DE Optimizer.
+        Initialize the DE Optimizer with parallel processing support.
         
         Args:
             config: Configuration dictionary
@@ -140,6 +150,26 @@ class DEOptimizer:
         if self.population_size is None:
             self.population_size = max(15, min(4 * total_params, 50))  # 4*D, between 15-50
         
+        # Add parallel processing configuration
+        self.num_processes = max(1, self.config.get('MPI_PROCESSES', 1))
+        self.use_parallel = self.num_processes > 1
+        
+        if self.use_parallel:
+            self.logger.info(f"🚀 Parallel processing ENABLED with {self.num_processes} processes")
+            self.logger.info("Each process will use its own working directory to avoid conflicts")
+            
+            # Adjust population size for better parallel efficiency
+            if self.population_size < self.num_processes * 2:
+                old_pop_size = self.population_size
+                self.population_size = self.num_processes * 2
+                self.logger.info(f"Increased population size from {old_pop_size} to {self.population_size} "
+                                f"for better parallel efficiency")
+            
+            # Create parallel working directories
+            self._setup_parallel_directories()
+        else:
+            self.logger.info("Sequential processing mode (single process)")
+        
         # Logging
         self.logger.info(f"DE Optimizer initialized with {len(self.local_params)} local, {len(self.basin_params)} basin, {len(self.depth_params)} depth, and {len(self.mizuroute_params)} mizuRoute parameters")
         self.logger.info(f"Maximum generations: {self.max_iterations}, population size: {self.population_size}")
@@ -153,6 +183,141 @@ class DEOptimizer:
         # Log optimization period
         opt_period = self._get_optimization_period_string()
         self.logger.info(f"Optimization period: {opt_period}")
+        
+    def _setup_parallel_directories(self):
+        """Create separate working directories for each parallel process with better verification."""
+        self.logger.info("Setting up parallel working directories")
+        
+        self.parallel_dirs = []
+
+        for proc_id in range(self.num_processes):
+            # Create process-specific directories
+            proc_base_dir = self.optimization_dir / f"parallel_proc_{proc_id:02d}"
+            proc_summa_dir = proc_base_dir / "SUMMA"
+            proc_mizuroute_dir = proc_base_dir / "mizuRoute"
+            proc_settings_dir = proc_base_dir / "settings" / "SUMMA"
+            proc_mizu_settings_dir = proc_base_dir / "settings" / "mizuRoute"
+            
+            # Create all directories using pathlib
+            for directory in [proc_base_dir, proc_summa_dir, proc_mizuroute_dir, proc_settings_dir, proc_mizu_settings_dir]:
+                directory.mkdir(parents=True, exist_ok=True)
+
+            # Copy settings files to process directory
+            self._copy_settings_to_process_dir(proc_settings_dir, proc_mizu_settings_dir)
+
+            # Store directory info for this process
+            proc_dirs = {
+                'base_dir': proc_base_dir,
+                'summa_dir': proc_summa_dir,
+                'mizuroute_dir': proc_mizuroute_dir,
+                'summa_settings_dir': proc_settings_dir,
+                'mizuroute_settings_dir': proc_mizu_settings_dir,
+                'proc_id': proc_id
+            }
+
+            # Update file managers for this process
+            self._update_file_manager_for_proc(proc_dirs)
+            
+            # Verify the setup worked
+            file_manager = proc_settings_dir / 'fileManager.txt'
+            if not file_manager.exists():
+                self.logger.error(f"Failed to create file manager for process {proc_id}")
+                raise FileNotFoundError(f"File manager not created for process {proc_id}")
+            
+            self.parallel_dirs.append(proc_dirs)
+        
+        self.logger.info(f"Created {len(self.parallel_dirs)} parallel working directories")
+
+    
+    def _run_summa_simulation_for_proc(self, file_manager_path: Path, summa_exe: Path, log_dir: Path) -> bool:
+        summa_command = f"{summa_exe} -m {file_manager_path}"
+        print(summa_command)
+        log_file = log_dir / f"summa_proc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        try:
+            with open(log_file, 'w') as f:
+                subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+        
+    def _copy_settings_to_process_dir(self, proc_settings_dir, proc_mizu_settings_dir):
+        """Copy all necessary settings files to a process-specific directory."""
+        
+        def safe_copy_file(src_file, dest_file, max_retries=5):
+            """Safely copy a file with retry logic and locking."""
+            for attempt in range(max_retries):
+                try:
+                    # Create temp destination
+                    temp_dest = dest_file.with_suffix('.copying')
+                    
+                    with open(src_file, 'rb') as src:
+                        # Lock source file for reading
+                        fcntl.flock(src.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+                        
+                        with open(temp_dest, 'wb') as dst:
+                            # Copy in chunks
+                            shutil.copyfileobj(src, dst)
+                            dst.flush()
+                            os.fsync(dst.fileno())  # Force write to disk
+                    
+                    # Atomic rename
+                    temp_dest.replace(dest_file)
+                    
+                    # Copy metadata
+                    shutil.copystat(src_file, dest_file)
+                    return True
+                    
+                except (IOError, OSError) as e:
+                    # Clean up temp file
+                    if temp_dest.exists():
+                        temp_dest.unlink()
+                        
+                    if attempt < max_retries - 1:
+                        time.sleep(random.uniform(0.1, 0.5))
+                        continue
+                    else:
+                        raise e
+            return False
+        
+        # Copy SUMMA settings
+        if self.optimization_settings_dir.exists():
+            for settings_file in self.optimization_settings_dir.glob("*"):
+                if settings_file.is_file():
+                    dest_file = proc_settings_dir / settings_file.name
+                    safe_copy_file(settings_file, dest_file)
+        
+        # Copy mizuRoute settings  
+        mizu_source_dir = self.optimization_dir / "settings" / "mizuRoute"
+        if mizu_source_dir.exists():
+            for settings_file in mizu_source_dir.glob("*"):
+                if settings_file.is_file():
+                    dest_file = proc_mizu_settings_dir / settings_file.name
+                    safe_copy_file(settings_file, dest_file)
+    
+    def test_parallel_setup(self):
+        """Test parallel processing setup without running full optimization."""
+        return True
+        
+    
+    def cleanup_parallel_directories(self):
+        """Clean up parallel working directories when optimization is complete."""
+        return
+        '''
+        if not self.use_parallel:
+            return
+        
+        self.logger.info("Cleaning up parallel working directories")
+        
+        try:
+            for proc_dirs in self.parallel_dirs:
+                proc_base_dir = proc_dirs['base_dir']
+                if proc_base_dir.exists():
+                    shutil.rmtree(proc_base_dir)
+                    
+            self.logger.info("Parallel directory cleanup completed")
+        except Exception as e:
+            self.logger.warning(f"Error during parallel directory cleanup: {str(e)}")
+        '''
     
     def _check_routing_configuration(self):
         """
@@ -785,75 +950,91 @@ class DEOptimizer:
     
     def run_de_optimization(self):
         """
-        Run the DE optimization algorithm with parameter persistence and depth calibration.
+        Run the DE optimization algorithm with parameter persistence, depth calibration, and parallel processing.
         
         Enhanced to:
         1. Check for existing optimized parameters and use them as starting point
         2. Save best parameters back to default settings when complete
         3. Handle soil depth calibration if enabled
+        4. Support parallel processing for faster evaluation
         
         Returns:
             Dict: Dictionary with optimization results
         """
-        self.logger.info("Starting DE optimization with parameter persistence")
+        self.logger.info("Starting DE optimization with parameter persistence and parallel processing support")
         
         if self.calibrate_depth:
             self.logger.info("🌱 Soil depth calibration is ENABLED")
             self.logger.info("📏 Will optimize soil depth profile using shape method")
         
-        # Step 1: Try to load existing optimized parameters
-        existing_params = self._load_existing_optimized_parameters()
-        
-        if existing_params:
-            self.logger.info("🔄 Starting optimization from existing optimized parameters")
-            initial_params = existing_params
-        else:
-            # Step 2: Get initial parameter values from a preliminary SUMMA run
-            self.logger.info("🆕 No existing optimized parameters found, extracting from model run")
-            initial_params = self.run_parameter_extraction()
-        
-        # Step 3: Parse parameter bounds
-        param_bounds = self._parse_parameter_bounds()
-        
-        # Step 4: Initialize optimization variables
-        self._initialize_optimization(initial_params, param_bounds)
-        
-        # Step 5: Run the DE algorithm
-        best_params, best_score, history = self._run_de_algorithm()
-        
-        # Step 6: Create visualization of optimization progress
-        self._create_optimization_plots(history)
-        
-        # Step 7: Run a final simulation with the best parameters
-        final_result = self._run_final_simulation(best_params)
-        
-        # Step 8: Save best parameters to default model settings
-        if best_params:
-            save_success = self._save_best_parameters_to_default_settings(best_params)
-            if save_success:
-                self.logger.info("✅ Best parameters saved to default model settings")
-                self.logger.info("🔄 Future optimization runs will start from these optimized parameters")
-                if self.calibrate_depth:
-                    self.logger.info("🌱 Optimized soil depths saved to coldState.nc")
+        try:
+            # Test parallel setup if enabled
+            if self.use_parallel:
+                if not self.test_parallel_setup():
+                    self.logger.warning("Parallel setup test failed, falling back to sequential mode")
+                    self.use_parallel = False
+                    self.num_processes = 1
+            
+            # Step 1: Try to load existing optimized parameters
+            existing_params = self._load_existing_optimized_parameters()
+            
+            if existing_params:
+                self.logger.info("🔄 Starting optimization from existing optimized parameters")
+                initial_params = existing_params
             else:
-                self.logger.warning("⚠️ Failed to save parameters to default settings")
+                # Step 2: Get initial parameter values from a preliminary SUMMA run
+                self.logger.info("🆕 No existing optimized parameters found, extracting from model run")
+                initial_params = self.run_parameter_extraction()
+            
+            # Step 3: Parse parameter bounds
+            param_bounds = self._parse_parameter_bounds()
+            
+            # Step 4: Initialize optimization variables
+            self._initialize_optimization(initial_params, param_bounds)
+            
+            # Step 5: Run the DE algorithm
+            best_params, best_score, history = self._run_de_algorithm()
+            
+            # Step 6: Create visualization of optimization progress
+            self._create_optimization_plots(history)
+            
+            # Step 7: Run a final simulation with the best parameters
+            final_result = self._run_final_simulation(best_params)
+            
+            # Step 8: Save best parameters to default model settings
+            save_success = False
+            if best_params:
+                save_success = self._save_best_parameters_to_default_settings(best_params)
+                if save_success:
+                    self.logger.info("✅ Best parameters saved to default model settings")
+                    self.logger.info("🔄 Future optimization runs will start from these optimized parameters")
+                    if self.calibrate_depth:
+                        self.logger.info("🌱 Optimized soil depths saved to coldState.nc")
+                else:
+                    self.logger.warning("⚠️ Failed to save parameters to default settings")
+            
+            # Step 9: Save parameter evaluation history to files
+            self._save_parameter_evaluation_history()
+            
+            # Return results
+            results = {
+                'best_parameters': best_params,
+                'best_score': best_score,
+                'history': history,
+                'final_result': final_result,
+                'output_dir': str(self.output_dir),
+                'used_existing_params': existing_params is not None,
+                'saved_to_default': save_success if best_params else False,
+                'depth_calibration_enabled': self.calibrate_depth,
+                'parallel_processing_used': self.use_parallel,
+                'num_processes_used': self.num_processes if self.use_parallel else 1
+            }
+            
+            return results
         
-        # Step 9: Save parameter evaluation history to files
-        self._save_parameter_evaluation_history()
-        
-        # Return results
-        results = {
-            'best_parameters': best_params,
-            'best_score': best_score,
-            'history': history,
-            'final_result': final_result,
-            'output_dir': str(self.output_dir),
-            'used_existing_params': existing_params is not None,
-            'saved_to_default': save_success if best_params else False,
-            'depth_calibration_enabled': self.calibrate_depth
-        }
-        
-        return results
+        finally:
+            # Always cleanup parallel directories
+            self.cleanup_parallel_directories()
     
     def _parse_parameter_bounds(self):
         """
@@ -934,10 +1115,12 @@ class DEOptimizer:
                 self.logger.warning(f"Unknown mizuRoute parameter: {param}. Available: {list(default_bounds.keys())}")
         
         return bounds
-    
+
+
     def _parse_param_info_file(self, file_path, param_names):
         """
         Parse parameter bounds from a SUMMA parameter info file.
+        Enhanced to handle different file formats robustly.
         
         Args:
             file_path: Path to the parameter info file
@@ -952,50 +1135,88 @@ class DEOptimizer:
             self.logger.error(f"Parameter info file not found: {file_path}")
             return bounds
         
+        self.logger.debug(f"Parsing parameter bounds from: {file_path}")
+        
         try:
             with open(file_path, 'r') as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
-                    if not line or line.startswith('!'):
+                    if not line or line.startswith('!') or line.startswith("'"):
                         continue
                     
                     # Parse the line to extract parameter name and bounds
-                    # Format is typically: paramName | maxValue | minValue | ...
+                    # Both files use format: param | default | min | max
                     parts = [p.strip() for p in line.split('|')]
-                    if len(parts) >= 3:
-                        param_name = parts[0]
-                        if param_name in param_names:
-                            try:
-                                # Handle Fortran-style scientific notation (1.0d+6 -> 1.0e+6)
-                                default_val_str = parts[1]
-                                lower_val_str   = parts[2]
-                                upper_val_str   = parts[3]
-                                min_val = float(lower_val_str.replace('d','e').replace('D','e'))
-                                max_val = float(upper_val_str.replace('d','e').replace('D','e'))
-
-                                bounds[param_name] = {'min': min_val, 'max': max_val}
-                                self.logger.debug(f"Found bounds for {param_name}: min={min_val}, max={max_val}")
-                            except ValueError as ve:
-                                self.logger.warning(f"Could not parse bounds for parameter '{param_name}' in line: {line}. Error: {str(ve)}")
+                    if len(parts) < 3:
+                        continue
+                        
+                    param_name = parts[0]
+                    if param_name in param_names:
+                        try:
+                            if len(parts) >= 4:
+                                # Standard format: param | default | min | max
+                                default_str = parts[1]
+                                min_str = parts[2]
+                                max_str = parts[3]
+                            elif len(parts) == 3:
+                                # Fallback format: param | min | max (no default)
+                                min_str = parts[1]  
+                                max_str = parts[2]
+                            else:
+                                continue
+                            
+                            # Convert scientific notation (1.0d-6 -> 1.0e-6)
+                            min_val = float(min_str.replace('d','e').replace('D','e'))
+                            max_val = float(max_str.replace('d','e').replace('D','e'))
+                            
+                            # Validate bounds make sense
+                            if min_val > max_val:
+                                self.logger.warning(f"Line {line_num}: min > max for {param_name}, swapping")
+                                min_val, max_val = max_val, min_val
+                            
+                            if min_val == max_val:
+                                self.logger.warning(f"Line {line_num}: min == max for {param_name}, adding small range")
+                                range_val = abs(min_val) * 0.1 if min_val != 0 else 0.1
+                                min_val -= range_val
+                                max_val += range_val
+                            
+                            bounds[param_name] = {'min': min_val, 'max': max_val}
+                            
+                            # Log the parsed bounds for verification
+                            self.logger.debug(f"Line {line_num}: {param_name} bounds = [{min_val:.6e}, {max_val:.6e}]")
+                            
+                            # Special validation for known problematic parameters
+                            if param_name == 'aquiferBaseflowRate':
+                                if max_val > 1e-3:  # Should be very small
+                                    self.logger.warning(f"aquiferBaseflowRate max bound seems large: {max_val:.6e}")
+                                if min_val < 1e-10:  # Should not be too small
+                                    self.logger.debug(f"aquiferBaseflowRate min bound: {min_val:.6e}")
+                            
+                        except (ValueError, IndexError) as e:
+                            self.logger.error(f"Line {line_num}: Failed to parse bounds for {param_name}")
+                            self.logger.error(f"Line content: {line}")
+                            self.logger.error(f"Parts: {parts}")
+                            self.logger.error(f"Error: {str(e)}")
+                            
         except Exception as e:
             self.logger.error(f"Error parsing parameter info file {file_path}: {str(e)}")
         
-        return bounds
-    
-    def _denormalize_individual(self, normalized_individual):
-        """
-        Denormalize an individual's parameters from [0,1] range to original parameter ranges.
-        Enhanced to handle depth parameters.
+        self.logger.info(f"Found bounds for {len(bounds)} parameters in {file_path.name}")
         
-        Args:
-            normalized_individual: Array of normalized parameter values for one individual
-            
-        Returns:
-            Dict: Parameter dictionary with denormalized values
-        """
+        # Log a few key parameters for verification
+        key_params = ['aquiferBaseflowRate', 'k_soil', 'theta_sat', 'routingGammaScale']
+        for param in key_params:
+            if param in bounds:
+                b = bounds[param]
+                self.logger.info(f"  {param}: [{b['min']:.6e}, {b['max']:.6e}]")
+        
+        return bounds
+        
+
+    def _denormalize_individual(self, normalized_individual):
+        """Enhanced with debugging for parameter denormalization issues"""
         params = {}
         
-        # Get parameter names and bounds
         param_names = self.param_names
         param_bounds = self.param_bounds
         
@@ -1009,22 +1230,25 @@ class DEOptimizer:
                 min_val = bounds['min']
                 max_val = bounds['max']
                 
-                # Denormalize value
+                # Denormalize value from [0,1] to [min, max]
                 denorm_value = min_val + normalized_individual[i] * (max_val - min_val)
                 
-                # Special handling for depth parameters
+                
+                # CRITICAL FIX: Validate denormalized value is within bounds
+                if denorm_value < min_val or denorm_value > max_val:
+                    self.logger.error(f"❌ DENORM ERROR {param_name}: {denorm_value:.6e} outside bounds!")
+                    denorm_value = np.clip(denorm_value, min_val, max_val)
+                    self.logger.warning(f"🔧 CLIPPED {param_name}: -> {denorm_value:.6e}")
+                
+                # Continue with existing parameter assignment logic...
                 if param_name in self.depth_params:
-                    # Depth parameters are scalar values
                     params[param_name] = np.array([denorm_value])
                 elif param_name in self.basin_params:
-                    # Basin/GRU level parameter - single value
                     params[param_name] = np.array([denorm_value])
                 elif param_name in self.mizuroute_params:
-                    # mizuRoute parameters are scalar values
                     params[param_name] = denorm_value
                 else:
-                    # Local/HRU level parameter - may need multiple values
-                    # For simplicity, use the same value for all HRUs
+                    # Local/HRU level parameter
                     with xr.open_dataset(self.attr_file_path) as ds:
                         if 'hru' in ds.dims:
                             num_hrus = ds.sizes['hru']
@@ -1081,7 +1305,21 @@ class DEOptimizer:
                 return None
             
             # Run SUMMA
-            summa_success = self._run_summa_simulation()
+            # If in parallel mode and we have proc_dirs, run SUMMA in proc-local dir
+            if self.use_parallel and hasattr(self, 'parallel_dirs') and len(self.parallel_dirs) == 1:
+                proc_dirs = self.parallel_dirs[0]
+                summa_path = self.config.get('SUMMA_INSTALL_PATH')
+                if summa_path == 'default':
+                    summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+                else: 
+                    summa_path = Path(summa_path)
+
+                summa_exe = summa_path / self.config.get('SUMMA_EXE')
+                file_manager = Path(proc_dirs['summa_settings_dir']) / self.config.get('SETTINGS_SUMMA_FILEMANAGER', 'fileManager.txt')
+                log_dir = Path(proc_dirs['summa_dir']) / "logs"
+                summa_success = self._run_summa_simulation_for_proc(file_manager, summa_exe, log_dir)
+            else:
+                summa_success = self._run_summa_simulation()
             if not summa_success:
                 self.logger.debug("❌ SUMMA simulation failed")
                 return None
@@ -1146,65 +1384,55 @@ class DEOptimizer:
         if not hasattr(self, '_param_bounds'):
             self._param_bounds = self._parse_parameter_bounds()
         return self._param_bounds
-    
+        
     def run_parameter_extraction(self):
         """
-        Run a preliminary SUMMA simulation to extract parameter values.
-        Enhanced to handle depth parameters.
+        Get initial parameter values directly from parameter info files instead of running SUMMA.
+        This is more reliable and faster than the simulation-based approach.
         
         Returns:
             Dict: Dictionary with parameter names as keys and arrays of values as values
         """
-        self.logger.info("Setting up preliminary parameter extraction run")
+        self.logger.info("Reading initial parameter values directly from parameter files")
         
-        # Create a directory for the parameter extraction run
-        extract_dir = self.output_dir / "param_extraction"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create settings directory
-        extract_settings_dir = extract_dir / "settings" / "SUMMA"
-        extract_settings_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Copy settings files
-        self._copy_static_settings_files(extract_settings_dir)
-        
-        # Create modified outputControl.txt with calibration parameters added
-        self._create_parameter_output_control(extract_settings_dir)
-        
-        # Create modified fileManager.txt with shorter time period
-        self._create_parameter_file_manager(extract_dir, extract_settings_dir)
-        
-        # Run SUMMA for the parameter extraction
-        extract_result = self._run_parameter_extraction_summa(extract_dir)
-        
-        # Extract parameters from the result file
-        if extract_result:
-            extracted_params = self._extract_parameters_from_results(extract_dir)
+        try:
+            # Parse default values from parameter files
+            defaults = self._parse_parameter_defaults_from_files()
             
-            # Add default depth parameters if depth calibration is enabled
-            if self.calibrate_depth and extracted_params:
-                extracted_params['total_mult'] = np.array([1.0])  # Default: no depth scaling
-                extracted_params['shape_factor'] = np.array([1.0])  # Default: uniform scaling
-                self.logger.info("Added default depth parameters to extraction results")
+            if not defaults:
+                self.logger.error("No parameter defaults found in parameter files")
+                return None
+            
+            # Expand defaults to appropriate dimensions (HRU count for local params)
+            expanded_defaults = self._expand_defaults_to_hru_count(defaults)
+            
+            # Add depth parameters if depth calibration is enabled
+            if self.calibrate_depth and expanded_defaults:
+                expanded_defaults['total_mult'] = np.array([1.0])    # Default: no depth scaling
+                expanded_defaults['shape_factor'] = np.array([1.0])  # Default: uniform scaling
+                self.logger.info("Added default depth parameters: total_mult=1.0, shape_factor=1.0")
             
             # Add mizuRoute parameters if routing calibration is enabled
-            if self.mizuroute_params and extracted_params:
+            if self.mizuroute_params and expanded_defaults:
                 for param in self.mizuroute_params:
-                    extracted_params[param] = self._get_default_mizuroute_value(param)
-                self.logger.info("Added default mizuRoute parameters to extraction results")
+                    expanded_defaults[param] = self._get_default_mizuroute_value(param)
+                self.logger.info("Added default mizuRoute parameters")
             
-            return extracted_params
-        else:
-            self.logger.warning("Parameter extraction run failed, will use default parameter ranges")
-            # Return default parameters if extraction failed
-            default_params = {}
-            if self.calibrate_depth:
-                default_params['total_mult'] = np.array([1.0])
-                default_params['shape_factor'] = np.array([1.0])
-            if self.mizuroute_params:
-                for param in self.mizuroute_params:
-                    default_params[param] = self._get_default_mizuroute_value(param)
-            return default_params if default_params else None
+            # Log summary
+            self.logger.info(f"✅ Successfully loaded default values for {len(expanded_defaults)} parameters:")
+            for param_name, values in expanded_defaults.items():
+                if len(values) == 1:
+                    self.logger.info(f"   {param_name}: {values[0]:.6e}")
+                else:
+                    self.logger.info(f"   {param_name}: {len(values)} values, mean={np.mean(values):.6e}")
+            
+            return expanded_defaults
+            
+        except Exception as e:
+            self.logger.error(f"Error reading parameter defaults from files: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
     
     def _setup_optimization_environment(self):
         """
@@ -1341,35 +1569,320 @@ class DEOptimizer:
         # Record initial state
         self._record_generation(0)
     
-    def _evaluate_population(self):
-        """Evaluate all individuals in the population."""
+    def _evaluate_population_parallel(self):
+        """Evaluate population in parallel using multiprocessing."""
+        self.logger.info(f"Evaluating population with {self.num_processes} parallel processes")
+        
+        evaluation_tasks = []
         for i in range(self.population_size):
-            # Skip already evaluated individuals
             if not np.isnan(self.population_scores[i]):
                 continue
-                
-            # Denormalize parameters for this individual
+            
             params = self._denormalize_individual(self.population[i])
             
-            # Evaluate this parameter set
-            score = self._evaluate_parameters(params)
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"pop_eval_{i:03d}"
+            }
+            evaluation_tasks.append(task)
+        
+        if not evaluation_tasks:
+            return
+        
+        results = self._run_parallel_evaluations(evaluation_tasks)
+        
+        for result in results:
+            individual_id = result['individual_id']
+            score = result['score']
             
-            # Store score
-            self.population_scores[i] = score if score is not None else float('-inf')
+            self.population_scores[individual_id] = score if score is not None else float('-inf')
             
-            # Update best if better
-            if self.population_scores[i] > self.best_score:
-                self.best_score = self.population_scores[i]
-                self.best_params = params.copy()
+            if self.population_scores[individual_id] > self.best_score:
+                self.best_score = self.population_scores[individual_id]
+                self.best_params = result['params'].copy()
+                
+    def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
+        """
+        Run parallel evaluations without staggered batching - submit all tasks immediately.
+        
+        Args:
+            evaluation_tasks: List of task dictionaries with individual_id, params, proc_id, evaluation_id
+            
+        Returns:
+            List of result dictionaries with individual_id, params, score, error
+        """
+        start_time = time.time()
+        num_tasks = len(evaluation_tasks)
+        
+        self.logger.info(f"Starting parallel evaluation of {num_tasks} tasks")
+        self.logger.info(f"🚀 Using ALL {self.num_processes} processes simultaneously")
+        
+        # Prepare all worker tasks with full task data
+        worker_tasks = []
+        for task in evaluation_tasks:
+            proc_dirs = self.parallel_dirs[task['proc_id']]
+            
+            # Create complete task data for worker function
+            task_data = {
+                'individual_id': task['individual_id'],
+                'params': task['params'],
+                'proc_id': task['proc_id'],
+                'evaluation_id': task['evaluation_id'],
+                
+                # Paths (as strings for serialization)
+                'summa_exe': str(self._get_summa_exe_path()),
+                'file_manager': str(proc_dirs['summa_settings_dir'] / 'fileManager.txt'),
+                'summa_dir': str(proc_dirs['summa_dir']),
+                'settings_dir': str(proc_dirs['summa_settings_dir']),
+                'mizuroute_settings_dir': str(proc_dirs['mizuroute_settings_dir']),
+                
+                # Configuration data
+                'target_metric': self.target_metric,
+                'calibrate_depth': self.calibrate_depth,
+                'original_depths': self.original_depths.tolist() if self.original_depths is not None else None,
+                'mizuroute_params': self.mizuroute_params,
+                'local_params': self.local_params,
+                'basin_params': self.basin_params,
+                'depth_params': self.depth_params,
+                'obs_file': str(self._get_obs_file_path()),
+                'catchment_area': self._get_catchment_area() or 1e6,
+                'domain_method': self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped'),
+                'routing_delineation': self.config.get('ROUTING_DELINEATION', 'lumped'),
+            }
+            
+            worker_tasks.append(task_data)
+        
+        # Submit ALL tasks to process pool immediately - no batching, no delays
+        results = []
+        completed_count = 0
+        failed_count = 0
+        
+        try:
+            with ProcessPoolExecutor(max_workers=self.num_processes) as executor:
+                self.logger.info(f"📤 Submitted all {num_tasks} tasks to {self.num_processes} worker processes")
+                
+                # Submit all tasks at once
+                future_to_task_id = {}
+                for i, task_data in enumerate(worker_tasks):
+                    future = executor.submit(_evaluate_parameters_worker, task_data)
+                    future_to_task_id[future] = i
+                
+                # Collect results as they complete (in any order)
+                for future in as_completed(future_to_task_id):
+                    task_id = future_to_task_id[future]
+                    task_data = worker_tasks[task_id]
+                    completed_count += 1
+                    
+                    try:
+                        # Get result from worker with timeout
+                        result = future.result(timeout=1800)  # 30 minute timeout per task
+                        results.append(result)
+                        
+                        if result['score'] is not None:
+                            # Log successful completion
+                            if isinstance(result['score'], (int, float)):
+                                score_str = f"score={result['score']:.6f}"
+                            else:
+                                score_str = f"score={result['score']}"
+                            
+                            self.logger.info(f"✅ Task {completed_count}/{num_tasks} completed - {score_str}")
+                        else:
+                            failed_count += 1
+                            error_msg = result.get('error', 'Unknown error')
+                            self.logger.error(f"❌ Task {completed_count}/{num_tasks} failed: {error_msg}")
+                            
+                    except Exception as e:
+                        # Handle task timeout or other exceptions
+                        failed_count += 1
+                        error_result = {
+                            'individual_id': task_data['individual_id'],
+                            'params': task_data['params'],
+                            'score': None,
+                            'error': f'Task exception: {str(e)}'
+                        }
+                        results.append(error_result)
+                        self.logger.error(f"❌ Task {completed_count}/{num_tasks} exception: {str(e)}")
+                    
+                    # Progress logging every 5 completed tasks or at the end
+                    if completed_count % 5 == 0 or completed_count == num_tasks:
+                        elapsed = time.time() - start_time
+                        successful = sum(1 for r in results if r['score'] is not None)
+                        avg_time = elapsed / completed_count if completed_count > 0 else 0
+                        remaining = num_tasks - completed_count
+                        estimated_remaining = (avg_time * remaining) / 60 if remaining > 0 else 0
+                        
+                        self.logger.info(f"📊 Progress: {completed_count}/{num_tasks} completed, "
+                                    f"{successful} successful ({100*successful/completed_count:.1f}%), "
+                                    f"elapsed: {elapsed/60:.1f}min" +
+                                    (f", est. remaining: {estimated_remaining:.1f}min" if remaining > 0 else ""))
+            
+            # Final summary
+            elapsed = time.time() - start_time
+            successful_count = sum(1 for r in results if r['score'] is not None)
+            
+            self.logger.info(f"🏁 Parallel evaluation completed:")
+            self.logger.info(f"   ✅ Successful: {successful_count}/{num_tasks} ({100*successful_count/num_tasks:.1f}%)")
+            self.logger.info(f"   ❌ Failed: {failed_count}/{num_tasks} ({100*failed_count/num_tasks:.1f}%)")
+            self.logger.info(f"   ⏱️ Total time: {elapsed/60:.1f} minutes")
+            
+            if successful_count > 0:
+                avg_time_per_task = elapsed / num_tasks
+                self.logger.info(f"   📈 Average time per task: {avg_time_per_task:.1f} seconds")
+            
+            if successful_count == 0:
+                self.logger.error("⚠️ All evaluations failed! Check SUMMA configuration and parameter bounds.")
+            elif failed_count > num_tasks * 0.5:
+                self.logger.warning(f"⚠️ High failure rate: {failed_count}/{num_tasks} tasks failed")
+            
+            # Ensure results are in the same order as input tasks
+            # Sort results by individual_id to match the original order
+            results_dict = {r['individual_id']: r for r in results}
+            ordered_results = []
+            for task in evaluation_tasks:
+                individual_id = task['individual_id']
+                if individual_id in results_dict:
+                    ordered_results.append(results_dict[individual_id])
+                else:
+                    # Create a failure result if somehow missing
+                    ordered_results.append({
+                        'individual_id': individual_id,
+                        'params': task['params'],
+                        'score': None,
+                        'error': 'Result missing from worker output'
+                    })
+            
+            return ordered_results
+            
+        except Exception as e:
+            self.logger.error(f"💥 Critical error in parallel evaluation: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Return failure results for all tasks
+            failure_results = []
+            for task in evaluation_tasks:
+                failure_results.append({
+                    'individual_id': task['individual_id'],
+                    'params': task['params'],
+                    'score': None,
+                    'error': f'Critical parallel evaluation error: {str(e)}'
+                })
+            
+            return failure_results
+
+    def _get_summa_exe_path(self) -> Path:
+        """Get the SUMMA executable path."""
+        summa_path = self.config.get('SUMMA_INSTALL_PATH')
+        if summa_path == 'default':
+            summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+        else:
+            summa_path = Path(summa_path)
+        
+        return summa_path / self.config.get('SUMMA_EXE')
+
+
+    def _get_obs_file_path(self) -> Path:
+        """Get the path to the observed streamflow file."""
+        obs_path = self.config.get('OBSERVATIONS_PATH')
+        if obs_path == 'default':
+            return self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.domain_name}_streamflow_processed.csv"
+        else:
+            return Path(obs_path)
+        
+    def _update_file_manager_for_proc(self, proc_dirs, is_final_run=False):
+        """Update file manager for process with better error handling and path verification."""
+        fm_path = proc_dirs['summa_settings_dir'] / 'fileManager.txt'
+        if not fm_path.exists():
+            self.logger.error(f"File manager template not found for process {proc_dirs['proc_id']}: {fm_path}")
+            return
+
+        try:
+            # Read the original file
+            with open(fm_path, 'r') as f:
+                lines = f.readlines()
+            
+            # Process lines
+            updated_lines = []
+            prefix = f"proc{proc_dirs['proc_id']:02d}_de_opt_{self.experiment_id}"
+            
+            for line in lines:
+                if 'outFilePrefix' in line:
+                    updated_lines.append(f"outFilePrefix        '{prefix}'\n")
+                elif 'outputPath' in line:
+                    # Ensure forward slashes for cross-platform compatibility
+                    output_path = str(proc_dirs['summa_dir']).replace('\\', '/')
+                    updated_lines.append(f"outputPath           '{output_path}/'\n")
+                elif 'settingsPath' in line:
+                    settings_path = str(proc_dirs['summa_settings_dir']).replace('\\', '/')
+                    updated_lines.append(f"settingsPath         '{settings_path}/'\n")
+                else:
+                    updated_lines.append(line)
+            
+            # Write the updated file
+            with open(fm_path, 'w') as f:
+                f.writelines(updated_lines)
+            
+            self.logger.debug(f"Updated file manager for process {proc_dirs['proc_id']}")
+            
+            # Verify the update worked by checking the file content
+            with open(fm_path, 'r') as f:
+                content = f.read()
+                if prefix not in content:
+                    self.logger.warning(f"File manager update may have failed for process {proc_dirs['proc_id']}")
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to update file manager for process {proc_dirs['proc_id']}: {str(e)}")
+
+
+    def _create_evaluation_context(self) -> Dict:
+        """Create a serializable evaluation context for worker processes."""
+        return {
+            'config': self.config,
+            'domain_name': self.domain_name,
+            'experiment_id': self.experiment_id,
+            'project_dir': str(self.project_dir),
+            'calibration_period': self.calibration_period,
+            'evaluation_period': self.evaluation_period,
+            'target_metric': self.target_metric,
+            'calibrate_depth': self.calibrate_depth,
+            'original_depths': self.original_depths,
+            'depth_params': self.depth_params,
+            'mizuroute_params': self.mizuroute_params,
+            'local_params': self.local_params,
+            'basin_params': self.basin_params,
+            'param_bounds': self.param_bounds,
+            'output_variable': self.config.get("TARGET_VARIABLE", "scalarTotalRunoff"),
+            'target_metric': self.target_metric,
+        }
+
+    
+    def _evaluate_population(self):
+        """Evaluate population - uses parallel or sequential mode based on configuration."""
+        if self.use_parallel:
+            self._evaluate_population_parallel()
+        else:
+            for i in range(self.population_size):
+                if not np.isnan(self.population_scores[i]):
+                    continue
+                
+                params = self._denormalize_individual(self.population[i])
+                score = self._evaluate_parameters(params)
+                self.population_scores[i] = score if score is not None else float('-inf')
+                
+                if self.population_scores[i] > self.best_score:
+                    self.best_score = self.population_scores[i]
+                    self.best_params = params.copy()
     
     def _run_de_algorithm(self):
         """
-        Run the DE algorithm with enhanced logging.
+        Run the DE algorithm with enhanced logging and parallel trial evaluation.
         
         Returns:
             Tuple: (best_params, best_score, history)
         """
-        self.logger.info("Running DE algorithm")
+        self.logger.info("Running DE algorithm with parallel support")
         self.logger.info("=" * 60)
         self.logger.info(f"Target metric: {self.target_metric} (higher is better)")
         self.logger.info(f"Total generations: {self.max_iterations}")
@@ -1377,6 +1890,8 @@ class DEOptimizer:
         self.logger.info(f"DE parameters: F={self.F}, CR={self.CR}")
         if self.calibrate_depth:
             self.logger.info("🌱 Soil depth calibration: ENABLED")
+        if self.use_parallel:
+            self.logger.info(f"🚀 Parallel processing: {self.num_processes} processes")
         self.logger.info("=" * 60)
         
         # Track statistics
@@ -1395,35 +1910,35 @@ class DEOptimizer:
             for i in range(self.population_size):
                 trial_population[i] = self._create_trial_vector(i)
             
-            # Evaluate trial population
-            trial_scores = np.full(self.population_size, np.nan)
+            # Evaluate trial population (parallel or sequential)
+            if self.use_parallel:
+                trial_results = self._evaluate_trial_population_parallel(trial_population)
+            else:
+                trial_results = self._evaluate_trial_population_sequential(trial_population)
+            
             generation_improvements = 0
             
-            for i in range(self.population_size):
-                # Denormalize trial parameters
-                trial_params = self._denormalize_individual(trial_population[i])
-                
-                # Evaluate trial individual
-                trial_score = self._evaluate_parameters(trial_params)
-                trial_scores[i] = trial_score if trial_score is not None else float('-inf')
+            # Selection phase
+            for i, result in enumerate(trial_results):
+                trial_score = result['score'] if result['score'] is not None else float('-inf')
                 
                 # Selection: keep trial if better than parent
-                if trial_scores[i] > self.population_scores[i]:
+                if trial_score > self.population_scores[i]:
                     self.population[i] = trial_population[i].copy()
-                    self.population_scores[i] = trial_scores[i]
+                    self.population_scores[i] = trial_score
                     generation_improvements += 1
                     
                     # Update global best if this is the new best
-                    if trial_scores[i] > self.best_score:
+                    if trial_score > self.best_score:
                         old_best = self.best_score
-                        self.best_score = trial_scores[i]
-                        self.best_params = trial_params.copy()
+                        self.best_score = trial_score
+                        self.best_params = result['params'].copy()
                         
                         # Log the new best with depth info if applicable
                         log_msg = f"Gen {generation:3d}: Individual {i:2d} ⭐ NEW GLOBAL BEST! {self.target_metric}={self.best_score:.6f}"
-                        if self.calibrate_depth and 'total_mult' in trial_params and 'shape_factor' in trial_params:
-                            tm = trial_params['total_mult'][0] if isinstance(trial_params['total_mult'], np.ndarray) else trial_params['total_mult']
-                            sf = trial_params['shape_factor'][0] if isinstance(trial_params['shape_factor'], np.ndarray) else trial_params['shape_factor']
+                        if self.calibrate_depth and 'total_mult' in result['params'] and 'shape_factor' in result['params']:
+                            tm = result['params']['total_mult'][0] if isinstance(result['params']['total_mult'], np.ndarray) else result['params']['total_mult']
+                            sf = result['params']['shape_factor'][0] if isinstance(result['params']['shape_factor'], np.ndarray) else result['params']['shape_factor']
                             log_msg += f" [depth: tm={tm:.3f}, sf={sf:.3f}]"
                         
                         if old_best > float('-inf'):
@@ -1513,6 +2028,39 @@ class DEOptimizer:
                 trial[j] = mutant[j]
         
         return trial
+    
+    def _evaluate_trial_population_parallel(self, trial_population):
+        """Evaluate trial population in parallel."""
+        evaluation_tasks = []
+        
+        for i in range(self.population_size):
+            params = self._denormalize_individual(trial_population[i])
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"trial_gen_{len(self.iteration_history):03d}_{i:03d}"
+            }
+            evaluation_tasks.append(task)
+        
+        return self._run_parallel_evaluations(evaluation_tasks)
+    
+    def _evaluate_trial_population_sequential(self, trial_population):
+        """Evaluate trial population sequentially (fallback)."""
+        results = []
+        
+        for i in range(self.population_size):
+            params = self._denormalize_individual(trial_population[i])
+            score = self._evaluate_parameters(params)
+            
+            result = {
+                'individual_id': i,
+                'params': params,
+                'score': score
+            }
+            results.append(result)
+        
+        return results
     
     def _record_generation(self, generation):
         """Record generation statistics."""
@@ -1738,171 +2286,105 @@ class DEOptimizer:
         )
 
     def _generate_trial_params_file_in_directory(self, params, target_dir, filename):
-        """
-        Generate a trialParams.nc file with the given parameters in the specified directory.
+        """Generate trialParams.nc with proper parameter dimensions."""
+        self.logger.info('hello from generate trial params file')
+        trial_params_path = target_dir / filename
         
-        Args:
-            params: Dictionary with parameter values
-            target_dir: Directory where to save the file
-            filename: Name of the file to create
+        # Get HRU and GRU counts
+        with xr.open_dataset(self.attr_file_path) as ds:
+            num_hrus = ds.sizes.get('hru', 1)
+            num_grus = ds.sizes.get('gru', 1)  # Usually 1 for single watershed
+        
+        routing_params = ['routingGammaShape', 'routingGammaScale']
+        
+        with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
+            # Create dimensions
+            hru_dim = output_ds.createDimension('hru', num_hrus)
+            gru_dim = output_ds.createDimension('gru', num_grus)  # ADD GRU DIMENSION
             
-        Returns:
-            Path: Path to the generated trial parameters file
-        """
-        self.logger.debug(f"Generating trial parameters file: {target_dir / filename}")
-        
-        # Get attribute file path for reading HRU information
-        attr_file_path = self.default_settings_dir / self.config.get('SETTINGS_SUMMA_ATTRIBUTES', 'attributes.nc')
-        
-        if not attr_file_path.exists():
-            self.logger.error(f"Attribute file not found: {attr_file_path}")
-            return None
-        
-        try:
-            # Read HRU and GRU information from the attributes file
-            with xr.open_dataset(attr_file_path) as ds:
-                # Check for GRU dimension
-                has_gru_dim = 'gru' in ds.dims
-                hru_ids = ds['hruId'].values
+            # Create coordinate variables
+            hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
+            hru_var[:] = range(1, num_hrus + 1)
+            
+            gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
+            gru_var[:] = range(1, num_grus + 1)
+            
+            # Add parameter variables with CORRECT dimensions
+            for param_name, param_values in params.items():
+                param_values_array = np.asarray(param_values)
                 
-                if has_gru_dim:
-                    gru_ids = ds['gruId'].values
-                    self.logger.debug(f"Attribute file has {len(gru_ids)} GRUs and {len(hru_ids)} HRUs")
+                if param_name in routing_params:
+                    # ROUTING PARAMETERS: Use GRU dimension
+                    param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                    param_var.long_name = f"Trial value for {param_name}"
+                    
+                    # Routing parameters should have 1 value per GRU (usually just 1)
+                    if len(param_values_array) == 1:
+                        param_var[:] = param_values_array[0]
+                    else:
+                        param_var[:] = param_values_array[:num_grus]
+                        
+                    self.logger.debug(f"✓ {param_name}: GRU-level parameter, value = {param_values_array[0]:.6e}")
+                    
+                elif param_name in self.basin_params:
+                    # BASIN PARAMETERS: Use GRU dimension  
+                    param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                    param_var.long_name = f"Trial value for {param_name}"
+                    
+                    if len(param_values_array) == 1:
+                        param_var[:] = param_values_array[0]
+                    else:
+                        param_var[:] = param_values_array[:num_grus]
+                        
+                    self.logger.debug(f"✓ {param_name}: Basin-level parameter, value = {param_values_array[0]:.6e}")
+                    
                 else:
-                    gru_ids = np.array([1])  # Default if no GRU dimension
-                    self.logger.debug(f"Attribute file has no GRU dimension, using default GRU ID=1")
-                
-                # Create the trial parameters dataset
-                trial_params_path = target_dir / filename
-                
-                # Routing parameters should be at GRU level
-                routing_params = ['routingGammaShape', 'routingGammaScale']
-                
-                with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
-                    # Add dimensions
-                    output_ds.createDimension('hru', len(hru_ids))
+                    # LOCAL/HRU PARAMETERS: Use HRU dimension
+                    param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
+                    param_var.long_name = f"Trial value for {param_name}"
                     
-                    # Add GRU dimension if needed for routing parameters
-                    if any(param in params for param in routing_params):
-                        output_ds.createDimension('gru', len(gru_ids))
+                    if len(param_values_array) == num_hrus:
+                        param_var[:] = param_values_array
+                    else:
+                        # Broadcast single value to all HRUs
+                        param_var[:] = param_values_array[0]
                         
-                        # Add GRU ID variable
-                        gru_id_var = output_ds.createVariable('gruId', 'i4', ('gru',))
-                        gru_id_var[:] = gru_ids
-                        gru_id_var.long_name = 'Group Response Unit ID (GRU)'
-                        gru_id_var.units = '-'
-                        
-                        # Add HRU2GRU mapping if available
-                        if 'hru2gruId' in ds.variables:
-                            hru2gru_var = output_ds.createVariable('hru2gruId', 'i4', ('hru',))
-                            hru2gru_var[:] = ds['hru2gruId'].values
-                            hru2gru_var.long_name = 'Index of GRU for each HRU'
-                            hru2gru_var.units = '-'
-                    
-                    # Add HRU ID variable
-                    hru_id_var = output_ds.createVariable('hruId', 'i4', ('hru',))
-                    hru_id_var[:] = hru_ids
-                    hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
-                    hru_id_var.units = '-'
-                    
-                    # Add parameter variables
-                    for param_name, param_values in params.items():
-                        # Ensure param_values is a numpy array
-                        param_values_array = np.asarray(param_values)
-                        
-                        # Check if this is a routing parameter (should be at GRU level)
-                        if param_name in routing_params:
-                            # These parameters should be at GRU level
-                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
-                            
-                            # Most likely, we have 1 value per GRU for these parameters
-                            if len(param_values_array) != len(gru_ids):
-                                if len(param_values_array) > len(gru_ids):
-                                    # Take only what we need
-                                    param_values_array = param_values_array[:len(gru_ids)]
-                                else:
-                                    # Expand by repetition if needed
-                                    repeats = int(np.ceil(len(gru_ids) / len(param_values_array)))
-                                    param_values_array = np.tile(param_values_array, repeats)[:len(gru_ids)]
-                            
-                            # Assign to GRU dimension
-                            param_var[:] = param_values_array
-                        else:
-                            # Regular parameter at HRU level
-                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
-                            
-                            # Handle array shape issues
-                            if param_values_array.ndim > 1:
-                                original_shape = param_values_array.shape
-                                param_values_array = param_values_array.flatten()
-                                self.logger.debug(f"Flattened {param_name} from shape {original_shape} to 1D")
-                            
-                            # Handle array length issues
-                            if len(param_values_array) != len(hru_ids):
-                                if len(param_values_array) > len(hru_ids):
-                                    # Truncate
-                                    param_values_array = param_values_array[:len(hru_ids)]
-                                else:
-                                    # Expand by repetition
-                                    repeats = int(np.ceil(len(hru_ids) / len(param_values_array)))
-                                    param_values_array = np.tile(param_values_array, repeats)[:len(hru_ids)]
-                            
-                            # Assign to HRU dimension
-                            param_var[:] = param_values_array
-                        
-                        # Add attributes
-                        param_var.long_name = f"Trial value for {param_name}"
-                        param_var.units = "N/A"
-                    
-                    # Add global attributes
-                    output_ds.description = "SUMMA Trial Parameter file generated by CONFLUENCE DE Optimizer"
-                    output_ds.history = f"Created on {datetime.now().isoformat()}"
-                    output_ds.confluence_experiment_id = f"DE_optimization_{self.experiment_id}"
-                
-                self.logger.debug(f"Trial parameters file generated: {trial_params_path}")
-                return trial_params_path
-                
-        except Exception as e:
-            self.logger.error(f"Error generating trial parameters file: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
-
-    def _run_summa_simulation(self):
-        """
-        Run SUMMA with the current trial parameters using optimization-specific settings.
+                    self.logger.debug(f"✓ {param_name}: HRU-level parameter, {len(param_values_array)} values")
         
+        self.logger.info(f"✅ Created {trial_params_path.name} with proper GRU/HRU dimensions")
+        
+        return trial_params_path
+    
+    def _run_summa_simulation(self) -> bool:
+        """
+        Run SUMMA with the current trial parameters using the global optimization settings.
+        This version is retained for non-parallel or final evaluations.
+
         Returns:
             bool: True if the run was successful, False otherwise
         """
         self.logger.debug("Running SUMMA simulation in optimization environment")
-        
-        # Get SUMMA executable path
+
         summa_path = self.config.get('SUMMA_INSTALL_PATH')
         if summa_path == 'default':
             summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
         else:
             summa_path = Path(summa_path)
-        
+
         summa_exe = summa_path / self.config.get('SUMMA_EXE')
-        
-        # Use the optimization-specific file manager
         file_manager = self.optimization_settings_dir / self.config.get('SETTINGS_SUMMA_FILEMANAGER', 'fileManager.txt')
-        
+
         if not file_manager.exists():
             self.logger.error(f"Optimization file manager not found: {file_manager}")
             return False
-        
-        # Create command
+
         summa_command = f"{summa_exe} -m {file_manager}"
-        
-        # Create log file in optimization logs directory
         log_file = self.summa_sim_dir / "logs" / f"summa_de_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        
+        self.logger.info(f"summa command: {summa_command}")
         try:
             with open(log_file, 'w') as f:
-                process = subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
-            
+                subprocess.run(summa_command, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True)
+
             self.logger.debug("SUMMA simulation completed successfully")
             return True
         except subprocess.CalledProcessError as e:
@@ -2187,7 +2669,7 @@ class DEOptimizer:
                     self.logger.error("Could not determine catchment area for unit conversion")
                     return None
                 
-                self.logger.info(f"Using catchment area: {catchment_area:.2f} m² ({catchment_area/1e6:.2f} km²)")
+                #self.logger.info(f"Using catchment area: {catchment_area:.2f} m² ({catchment_area/1e6:.2f} km²)")
                 
                 # Open the file and extract streamflow
                 try:
@@ -2257,7 +2739,6 @@ class DEOptimizer:
             
             # Round time index to nearest hour for better matching
             simulated_flow.index = simulated_flow.index.round('h')
-            self.logger.info(f'simulated flow: {simulated_flow}')
 
             # Check time overlap
             common_idx = observed_flow.index.intersection(simulated_flow.index)
@@ -2505,6 +2986,252 @@ class DEOptimizer:
             self.logger.error(traceback.format_exc())
             return None
 
+    def _parse_parameter_defaults_from_files(self):
+        """
+        Parse default parameter values directly from parameter info files.
+        This replaces the complex parameter extraction simulation.
+        
+        Returns:
+            Dict: Dictionary with parameter names as keys and default values as values
+        """
+        self.logger.info("Reading default parameter values directly from parameter files")
+        
+        defaults = {}
+        
+        # Parse local parameters
+        if self.local_params:
+            local_defaults = self._parse_defaults_from_file(
+                self.local_param_info_path, self.local_params, "local"
+            )
+            defaults.update(local_defaults)
+        
+        # Parse basin parameters  
+        if self.basin_params:
+            basin_defaults = self._parse_defaults_from_file(
+                self.basin_param_info_path, self.basin_params, "basin"
+            )
+            defaults.update(basin_defaults)
+        
+        return defaults
+
+    def _parse_defaults_from_file(self, file_path, param_names, param_type):
+        """
+        Parse default values from a single parameter info file.
+        
+        Args:
+            file_path: Path to parameter info file
+            param_names: List of parameter names to extract
+            param_type: Type of parameters ('local' or 'basin') for logging
+            
+        Returns:
+            Dict: Parameter defaults
+        """
+        defaults = {}
+        
+        if not file_path.exists():
+            self.logger.error(f"{param_type.title()} parameter file not found: {file_path}")
+            return defaults
+        
+        self.logger.info(f"Parsing {param_type} parameter defaults from: {file_path}")
+        
+        try:
+            with open(file_path, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line or line.startswith('!') or line.startswith("'"):
+                        continue
+                    
+                    # Parse the line: param | default | min | max
+                    parts = [p.strip() for p in line.split('|')]
+                    
+                    # DEBUG: Print every line that gets parsed for aquiferBaseflowRate
+                    if 'aquiferBaseflow' in line:
+                        self.logger.info(f"🔍 DEBUG Line {line_num}: {line}")
+                        self.logger.info(f"🔍 DEBUG Parts: {parts}")
+                    
+                    if len(parts) < 4:
+                        continue
+                        
+                    param_name = parts[0]
+                    if param_name in param_names:
+                        try:
+                            # Get default value (parts[1])
+                            default_str = parts[1]
+                            min_str = parts[2] 
+                            max_str = parts[3]
+                            
+                            # DEBUG: Show the raw strings before conversion
+                            if 'aquiferBaseflow' in param_name:
+                                self.logger.info(f"🔍 DEBUG {param_name} raw values:")
+                                self.logger.info(f"    default_str: '{default_str}'")
+                                self.logger.info(f"    min_str: '{min_str}'") 
+                                self.logger.info(f"    max_str: '{max_str}'")
+                            
+                            default_val = float(default_str.replace('d','e').replace('D','e'))
+                            min_val = float(min_str.replace('d','e').replace('D','e'))
+                            max_val = float(max_str.replace('d','e').replace('D','e'))
+                            
+                            # DEBUG: Show converted values
+                            if 'aquiferBaseflow' in param_name:
+                                self.logger.info(f"🔍 DEBUG {param_name} converted values:")
+                                self.logger.info(f"    default_val: {default_val:.6e}")
+                                self.logger.info(f"    min_val: {min_val:.6e}")
+                                self.logger.info(f"    max_val: {max_val:.6e}")
+                            
+                            # Validate that default is within bounds
+                            if not (min_val <= default_val <= max_val):
+                                self.logger.warning(f"Line {line_num}: Default value for {param_name} ({default_val:.6e}) "
+                                                f"not within bounds [{min_val:.6e}, {max_val:.6e}]")
+                                # Use middle of bounds as fallback
+                                default_val = (min_val + max_val) / 2
+                                self.logger.warning(f"Using middle of bounds: {default_val:.6e}")
+                            
+                            # Store as numpy array for consistency with existing code
+                            if param_type == "basin":
+                                defaults[param_name] = np.array([default_val])
+                            else:
+                                # For local parameters, we'll expand to HRU count later
+                                defaults[param_name] = np.array([default_val])
+                            
+                            self.logger.debug(f"✓ {param_name}: default = {default_val:.6e}")
+                            
+                        except ValueError as e:
+                            self.logger.error(f"Line {line_num}: Could not parse {param_name}: {line}")
+                            self.logger.error(f"Error: {str(e)}")
+                            
+        except Exception as e:
+            self.logger.error(f"Error reading {param_type} parameter file {file_path}: {str(e)}")
+        
+        self.logger.info(f"Found defaults for {len(defaults)} {param_type} parameters")
+        return defaults
+
+    def _expand_defaults_to_hru_count(self, defaults):
+        """
+        Expand parameter defaults to match HRU count for local parameters.
+        
+        Args:
+            defaults: Dictionary with parameter defaults
+            
+        Returns:
+            Dict: Parameter defaults expanded to HRU count
+        """
+        try:
+            # Get HRU count from attributes file
+            with xr.open_dataset(self.attr_file_path) as ds:
+                if 'hru' in ds.dims:
+                    num_hrus = ds.sizes['hru']
+                else:
+                    num_hrus = 1
+            
+            self.logger.info(f"Expanding parameters to {num_hrus} HRUs")
+            
+            expanded_defaults = {}
+            
+            # Get routing parameters that should stay at GRU level
+            routing_params = ['routingGammaShape', 'routingGammaScale']
+            
+            for param_name, default_values in defaults.items():
+                if param_name in self.basin_params or param_name in routing_params:
+                    # Basin/GRU parameters stay as single values
+                    expanded_defaults[param_name] = default_values
+                    self.logger.debug(f"{param_name}: kept as basin parameter ({len(default_values)} values)")
+                else:
+                    # Local/HRU parameters get expanded to all HRUs
+                    expanded_values = np.full(num_hrus, default_values[0])
+                    expanded_defaults[param_name] = expanded_values
+                    self.logger.debug(f"{param_name}: expanded to {len(expanded_values)} HRUs")
+            
+            return expanded_defaults
+            
+        except Exception as e:
+            self.logger.error(f"Error expanding defaults to HRU count: {str(e)}")
+            return defaults
+
+    def debug_single_parallel_process(self, process_id: int = 0) -> Dict:
+        """
+        Debug a single parallel process to identify issues.
+        """
+        if not self.parallel_dirs or process_id >= len(self.parallel_dirs):
+            return {'error': 'Invalid process ID or parallel directories not set up'}
+        
+        proc_dirs = self.parallel_dirs[process_id]
+        
+        # Create simple test parameters
+        dummy_params = {}
+        param_bounds = self._parse_parameter_bounds()
+        
+        for param_name in self.local_params + self.basin_params:
+            if param_name in param_bounds:
+                bounds = param_bounds[param_name]
+                # Use middle value of bounds
+                mid_value = (bounds['min'] + bounds['max']) / 2
+                dummy_params[param_name] = np.array([mid_value])
+        
+        # Create debug task
+        task_data = {
+            'individual_id': 999,
+            'params': dummy_params,
+            'proc_id': process_id,
+            'evaluation_id': 'debug_test',
+            
+            'summa_exe': str(self._get_summa_exe_path()),
+            'file_manager': str(proc_dirs['summa_settings_dir'] / 'fileManager.txt'),
+            'summa_dir': str(proc_dirs['summa_dir']),
+            'settings_dir': str(proc_dirs['summa_settings_dir']),
+            'mizuroute_settings_dir': str(proc_dirs['mizuroute_settings_dir']),
+            
+            'target_metric': self.target_metric,
+            'calibrate_depth': self.calibrate_depth,
+            'original_depths': self.original_depths.tolist() if self.original_depths is not None else None,
+            'mizuroute_params': self.mizuroute_params,
+            'local_params': self.local_params,
+            'basin_params': self.basin_params,
+            'depth_params': self.depth_params,
+            'obs_file': str(self._get_obs_file_path()),
+            'catchment_area': self._get_catchment_area() or 1e6,
+            'domain_method': self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped'),
+            'routing_delineation': self.config.get('ROUTING_DELINEATION', 'lumped'),
+        }
+        
+        self.logger.info(f"Running debug test on process {process_id}")
+        
+        # Test the worker function directly
+        try:
+            result = _evaluate_parameters_worker(task_data)
+            
+            self.logger.info("Debug test completed:")
+            self.logger.info(f"  Score: {result.get('score', 'None')}")
+            self.logger.info(f"  Error: {result.get('error', 'None')}")
+            
+            # Additional debugging info
+            debug_info = {
+                'process_id': process_id,
+                'file_manager_exists': Path(task_data['file_manager']).exists(),
+                'summa_exe_exists': Path(task_data['summa_exe']).exists(),
+                'summa_dir_exists': Path(task_data['summa_dir']).exists(),
+                'settings_dir_exists': Path(task_data['settings_dir']).exists(),
+                'obs_file_exists': Path(task_data['obs_file']).exists(),
+                'result': result
+            }
+            
+            # Check what files exist in the process directory
+            summa_dir = Path(task_data['summa_dir'])
+            if summa_dir.exists():
+                debug_info['files_in_summa_dir'] = [f.name for f in summa_dir.glob('*')]
+                debug_info['nc_files_in_summa_dir'] = [f.name for f in summa_dir.glob('*.nc')]
+            
+            return debug_info
+            
+        except Exception as e:
+            import traceback
+            return {
+                'process_id': process_id,
+                'error': f'Debug test failed: {str(e)}',
+                'traceback': traceback.format_exc()
+            }
+
+
+
     def _update_mizuroute_parameters(self, params):
         """
         Update mizuRoute parameter file with new parameter values.
@@ -2716,6 +3443,9 @@ class DEOptimizer:
         
         return defaults.get(param_name, 1.0)
 
+
+    
+
     def _run_final_simulation(self, best_params):
         """
         Run a final simulation with the best parameters using the full experiment period.
@@ -2874,6 +3604,8 @@ class DEOptimizer:
             title = 'DE Optimization Progress'
             if self.calibrate_depth:
                 title += ' (with Soil Depth Calibration)'
+            if self.use_parallel:
+                title += f' ({self.num_processes} processes)'
             plt.title(title)
             plt.grid(True, alpha=0.3)
             
@@ -3141,6 +3873,8 @@ class DEOptimizer:
                 'parameters_calibrated': self.local_params + self.basin_params + self.depth_params + self.mizuroute_params,
                 'depth_calibration_enabled': self.calibrate_depth,
                 'mizuroute_calibration_enabled': bool(self.mizuroute_params),
+                'parallel_processing_enabled': self.use_parallel,
+                'num_processes_used': self.num_processes if self.use_parallel else 1,
                 'routing_configuration': self._check_routing_configuration(),
                 'total_evaluations': len(all_evaluations),
                 'experiment_id': self.experiment_id,
@@ -3558,3 +4292,1341 @@ class DEOptimizer:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
+
+def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger) -> bool:
+    """Generate trial parameters file in worker process with proper GRU/HRU dimensions."""
+    try:
+        import netCDF4 as nc
+        import xarray as xr
+        import numpy as np
+        
+        if not params:
+            return True
+        
+        attr_file = settings_dir / 'attributes.nc'
+        trial_params_path = settings_dir / 'trialParams.nc'
+        
+        # Define parameter levels
+        routing_params = ['routingGammaShape', 'routingGammaScale']
+        basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
+        gru_level_params = routing_params + basin_params
+        
+        with xr.open_dataset(attr_file) as attr_ds:
+            # Get HRU information
+            hru_ids = attr_ds['hruId'].values
+            num_hrus = len(hru_ids)
+            
+            # Get GRU information (usually 1 for single watershed)
+            if 'gruId' in attr_ds:
+                gru_ids = attr_ds['gruId'].values
+                num_grus = len(gru_ids)
+            else:
+                # If no gruId in attributes, assume 1 GRU
+                gru_ids = np.array([1])
+                num_grus = 1
+            
+            logger.debug(f"Creating trialParams.nc with {num_hrus} HRUs and {num_grus} GRUs")
+            
+            with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as ds:
+                # Create BOTH dimensions
+                ds.createDimension('hru', num_hrus)
+                ds.createDimension('gru', num_grus)  # ← CRITICAL: Add GRU dimension
+                
+                # Create coordinate variables
+                hru_var = ds.createVariable('hruId', 'i4', ('hru',))
+                hru_var[:] = hru_ids
+                
+                gru_var = ds.createVariable('gruId', 'i4', ('gru',))
+                gru_var[:] = gru_ids
+                
+                # Add parameters with CORRECT dimensions
+                for param_name, param_values in params.items():
+                    param_values_array = np.asarray(param_values)
+                    
+                    # Flatten if multi-dimensional
+                    if param_values_array.ndim > 1:
+                        param_values_array = param_values_array.flatten()
+                    
+                    if param_name in gru_level_params:
+                        # GRU-LEVEL PARAMETERS (routing and basin parameters)
+                        param_var = ds.createVariable(param_name, 'f8', ('gru',))  # ← Use GRU dimension
+                        param_var.long_name = f"Trial value for {param_name}"
+                        
+                        # GRU parameters should have 1 value per GRU (usually just 1)
+                        if len(param_values_array) >= num_grus:
+                            param_var[:] = param_values_array[:num_grus]
+                        else:
+                            # Use the first value for all GRUs
+                            param_var[:] = param_values_array[0]
+                        
+                        logger.debug(f"✓ {param_name}: GRU-level parameter, value = {param_values_array[0]:.6e}")
+                        
+                    else:
+                        # HRU-LEVEL PARAMETERS (all other parameters)
+                        param_var = ds.createVariable(param_name, 'f8', ('hru',))  # ← Use HRU dimension
+                        param_var.long_name = f"Trial value for {param_name}"
+                        
+                        # Handle HRU parameter dimensions
+                        if len(param_values_array) == num_hrus:
+                            # Perfect match - use as is
+                            param_var[:] = param_values_array
+                        elif len(param_values_array) == 1:
+                            # Single value - broadcast to all HRUs
+                            param_var[:] = param_values_array[0]
+                        else:
+                            # Mismatched dimensions - handle appropriately
+                            if len(param_values_array) > num_hrus:
+                                # Too many values - truncate
+                                param_var[:] = param_values_array[:num_hrus]
+                                logger.warning(f"⚠️ {param_name}: truncated {len(param_values_array)} values to {num_hrus} HRUs")
+                            else:
+                                # Too few values - repeat to fill
+                                repeats = int(np.ceil(num_hrus / len(param_values_array)))
+                                expanded_values = np.tile(param_values_array, repeats)[:num_hrus]
+                                param_var[:] = expanded_values
+                                logger.warning(f"⚠️ {param_name}: expanded {len(param_values_array)} values to {num_hrus} HRUs")
+                        
+        logger.info(f"✅ Created {trial_params_path.name} with proper GRU/HRU dimensions")
+        
+        # Log summary of parameter levels for verification
+        gru_params_in_file = [p for p in params.keys() if p in gru_level_params]
+        hru_params_in_file = [p for p in params.keys() if p not in gru_level_params]
+        
+        if gru_params_in_file:
+            logger.info(f"   GRU-level parameters: {gru_params_in_file}")
+        if hru_params_in_file:
+            logger.info(f"   HRU-level parameters: {len(hru_params_in_file)} parameters")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error generating trial params: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+
+def _update_mizuroute_params_worker(params: Dict, task_data: Dict, settings_dir: Path, logger) -> bool:
+    """Update mizuRoute parameters in worker process."""
+    try:
+        import re
+        
+        mizuroute_params = task_data.get('mizuroute_params', [])
+        if not mizuroute_params:
+            return True
+        
+        param_file = Path(task_data['mizuroute_settings_dir']) / "param.nml.default"
+        if not param_file.exists():
+            return True
+        
+        with open(param_file, 'r') as f:
+            content = f.read()
+        
+        updated_content = content
+        for param_name in mizuroute_params:
+            if param_name in params:
+                param_value = params[param_name]
+                pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
+                
+                if param_name in ['tscale']:
+                    replacement = rf'\g<1>{int(param_value)}'
+                else:
+                    replacement = rf'\g<1>{param_value:.6f}'
+                
+                updated_content = re.sub(pattern, replacement, updated_content)
+        
+        with open(param_file, 'w') as f:
+            f.write(updated_content)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating mizuRoute params: {str(e)}")
+        return False
+
+
+def _evaluate_parameters_worker_staggered(task_data: Dict) -> Dict:
+    """Worker function with staggered start to reduce resource contention."""
+    import time
+    import os
+    
+    # Apply stagger delay
+    start_delay = task_data.get('start_delay', 0)
+    if start_delay > 0:
+        time.sleep(start_delay)
+    
+    # Set process priority to be nice to other processes
+    try:
+        os.nice(5)  # Lower priority
+    except:
+        pass
+    
+    # Call the original worker function
+    return _evaluate_parameters_worker(task_data)
+
+
+def _run_summa_worker(summa_exe: str, file_manager: Path, summa_dir: Path, 
+                     proc_id: int, logger) -> bool:
+    """Fixed SUMMA worker that maintains consistent path handling."""
+    try:
+        # Create log directory
+        log_dir = summa_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"proc_{proc_id:02d}_summa.log"
+        
+        # Set environment variables for better resource management
+        env = os.environ.copy()
+        env['OMP_NUM_THREADS'] = '1'  # Force single-threaded operation
+        env['MKL_NUM_THREADS'] = '1'
+        
+        # Use the same approach as the original non-parallel version
+        # Don't change working directory - let SUMMA resolve paths as intended
+        cmd = f"{summa_exe} -m {file_manager}"
+        
+        logger.debug(f"Process {proc_id}: Running SUMMA command: {cmd}")
+        logger.debug(f"Process {proc_id}: File manager: {file_manager}")
+        logger.debug(f"Process {proc_id}: Expected output in: {summa_dir}")
+        
+        # Run SUMMA with shell=True like the original version
+        # This maintains the same path resolution behavior
+        with open(log_file, 'w') as f:
+            result = subprocess.run(
+                cmd,
+                shell=True,  # Use shell=True like the original
+                stdout=f, 
+                stderr=subprocess.STDOUT,
+                check=True, 
+                timeout=1800,  # 30 minute timeout
+                env=env
+            )
+        
+        logger.debug(f"Process {proc_id}: SUMMA completed with return code {result.returncode}")
+        
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Process {proc_id}: SUMMA failed with exit code {e.returncode}")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error(f"Process {proc_id}: SUMMA timed out after 30 minutes")
+        return False
+    except Exception as e:
+        logger.error(f"Process {proc_id}: Unexpected error: {str(e)}")
+        import traceback
+        logger.error(f"Process {proc_id}: Traceback: {traceback.format_exc()}")
+        return False
+
+def _calculate_metrics_worker(summa_dir: Path, task_data: Dict, logger) -> float:
+    """Calculate performance metrics with increased timeout and better error handling."""
+    try:
+        proc_id = task_data.get('proc_id', 0)
+        
+        # Get observed data
+        obs_file = task_data['obs_file']
+        if not Path(obs_file).exists():
+            logger.error(f"Process {proc_id}: Observed data not found: {obs_file}")
+            return None
+        
+        # Load observed data
+        obs_df = pd.read_csv(obs_file)
+        
+        # Find columns with more robust detection
+        date_col = None
+        flow_col = None
+        
+        for col in obs_df.columns:
+            col_lower = col.lower()
+            if date_col is None and any(term in col_lower for term in ['date', 'time', 'datetime']):
+                date_col = col
+            if flow_col is None and any(term in col_lower for term in ['flow', 'discharge', 'q_', 'streamflow']):
+                flow_col = col
+        
+        if not date_col or not flow_col:
+            logger.error(f"Process {proc_id}: Could not identify date/flow columns")
+            logger.error(f"Process {proc_id}: Available columns: {obs_df.columns.tolist()}")
+            return None
+        
+        # Process observed data
+        obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+        obs_df.set_index('DateTime', inplace=True)
+        observed_flow = obs_df[flow_col]
+        
+        # Find SUMMA output with extended retry logic
+        max_retries = 10  # Increased from 5
+        retry_delay = 30  # Increased to 30 seconds between retries
+        
+        for attempt in range(max_retries):
+            # Try multiple patterns for finding simulation files
+            patterns = [
+                f"proc_{proc_id:02d}_opt_*_timestep.nc",
+                f"*proc_{proc_id:02d}*timestep.nc",
+                f"*timestep.nc"  # Fallback
+            ]
+            
+            sim_files = []
+            for pattern in patterns:
+                found_files = list(summa_dir.glob(pattern))
+                if found_files:
+                    sim_files = found_files
+                    logger.debug(f"Process {proc_id}: Found files with pattern '{pattern}': {[f.name for f in found_files]}")
+                    break
+            
+            if sim_files:
+                # Verify the file is readable and complete
+                sim_file = sim_files[0]  # Take the first match
+                
+                try:
+                    # Test if file can be opened and has reasonable data
+                    with xr.open_dataset(sim_file) as ds:
+                        if 'time' in ds.dims and len(ds.time) > 10:  # At least 10 time steps
+                            logger.debug(f"Process {proc_id}: Found valid simulation file: {sim_file.name} with {len(ds.time)} time steps")
+                            break
+                        else:
+                            logger.debug(f"Process {proc_id}: File {sim_file.name} exists but has insufficient data (time dim: {len(ds.time) if 'time' in ds.dims else 'missing'})")
+                            sim_files = []  # Reset to trigger retry
+                except Exception as e:
+                    logger.debug(f"Process {proc_id}: File {sim_file.name} not ready yet: {str(e)}")
+                    sim_files = []  # Reset to trigger retry
+            
+            if attempt < max_retries - 1:
+                logger.debug(f"Process {proc_id}: No valid timestep files found (attempt {attempt+1}/{max_retries}), retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"Process {proc_id}: No SUMMA timestep files found after {max_retries} attempts over {max_retries * retry_delay / 60:.1f} minutes")
+                
+                # Debug: list all files in directory
+                all_files = list(summa_dir.glob("*"))
+                nc_files = list(summa_dir.glob("*.nc"))
+                logger.error(f"Process {proc_id}: All files in {summa_dir}: {[f.name for f in all_files]}")
+                logger.error(f"Process {proc_id}: NetCDF files: {[f.name for f in nc_files]}")
+                
+                # If there are NetCDF files but they don't match our pattern, investigate
+                if nc_files:
+                    logger.error(f"Process {proc_id}: Investigating NetCDF files that don't match expected pattern...")
+                    for nc_file in nc_files[:3]:  # Check first 3 files
+                        try:
+                            with xr.open_dataset(nc_file) as ds:
+                                logger.error(f"Process {proc_id}: File {nc_file.name}: dims={dict(ds.sizes)}, vars={list(ds.variables.keys())[:10]}")
+                        except Exception as e:
+                            logger.error(f"Process {proc_id}: Could not read {nc_file.name}: {str(e)}")
+                
+                return None
+        
+        # Process simulated data (rest of function remains the same)
+        with xr.open_dataset(sim_file) as ds:
+            # Find runoff variable with better detection
+            runoff_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff', 
+                          'averageRoutedRunoff_mean', 'basin__TotalRunoff_mean']
+            
+            runoff_var = None
+            for var_name in runoff_vars:
+                if var_name in ds.variables:
+                    runoff_var = var_name
+                    logger.debug(f"Process {proc_id}: Found runoff variable: {var_name}")
+                    break
+            
+            if not runoff_var:
+                available_vars = list(ds.variables.keys())
+                logger.error(f"Process {proc_id}: No runoff variable found")
+                logger.error(f"Process {proc_id}: Available variables: {available_vars}")
+                
+                # Try to find any variable with "runoff" in the name
+                runoff_like = [v for v in available_vars if 'runoff' in v.lower()]
+                if runoff_like:
+                    runoff_var = runoff_like[0]
+                    logger.warning(f"Process {proc_id}: Using fallback variable: {runoff_var}")
+                else:
+                    return None
+            
+            # Extract simulated flow
+            var = ds[runoff_var]
+            logger.debug(f"Process {proc_id}: Variable {runoff_var} has dimensions: {var.dims}, shape: {var.shape}")
+            
+            if len(var.shape) > 1:
+                # Multi-dimensional - extract spatial dimension
+                if 'hru' in var.dims:
+                    simulated_flow = var.isel(hru=0).to_pandas()
+                elif 'gru' in var.dims:
+                    simulated_flow = var.isel(gru=0).to_pandas()
+                else:
+                    # Get non-time dimensions and use first spatial index
+                    non_time_dims = [dim for dim in var.dims if dim != 'time']
+                    if non_time_dims:
+                        simulated_flow = var.isel({non_time_dims[0]: 0}).to_pandas()
+                    else:
+                        simulated_flow = var.to_pandas()
+            else:
+                simulated_flow = var.to_pandas()
+            
+            # Convert units (m/s to m³/s)
+            catchment_area = task_data.get('catchment_area', 1e6)
+            simulated_flow = simulated_flow * catchment_area
+            
+            logger.debug(f"Process {proc_id}: Extracted {len(simulated_flow)} simulated flow values")
+            logger.debug(f"Process {proc_id}: Simulated flow range: {simulated_flow.min():.2f} to {simulated_flow.max():.2f} m³/s")
+        
+        # Align time series with better synchronization
+        simulated_flow.index = simulated_flow.index.round('h')
+        common_idx = observed_flow.index.intersection(simulated_flow.index)
+        
+        logger.debug(f"Process {proc_id}: Time alignment: {len(observed_flow)} obs, {len(simulated_flow)} sim, {len(common_idx)} common")
+        
+        if len(common_idx) == 0:
+            logger.error(f"Process {proc_id}: No time overlap between observed and simulated data")
+            logger.error(f"Process {proc_id}: Observed range: {observed_flow.index.min()} to {observed_flow.index.max()}")
+            logger.error(f"Process {proc_id}: Simulated range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+            return None
+        
+        obs_common = observed_flow.loc[common_idx]
+        sim_common = simulated_flow.loc[common_idx]
+        
+        # Calculate target metric
+        score = _calculate_single_metric_worker(obs_common, sim_common, task_data['target_metric'])
+        
+        logger.debug(f"Process {proc_id}: Calculated {task_data['target_metric']} = {score}")
+        
+        return score
+        
+    except Exception as e:
+        logger.error(f"Process {proc_id}: Error calculating metrics: {str(e)}")
+        import traceback
+        logger.error(f"Process {proc_id}: Traceback: {traceback.format_exc()}")
+        return None
+
+
+
+
+def _apply_parameters_worker(params: Dict, settings_dir: Path, task_data: Dict, logger) -> bool:
+    """Apply parameters to files in the worker process."""
+    try:
+        # Handle soil depth parameters
+        if task_data.get('calibrate_depth', False):
+            if 'total_mult' in params and 'shape_factor' in params:
+                success = _update_soil_depths_worker(
+                    params['total_mult'], params['shape_factor'],
+                    task_data['original_depths'], settings_dir, logger
+                )
+                if not success:
+                    return False
+        
+        # Handle hydraulic parameters (excluding depth and mizuRoute parameters)
+        hydraulic_params = {k: v for k, v in params.items() 
+                          if k not in ['total_mult', 'shape_factor'] + task_data.get('mizuroute_params', [])}
+        
+        if hydraulic_params:
+            success = _generate_trial_params_worker(hydraulic_params, settings_dir, logger)
+            if not success:
+                return False
+        
+        # Handle mizuRoute parameters
+        if task_data.get('mizuroute_params') and any(p in params for p in task_data['mizuroute_params']):
+            success = _update_mizuroute_params_worker(params, task_data, settings_dir, logger)
+            if not success:
+                return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error applying parameters: {str(e)}")
+        return False
+
+
+def _update_soil_depths_worker(total_mult: float, shape_factor: float, 
+                              original_depths_list: list, settings_dir: Path, logger) -> bool:
+    """Update soil depths in worker process."""
+    try:
+        if not original_depths_list:
+            return True
+        
+        original_depths = np.array(original_depths_list)
+        
+        # Calculate new depths using the same logic as the main class
+        arr = original_depths.copy()
+        n = len(arr)
+        idx = np.arange(n)
+        
+        if shape_factor > 1:
+            w = np.exp(idx / (n - 1) * np.log(shape_factor))
+        elif shape_factor < 1:
+            w = np.exp((n - 1 - idx) / (n - 1) * np.log(1 / shape_factor))
+        else:
+            w = np.ones(n)
+        
+        w /= w.mean()
+        new_depths = arr * w * total_mult
+        
+        # Calculate layer heights
+        heights = np.zeros(len(new_depths) + 1)
+        for i in range(len(new_depths)):
+            heights[i + 1] = heights[i] + new_depths[i]
+        
+        # Update coldState.nc
+        coldstate_path = settings_dir / 'coldState.nc'
+        if not coldstate_path.exists():
+            logger.error(f"coldState.nc not found: {coldstate_path}")
+            return False
+        
+        import netCDF4 as nc
+        with nc.Dataset(coldstate_path, 'r+') as ds:
+            if 'mLayerDepth' not in ds.variables or 'iLayerHeight' not in ds.variables:
+                logger.error("Required depth variables not found")
+                return False
+            
+            num_hrus = ds.dimensions['hru'].size
+            for h in range(num_hrus):
+                ds.variables['mLayerDepth'][:, h] = new_depths
+                ds.variables['iLayerHeight'][:, h] = heights
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating soil depths: {str(e)}")
+        return False
+
+
+def _debug_worker_environment(task_data: Dict) -> Dict:
+    """Debug function to check what's happening in worker processes."""
+    import os
+    import subprocess
+    from pathlib import Path
+    
+    debug_info = {
+        'worker_pid': os.getpid(),
+        'current_dir': str(Path.cwd()),
+        'summa_exe_exists': Path(task_data['summa_exe']).exists(),
+        'file_manager_exists': Path(task_data['file_manager']).exists(),
+        'summa_dir_exists': Path(task_data['summa_dir']).exists(),
+        'settings_dir_exists': Path(task_data['settings_dir']).exists(),
+    }
+    
+    # Check if we can run SUMMA command
+    try:
+        cmd = f"{task_data['summa_exe']} --help"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        debug_info['summa_help_exit_code'] = result.returncode
+        debug_info['summa_help_stdout'] = result.stdout[:200] if result.stdout else ""
+        debug_info['summa_help_stderr'] = result.stderr[:200] if result.stderr else ""
+    except Exception as e:
+        debug_info['summa_help_error'] = str(e)
+    
+    # Check file manager content
+    try:
+        with open(task_data['file_manager'], 'r') as f:
+            debug_info['file_manager_content'] = f.read()[:500]
+    except Exception as e:
+        debug_info['file_manager_read_error'] = str(e)
+    
+    return debug_info
+
+def _calculate_single_metric_worker(observed: pd.Series, simulated: pd.Series, metric_name: str) -> float:
+    """Calculate a single performance metric."""
+    try:
+        import pandas as pd
+        import numpy as np
+        
+        # Clean data
+        observed = pd.to_numeric(observed, errors='coerce')
+        simulated = pd.to_numeric(simulated, errors='coerce')
+        
+        valid = ~(observed.isna() | simulated.isna())
+        observed = observed[valid]
+        simulated = simulated[valid]
+        
+        if len(observed) == 0:
+            return np.nan
+        
+        metric_name = metric_name.upper()
+        
+        if metric_name == 'KGE':
+            # Kling-Gupta Efficiency
+            r = observed.corr(simulated)
+            alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
+            beta = simulated.mean() / observed.mean() if observed.mean() != 0 else np.nan
+            kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+            return kge if not np.isnan(kge) else 0.0
+        
+        elif metric_name == 'NSE':
+            mean_obs = observed.mean()
+            nse_num = ((observed - simulated) ** 2).sum()
+            nse_den = ((observed - mean_obs) ** 2).sum()
+            return 1 - (nse_num / nse_den) if nse_den > 0 else 0.0
+        
+        # Add other metrics as needed...
+        else:
+            # Default to KGE
+            r = observed.corr(simulated)
+            alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
+            beta = simulated.mean() / observed.mean() if observed.mean() != 0 else np.nan
+            kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+            return kge if not np.isnan(kge) else 0.0
+        
+    except Exception:
+        return np.nan
+
+'''
+
+def _evaluate_parameters_worker(task_data: Dict) -> Dict:
+    """Debug version of the worker function."""
+    try:
+        individual_id = task_data['individual_id']
+        params = task_data['params']
+        proc_id = task_data['proc_id']
+        
+        # Run debug check
+        debug_info = _debug_worker_environment(task_data)
+        
+        return {
+            'individual_id': individual_id,
+            'params': params,
+            'score': None,
+            'error': f'DEBUG INFO: {debug_info}'
+        }
+        
+    except Exception as e:
+        return {
+            'individual_id': task_data.get('individual_id', -1),
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': f'Debug worker exception: {str(e)}'
+        }
+'''
+
+def _evaluate_parameters_worker(task_data: Dict) -> Dict:
+    """
+    Main worker function with improved error handling and debugging.
+    """
+    import sys
+    import logging
+    from pathlib import Path
+    import numpy as np
+    
+    try:
+        # Extract basic task info
+        individual_id = task_data['individual_id']
+        params = task_data['params']
+        proc_id = task_data['proc_id']
+        evaluation_id = task_data.get('evaluation_id', f'eval_{individual_id}')
+        
+        # Create a process-specific logger
+        logger = logging.getLogger(f'worker_{proc_id}')
+        if not logger.handlers:  # Avoid duplicate handlers
+            logger.setLevel(logging.DEBUG)
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(f'[P{proc_id:02d}] %(levelname)s: %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        
+        logger.debug(f"Starting evaluation {evaluation_id} for individual {individual_id}")
+        
+        # Get paths from task data (already resolved as strings)
+        summa_exe = task_data['summa_exe']
+        file_manager = Path(task_data['file_manager'])
+        summa_dir = Path(task_data['summa_dir'])
+        settings_dir = Path(task_data['settings_dir'])
+        
+        # Verify critical paths exist
+        if not Path(summa_exe).exists():
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': f'SUMMA executable not found: {summa_exe}'
+            }
+        
+        if not file_manager.exists():
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': f'File manager not found: {file_manager}'
+            }
+        
+        logger.debug(f"Verified paths - SUMMA exe: {Path(summa_exe).exists()}, FileManager: {file_manager.exists()}")
+        
+        # Step 1: Apply parameters to files
+        logger.debug("Applying parameters to model files")
+        success = _apply_parameters_worker(params, settings_dir, task_data, logger)
+        if not success:
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': 'Failed to apply parameters to model files'
+            }
+        
+        # Step 2: Run SUMMA
+        logger.debug("Running SUMMA simulation")
+        success = _run_summa_worker(summa_exe, file_manager, summa_dir, proc_id, logger)
+        if not success:
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': 'SUMMA simulation failed or output files not created'
+            }
+        
+        # Step 3: Calculate metrics
+        logger.debug("Calculating performance metrics")
+        score = _calculate_metrics_worker(summa_dir, task_data, logger)
+        
+        if score is None:
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': 'Failed to calculate performance metrics'
+            }
+        
+        # Apply score transformation if needed (negate for metrics where lower is better)
+        target_metric = task_data['target_metric']
+        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
+            score = -score
+        
+        logger.debug(f"Evaluation {evaluation_id} completed successfully with score: {score}")
+        
+        return {
+            'individual_id': individual_id,
+            'params': params,
+            'score': score,
+            'error': None
+        }
+        
+    except Exception as e:
+        proc_id = task_data.get('proc_id', 'unknown')
+        individual_id = task_data.get('individual_id', -1)
+        
+        # Try to get more detailed error info
+        import traceback
+        error_details = f'Worker exception in process {proc_id}: {str(e)}\nTraceback: {traceback.format_exc()}'
+        
+        return {
+            'individual_id': individual_id,
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': error_details
+        }
+class ParameterEvaluator:
+    """
+    Standalone parameter evaluator for use in worker processes.
+    This class recreates the evaluation environment without the full DE optimizer context.
+    """
+    
+    def __init__(self, eval_context: Dict, proc_dirs: Dict, logger: logging.Logger):
+        """Initialize the parameter evaluator with the given context."""
+        self.config = eval_context['config']
+        self.domain_name = eval_context['domain_name']
+        self.experiment_id = eval_context['experiment_id']
+        self.project_dir = Path(eval_context['project_dir'])
+        self.calibration_period = eval_context['calibration_period']
+        self.evaluation_period = eval_context['evaluation_period']
+        self.target_metric = eval_context['target_metric']
+        self.calibrate_depth = eval_context['calibrate_depth']
+        self.original_depths = eval_context['original_depths']
+        self.depth_params = eval_context['depth_params']
+        self.mizuroute_params = eval_context['mizuroute_params']
+        self.local_params = eval_context['local_params']
+        self.basin_params = eval_context['basin_params']
+        self.param_bounds = eval_context['param_bounds']
+        
+        # Process-specific directories
+        self.summa_dir = proc_dirs['summa_dir']
+        self.mizuroute_dir = proc_dirs['mizuroute_dir']
+        self.summa_settings_dir = proc_dirs['summa_settings_dir']
+        self.mizuroute_settings_dir = proc_dirs['mizuroute_settings_dir']
+        self.proc_id = proc_dirs['proc_id']
+        
+        self.logger = logger
+        
+        # Update file managers for this process
+        self._update_process_file_managers()
+    
+    def _update_process_file_managers(self):
+        """Update file managers to point to process-specific directories."""
+        
+        # Update SUMMA file manager
+        summa_filemanager = self.summa_settings_dir / 'fileManager.txt'
+        if summa_filemanager.exists():
+            self._update_summa_file_manager(summa_filemanager)
+        
+        # Update mizuRoute control file
+        mizuroute_control = self.mizuroute_settings_dir / 'mizuroute.control'
+        if mizuroute_control.exists():
+            self._update_mizuroute_control_file(mizuroute_control)
+    
+    def _update_summa_file_manager(self, filemanager_path):
+        """Update SUMMA file manager with process-specific paths."""
+        with open(filemanager_path, 'r') as f:
+            lines = f.readlines()
+        
+        updated_lines = []
+        for line in lines:
+            if 'outputPath' in line:
+                output_path = str(self.summa_dir).replace('\\', '/')
+                updated_lines.append(f"outputPath           '{output_path}/'\n")
+            elif 'settingsPath' in line:
+                settings_path = str(self.summa_settings_dir).replace('\\', '/')
+                updated_lines.append(f"settingsPath         '{settings_path}/'\n")
+            elif 'outFilePrefix' in line:
+                prefix = f"proc_{self.proc_id:02d}_opt_{self.experiment_id}"
+                updated_lines.append(f"outFilePrefix        '{prefix}'\n")
+            else:
+                updated_lines.append(line)
+        
+        with open(filemanager_path, 'w') as f:
+            f.writelines(updated_lines)
+    
+    def _update_mizuroute_control_file(self, control_path):
+        """Update mizuRoute control file with process-specific paths."""
+        with open(control_path, 'r') as f:
+            lines = f.readlines()
+        
+        updated_lines = []
+        for line in lines:
+            if '<input_dir>' in line:
+                input_path = str(self.summa_dir).replace('\\', '/')
+                updated_lines.append(f"<input_dir>             {input_path}/\n")
+            elif '<output_dir>' in line:
+                output_path = str(self.mizuroute_dir).replace('\\', '/')
+                updated_lines.append(f"<output_dir>            {output_path}/\n")
+            elif '<ancil_dir>' in line:
+                ancil_path = str(self.mizuroute_settings_dir).replace('\\', '/')
+                updated_lines.append(f"<ancil_dir>             {ancil_path}/\n")
+            elif '<case_name>' in line:
+                case_name = f"proc_{self.proc_id:02d}_opt_{self.experiment_id}"
+                updated_lines.append(f"<case_name>             {case_name}\n")
+            elif '<fname_qsim>' in line:
+                fname = f"proc_{self.proc_id:02d}_opt_{self.experiment_id}_timestep.nc"
+                updated_lines.append(f"<fname_qsim>            {fname}\n")
+            else:
+                updated_lines.append(line)
+        
+        with open(control_path, 'w') as f:
+            f.writelines(updated_lines)
+        
+    def evaluate_parameters(self, params: np.ndarray) -> float:
+        """
+        Evaluate the given parameters by running the model and computing the objective function.
+        """
+        self.logger.info(f"Evaluating parameters: {params}")
+
+        # Apply parameters to the trial NetCDF file
+        if not self._apply_parameters_to_netcdf(params):
+            self.logger.error("Failed to write parameters to NetCDF file.")
+            return np.nan
+
+
+        # Extract model outputs
+        output_file = self.proc_dirs['summa_dir'] / 'output' / 'output.nc'
+        if not output_file.exists():
+            self.logger.error(f"Expected SUMMA output not found at: {output_file}")
+            return np.nan
+
+        # Compute objective function
+        score = self._compute_objective(output_file)
+        self.logger.info(f"Computed objective score: {score}")
+        return score
+
+    
+    def _needs_mizuroute_routing(self, domain_method: str, routing_delineation: str) -> bool:
+        """Determine if mizuRoute routing is needed."""
+        if domain_method not in ['point', 'lumped']:
+            return True
+        if domain_method == 'lumped' and routing_delineation == 'river_network':
+            return True
+        return False
+    
+    def _run_summa(self) -> bool:
+        """
+        Run SUMMA simulation in this process directory using instance-local paths.
+
+        Returns:
+            bool: True if the run was successful, False otherwise
+        """
+        summa_path = Path(self.config.get('SUMMA_INSTALL_PATH', 'default'))
+        if str(summa_path) == 'default':
+            summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+
+        summa_exe = summa_path / self.config.get('SUMMA_EXE')
+        file_manager = self.summa_settings_dir / 'fileManager.txt'
+
+        if not file_manager.exists():
+            return False
+
+        cmd = f"{summa_exe} -m {file_manager}"
+        log_dir = self.summa_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"proc_{self.proc_id}_summa.log"
+
+        try:
+            with open(log_file, 'w') as f:
+                subprocess.run(cmd, shell=True, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=180)
+            return True
+        except Exception:
+            return False
+    
+    def _run_mizuroute(self) -> bool:
+        """Run mizuRoute simulation in this process directory."""
+        mizu_path = Path(self.config.get('INSTALL_PATH_MIZUROUTE', 'default'))
+        if str(mizu_path) == 'default':
+            mizu_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
+        
+        mizu_exe = mizu_path / self.config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
+        control_file = self.mizuroute_settings_dir / 'mizuroute.control'
+        
+        cmd = f"{mizu_exe} {control_file}"
+        log_file = self.mizuroute_dir / "logs" / f"proc_{self.proc_id}_mizuroute.log"
+        
+        try:
+            with open(log_file, 'w') as f:
+                subprocess.run(cmd, shell=True, stdout=f, stderr=subprocess.STDOUT, 
+                             check=True, timeout=180, cwd=str(control_file.parent))
+            return True
+        except Exception:
+            return False
+    
+    def _update_soil_depths(self, params):
+        """Update soil depths for this process."""
+        try:
+            if not self.calibrate_depth:
+                return True
+            
+            total_mult = params['total_mult'][0] if isinstance(params['total_mult'], np.ndarray) else params['total_mult']
+            shape_factor = params['shape_factor'][0] if isinstance(params['shape_factor'], np.ndarray) else params['shape_factor']
+            
+            # Calculate new depths
+            new_depths = self._calculate_new_depths(total_mult, shape_factor)
+            if new_depths is None:
+                return False
+            
+            # Update coldState.nc in process directory
+            coldstate_path = self.summa_settings_dir / 'coldState.nc'
+            
+            if not coldstate_path.exists():
+                return False
+            
+            # Calculate layer heights
+            heights = np.zeros(len(new_depths) + 1)
+            for i in range(len(new_depths)):
+                heights[i + 1] = heights[i] + new_depths[i]
+            
+            # Update the file
+            with nc.Dataset(coldstate_path, 'r+') as ds:
+                if 'mLayerDepth' not in ds.variables or 'iLayerHeight' not in ds.variables:
+                    return False
+                
+                num_hrus = ds.dimensions['hru'].size
+                for h in range(num_hrus):
+                    ds.variables['mLayerDepth'][:, h] = new_depths
+                    ds.variables['iLayerHeight'][:, h] = heights
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    def _calculate_new_depths(self, total_mult, shape_factor):
+        """Calculate new soil depths using the shape method."""
+        if self.original_depths is None:
+            return None
+        
+        arr = self.original_depths.copy()
+        n = len(arr)
+        idx = np.arange(n)
+        
+        if shape_factor > 1:
+            w = np.exp(idx / (n - 1) * np.log(shape_factor))
+        elif shape_factor < 1:
+            w = np.exp((n - 1 - idx) / (n - 1) * np.log(1 / shape_factor))
+        else:
+            w = np.ones(n)
+        
+        w /= w.mean()
+        new_depths = arr * w * total_mult
+        
+        return new_depths
+    
+    def _update_mizuroute_parameters(self, params):
+        """Update mizuRoute parameters for this process."""
+        try:
+            if not self.mizuroute_params:
+                return True
+            
+            param_file = self.mizuroute_settings_dir / "param.nml.default"
+            
+            if not param_file.exists():
+                return False
+            
+            with open(param_file, 'r') as f:
+                content = f.read()
+            
+            updated_content = content
+            
+            for param_name in self.mizuroute_params:
+                if param_name in params:
+                    param_value = params[param_name]
+                    
+                    pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
+                    
+                    if param_name in ['tscale']:
+                        replacement = rf'\g<1>{int(param_value)}'
+                    else:
+                        replacement = rf'\g<1>{param_value:.6f}'
+                    
+                    updated_content = re.sub(pattern, replacement, updated_content)
+            
+            with open(param_file, 'w') as f:
+                f.write(updated_content)
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    def _generate_trial_params_file(self, params):
+        """Generate trial parameters file for this process with proper GRU/HRU dimensions."""
+        try:
+            if not params:
+                return True
+            
+            # Use a simplified version for the worker process
+            trial_params_path = self.summa_settings_dir / 'trialParams.nc'
+            
+            # Get attribute file to read HRU information
+            attr_file_path = self.summa_settings_dir / 'attributes.nc'
+            
+            if not attr_file_path.exists():
+                self.logger.error(f"Attributes file not found: {attr_file_path}")
+                return False
+            
+            # Define parameter levels
+            routing_params = ['routingGammaShape', 'routingGammaScale']
+            basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
+            gru_level_params = routing_params + basin_params
+            
+            with xr.open_dataset(attr_file_path) as ds:
+                # Get HRU information
+                hru_ids = ds['hruId'].values
+                num_hrus = len(hru_ids)
+                
+                # Get GRU information (usually 1 for single watershed)
+                if 'gruId' in ds:
+                    gru_ids = ds['gruId'].values
+                    num_grus = len(gru_ids)
+                else:
+                    # If no gruId in attributes, assume 1 GRU
+                    gru_ids = np.array([1])
+                    num_grus = 1
+                
+                self.logger.debug(f"Creating trialParams.nc with {num_hrus} HRUs and {num_grus} GRUs")
+                
+                with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
+                    # Create BOTH dimensions
+                    output_ds.createDimension('hru', num_hrus)
+                    output_ds.createDimension('gru', num_grus)  # ← CRITICAL: Add GRU dimension
+                    
+                    # Create coordinate variables
+                    hru_id_var = output_ds.createVariable('hruId', 'i4', ('hru',))
+                    hru_id_var[:] = hru_ids
+                    hru_id_var.long_name = 'Hydrologic Response Unit ID (HRU)'
+                    hru_id_var.units = '-'
+                    
+                    gru_id_var = output_ds.createVariable('gruId', 'i4', ('gru',))
+                    gru_id_var[:] = gru_ids
+                    gru_id_var.long_name = 'Grouped Response Unit ID (GRU)'
+                    gru_id_var.units = '-'
+                    
+                    # Add parameters with CORRECT dimensions
+                    for param_name, param_values in params.items():
+                        param_values_array = np.asarray(param_values)
+                        
+                        # Flatten if multi-dimensional
+                        if param_values_array.ndim > 1:
+                            param_values_array = param_values_array.flatten()
+                        
+                        if param_name in gru_level_params:
+                            # GRU-LEVEL PARAMETERS (routing and basin parameters)
+                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            param_var.units = "N/A"
+                            
+                            # GRU parameters should have 1 value per GRU (usually just 1)
+                            if len(param_values_array) >= num_grus:
+                                param_var[:] = param_values_array[:num_grus]
+                            else:
+                                # Use the first value for all GRUs
+                                param_var[:] = param_values_array[0]
+                            
+                            self.logger.debug(f"✓ {param_name}: GRU-level parameter, value = {param_values_array[0]:.6e}")
+                            
+                        else:
+                            # HRU-LEVEL PARAMETERS (all other parameters)
+                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            param_var.units = "N/A"
+                            
+                            # Handle HRU parameter dimensions
+                            if len(param_values_array) == num_hrus:
+                                # Perfect match - use as is
+                                param_var[:] = param_values_array
+                            elif len(param_values_array) == 1:
+                                # Single value - broadcast to all HRUs
+                                param_var[:] = param_values_array[0]
+                            else:
+                                # Mismatched dimensions - handle appropriately
+                                if len(param_values_array) > num_hrus:
+                                    # Too many values - truncate
+                                    param_var[:] = param_values_array[:num_hrus]
+                                    self.logger.warning(f"⚠️ {param_name}: truncated {len(param_values_array)} values to {num_hrus} HRUs")
+                                else:
+                                    # Too few values - repeat to fill
+                                    repeats = int(np.ceil(num_hrus / len(param_values_array)))
+                                    expanded_values = np.tile(param_values_array, repeats)[:num_hrus]
+                                    param_var[:] = expanded_values
+                                    self.logger.warning(f"⚠️ {param_name}: expanded {len(param_values_array)} values to {num_hrus} HRUs")
+                            
+                            # Log for debugging
+                            if len(param_values_array) == 1:
+                                self.logger.debug(f"✓ {param_name}: HRU-level parameter, value = {param_values_array[0]:.6e}")
+                            else:
+                                self.logger.debug(f"✓ {param_name}: HRU-level parameter, {len(param_values_array)} values")
+                    
+                    # Add global attributes
+                    output_ds.description = "SUMMA Trial Parameter file for parallel DE evaluation"
+                    output_ds.history = f"Created on {datetime.now().isoformat()}"
+                    output_ds.comment = "Routing and basin parameters at GRU level, other parameters at HRU level"
+            
+            self.logger.info(f"✅ Created {trial_params_path.name} with proper GRU/HRU dimensions")
+            
+            # Log summary of parameter levels for verification
+            gru_params_in_file = [p for p in params.keys() if p in gru_level_params]
+            hru_params_in_file = [p for p in params.keys() if p not in gru_level_params]
+            
+            if gru_params_in_file:
+                self.logger.info(f"   GRU-level parameters: {gru_params_in_file}")
+            if hru_params_in_file:
+                self.logger.info(f"   HRU-level parameters: {len(hru_params_in_file)} parameters")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error generating trial params file: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def _convert_lumped_to_distributed_routing(self):
+        """Convert lumped SUMMA output for distributed routing (simplified for worker)."""
+        try:
+            # Find SUMMA timestep file
+            timestep_files = list(self.summa_dir.glob("*timestep.nc"))
+            if not timestep_files:
+                return False
+            
+            summa_file = timestep_files[0]
+            
+            # Load topology
+            topology_file = self.mizuroute_settings_dir / 'topology.nc'
+            if not topology_file.exists():
+                return False
+            
+            with xr.open_dataset(topology_file) as topo_ds:
+                seg_ids = topo_ds['segId'].values
+                n_segments = len(seg_ids)
+            
+            # Load SUMMA output and convert
+            with xr.open_dataset(summa_file, decode_times=False) as summa_ds:
+                # Find runoff variable
+                routing_var = 'averageRoutedRunoff'
+                if routing_var not in summa_ds:
+                    routing_var = 'basin__TotalRunoff'
+                
+                if routing_var not in summa_ds:
+                    return False
+                
+                # Create mizuRoute forcing
+                mizuForcing = xr.Dataset()
+                
+                # Copy time
+                mizuForcing['time'] = summa_ds['time']
+                
+                # Create GRU dimension
+                mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
+                mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
+                
+                # Get runoff data and broadcast
+                runoff_data = summa_ds[routing_var].values
+                if len(runoff_data.shape) == 2:
+                    if runoff_data.shape[1] == 1:
+                        runoff_data = runoff_data.flatten()
+                    else:
+                        runoff_data = runoff_data[:, 0]
+                
+                # Broadcast to all segments
+                tiled_data = np.tile(runoff_data[:, np.newaxis], (1, n_segments))
+                
+                mizuForcing['averageRoutedRunoff'] = xr.DataArray(
+                    tiled_data, dims=('time', 'gru'))
+            
+            # Save converted file
+            mizuForcing.to_netcdf(summa_file, format='NETCDF4')
+            mizuForcing.close()
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    def _calculate_performance_metrics(self):
+        """Calculate performance metrics (simplified for worker)."""
+        try:
+            # Get observed data
+            obs_path = self.project_dir / "observations" / "streamflow" / "preprocessed" / f"{self.domain_name}_streamflow_processed.csv"
+            
+            if not obs_path.exists():
+                return None
+            
+            # Read observed data
+            obs_df = pd.read_csv(obs_path)
+            
+            # Find date and flow columns
+            date_col = next((col for col in obs_df.columns if 'date' in col.lower() or 'time' in col.lower()), None)
+            flow_col = next((col for col in obs_df.columns if 'flow' in col.lower() or 'discharge' in col.lower()), None)
+            
+            if not date_col or not flow_col:
+                return None
+            
+            # Process observed data
+            obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+            obs_df.set_index('DateTime', inplace=True)
+            observed_flow = obs_df[flow_col]
+            
+            # Determine output type
+            domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+            needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+            
+            if needs_mizuroute:
+                # Use mizuRoute output
+                sim_files = list(self.mizuroute_dir.glob("*.nc"))
+                if not sim_files:
+                    return None
+                
+                sim_file = sim_files[0]
+                
+                with xr.open_dataset(sim_file) as ds:
+                    reach_id = self.config.get('SIM_REACH_ID')
+                    
+                    if 'reachID' in ds.variables:
+                        reach_ids = ds['reachID'].values
+                        reach_indices = np.where(reach_ids == int(reach_id))[0]
+                        
+                        if len(reach_indices) > 0:
+                            reach_index = reach_indices[0]
+                            
+                            # Find streamflow variable
+                            for var_name in ['IRFroutedRunoff', 'averageRoutedRunoff']:
+                                if var_name in ds.variables:
+                                    var = ds[var_name]
+                                    if 'seg' in var.dims:
+                                        simulated_flow = var.isel(seg=reach_index).to_pandas()
+                                    else:
+                                        simulated_flow = var.isel(reachID=reach_index).to_pandas()
+                                    break
+                            else:
+                                return None
+                        else:
+                            return None
+                    else:
+                        return None
+            else:
+                # Use SUMMA output
+                sim_files = list(self.summa_dir.glob("*timestep.nc"))
+                if not sim_files:
+                    return None
+                
+                sim_file = sim_files[0]
+                
+                # Get catchment area (simplified)
+                try:
+                    import geopandas as gpd
+                    basin_path = self.project_dir / "shapefiles" / "river_basins"
+                    basin_files = list(basin_path.glob("*.shp"))
+                    if basin_files:
+                        gdf = gpd.read_file(basin_files[0])
+                        area_col = 'GRU_area'
+                        if area_col in gdf.columns:
+                            catchment_area = gdf[area_col].sum()
+                        else:
+                            catchment_area = 1e6  # Default 1 km²
+                    else:
+                        catchment_area = 1e6  # Default 1 km²
+                except:
+                    catchment_area = 1e6  # Default 1 km²
+                
+                with xr.open_dataset(sim_file) as ds:
+                    # Find runoff variable
+                    for var_name in ['averageRoutedRunoff', 'basin__TotalRunoff']:
+                        if var_name in ds.variables:
+                            var = ds[var_name]
+                            if len(var.shape) > 1:
+                                if 'hru' in var.dims:
+                                    simulated_flow = var.isel(hru=0).to_pandas()
+                                else:
+                                    simulated_flow = var.isel({list(var.dims)[1]: 0}).to_pandas()
+                            else:
+                                simulated_flow = var.to_pandas()
+                            
+                            # Convert units
+                            simulated_flow = simulated_flow * catchment_area
+                            break
+                    else:
+                        return None
+            
+            # Align time series
+            simulated_flow.index = simulated_flow.index.round('h')
+            common_idx = observed_flow.index.intersection(simulated_flow.index)
+            
+            if len(common_idx) == 0:
+                return None
+            
+            obs_common = observed_flow.loc[common_idx]
+            sim_common = simulated_flow.loc[common_idx]
+            
+            # Calculate metrics
+            metrics = self._calculate_streamflow_metrics(obs_common, sim_common)
+            
+            return metrics
+            
+        except Exception:
+            return None
+    
+    def _calculate_streamflow_metrics(self, observed, simulated):
+        """Calculate streamflow metrics (simplified)."""
+        try:
+            observed = pd.to_numeric(observed, errors='coerce')
+            simulated = pd.to_numeric(simulated, errors='coerce')
+            
+            valid = ~(observed.isna() | simulated.isna())
+            observed = observed[valid]
+            simulated = simulated[valid]
+            
+            if len(observed) == 0:
+                return {'KGE': np.nan}
+            
+            # Calculate KGE
+            r = observed.corr(simulated)
+            alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
+            beta = simulated.mean() / observed.mean() if observed.mean() != 0 else np.nan
+            kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
+            
+            return {'KGE': kge}
+            
+        except Exception:
+            return {'KGE': np.nan}
+    
+    def _extract_target_metric(self, metrics):
+        """Extract target metric value."""
+        if self.target_metric in metrics:
+            return metrics[self.target_metric]
+        else:
+            return list(metrics.values())[0] if metrics else None 

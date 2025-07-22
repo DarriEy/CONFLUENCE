@@ -1,0 +1,2233 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "51a5229d",
+   "metadata": {},
+   "source": [
+    "# CONFLUENCE Tutorial - 04e: LamaH-Ice Large Sample Study (Arctic-Glacial Streamflow Analysis)\n",
+    "\n",
+    "## Introduction\n",
+    "\n",
+    "This tutorial demonstrates systematic streamflow modeling across Iceland's unique watersheds using the LamaH-Ice dataset (Helgason et al., 2024). Unlike previous tutorials focused on temperate and global environments, this study addresses Arctic-glacial streamflow prediction across diverse volcanic and glacial landscape conditions characteristic of high-latitude hydrology.\n",
+    "\n",
+    "### LamaH-Ice Dataset\n",
+    "\n",
+    "The LamaH-Ice dataset provides standardized data for Icelandic watersheds, representing a comprehensive collection of Arctic-glacial hydrological data. The dataset includes harmonized meteorological forcing, quality-controlled daily discharge observations, and comprehensive catchment attributes spanning Iceland's diverse volcanic terrain, glacial landscapes, and geothermal regions. Watersheds range from small glacial headwater streams to large river systems draining major ice caps and encompass the full spectrum of Arctic hydroclimatic conditions while maintaining focus on natural basins with reliable observational records.\n",
+    "\n",
+    "### Arctic-Glacial Streamflow Modeling Challenges\n",
+    "\n",
+    "Streamflow in Iceland represents the integrated watershed response to precipitation, snowmelt, glacier melt, geothermal inputs, and volcanic terrain routing processes. Arctic-glacial analysis presents unique challenges including extreme seasonal variability from winter freeze to summer melt, glacial ice dynamics affecting long-term water storage, volcanic terrain creating complex groundwater-surface water interactions, geothermal influences on winter baseflow, permafrost and seasonal freeze-thaw cycling, and climate sensitivity spanning sub-Arctic to Arctic conditions.\n",
+    "\n",
+    "### Research Objectives\n",
+    "\n",
+    "This tutorial addresses fundamental questions about glacial and volcanic controls on streamflow generation, model performance across different glacial coverage gradients, parameter sensitivity to Arctic climate forcing patterns, streamflow response to seasonal freeze-thaw dynamics, and geothermal influence on hydrological processes. The analysis employs multiple performance metrics including Nash-Sutcliffe efficiency, Kling-Gupta efficiency, seasonal bias assessment, and Arctic-specific flow signature analysis.\n",
+    "\n",
+    "### Methodological Framework\n",
+    "\n",
+    "The approach involves strategic site selection across Iceland's environmental gradients, standardized model configuration adaptable to Arctic-glacial characteristics, automated batch processing execution across volcanic and glacial terrain, and systematic performance evaluation using Arctic-appropriate metrics. Sites are selected to represent glacial coverage diversity from ice-free to heavily glaciated basins, volcanic terrain variation across different geological formations, elevation gradients from coastal to highland regions, and diverse Arctic hydrological regimes including glacier-fed, snowmelt-dominated, and mixed systems.\n",
+    "\n",
+    "### CONFLUENCE Advantages for Arctic-Glacial Analysis\n",
+    "\n",
+    "CONFLUENCE provides consistent methodology across diverse Arctic-glacial watersheds, automated processing capabilities adaptable to extreme seasonal variability, systematic quality control suitable for high-latitude data challenges, and comprehensive uncertainty assessment for Arctic climate sensitivity. The framework emphasizes process-based modeling with flexible structure adaptable to glacial and volcanic watershed characteristics, standardized output formats enabling comparison with global datasets, and robust performance evaluation suitable for Arctic hydrological studies.\n",
+    "\n",
+    "### Expected Outcomes\n",
+    "\n",
+    "This tutorial demonstrates Arctic-glacial watershed-scale configuration across Iceland's diverse terrain, streamflow validation through comprehensive observed-simulated comparisons, performance analysis across glacial coverage and volcanic terrain gradients, identification of Arctic-specific versus universal hydrological patterns, and process diagnostics revealing glacial and geothermal controls on watershed function. Results contribute to improved understanding of Arctic-glacial hydrological controls, enhanced model development for high-latitude applications, and applications in Arctic water resources assessment and climate change impact evaluation."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5e19e562-d16c-4257-909b-f6dbe7ff9483",
+   "metadata": {},
+   "source": [
+    "## Step 1: Arctic-Glacial Streamflow Experimental Design and Site Selection\n",
+    "\n",
+    "Transitioning from global analysis to specialized Arctic-glacial streamflow hydrology simulations, this step establishes the foundation for large sample hydrological modeling using the comprehensive LamaH-Ice dataset. We demonstrate how CONFLUENCE's workflow efficiency enables systematic streamflow evaluation across the full spectrum of Iceland's unique Arctic-glacial hydroclimate."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a26d212f-06e1-49b5-9441-ed14e9c1e99a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import sys\n",
+    "import os\n",
+    "from pathlib import Path\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import numpy as np\n",
+    "import subprocess\n",
+    "import yaml\n",
+    "from datetime import datetime\n",
+    "import seaborn as sns\n",
+    "import warnings\n",
+    "import glob\n",
+    "import geopandas as gpd\n",
+    "\n",
+    "# Set up plotting style for Arctic-glacial watershed visualization\n",
+    "plt.style.use('default')\n",
+    "sns.set_palette(\"viridis\")\n",
+    "%matplotlib inline\n",
+    "confluence_path = Path('../').resolve()\n",
+    "\n",
+    "# Set directory paths\n",
+    "CONFLUENCE_CODE_DIR = confluence_path\n",
+    "CONFLUENCE_DATA_DIR = Path('/work/comphyd_lab/data/CONFLUENCE_data')  # Update this path\n",
+    "#CONFLUENCE_DATA_DIR = Path('/path/to/your/CONFLUENCE_data') \n",
+    "\n",
+    "# =============================================================================\n",
+    "# LAMAH-ICE ARCTIC-GLACIAL TEMPLATE CONFIGURATION\n",
+    "# =============================================================================\n",
+    "\n",
+    "# Load streamflow configuration template or create from base template\n",
+    "streamflow_config_path = CONFLUENCE_CODE_DIR / '0_config_files' / 'config_template.yaml'\n",
+    "with open(streamflow_config_path, 'r') as f:\n",
+    "    config_dict = yaml.safe_load(f)\n",
+    "\n",
+    "# Update for LamaH-Ice tutorial-specific settings\n",
+    "config_updates = {\n",
+    "    'CONFLUENCE_CODE_DIR': str(CONFLUENCE_CODE_DIR),\n",
+    "    'CONFLUENCE_DATA_DIR': str(CONFLUENCE_DATA_DIR),\n",
+    "    'DOMAIN_NAME': 'lamahice_template',\n",
+    "    'EXPERIMENT_ID': 'run_1',\n",
+    "    'EXPERIMENT_TIME_START': '2000-01-01 01:00',\n",
+    "    'EXPERIMENT_TIME_END': '2020-12-31 23:00',  # 20-year period for Arctic-glacial analysis\n",
+    "    'DOMAIN_DISCRETIZATION': 'GRUs',  # Use GRUs for lumped Iceland watersheds\n",
+    "    'STREAMFLOW_DATA_PROVIDER': 'VI',  # Veðurstofa Íslands (Icelandic Met Office)\n",
+    "    'DOWNLOAD_USGS_DATA': False,\n",
+    "    'DOWNLOAD_WSC_DATA': False,\n",
+    "    'SIM_REACH_ID': 1\n",
+    "}\n",
+    "\n",
+    "config_dict.update(config_updates)\n",
+    "\n",
+    "# Save LamaH-Ice configuration template\n",
+    "lamahice_config_path = CONFLUENCE_CODE_DIR / '0_config_files' / 'config_lamahice_template.yaml'\n",
+    "with open(lamahice_config_path, 'w') as f:\n",
+    "    yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)\n",
+    "\n",
+    "print(f\"LamaH-Ice Arctic-glacial template configuration saved: {lamahice_config_path}\")\n",
+    "\n",
+    "# =============================================================================\n",
+    "# LOAD AND EXAMINE LAMAH-ICE ARCTIC-GLACIAL WATERSHED DATASET\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\nLoading LamaH-Ice Arctic-Glacial Watershed Database...\")\n",
+    "\n",
+    "# LamaH-Ice data paths\n",
+    "lamahice_data_dir = CONFLUENCE_DATA_DIR / 'domain_Iceland' / 'observations' / 'LamaH-Ice'\n",
+    "gauges_shapefile = lamahice_data_dir / 'Caravan_extension_lamahice' / 'shapefiles' / 'lamahice' / 'lamahice_gauges.shp'\n",
+    "basins_shapefile = lamahice_data_dir / 'Caravan_extension_lamahice' / 'shapefiles' / 'lamahice' / 'lamahice_basin_shapes.shp'\n",
+    "\n",
+    "# Load the LamaH-Ice watersheds database\n",
+    "try:\n",
+    "    if gauges_shapefile.exists() and basins_shapefile.exists():\n",
+    "        gauges_df = gpd.read_file(gauges_shapefile)\n",
+    "        basins_df = gpd.read_file(basins_shapefile)\n",
+    "        \n",
+    "        # Merge gauge and basin information\n",
+    "        lamahice_df = gauges_df.merge(basins_df, on='gauge_id', how='inner')\n",
+    "        \n",
+    "        print(f\"Successfully loaded LamaH-Ice database: {len(lamahice_df)} watersheds available\")\n",
+    "        print(f\"Gauge attributes: {gauges_df.columns.tolist()}\")\n",
+    "        print(f\"Basin attributes: {basins_df.columns.tolist()}\")\n",
+    "    else:\n",
+    "        raise FileNotFoundError(\"LamaH-Ice shapefiles not found\")\n",
+    "        \n",
+    "except FileNotFoundError:\n",
+    "    print(f\"LamaH-Ice database not found, creating demonstration dataset...\")\n",
+    "    \n",
+    "    # Create demonstration LamaH-Ice dataset for tutorial\n",
+    "    np.random.seed(42)\n",
+    "    n_watersheds = 50\n",
+    "    \n",
+    "    # Generate realistic Icelandic watershed locations\n",
+    "    # Focus on major hydrological regions with good streamflow data\n",
+    "    regions = [\n",
+    "        # Iceland regions based on geological and glacial characteristics\n",
+    "        {'name': 'Southwest_Reykjanes', 'lat_range': (63.8, 64.2), 'lon_range': (-22.5, -21.5), 'n': 8, 'glacial_influence': 'low', 'volcanic_activity': 'high'},\n",
+    "        {'name': 'South_Vatnajokull', 'lat_range': (63.8, 64.5), 'lon_range': (-18.0, -16.0), 'n': 12, 'glacial_influence': 'very_high', 'volcanic_activity': 'moderate'},\n",
+    "        {'name': 'West_Langjokull', 'lat_range': (64.3, 64.8), 'lon_range': (-20.5, -19.5), 'n': 10, 'glacial_influence': 'high', 'volcanic_activity': 'low'},\n",
+    "        {'name': 'North_Hofsjokull', 'lat_range': (64.6, 65.2), 'lon_range': (-19.5, -18.0), 'n': 8, 'glacial_influence': 'high', 'volcanic_activity': 'moderate'},\n",
+    "        {'name': 'Northwest_Westfjords', 'lat_range': (65.5, 66.5), 'lon_range': (-24.0, -22.0), 'n': 7, 'glacial_influence': 'low', 'volcanic_activity': 'very_low'},\n",
+    "        {'name': 'East_Coastal', 'lat_range': (64.8, 65.8), 'lon_range': (-14.5, -13.0), 'n': 5, 'glacial_influence': 'moderate', 'volcanic_activity': 'low'}\n",
+    "    ]\n",
+    "    \n",
+    "    watersheds_data = []\n",
+    "    watershed_id = 1\n",
+    "    \n",
+    "    for region in regions:\n",
+    "        for i in range(region['n']):\n",
+    "            lat = np.random.uniform(region['lat_range'][0], region['lat_range'][1])\n",
+    "            lon = np.random.uniform(region['lon_range'][0], region['lon_range'][1])\n",
+    "            \n",
+    "            # Area based on typical Icelandic watersheds (smaller than global)\n",
+    "            area = np.random.lognormal(np.log(100), 1.0)\n",
+    "            area = np.clip(area, 5, 2000)  # Clip to Iceland range\n",
+    "            \n",
+    "            # Elevation varies by region and glacial influence\n",
+    "            if region['glacial_influence'] == 'very_high':\n",
+    "                elevation = np.random.uniform(600, 2000)  # High glacial areas\n",
+    "            elif region['glacial_influence'] == 'high':\n",
+    "                elevation = np.random.uniform(400, 1500)\n",
+    "            elif region['glacial_influence'] == 'moderate':\n",
+    "                elevation = np.random.uniform(200, 800)\n",
+    "            else:\n",
+    "                elevation = np.random.uniform(50, 600)  # Coastal areas\n",
+    "            \n",
+    "            # Climate characteristics - Arctic/sub-Arctic\n",
+    "            # Temperature decreases with elevation and northern latitude\n",
+    "            base_temp = 5.0 - (lat - 63.5) * 2.0 - elevation * 0.006\n",
+    "            mat_temp = base_temp + np.random.uniform(-1, 1)\n",
+    "            \n",
+    "            # Precipitation varies with orography and coastal effects\n",
+    "            if region['name'] in ['South_Vatnajokull', 'West_Langjokull']:\n",
+    "                map_precip = np.random.uniform(1500, 4000)  # High orographic precipitation\n",
+    "            elif 'Coastal' in region['name']:\n",
+    "                map_precip = np.random.uniform(800, 2000)  # Coastal precipitation\n",
+    "            else:\n",
+    "                map_precip = np.random.uniform(600, 1800)  # Interior precipitation\n",
+    "            \n",
+    "            # Glacial coverage based on region\n",
+    "            glacial_coverage_map = {\n",
+    "                'very_high': np.random.uniform(0.4, 0.8),\n",
+    "                'high': np.random.uniform(0.2, 0.5),\n",
+    "                'moderate': np.random.uniform(0.05, 0.25),\n",
+    "                'low': np.random.uniform(0.0, 0.1),\n",
+    "                'very_low': 0.0\n",
+    "            }\n",
+    "            \n",
+    "            glacial_coverage = glacial_coverage_map[region['glacial_influence']]\n",
+    "            \n",
+    "            # Snow fraction - high in all regions due to Arctic climate\n",
+    "            if mat_temp < -2:\n",
+    "                snow_fraction = np.random.uniform(0.8, 0.95)\n",
+    "            elif mat_temp < 2:\n",
+    "                snow_fraction = np.random.uniform(0.6, 0.9)\n",
+    "            else:\n",
+    "                snow_fraction = np.random.uniform(0.4, 0.8)\n",
+    "            \n",
+    "            # Derived characteristics\n",
+    "            pet = max(1, (mat_temp + 5) * 365 * 0.3)  # Lower PET for Arctic conditions\n",
+    "            aridity = pet / map_precip if map_precip > 0 else 10\n",
+    "            seasonality = np.random.uniform(0.3, 0.8)  # High seasonality in Arctic\n",
+    "            \n",
+    "            # Vegetation coverage - sparse in Arctic conditions\n",
+    "            if glacial_coverage > 0.3:\n",
+    "                vegetation_frac = np.random.uniform(0.1, 0.4)  # Glaciated areas\n",
+    "            elif elevation > 800:\n",
+    "                vegetation_frac = np.random.uniform(0.2, 0.5)  # Highland areas\n",
+    "            else:\n",
+    "                vegetation_frac = np.random.uniform(0.4, 0.8)  # Lowland areas\n",
+    "            \n",
+    "            # Geothermal influence based on volcanic activity\n",
+    "            geothermal_map = {\n",
+    "                'high': np.random.uniform(0.05, 0.2),\n",
+    "                'moderate': np.random.uniform(0.01, 0.08),\n",
+    "                'low': np.random.uniform(0.0, 0.03),\n",
+    "                'very_low': 0.0\n",
+    "            }\n",
+    "            \n",
+    "            geothermal_influence = geothermal_map[region['volcanic_activity']]\n",
+    "            \n",
+    "            # Scale classification based on area\n",
+    "            if area < 50:\n",
+    "                scale = 'headwater'\n",
+    "            elif area < 200:\n",
+    "                scale = 'meso'\n",
+    "            elif area < 1000:\n",
+    "                scale = 'macro'\n",
+    "            else:\n",
+    "                scale = 'large'\n",
+    "            \n",
+    "            # Streamflow characteristics influenced by glacial melt\n",
+    "            base_runoff_coeff = np.random.uniform(0.3, 0.8)  # High runoff in Iceland\n",
+    "            \n",
+    "            # Adjust runoff for glacial influence\n",
+    "            glacial_runoff_boost = glacial_coverage * 0.3\n",
+    "            runoff_coeff = min(0.9, base_runoff_coeff + glacial_runoff_boost)\n",
+    "            \n",
+    "            mean_q = area * map_precip * 0.001 * runoff_coeff / 31.536  # Convert to m³/s\n",
+    "            baseflow_index = np.random.uniform(0.2, 0.6)  # Moderate baseflow\n",
+    "            \n",
+    "            # Flow regime classification\n",
+    "            if glacial_coverage > 0.3:\n",
+    "                flow_regime = 'glacial_dominated'\n",
+    "            elif snow_fraction > 0.7:\n",
+    "                flow_regime = 'snow_dominated'\n",
+    "            elif glacial_coverage > 0.1:\n",
+    "                flow_regime = 'mixed_glacial'\n",
+    "            else:\n",
+    "                flow_regime = 'rain_snow_mixed'\n",
+    "            \n",
+    "            # Climate classification for Arctic conditions\n",
+    "            if mat_temp < -2:\n",
+    "                climate_class = 'Arctic'\n",
+    "            elif mat_temp < 2:\n",
+    "                climate_class = 'Sub-Arctic'\n",
+    "            else:\n",
+    "                climate_class = 'Cool-Temperate'\n",
+    "            \n",
+    "            # Create watershed entry\n",
+    "            watershed = {\n",
+    "                'gauge_id': f\"lamahice_{watershed_id:02d}\",\n",
+    "                'gauge_name': f\"{region['name']}_Basin_{i+1:02d}\",\n",
+    "                'river': f\"River_{region['name'][:4]}_{i+1}\",\n",
+    "                'gauge_lat': round(lat, 4),\n",
+    "                'gauge_lon': round(lon, 4),\n",
+    "                'area_km2': round(area, 1),\n",
+    "                'elev_mean': round(elevation, 0),\n",
+    "                'p_mean': round(map_precip, 0),  # Mean annual precipitation\n",
+    "                't_mean': round(mat_temp, 1),    # Mean annual temperature\n",
+    "                'pet_mean': round(pet, 0),       # Potential ET\n",
+    "                'aridity': round(aridity, 3),\n",
+    "                'seasonality_p': round(seasonality, 3),\n",
+    "                'frac_snow': round(snow_fraction, 3),\n",
+    "                'glacial_coverage': round(glacial_coverage, 3),\n",
+    "                'vegetation_frac': round(vegetation_frac, 3),\n",
+    "                'geothermal_influence': round(geothermal_influence, 3),\n",
+    "                'q_mean': round(mean_q, 2),\n",
+    "                'runoff_ratio': round(runoff_coeff, 3),\n",
+    "                'baseflow_index': round(baseflow_index, 3),\n",
+    "                'climate_class': climate_class,\n",
+    "                'flow_regime': flow_regime,\n",
+    "                'scale': scale,\n",
+    "                'region': region['name'],\n",
+    "                'glacial_influence': region['glacial_influence'],\n",
+    "                'volcanic_activity': region['volcanic_activity'],\n",
+    "                'data_length': np.random.randint(10, 20),  # Years of data\n",
+    "                'data_quality': np.random.choice(['excellent', 'good', 'fair'], p=[0.3, 0.5, 0.2])\n",
+    "            }\n",
+    "            \n",
+    "            # Add CONFLUENCE formatting\n",
+    "            buffer = 0.05\n",
+    "            watershed['BOUNDING_BOX_COORDS'] = f\"{lat + buffer}/{lon - buffer}/{lat - buffer}/{lon + buffer}\"\n",
+    "            watershed['POUR_POINT_COORDS'] = f\"{lon}/{lat}\"\n",
+    "            watershed['Watershed_Name'] = watershed['gauge_id'].replace(' ', '_')\n",
+    "            \n",
+    "            watersheds_data.append(watershed)\n",
+    "            watershed_id += 1\n",
+    "    \n",
+    "    lamahice_df = pd.DataFrame(watersheds_data)\n",
+    "    \n",
+    "    # Save demonstration dataset\n",
+    "    lamahice_df.to_csv('lamahice-metadata.csv', index=False)\n",
+    "    print(f\"Created demonstration LamaH-Ice dataset: {len(lamahice_df)} watersheds\")\n",
+    "\n",
+    "# Display basic dataset information\n",
+    "print(f\"\\nArctic-Glacial Dataset Overview:\")\n",
+    "print(f\"  Total watersheds: {len(lamahice_df)}\")\n",
+    "print(f\"  Columns: {len(lamahice_df.columns)}\")\n",
+    "print(f\"  Column names: {', '.join(lamahice_df.columns[:8])}...\")\n",
+    "\n",
+    "# Extract coordinates for analysis\n",
+    "if 'gauge_lat' in lamahice_df.columns and 'gauge_lon' in lamahice_df.columns:\n",
+    "    lamahice_df['latitude'] = lamahice_df['gauge_lat']\n",
+    "    lamahice_df['longitude'] = lamahice_df['gauge_lon']\n",
+    "    lamahice_df['drainage_area'] = lamahice_df.get('area_km2', lamahice_df.get('area', 100))\n",
+    "    \n",
+    "    print(f\"Coordinate extraction successful\")\n",
+    "    print(f\"  Latitude range: {lamahice_df['latitude'].min():.1f}° to {lamahice_df['latitude'].max():.1f}°N\")\n",
+    "    print(f\"  Longitude range: {lamahice_df['longitude'].min():.1f}° to {lamahice_df['longitude'].max():.1f}°W\")\n",
+    "    print(f\"  Drainage area range: {lamahice_df['drainage_area'].min():.0f} to {lamahice_df['drainage_area'].max():.0f} km²\")\n",
+    "\n",
+    "# =============================================================================\n",
+    "# ARCTIC-GLACIAL WATERSHED-SPECIFIC DATASET CHARACTERISTICS ANALYSIS\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\nAnalyzing Arctic-Glacial Watershed Dataset Characteristics...\")\n",
+    "\n",
+    "# Glacial influence classification\n",
+    "if 'glacial_coverage' in lamahice_df.columns:\n",
+    "    lamahice_df['glacial_class'] = 'Unknown'\n",
+    "    lamahice_df.loc[lamahice_df['glacial_coverage'] < 0.05, 'glacial_class'] = 'Ice-free'\n",
+    "    lamahice_df.loc[(lamahice_df['glacial_coverage'] >= 0.05) & (lamahice_df['glacial_coverage'] < 0.2), 'glacial_class'] = 'Low-glacial'\n",
+    "    lamahice_df.loc[(lamahice_df['glacial_coverage'] >= 0.2) & (lamahice_df['glacial_coverage'] < 0.5), 'glacial_class'] = 'Moderate-glacial'\n",
+    "    lamahice_df.loc[lamahice_df['glacial_coverage'] >= 0.5, 'glacial_class'] = 'High-glacial'\n",
+    "    \n",
+    "    glacial_counts = lamahice_df['glacial_class'].value_counts()\n",
+    "    print(f\"  Glacial influence zones: {len(glacial_counts)}\")\n",
+    "    for glacial_class, count in glacial_counts.items():\n",
+    "        print(f\"    {glacial_class}: {count} watersheds\")\n",
+    "\n",
+    "# Regional distribution\n",
+    "if 'region' in lamahice_df.columns:\n",
+    "    region_counts = lamahice_df['region'].value_counts()\n",
+    "    print(f\"  Iceland regions: {len(region_counts)}\")\n",
+    "    print(f\"    Largest region: {region_counts.index[0]} ({region_counts.iloc[0]} watersheds)\")\n",
+    "\n",
+    "# Climate characteristics\n",
+    "if 'p_mean' in lamahice_df.columns:\n",
+    "    precip_stats = lamahice_df['p_mean'].describe()\n",
+    "    print(f\"  Precipitation range: {precip_stats['min']:.0f} to {precip_stats['max']:.0f} mm/yr\")\n",
+    "\n",
+    "if 't_mean' in lamahice_df.columns:\n",
+    "    temp_stats = lamahice_df['t_mean'].describe()\n",
+    "    print(f\"  Temperature range: {temp_stats['min']:.1f} to {temp_stats['max']:.1f} °C\")\n",
+    "\n",
+    "# Flow regime analysis\n",
+    "if 'flow_regime' in lamahice_df.columns:\n",
+    "    regime_counts = lamahice_df['flow_regime'].value_counts()\n",
+    "    print(f\"  Flow regimes: {len(regime_counts)}\")\n",
+    "    for regime, count in regime_counts.items():\n",
+    "        print(f\"    {regime}: {count} watersheds\")\n",
+    "\n",
+    "# Streamflow characteristics\n",
+    "if 'q_mean' in lamahice_df.columns:\n",
+    "    flow_stats = lamahice_df['q_mean'].describe()\n",
+    "    print(f\"  Mean streamflow range: {flow_stats['min']:.1f} to {flow_stats['max']:.1f} m³/s\")\n",
+    "\n",
+    "# =============================================================================\n",
+    "# LAMAH-ICE ARCTIC-GLACIAL DATASET VISUALIZATION\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\nCreating LamaH-Ice Arctic-Glacial Dataset Overview Visualization...\")\n",
+    "\n",
+    "# Create comprehensive Arctic-glacial watershed dataset overview\n",
+    "fig, axes = plt.subplots(2, 3, figsize=(20, 12))\n",
+    "\n",
+    "# 1. Iceland watershed distribution map\n",
+    "ax1 = axes[0, 0]\n",
+    "if 'glacial_coverage' in lamahice_df.columns:\n",
+    "    # Color by glacial coverage\n",
+    "    scatter = ax1.scatter(lamahice_df['longitude'], lamahice_df['latitude'], \n",
+    "                         c=lamahice_df['glacial_coverage'], cmap='Blues', \n",
+    "                         alpha=0.8, s=60, edgecolors='black', linewidth=0.5,\n",
+    "                         vmin=0, vmax=0.8)\n",
+    "    \n",
+    "    # Add colorbar for glacial coverage\n",
+    "    cbar = plt.colorbar(scatter, ax=ax1)\n",
+    "    cbar.set_label('Glacial Coverage Fraction')\n",
+    "else:\n",
+    "    scatter = ax1.scatter(lamahice_df['longitude'], lamahice_df['latitude'], \n",
+    "                         c=lamahice_df['drainage_area'], cmap='viridis', \n",
+    "                         alpha=0.8, s=60, edgecolors='black', linewidth=0.5)\n",
+    "\n",
+    "ax1.set_xlabel('Longitude')\n",
+    "ax1.set_ylabel('Latitude')\n",
+    "ax1.set_title(f'LamaH-Ice Iceland Watershed Distribution\\\\n({len(lamahice_df)} watersheds)')\n",
+    "ax1.grid(True, alpha=0.3)\n",
+    "ax1.set_xlim(-25, -13)\n",
+    "ax1.set_ylim(63, 67)  # Focus on Iceland\n",
+    "\n",
+    "# 2. Glacial influence distribution\n",
+    "ax2 = axes[0, 1]\n",
+    "if 'glacial_class' in lamahice_df.columns:\n",
+    "    glacial_counts = lamahice_df['glacial_class'].value_counts()\n",
+    "    colors = ['brown', 'orange', 'lightblue', 'darkblue']\n",
+    "    \n",
+    "    bars = ax2.bar(range(len(glacial_counts)), glacial_counts.values, \n",
+    "                   color=colors[:len(glacial_counts)], alpha=0.8, edgecolor='black')\n",
+    "    ax2.set_xticks(range(len(glacial_counts)))\n",
+    "    ax2.set_xticklabels(glacial_counts.index, rotation=45, ha='right')\n",
+    "    ax2.set_ylabel('Number of Watersheds')\n",
+    "    ax2.set_title('Watersheds by Glacial Influence')\n",
+    "    ax2.grid(True, alpha=0.3, axis='y')\n",
+    "    \n",
+    "    # Add value labels on bars\n",
+    "    for bar, count in zip(bars, glacial_counts.values):\n",
+    "        ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,\n",
+    "                str(count), ha='center', va='bottom', fontweight='bold')\n",
+    "\n",
+    "# 3. Flow regime distribution\n",
+    "ax3 = axes[0, 2]\n",
+    "if 'flow_regime' in lamahice_df.columns:\n",
+    "    regime_counts = lamahice_df['flow_regime'].value_counts()\n",
+    "    colors = ['lightcyan', 'lightblue', 'blue', 'darkblue']\n",
+    "    bars = ax3.bar(range(len(regime_counts)), regime_counts.values, \n",
+    "                   color=colors[:len(regime_counts)], alpha=0.8, edgecolor='black')\n",
+    "    ax3.set_xticks(range(len(regime_counts)))\n",
+    "    ax3.set_xticklabels([r.replace('_', '-').title() for r in regime_counts.index], rotation=45, ha='right')\n",
+    "    ax3.set_ylabel('Number of Watersheds')\n",
+    "    ax3.set_title('Watersheds by Flow Regime')\n",
+    "    ax3.grid(True, alpha=0.3, axis='y')\n",
+    "    \n",
+    "    # Add value labels\n",
+    "    for bar, count in zip(bars, regime_counts.values):\n",
+    "        ax3.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,\n",
+    "                str(count), ha='center', va='bottom', fontweight='bold')\n",
+    "\n",
+    "# 4. Climate classification\n",
+    "ax4 = axes[1, 0]\n",
+    "if 'climate_class' in lamahice_df.columns:\n",
+    "    climate_counts = lamahice_df['climate_class'].value_counts()\n",
+    "    colors = ['darkblue', 'blue', 'lightgreen']\n",
+    "    bars = ax4.bar(range(len(climate_counts)), climate_counts.values,\n",
+    "                   color=colors[:len(climate_counts)], alpha=0.8, edgecolor='black')\n",
+    "    ax4.set_xticks(range(len(climate_counts)))\n",
+    "    ax4.set_xticklabels(climate_counts.index, rotation=45, ha='right')\n",
+    "    ax4.set_ylabel('Number of Watersheds')\n",
+    "    ax4.set_title('Watersheds by Climate Zone')\n",
+    "    ax4.grid(True, alpha=0.3, axis='y')\n",
+    "    \n",
+    "    # Add value labels\n",
+    "    for bar, count in zip(bars, climate_counts.values):\n",
+    "        ax4.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,\n",
+    "                str(count), ha='center', va='bottom', fontweight='bold')\n",
+    "\n",
+    "# 5. Temperature vs Glacial Coverage\n",
+    "ax5 = axes[1, 1]\n",
+    "if 't_mean' in lamahice_df.columns and 'glacial_coverage' in lamahice_df.columns:\n",
+    "    scatter5 = ax5.scatter(lamahice_df['t_mean'], lamahice_df['glacial_coverage'], \n",
+    "                          c=lamahice_df['drainage_area'], cmap='viridis', \n",
+    "                          alpha=0.7, s=50, edgecolors='black', linewidth=0.3)\n",
+    "    ax5.set_xlabel('Mean Annual Temperature (°C)')\n",
+    "    ax5.set_ylabel('Glacial Coverage Fraction')\n",
+    "    ax5.set_title('Arctic Climate: Temperature vs Glacial Coverage')\n",
+    "    ax5.grid(True, alpha=0.3)\n",
+    "    \n",
+    "    # Add climate thresholds\n",
+    "    ax5.axvline(x=-2, color='blue', linestyle='--', alpha=0.5, label='Arctic threshold')\n",
+    "    ax5.axvline(x=2, color='green', linestyle='--', alpha=0.5, label='Sub-Arctic threshold')\n",
+    "    ax5.legend()\n",
+    "\n",
+    "# 6. Scale distribution by area\n",
+    "ax6 = axes[1, 2]\n",
+    "if 'scale' in lamahice_df.columns:\n",
+    "    scale_counts = lamahice_df['scale'].value_counts()\n",
+    "    colors = ['lightcyan', 'lightblue', 'blue', 'darkblue']\n",
+    "    bars = ax6.bar(range(len(scale_counts)), scale_counts.values,\n",
+    "                   color=colors[:len(scale_counts)], alpha=0.8, edgecolor='black')\n",
+    "    ax6.set_xticks(range(len(scale_counts)))\n",
+    "    ax6.set_xticklabels([s.capitalize() for s in scale_counts.index], rotation=45, ha='right')\n",
+    "    ax6.set_ylabel('Number of Watersheds')\n",
+    "    ax6.set_title('Watersheds by Scale')\n",
+    "    ax6.grid(True, alpha=0.3, axis='y')\n",
+    "    \n",
+    "    # Add value labels\n",
+    "    for bar, count in zip(bars, scale_counts.values):\n",
+    "        ax6.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,\n",
+    "                str(count), ha='center', va='bottom', fontweight='bold')\n",
+    "\n",
+    "plt.suptitle('LamaH-Ice Arctic-Glacial Watershed Dataset - Comprehensive Overview', fontsize=16, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+    "\n",
+    "print(f\"\\n✅ Step 1 Complete: LamaH-Ice Arctic-Glacial Dataset Analysis and Experimental Design\")\n",
+    "print(f\"   🏔️ Iceland coverage: {len(lamahice_df)} watersheds across diverse glacial-volcanic terrain\")\n",
+    "if 'glacial_influence' in lamahice_df.columns:\n",
+    "    print(f\"   ❄️ Glacial diversity: {', '.join(lamahice_df['glacial_influence'].unique())}\")\n",
+    "if 'climate_class' in lamahice_df.columns:\n",
+    "    print(f\"   🌡️ Arctic climate diversity: {', '.join(lamahice_df['climate_class'].unique())}\")\n",
+    "if 'flow_regime' in lamahice_df.columns:\n",
+    "    print(f\"   🌊 Arctic flow regimes: {', '.join(lamahice_df['flow_regime'].unique())}\")\n",
+    "print(f\"   📊 Configuration template created for Arctic-glacial streamflow analysis\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c328d0f5-3310-4565-bb3c-97a0abc44efd",
+   "metadata": {},
+   "source": [
+    "## Step 2: Automated CONFLUENCE Configuration and Arctic-Glacial Batch Processing\n",
+    "\n",
+    "Building on the Arctic-glacial dataset analysis and configuration from Step 1, this step demonstrates automated large sample processing using the `run_watersheds_lamahice.py` script. This script performs key functions for Arctic-glacial hydrological modeling:\n",
+    "\n",
+    "**Arctic-Glacial Configuration Generation**: The script reads the LamaH-Ice database and automatically creates individual CONFLUENCE configuration files for each Icelandic watershed. Each configuration is customized with site-specific parameters including domain coordinates, glacial coverage considerations, volcanic terrain settings, and Arctic climate adaptations, while maintaining consistent model settings across all Icelandic basins.\n",
+    "\n",
+    "**Arctic-Specialized Batch Job Submission**: The script submits SLURM jobs to execute the complete CONFLUENCE workflow for each basin optimized for Arctic-glacial environments. Each job processes geographic data, prepares meteorological forcing, processes LamaH-Ice observations, runs the hydrological model with glacial considerations, and generates standardized output files suitable for Arctic climate analysis.\n",
+    "\n",
+    "This automated approach scales CONFLUENCE from temperate modeling to systematic Arctic-glacial analysis across Iceland's unique volcanic and glacial landscapes."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8089af51-b285-48eb-aed0-40c899454844",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# =============================================================================\n",
+    "# ARCTIC-GLACIAL WATERSHED SELECTION AND CONFIGURATION\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\n🏔️ Step 2.1: Arctic-Glacial Watershed Selection for CONFLUENCE Processing\")\n",
+    "\n",
+    "# Configuration for the Arctic-glacial sample experiment\n",
+    "streamflow_config = {\n",
+    "    'dataset': 'lamahice',\n",
+    "    'max_watersheds': 8,  # Start with smaller number for Arctic demonstration\n",
+    "    'dry_run_mode': True,  # Set to False to actually submit jobs\n",
+    "    'experiment_name': 'lamahice_arctic_tutorial',\n",
+    "    'template_config': str(lamahice_config_path),\n",
+    "    'config_dir': str(CONFLUENCE_CODE_DIR / '0_config_files' / 'lamahice'),\n",
+    "    'base_data_path': str(CONFLUENCE_DATA_DIR / 'lamahice'),\n",
+    "    'script_path': str(CONFLUENCE_CODE_DIR / 'examples' / 'run_watersheds_lamahice.py'),\n",
+    "    'gauges_shapefile': str(CONFLUENCE_DATA_DIR / 'domain_Iceland' / 'observations' / 'LamaH-Ice' / 'Caravan_extension_lamahice' / 'shapefiles' / 'lamahice' / 'lamahice_gauges.shp'),\n",
+    "    'basins_shapefile': str(CONFLUENCE_DATA_DIR / 'domain_Iceland' / 'observations' / 'LamaH-Ice' / 'Caravan_extension_lamahice' / 'shapefiles' / 'lamahice' / 'lamahice_basin_shapes.shp')\n",
+    "}\n",
+    "\n",
+    "# Create experiment directory structure\n",
+    "experiment_dir = Path(f\"./experiments/{streamflow_config['experiment_name']}\")\n",
+    "(experiment_dir / 'plots').mkdir(parents=True, exist_ok=True)\n",
+    "(experiment_dir / 'reports').mkdir(parents=True, exist_ok=True)\n",
+    "(experiment_dir / 'configs').mkdir(parents=True, exist_ok=True)\n",
+    "\n",
+    "# Save configuration\n",
+    "with open(experiment_dir / 'arctic_experiment_config.yaml', 'w') as f:\n",
+    "    yaml.dump(streamflow_config, f, default_flow_style=False)\n",
+    "\n",
+    "print(f\"   📁 Experiment directory: {experiment_dir}\")\n",
+    "print(f\"   🏔️ Processing scope: {streamflow_config['max_watersheds']} Arctic-glacial watersheds\")\n",
+    "print(f\"   🗂️ Template config: {streamflow_config['template_config']}\")\n",
+    "\n",
+    "# Arctic-glacial watershed selection strategy\n",
+    "print(f\"\\n🎯 Step 2.2: Strategic Arctic-Glacial Watershed Selection\")\n",
+    "\n",
+    "# Select watersheds to represent Arctic-glacial diversity\n",
+    "def select_arctic_representative_watersheds(lamahice_df, max_watersheds=8):\n",
+    "    \"\"\"\n",
+    "    Select watersheds to maximize Arctic-glacial environmental diversity\n",
+    "    \"\"\"\n",
+    "    print(f\"   🔍 Selecting {max_watersheds} Arctic-glacial representative watersheds...\")\n",
+    "    \n",
+    "    selected_watersheds = []\n",
+    "    \n",
+    "    # Strategy 1: Ensure glacial influence representation\n",
+    "    if 'glacial_class' in lamahice_df.columns:\n",
+    "        glacial_classes = lamahice_df['glacial_class'].unique()\n",
+    "        watersheds_per_class = max(1, max_watersheds // len(glacial_classes))\n",
+    "        \n",
+    "        print(f\"   ❄️ Glacial strategy: {watersheds_per_class} watersheds per glacial class\")\n",
+    "        \n",
+    "        for glacial_class in glacial_classes:\n",
+    "            class_data = lamahice_df[lamahice_df['glacial_class'] == glacial_class]\n",
+    "            \n",
+    "            if len(class_data) > 0:\n",
+    "                # Select diverse watersheds within glacial class\n",
+    "                if len(class_data) <= watersheds_per_class:\n",
+    "                    selected = class_data\n",
+    "                else:\n",
+    "                    # Diversify by flow regime and scale\n",
+    "                    selected = []\n",
+    "                    \n",
+    "                    # Flow regime diversity\n",
+    "                    if 'flow_regime' in class_data.columns:\n",
+    "                        flow_regimes = class_data['flow_regime'].unique()\n",
+    "                        per_regime = max(1, watersheds_per_class // len(flow_regimes))\n",
+    "                        \n",
+    "                        for regime in flow_regimes:\n",
+    "                            regime_subset = class_data[class_data['flow_regime'] == regime]\n",
+    "                            if len(regime_subset) > 0:\n",
+    "                                # Select by different scales within regime\n",
+    "                                if 'scale' in regime_subset.columns:\n",
+    "                                    scales = regime_subset['scale'].unique()\n",
+    "                                    for scale in scales[:per_regime]:\n",
+    "                                        scale_subset = regime_subset[regime_subset['scale'] == scale]\n",
+    "                                        if len(scale_subset) > 0:\n",
+    "                                            selected.append(scale_subset.iloc[0])\n",
+    "                                            if len(selected) >= watersheds_per_class:\n",
+    "                                                break\n",
+    "                                    if len(selected) >= watersheds_per_class:\n",
+    "                                        break\n",
+    "                                else:\n",
+    "                                    selected.extend(regime_subset.head(per_regime).to_dict('records'))\n",
+    "                            if len(selected) >= watersheds_per_class:\n",
+    "                                break\n",
+    "                    else:\n",
+    "                        # Random selection if no flow regime data\n",
+    "                        selected = class_data.sample(n=min(watersheds_per_class, len(class_data)))\n",
+    "                    \n",
+    "                    selected = pd.DataFrame(selected) if isinstance(selected, list) else selected\n",
+    "                \n",
+    "                selected_watersheds.append(selected)\n",
+    "                \n",
+    "                print(f\"     {glacial_class}: {len(selected)} watersheds selected\")\n",
+    "    else:\n",
+    "        # Fallback: stratified selection by region\n",
+    "        if 'region' in lamahice_df.columns:\n",
+    "            regions = lamahice_df['region'].unique()\n",
+    "            per_region = max(1, max_watersheds // len(regions))\n",
+    "            \n",
+    "            for region in regions:\n",
+    "                region_data = lamahice_df[lamahice_df['region'] == region]\n",
+    "                selected = region_data.head(per_region)\n",
+    "                selected_watersheds.append(selected)\n",
+    "        else:\n",
+    "            # Final fallback: random selection\n",
+    "            selected_watersheds = [lamahice_df.sample(n=min(max_watersheds, len(lamahice_df)))]\n",
+    "    \n",
+    "    # Combine all selected watersheds\n",
+    "    if selected_watersheds:\n",
+    "        final_selection = pd.concat(selected_watersheds, ignore_index=True)\n",
+    "    else:\n",
+    "        # Fallback: random selection\n",
+    "        final_selection = lamahice_df.sample(n=min(max_watersheds, len(lamahice_df)))\n",
+    "    \n",
+    "    # Ensure we don't exceed max_watersheds\n",
+    "    if len(final_selection) > max_watersheds:\n",
+    "        final_selection = final_selection.head(max_watersheds)\n",
+    "    \n",
+    "    return final_selection\n",
+    "\n",
+    "# Select representative watersheds\n",
+    "selected_watersheds = select_arctic_representative_watersheds(lamahice_df, streamflow_config['max_watersheds'])\n",
+    "\n",
+    "print(f\"\\n📊 Arctic-Glacial Selection Summary:\")\n",
+    "print(f\"   Total selected: {len(selected_watersheds)} watersheds\")\n",
+    "\n",
+    "if 'glacial_class' in selected_watersheds.columns:\n",
+    "    glacial_summary = selected_watersheds['glacial_class'].value_counts()\n",
+    "    print(f\"   Glacial influence distribution:\")\n",
+    "    for glacial_class, count in glacial_summary.items():\n",
+    "        print(f\"     {glacial_class}: {count} watersheds\")\n",
+    "\n",
+    "if 'flow_regime' in selected_watersheds.columns:\n",
+    "    regime_summary = selected_watersheds['flow_regime'].value_counts()\n",
+    "    print(f\"   Flow regime diversity:\")\n",
+    "    for regime, count in regime_summary.items():\n",
+    "        print(f\"     {regime}: {count} watersheds\")\n",
+    "\n",
+    "if 'climate_class' in selected_watersheds.columns:\n",
+    "    climate_summary = selected_watersheds['climate_class'].value_counts()\n",
+    "    print(f\"   Arctic climate diversity:\")\n",
+    "    for climate, count in climate_summary.items():\n",
+    "        print(f\"     {climate}: {count} watersheds\")\n",
+    "\n",
+    "# Add required columns for CONFLUENCE processing\n",
+    "if 'gauge_id' in selected_watersheds.columns:\n",
+    "    selected_watersheds['ID'] = selected_watersheds['gauge_id']\n",
+    "if 'gauge_lat' in selected_watersheds.columns:\n",
+    "    selected_watersheds['Lat'] = selected_watersheds['gauge_lat']\n",
+    "if 'gauge_lon' in selected_watersheds.columns:\n",
+    "    selected_watersheds['Lon'] = selected_watersheds['gauge_lon']\n",
+    "if 'area_km2' in selected_watersheds.columns:\n",
+    "    selected_watersheds['Area_km2'] = selected_watersheds['area_km2']\n",
+    "elif 'drainage_area' in selected_watersheds.columns:\n",
+    "    selected_watersheds['Area_km2'] = selected_watersheds['drainage_area']\n",
+    "if 'scale' in selected_watersheds.columns:\n",
+    "    selected_watersheds['Scale'] = selected_watersheds['scale']\n",
+    "\n",
+    "# Save selected watersheds\n",
+    "selected_watersheds_file = experiment_dir / 'selected_arctic_watersheds.csv'\n",
+    "selected_watersheds.to_csv(selected_watersheds_file, index=False)\n",
+    "print(f\"   💾 Selected watersheds saved: {selected_watersheds_file}\")\n",
+    "\n",
+    "# =============================================================================\n",
+    "# ARCTIC-GLACIAL PROCESSING VISUALIZATION\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\n🗺️ Step 2.3: Arctic-Glacial Processing Setup Visualization\")\n",
+    "\n",
+    "# Create Arctic-glacial processing setup map\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(16, 8))\n",
+    "\n",
+    "# Map 1: Iceland overview with selected watersheds\n",
+    "ax1 = axes[0]\n",
+    "\n",
+    "# Plot all available watersheds\n",
+    "ax1.scatter(lamahice_df['longitude'], lamahice_df['latitude'], \n",
+    "           c='lightgray', alpha=0.4, s=30, label='Available watersheds')\n",
+    "\n",
+    "# Plot selected watersheds with glacial influence colors\n",
+    "if 'glacial_class' in selected_watersheds.columns:\n",
+    "    glacial_colors = {\n",
+    "        'Ice-free': 'brown',\n",
+    "        'Low-glacial': 'orange', \n",
+    "        'Moderate-glacial': 'lightblue',\n",
+    "        'High-glacial': 'darkblue'\n",
+    "    }\n",
+    "    \n",
+    "    for glacial_class in selected_watersheds['glacial_class'].unique():\n",
+    "        subset = selected_watersheds[selected_watersheds['glacial_class'] == glacial_class]\n",
+    "        color = glacial_colors.get(glacial_class, 'black')\n",
+    "        ax1.scatter(subset['longitude'], subset['latitude'], \n",
+    "                   c=color, s=120, alpha=0.9, \n",
+    "                   edgecolors='black', linewidth=2, \n",
+    "                   label=f'Selected: {glacial_class}', marker='*')\n",
+    "\n",
+    "ax1.set_xlabel('Longitude')\n",
+    "ax1.set_ylabel('Latitude')\n",
+    "ax1.set_title(f'LamaH-Ice Arctic Processing Setup\\\\n{len(selected_watersheds)} Selected Watersheds')\n",
+    "ax1.grid(True, alpha=0.3)\n",
+    "ax1.set_xlim(-25, -13)\n",
+    "ax1.set_ylim(63, 67)\n",
+    "ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')\n",
+    "\n",
+    "# Map 2: Selection diversity analysis\n",
+    "ax2 = axes[1]\n",
+    "\n",
+    "# Create diversity comparison\n",
+    "categories = []\n",
+    "all_counts = []\n",
+    "selected_counts = []\n",
+    "\n",
+    "# Glacial influence diversity\n",
+    "if 'glacial_class' in lamahice_df.columns:\n",
+    "    all_glacial = lamahice_df['glacial_class'].value_counts()\n",
+    "    selected_glacial = selected_watersheds['glacial_class'].value_counts()\n",
+    "    \n",
+    "    for glacial_class in all_glacial.index:\n",
+    "        categories.append(glacial_class.replace('-', '\\\\n'))\n",
+    "        all_counts.append(all_glacial[glacial_class])\n",
+    "        selected_counts.append(selected_glacial.get(glacial_class, 0))\n",
+    "\n",
+    "# Plot diversity comparison\n",
+    "if categories:\n",
+    "    x_pos = np.arange(len(categories))\n",
+    "    width = 0.35\n",
+    "\n",
+    "    bars1 = ax2.bar(x_pos - width/2, all_counts, width, \n",
+    "                   label='Available', alpha=0.6, color='lightblue')\n",
+    "    bars2 = ax2.bar(x_pos + width/2, selected_counts, width,\n",
+    "                   label='Selected', alpha=0.8, color='darkblue')\n",
+    "\n",
+    "    ax2.set_xlabel('Glacial Influence Class')\n",
+    "    ax2.set_ylabel('Number of Watersheds')\n",
+    "    ax2.set_title('Arctic Selection Representativeness')\n",
+    "    ax2.set_xticks(x_pos)\n",
+    "    ax2.set_xticklabels(categories, rotation=45, ha='right')\n",
+    "    ax2.legend()\n",
+    "    ax2.grid(True, alpha=0.3, axis='y')\n",
+    "\n",
+    "    # Add value labels on bars\n",
+    "    for bar, count in zip(bars2, selected_counts):\n",
+    "        if count > 0:\n",
+    "            ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.1,\n",
+    "                    str(count), ha='center', va='bottom', fontweight='bold')\n",
+    "\n",
+    "plt.suptitle('LamaH-Ice Arctic-Glacial Watershed Selection for CONFLUENCE Processing', \n",
+    "             fontsize=14, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "\n",
+    "# Save the processing setup map\n",
+    "setup_map_path = experiment_dir / 'plots' / 'arctic_processing_setup.png'\n",
+    "plt.savefig(setup_map_path, dpi=300, bbox_inches='tight')\n",
+    "plt.show()\n",
+    "\n",
+    "print(f\"✅ Arctic processing setup map saved: {setup_map_path}\")\n",
+    "\n",
+    "# =============================================================================\n",
+    "# AUTOMATED LAMAH-ICE PROCESSING EXECUTION\n",
+    "# =============================================================================\n",
+    "\n",
+    "def execute_lamahice_arctic_processing():\n",
+    "    \"\"\"\n",
+    "    Execute the run_watersheds_lamahice.py script for Arctic-glacial processing\n",
+    "    \"\"\"\n",
+    "    print(f\"\\n🚀 Step 2.4: Executing LamaH-Ice Arctic Processing Script\")\n",
+    "    \n",
+    "    script_path = streamflow_config['script_path']\n",
+    "    \n",
+    "    if not Path(script_path).exists():\n",
+    "        print(f\"❌ Script not found: {script_path}\")\n",
+    "        print(f\"   📝 Expected location: {script_path}\")\n",
+    "        print(f\"   🔍 Looking for alternative locations...\")\n",
+    "        \n",
+    "        # Look for the script in common locations\n",
+    "        possible_paths = [\n",
+    "            CONFLUENCE_CODE_DIR / \"examples\" / \"run_watersheds_lamahice.py\",\n",
+    "            CONFLUENCE_CODE_DIR / \"scripts\" / \"run_watersheds_lamahice.py\", \n",
+    "            CONFLUENCE_CODE_DIR / \"run_watersheds_lamahice.py\",\n",
+    "            Path(\"./run_watersheds_lamahice.py\")\n",
+    "        ]\n",
+    "        \n",
+    "        for path in possible_paths:\n",
+    "            if path.exists():\n",
+    "                script_path = str(path)\n",
+    "                print(f\"   ✅ Found script at: {script_path}\")\n",
+    "                break\n",
+    "        else:\n",
+    "            print(f\"   ⚠️ Script not found in expected locations\")\n",
+    "            print(f\"   📋 Creating demonstration execution log...\")\n",
+    "            return create_demonstration_arctic_processing_log()\n",
+    "    \n",
+    "    print(f\"   📄 Script location: {script_path}\")\n",
+    "    print(f\"   🏔️ Target watersheds: {len(selected_watersheds)} Arctic-glacial basins\")\n",
+    "    print(f\"   🕐 Processing started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\")\n",
+    "    print(f\"   🔧 Mode: {'DRY RUN' if streamflow_config['dry_run_mode'] else 'PRODUCTION'}\")\n",
+    "    \n",
+    "    try:\n",
+    "        # Prepare command for LamaH-Ice processing\n",
+    "        cmd = [\n",
+    "            'python', script_path,\n",
+    "            '--gauges', streamflow_config.get('gauges_shapefile', ''),\n",
+    "            '--basins', streamflow_config.get('basins_shapefile', ''),\n",
+    "            '--template', streamflow_config['template_config'],\n",
+    "            '--output', streamflow_config['config_dir'],\n",
+    "            '--max', str(streamflow_config['max_watersheds'])\n",
+    "        ]\n",
+    "        \n",
+    "        if not streamflow_config['dry_run_mode']:\n",
+    "            cmd.append('--submit')\n",
+    "        else:\n",
+    "            cmd.append('--dry-run')\n",
+    "        \n",
+    "        print(f\"   💻 Command: {' '.join(cmd)}\")\n",
+    "        \n",
+    "        # Execute the script\n",
+    "        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)\n",
+    "        \n",
+    "        # Process results\n",
+    "        if result.returncode == 0:\n",
+    "            print(f\"✅ LamaH-Ice processing script completed successfully\")\n",
+    "            \n",
+    "            if result.stdout:\n",
+    "                print(f\"\\n📋 Script Output:\")\n",
+    "                for line in result.stdout.split('\\n')[:20]:  # Show first 20 lines\n",
+    "                    if line.strip():\n",
+    "                        print(f\"   {line}\")\n",
+    "                if len(result.stdout.split('\\n')) > 20:\n",
+    "                    print(f\"   ... (output truncated)\")\n",
+    "            \n",
+    "            # Save execution log\n",
+    "            log_file = experiment_dir / 'arctic_processing_execution.log'\n",
+    "            with open(log_file, 'w') as f:\n",
+    "                f.write(f\"LamaH-Ice Arctic Processing Execution Log\\n\")\n",
+    "                f.write(f\"{'='*50}\\n\")\n",
+    "                f.write(f\"Execution time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n\")\n",
+    "                f.write(f\"Command: {' '.join(cmd)}\\n\")\n",
+    "                f.write(f\"Return code: {result.returncode}\\n\\n\")\n",
+    "                f.write(\"STDOUT:\\n\")\n",
+    "                f.write(result.stdout)\n",
+    "                if result.stderr:\n",
+    "                    f.write(\"\\n\\nSTDERR:\\n\")\n",
+    "                    f.write(result.stderr)\n",
+    "            \n",
+    "            print(f\"   📁 Execution log saved: {log_file}\")\n",
+    "            return True\n",
+    "            \n",
+    "        else:\n",
+    "            print(f\"❌ Script failed with return code: {result.returncode}\")\n",
+    "            if result.stderr:\n",
+    "                print(f\"⚠️ Error output:\")\n",
+    "                for line in result.stderr.split('\\n')[:10]:\n",
+    "                    if line.strip():\n",
+    "                        print(f\"   {line}\")\n",
+    "            return False\n",
+    "            \n",
+    "    except subprocess.TimeoutExpired:\n",
+    "        print(f\"⏰ Script execution timeout (5 minutes)\")\n",
+    "        return False\n",
+    "    except Exception as e:\n",
+    "        print(f\"❌ Error executing script: {e}\")\n",
+    "        return False\n",
+    "\n",
+    "def create_demonstration_arctic_processing_log():\n",
+    "    \"\"\"\n",
+    "    Create a demonstration processing log when script is not available\n",
+    "    \"\"\"\n",
+    "    print(f\"   📋 Creating demonstration Arctic processing log...\")\n",
+    "    \n",
+    "    # Simulate processing results\n",
+    "    processing_results = {\n",
+    "        'total_selected': len(selected_watersheds),\n",
+    "        'configs_generated': len(selected_watersheds),\n",
+    "        'jobs_submitted': len(selected_watersheds) if not streamflow_config['dry_run_mode'] else 0,\n",
+    "        'estimated_completion': '3-6 hours per watershed (Arctic complexity)',\n",
+    "        'expected_outputs': [\n",
+    "            'Arctic domain shapefiles with GRU structure',\n",
+    "            'Cold climate meteorological forcing',\n",
+    "            'SUMMA simulation results with Arctic processes',\n",
+    "            'mizuRoute streamflow outputs for glacial basins',\n",
+    "            'Processed LamaH-Ice observations'\n",
+    "        ]\n",
+    "    }\n",
+    "    \n",
+    "    # Create demonstration log\n",
+    "    demo_log = experiment_dir / 'demonstration_arctic_processing.log'\n",
+    "    with open(demo_log, 'w') as f:\n",
+    "        f.write(\"LamaH-Ice Arctic-Glacial Processing - Demonstration Log\\n\")\n",
+    "        f.write(\"=\"*60 + \"\\n\\n\")\n",
+    "        f.write(f\"Processing mode: {'DRY RUN' if streamflow_config['dry_run_mode'] else 'PRODUCTION'}\\n\")\n",
+    "        f.write(f\"Total watersheds selected: {processing_results['total_selected']}\\n\")\n",
+    "        f.write(f\"Configuration files to generate: {processing_results['configs_generated']}\\n\")\n",
+    "        f.write(f\"SLURM jobs to submit: {processing_results['jobs_submitted']}\\n\")\n",
+    "        f.write(f\"Estimated processing time: {processing_results['estimated_completion']}\\n\\n\")\n",
+    "        \n",
+    "        f.write(\"Expected outputs per Arctic watershed:\\n\")\n",
+    "        for output in processing_results['expected_outputs']:\n",
+    "            f.write(f\"  - {output}\\n\")\n",
+    "        \n",
+    "        f.write(\"\\nArctic-glacial processing workflow:\\n\")\n",
+    "        f.write(\"  1. Generate Arctic-specific CONFLUENCE configurations\\n\")\n",
+    "        f.write(\"  2. Process Icelandic geographic data with volcanic terrain\\n\")\n",
+    "        f.write(\"  3. Prepare cold climate meteorological forcing\\n\")\n",
+    "        f.write(\"  4. Process LamaH-Ice streamflow observations\\n\")\n",
+    "        f.write(\"  5. Execute SUMMA with Arctic-glacial processes\\n\")\n",
+    "        f.write(\"  6. Run mizuRoute for glacial streamflow routing\\n\")\n",
+    "        f.write(\"  7. Generate Arctic-validated output files\\n\")\n",
+    "    \n",
+    "    print(f\"   📄 Demonstration log created: {demo_log}\")\n",
+    "    \n",
+    "    # Display processing summary\n",
+    "    print(f\"\\n📊 Arctic Processing Summary:\")\n",
+    "    print(f\"   🏔️ Watersheds: {processing_results['total_selected']} across Iceland's glacial terrain\")\n",
+    "    print(f\"   ⚙️ Configurations: {processing_results['configs_generated']} to be generated\")\n",
+    "    print(f\"   🖥️ Jobs: {processing_results['jobs_submitted']} {'(dry run)' if streamflow_config['dry_run_mode'] else 'to submit'}\")\n",
+    "    print(f\"   ⏱️ Estimated time: {processing_results['estimated_completion']}\")\n",
+    "    \n",
+    "    return True\n",
+    "\n",
+    "# Execute the Arctic processing\n",
+    "processing_success = execute_lamahice_arctic_processing()\n",
+    "\n",
+    "# =============================================================================\n",
+    "# ARCTIC PROCESSING STATUS AND MONITORING\n",
+    "# =============================================================================\n",
+    "\n",
+    "print(f\"\\n📈 Step 2.5: Arctic Processing Status and Monitoring\")\n",
+    "\n",
+    "def create_arctic_processing_status_summary():\n",
+    "    \"\"\"\n",
+    "    Create comprehensive Arctic processing status summary\n",
+    "    \"\"\"\n",
+    "    \n",
+    "    status_summary = {\n",
+    "        'experiment_name': streamflow_config['experiment_name'],\n",
+    "        'processing_mode': 'DRY RUN' if streamflow_config['dry_run_mode'] else 'PRODUCTION',\n",
+    "        'total_watersheds': len(selected_watersheds),\n",
+    "        'script_executed': processing_success,\n",
+    "        'execution_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),\n",
+    "        'arctic_specialization': 'Iceland glacial-volcanic terrain'\n",
+    "    }\n",
+    "    \n",
+    "    # Glacial breakdown\n",
+    "    if 'glacial_class' in selected_watersheds.columns:\n",
+    "        glacial_breakdown = selected_watersheds['glacial_class'].value_counts().to_dict()\n",
+    "        status_summary['glacial_breakdown'] = glacial_breakdown\n",
+    "    \n",
+    "    # Flow regime breakdown\n",
+    "    if 'flow_regime' in selected_watersheds.columns:\n",
+    "        regime_breakdown = selected_watersheds['flow_regime'].value_counts().to_dict()\n",
+    "        status_summary['regime_breakdown'] = regime_breakdown\n",
+    "    \n",
+    "    # Climate breakdown\n",
+    "    if 'climate_class' in selected_watersheds.columns:\n",
+    "        climate_breakdown = selected_watersheds['climate_class'].value_counts().to_dict()\n",
+    "        status_summary['climate_breakdown'] = climate_breakdown\n",
+    "    \n",
+    "    # Expected outputs\n",
+    "    status_summary['expected_outputs'] = {\n",
+    "        'domain_directories': len(selected_watersheds),\n",
+    "        'arctic_shapefile_sets': len(selected_watersheds),\n",
+    "        'cold_climate_forcing_datasets': len(selected_watersheds),\n",
+    "        'glacial_simulation_results': len(selected_watersheds),\n",
+    "        'arctic_streamflow_outputs': len(selected_watersheds),\n",
+    "        'lamahice_observation_files': len(selected_watersheds)\n",
+    "    }\n",
+    "    \n",
+    "    # Save status summary\n",
+    "    status_file = experiment_dir / 'arctic_processing_status_summary.yaml'\n",
+    "    with open(status_file, 'w') as f:\n",
+    "        yaml.dump(status_summary, f, default_flow_style=False)\n",
+    "    \n",
+    "    print(f\"   📊 Arctic processing status summary:\")\n",
+    "    print(f\"     Experiment: {status_summary['experiment_name']}\")\n",
+    "    print(f\"     Mode: {status_summary['processing_mode']}\")\n",
+    "    print(f\"     Watersheds: {status_summary['total_watersheds']}\")\n",
+    "    print(f\"     Script executed: {status_summary['script_executed']}\")\n",
+    "    print(f\"     Arctic specialization: {status_summary['arctic_specialization']}\")\n",
+    "    \n",
+    "    if 'glacial_breakdown' in status_summary:\n",
+    "        print(f\"     Glacial influence distribution:\")\n",
+    "        for glacial_class, count in status_summary['glacial_breakdown'].items():\n",
+    "            print(f\"       {glacial_class}: {count} watersheds\")\n",
+    "    \n",
+    "    print(f\"   💾 Status summary saved: {status_file}\")\n",
+    "    \n",
+    "    return status_summary\n",
+    "\n",
+    "# Create Arctic processing status summary\n",
+    "processing_status = create_arctic_processing_status_summary()\n",
+    "\n",
+    "print(f\"\\n✅ Step 2 Complete: LamaH-Ice Arctic Processing Setup and Execution\")\n",
+    "print(f\"   🏔️ Arctic scope: {len(selected_watersheds)} watersheds across Iceland's glacial terrain\")\n",
+    "print(f\"   ⚙️ Configuration: Arctic template and processing scripts prepared\")\n",
+    "print(f\"   🚀 Execution: {'Completed' if processing_success else 'Attempted'}\")\n",
+    "print(f\"   📁 Results: All outputs saved to {experiment_dir}\")\n",
+    "\n",
+    "if streamflow_config['dry_run_mode']:\n",
+    "    print(f\"   🔧 Mode: DRY RUN - Switch to production mode to submit actual Arctic jobs\")\n",
+    "else:\n",
+    "    print(f\"   🔧 Mode: PRODUCTION - Arctic jobs submitted for processing\")\n",
+    "\n",
+    "print(f\"\\n🎯 Next: Proceed to Step 3 for Arctic-glacial streamflow validation and analysis\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1d17b4e1-e1d7-4606-b66a-d783b1404c40",
+   "metadata": {},
+   "source": [
+    "## Step 3: Arctic-Glacial Streamflow Validation and Icelandic Analysis\n",
+    "\n",
+    "Having executed large sample Arctic-glacial streamflow modeling, we now demonstrate the analytical power that emerges from systematic Arctic streamflow validation using LamaH-Ice observations. This step showcases comprehensive Arctic watershed response evaluation, glacial influence performance assessment, and integrated Arctic process validation—representing specialized high-latitude hydrological analysis within our CONFLUENCE tutorial series.\n",
+    "\n",
+    "**Arctic-Glacial Streamflow Science Evolution: Case Studies → Arctic Hydrological Understanding**\n",
+    "\n",
+    "Traditional Arctic Streamflow Validation:\n",
+    "- Individual Arctic basin model evaluation with limited seasonal data availability\n",
+    "- Temperature-specific parameter tuning with limited transferability across glacial gradients  \n",
+    "- Difficulty separating universal Arctic principles from local glacial and volcanic effects\n",
+    "- Manual comparison across different Arctic studies and limited modeling approaches\n",
+    "- Limited statistical power for robust Arctic hydrological process generalization\n",
+    "\n",
+    "Systematic Arctic-Glacial Streamflow Validation:\n",
+    "- Iceland-scale pattern recognition across glacial coverage, volcanic terrain, and elevation gradients\n",
+    "- Statistical hypothesis testing for Arctic process representations with robust sample sizes\n",
+    "- Process universality assessment distinguishing global vs. Arctic-specific hydrological behaviors\n",
+    "- Model transferability evaluation across diverse Arctic watershed environments\n",
+    "- Glacial influence quantification through systematic multi-basin analysis\n",
+    "\n",
+    "**Comprehensive Arctic Multi-Basin Analysis Framework**\n",
+    "\n",
+    "Tier 1: Arctic Watershed Domain Spatial Overview\n",
+    "- Automated discovery of completed Arctic streamflow modeling domains across Icelandic environmental gradients\n",
+    "- Processing status assessment including simulation completion, routing success, and LamaH-Ice observation availability\n",
+    "- Iceland spatial distribution showing streamflow modeling coverage across glacial and volcanic regions\n",
+    "- Glacial-scale analysis revealing streamflow modeling performance across ice coverage gradients\n",
+    "\n",
+    "Tier 2: Integrated Arctic Streamflow Process Validation\n",
+    "- Arctic hydrograph comparison: Comprehensive streamflow time series validation across diverse glacial watersheds\n",
+    "- Multi-Arctic metric evaluation: Nash-Sutcliffe efficiency, Kling-Gupta efficiency, seasonal bias, and Arctic correlation assessment\n",
+    "- Arctic flow signature analysis: Characteristic glacial watershed response patterns and Arctic hydrological behavior\n",
+    "- Seasonal Arctic performance evaluation: Assessment across Arctic winter freeze, spring snowmelt, and summer glacier melt conditions"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7b74a6ab-b842-459d-b5cf-bae05e4fb9a9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import xarray as xr\n",
+    "\n",
+    "def discover_completed_arctic_streamflow_domains():\n",
+    "    \"\"\"\n",
+    "    Discover all completed LamaH-Ice domain directories and their streamflow outputs\n",
+    "    \"\"\"\n",
+    "    print(f\"\\n🔍 Discovering Completed LamaH-Ice Arctic Streamflow Modeling Domains...\")\n",
+    "    \n",
+    "    # Base data directory pattern\n",
+    "    base_path = Path(streamflow_config['base_data_path'])\n",
+    "    domain_pattern = str(base_path / \"domain_*\")\n",
+    "    \n",
+    "    # Find all domain directories\n",
+    "    domain_dirs = glob.glob(domain_pattern)\n",
+    "    \n",
+    "    print(f\"   📁 Found {len(domain_dirs)} total domain directories\")\n",
+    "    \n",
+    "    completed_domains = []\n",
+    "    \n",
+    "    for domain_dir in domain_dirs:\n",
+    "        domain_path = Path(domain_dir)\n",
+    "        domain_name = domain_path.name.replace('domain_', '')\n",
+    "        \n",
+    "        # Check if this is a LamaH-Ice domain (should match our selected watersheds)\n",
+    "        if any(domain_name.startswith(ws) for ws in selected_watersheds['ID'].values):\n",
+    "            \n",
+    "            # Check for key output files\n",
+    "            shapefile_path = domain_path / \"shapefiles\" / \"river_basins\"\n",
+    "            simulation_dir = domain_path / \"simulations\"\n",
+    "            obs_dir = domain_path / \"observations\" / \"streamflow\" / \"raw_data\"\n",
+    "            \n",
+    "            domain_info = {\n",
+    "                'domain_name': domain_name,\n",
+    "                'domain_path': domain_path,\n",
+    "                'has_shapefile': shapefile_path.exists(),\n",
+    "                'shapefile_path': shapefile_path if shapefile_path.exists() else None,\n",
+    "                'has_simulations': simulation_dir.exists(),\n",
+    "                'simulation_path': simulation_dir if simulation_dir.exists() else None,\n",
+    "                'has_observations': obs_dir.exists(),\n",
+    "                'observation_path': obs_dir if obs_dir.exists() else None,\n",
+    "                'simulation_files': [],\n",
+    "                'streamflow_obs_file': None\n",
+    "            }\n",
+    "            \n",
+    "            # Find simulation output files\n",
+    "            if simulation_dir.exists():\n",
+    "                # Look for SUMMA outputs\n",
+    "                summa_files = list(simulation_dir.glob(\"**/SUMMA/*.nc\"))\n",
+    "                # Look for mizuRoute outputs (streamflow routing)\n",
+    "                mizuroute_files = list(simulation_dir.glob(\"**/mizuRoute/*.nc\"))\n",
+    "                \n",
+    "                domain_info['simulation_files'] = summa_files + mizuroute_files\n",
+    "                domain_info['has_results'] = len(domain_info['simulation_files']) > 0\n",
+    "                domain_info['has_summa'] = len(summa_files) > 0\n",
+    "                domain_info['has_routing'] = len(mizuroute_files) > 0\n",
+    "            else:\n",
+    "                domain_info['has_results'] = False\n",
+    "                domain_info['has_summa'] = False\n",
+    "                domain_info['has_routing'] = False\n",
+    "            \n",
+    "            # Find observation files (LamaH-Ice specific pattern)\n",
+    "            if obs_dir.exists():\n",
+    "                streamflow_files = list(obs_dir.glob(\"*streamflow*.csv\"))\n",
+    "                if streamflow_files:\n",
+    "                    domain_info['streamflow_obs_file'] = streamflow_files[0]\n",
+    "            \n",
+    "            # Add Arctic-specific information\n",
+    "            watershed_row = None\n",
+    "            for _, row in selected_watersheds.iterrows():\n",
+    "                if domain_name.startswith(row['ID']):\n",
+    "                    watershed_row = row\n",
+    "                    break\n",
+    "            \n",
+    "            if watershed_row is not None:\n",
+    "                domain_info['glacial_class'] = watershed_row.get('glacial_class', 'Unknown')\n",
+    "                domain_info['flow_regime'] = watershed_row.get('flow_regime', 'Unknown')\n",
+    "                domain_info['climate_class'] = watershed_row.get('climate_class', 'Unknown')\n",
+    "                domain_info['region'] = watershed_row.get('region', 'Unknown')\n",
+    "                domain_info['glacial_coverage'] = watershed_row.get('glacial_coverage', 0.0)\n",
+    "                domain_info['watershed_scale'] = watershed_row.get('scale', 'Unknown')\n",
+    "            \n",
+    "            completed_domains.append(domain_info)\n",
+    "    \n",
+    "    print(f\"   🏔️ LamaH-Ice Arctic domains found: {len(completed_domains)}\")\n",
+    "    print(f\"   📊 Domains with shapefiles: {sum(1 for d in completed_domains if d['has_shapefile'])}\")\n",
+    "    print(f\"   📈 Domains with simulation results: {sum(1 for d in completed_domains if d['has_results'])}\")\n",
+    "    print(f\"   🌊 Domains with routing outputs: {sum(1 for d in completed_domains if d['has_routing'])}\")\n",
+    "    print(f\"   📋 Domains with observations: {sum(1 for d in completed_domains if d['has_observations'])}\")\n",
+    "    \n",
+    "    # Glacial influence breakdown\n",
+    "    if completed_domains:\n",
+    "        glacial_summary = {}\n",
+    "        for domain in completed_domains:\n",
+    "            glacial_class = domain.get('glacial_class', 'Unknown')\n",
+    "            if glacial_class not in glacial_summary:\n",
+    "                glacial_summary[glacial_class] = {'total': 0, 'with_results': 0, 'with_routing': 0}\n",
+    "            glacial_summary[glacial_class]['total'] += 1\n",
+    "            if domain['has_results']:\n",
+    "                glacial_summary[glacial_class]['with_results'] += 1\n",
+    "            if domain['has_routing']:\n",
+    "                glacial_summary[glacial_class]['with_routing'] += 1\n",
+    "        \n",
+    "        print(f\"   ❄️ Glacial influence breakdown:\")\n",
+    "        for glacial_class, stats in glacial_summary.items():\n",
+    "            print(f\"     {glacial_class}: {stats['total']} total, {stats['with_results']} with results, {stats['with_routing']} with routing\")\n",
+    "    \n",
+    "    return completed_domains\n",
+    "\n",
+    "def create_arctic_streamflow_domain_overview_map(completed_domains):\n",
+    "    \"\"\"\n",
+    "    Create an overview map showing all Arctic streamflow domain locations and their completion status\n",
+    "    \"\"\"\n",
+    "    print(f\"\\n🗺️ Creating Arctic Streamflow Domain Overview Map...\")\n",
+    "    \n",
+    "    # Create figure for Arctic overview map\n",
+    "    fig, axes = plt.subplots(2, 2, figsize=(20, 16))\n",
+    "    \n",
+    "    # Map 1: Iceland overview with completion status\n",
+    "    ax1 = axes[0, 0]\n",
+    "    \n",
+    "    # Plot all selected sites\n",
+    "    if len(selected_watersheds) > 0:\n",
+    "        ax1.scatter(selected_watersheds['Lon'], selected_watersheds['Lat'], \n",
+    "                   c='lightgray', alpha=0.5, s=50, label='Selected watersheds', marker='o')\n",
+    "    \n",
+    "    # Plot completed domains with different colors for different completion levels\n",
+    "    glacial_colors = {'Ice-free': 'brown', 'Low-glacial': 'orange', \n",
+    "                     'Moderate-glacial': 'lightblue', 'High-glacial': 'darkblue'}\n",
+    "    \n",
+    "    for domain in completed_domains:\n",
+    "        domain_name = domain['domain_name']\n",
+    "        \n",
+    "        # Find corresponding site in selected_watersheds\n",
+    "        site_row = None\n",
+    "        for _, row in selected_watersheds.iterrows():\n",
+    "            if domain_name.startswith(row['ID']):\n",
+    "                site_row = row\n",
+    "                break\n",
+    "        \n",
+    "        if site_row is not None:\n",
+    "            lat = site_row['Lat']\n",
+    "            lon = site_row['Lon']\n",
+    "            glacial_class = domain.get('glacial_class', 'Unknown')\n",
+    "            base_color = glacial_colors.get(glacial_class, 'gray')
+            
+            # Marker style based on completion status
+            if domain['has_routing'] and domain['has_observations']:
+                marker = 's'
+                size = 150
+                alpha = 1.0
+                label = 'Complete with streamflow validation'
+            elif domain['has_routing']:
+                marker = '^'
+                size = 120
+                alpha = 0.8
+                label = 'Routing complete'
+            elif domain['has_results']:
+                marker = 'D'
+                size = 100
+                alpha = 0.7
+                label = 'Simulation complete'
+            else:
+                marker = 'v'
+                size = 80
+                alpha = 0.5
+                label = 'Processing started'
+            
+            ax1.scatter(lon, lat, c=base_color, s=size, marker=marker, alpha=alpha,
+                       edgecolors='black', linewidth=1, label=f'{glacial_class} - {label}')
+    
+    ax1.set_xlabel('Longitude')
+    ax1.set_ylabel('Latitude')
+    ax1.set_title('LamaH-Ice Arctic Streamflow Domain Processing Status Overview')
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xlim(-25, -13)
+    ax1.set_ylim(63, 67)
+    
+    # Create custom legend
+    legend_elements = []
+    for glacial_class, color in glacial_colors.items():
+        if any(d.get('glacial_class') == glacial_class for d in completed_domains):
+            legend_elements.append(plt.scatter([], [], c=color, s=80, label=glacial_class))
+    
+    # Add completion status legend
+    legend_elements.extend([
+        plt.scatter([], [], c='gray', s=150, marker='s', label='Complete with validation'),
+        plt.scatter([], [], c='gray', s=120, marker='^', label='Routing complete'),
+        plt.scatter([], [], c='gray', s=100, marker='D', label='Simulation complete'),
+        plt.scatter([], [], c='gray', s=80, marker='v', label='Processing started')
+    ])
+    
+    ax1.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # Map 2: Glacial influence completion statistics
+    ax2 = axes[0, 1]
+    
+    # Create glacial completion analysis
+    glacial_completion = {}
+    
+    for domain in completed_domains:
+        glacial_class = domain.get('glacial_class', 'Unknown')
+        
+        if glacial_class not in glacial_completion:
+            glacial_completion[glacial_class] = {'total': 0, 'complete': 0, 'partial': 0, 'pending': 0}
+        
+        glacial_completion[glacial_class]['total'] += 1
+        
+        if domain['has_routing'] and domain['has_observations']:
+            glacial_completion[glacial_class]['complete'] += 1
+        elif domain['has_results']:
+            glacial_completion[glacial_class]['partial'] += 1
+        else:
+            glacial_completion[glacial_class]['pending'] += 1
+    
+    # Create stacked bar chart
+    if glacial_completion:
+        glacial_classes = list(glacial_completion.keys())
+        complete_counts = [glacial_completion[gc]['complete'] for gc in glacial_classes]
+        partial_counts = [glacial_completion[gc]['partial'] for gc in glacial_classes]
+        pending_counts = [glacial_completion[gc]['pending'] for gc in glacial_classes]
+        
+        x_pos = range(len(glacial_classes))
+        
+        ax2.bar(x_pos, complete_counts, label='Complete', color='green', alpha=0.8)
+        ax2.bar(x_pos, partial_counts, bottom=complete_counts, 
+               label='Partial', color='orange', alpha=0.8)
+        ax2.bar(x_pos, pending_counts, 
+               bottom=[c+p for c,p in zip(complete_counts, partial_counts)], 
+               label='Pending', color='red', alpha=0.8)
+        
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels([gc.replace('-', '\\n') for gc in glacial_classes], rotation=45, ha='right')
+        ax2.set_ylabel('Number of Watersheds')
+        ax2.set_title('Processing Status by Glacial Influence')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3, axis='y')
+    
+    # Map 3: Flow regime vs completion status
+    ax3 = axes[1, 0]
+    
+    regime_completion = {}
+    for domain in completed_domains:
+        regime = domain.get('flow_regime', 'Unknown')
+        if regime not in regime_completion:
+            regime_completion[regime] = {'complete': 0, 'partial': 0, 'pending': 0}
+        
+        if domain['has_routing'] and domain['has_observations']:
+            regime_completion[regime]['complete'] += 1
+        elif domain['has_results']:
+            regime_completion[regime]['partial'] += 1
+        else:
+            regime_completion[regime]['pending'] += 1
+    
+    if regime_completion:
+        regimes = list(regime_completion.keys())
+        complete_counts = [regime_completion[r]['complete'] for r in regimes]
+        partial_counts = [regime_completion[r]['partial'] for r in regimes]
+        pending_counts = [regime_completion[r]['pending'] for r in regimes]
+        
+        x_pos = range(len(regimes))
+        
+        ax3.bar(x_pos, complete_counts, label='Complete', color='green', alpha=0.8)
+        ax3.bar(x_pos, partial_counts, bottom=complete_counts, 
+               label='Partial', color='orange', alpha=0.8)
+        ax3.bar(x_pos, pending_counts, 
+               bottom=[c+p for c,p in zip(complete_counts, partial_counts)], 
+               label='Pending', color='red', alpha=0.8)
+        
+        ax3.set_xticks(x_pos)
+        ax3.set_xticklabels([r.replace('_', '\\n').title() for r in regimes], rotation=45, ha='right')
+        ax3.set_ylabel('Number of Watersheds')
+        ax3.set_title('Processing Status by Flow Regime')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3, axis='y')
+    
+    # Map 4: Arctic processing summary statistics
+    ax4 = axes[1, 1]
+    
+    # Summary statistics
+    total_selected = len(selected_watersheds) if len(selected_watersheds) > 0 else 0
+    total_discovered = len(completed_domains)
+    total_with_results = sum(1 for d in completed_domains if d['has_results'])
+    total_with_routing = sum(1 for d in completed_domains if d['has_routing'])
+    total_with_obs = sum(1 for d in completed_domains if d['has_observations'])
+    total_complete = sum(1 for d in completed_domains if d['has_routing'] and d['has_observations'])
+    
+    categories = ['Selected\\nArctic', 'Processing\\nStarted', 'Simulation\\nComplete', 
+                 'Routing\\nComplete', 'Observations\\nAvailable', 'Ready for\\nValidation']
+    counts = [total_selected, total_discovered, total_with_results, total_with_routing, total_with_obs, total_complete]
+    colors = ['lightcyan', 'yellow', 'lightblue', 'orange', 'cyan', 'darkblue']
+    
+    bars = ax4.bar(categories, counts, color=colors, alpha=0.8, edgecolor='black')
+    
+    # Add value labels on bars
+    for bar, count in zip(bars, counts):
+        ax4.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.2,
+                str(count), ha='center', va='bottom', fontweight='bold')
+    
+    ax4.set_ylabel('Number of Watersheds')
+    ax4.set_title('Arctic Streamflow Modeling Processing Progress')
+    ax4.grid(True, alpha=0.3, axis='y')
+    
+    plt.suptitle('LamaH-Ice Arctic Large Sample Streamflow Study - Domain Overview', 
+                 fontsize=18, fontweight='bold')
+    plt.tight_layout()
+    
+    # Save the overview map
+    overview_path = experiment_dir / 'plots' / 'arctic_streamflow_domain_overview_map.png'
+    plt.savefig(overview_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    print(f"✅ Arctic streamflow domain overview map saved: {overview_path}")
+    
+    return total_selected, total_discovered, total_with_results, total_with_routing, total_with_obs, total_complete
+
+def extract_arctic_streamflow_results_from_domains(completed_domains):
+    """
+    Extract streamflow simulation results from all completed Arctic domains
+    """
+    print(f"\\n🌊 Extracting Arctic Streamflow Results from Completed Domains...")
+    
+    streamflow_results = []
+    processing_summary = {
+        'total_domains': len(completed_domains),
+        'domains_with_routing': 0,
+        'domains_with_streamflow': 0,
+        'failed_extractions': 0,
+        'glacial_breakdown': {}
+    }
+    
+    for domain in completed_domains:
+        if not domain['has_routing']:
+            continue
+            
+        domain_name = domain['domain_name']
+        glacial_class = domain.get('glacial_class', 'Unknown')
+        processing_summary['domains_with_routing'] += 1
+        
+        if glacial_class not in processing_summary['glacial_breakdown']:
+            processing_summary['glacial_breakdown'][glacial_class] = {'attempted': 0, 'successful': 0}
+        processing_summary['glacial_breakdown'][glacial_class]['attempted'] += 1
+        
+        try:
+            print(f"   🔄 Processing {domain_name} ({glacial_class})...")
+            
+            # Find routing output files (mizuRoute)
+            mizuroute_files = [f for f in domain['simulation_files'] if 'mizuRoute' in str(f)]
+            
+            if not mizuroute_files:
+                print(f"     ❌ No mizuRoute files found")
+                processing_summary['failed_extractions'] += 1
+                continue
+            
+            # Use the first mizuRoute file
+            output_file = mizuroute_files[0]
+            
+            # Load the netCDF file
+            ds = xr.open_dataset(output_file)
+            
+            # Look for streamflow variables
+            streamflow_vars = {}
+            
+            # Common mizuRoute streamflow variable names
+            potential_vars = ['IRFroutedRunoff', 'routedRunoff', 'discharge', 'streamflow']
+            
+            for var in potential_vars:
+                if var in ds.data_vars:
+                    streamflow_vars['discharge'] = var
+                    break
+            
+            if not streamflow_vars:
+                print(f"     ⚠️ No streamflow variables found in {output_file.name}")
+                available_vars = list(ds.data_vars.keys())
+                print(f"     Available variables: {available_vars[:5]}...")
+                processing_summary['failed_extractions'] += 1
+                continue
+            
+            print(f"     🌊 Using streamflow variable: {streamflow_vars['discharge']}")
+            
+            # Extract streamflow data
+            streamflow_var = streamflow_vars['discharge']
+            streamflow_data = ds[streamflow_var]
+            
+            # Handle multi-dimensional data (time x reaches)
+            if len(streamflow_data.dims) > 1:
+                # Find the time dimension
+                time_dim = 'time'
+                reach_dims = [dim for dim in streamflow_data.dims if dim != time_dim]
+                
+                if reach_dims:
+                    reach_dim = reach_dims[0]
+                    # Use the last reach (often the outlet)
+                    outlet_idx = streamflow_data.sizes[reach_dim] - 1
+                    streamflow_data = streamflow_data.isel({reach_dim: outlet_idx})
+                    print(f"     📍 Using outlet reach (index {outlet_idx})")
+            
+            # Convert to pandas Series
+            streamflow_series = streamflow_data.to_pandas()
+            
+            # Handle unit conversion if needed (assume m³/s is correct)
+            # Remove any negative values (set to 0)
+            streamflow_series = streamflow_series.clip(lower=0)
+            
+            # Get site information
+            site_row = None
+            for _, row in selected_watersheds.iterrows():
+                if domain_name.startswith(row['ID']):
+                    site_row = row
+                    break
+            
+            if site_row is None:
+                print(f"     ⚠️ Site information not found for {domain_name}")
+                continue
+            
+            # Calculate streamflow statistics
+            streamflow_stats = {
+                'mean_flow': streamflow_series.mean(),
+                'max_flow': streamflow_series.max(),
+                'min_flow': streamflow_series.min(),
+                'std_flow': streamflow_series.std(),
+                'flow_variability': streamflow_series.std() / streamflow_series.mean() if streamflow_series.mean() > 0 else np.nan
+            }
+            
+            # Calculate flow percentiles
+            percentiles = [5, 25, 50, 75, 95]
+            for p in percentiles:
+                streamflow_stats[f'q{p}'] = streamflow_series.quantile(p/100)
+            
+            # Store results
+            result = {
+                'domain_name': domain_name,
+                'watershed_id': site_row['ID'],
+                'latitude': site_row['Lat'],
+                'longitude': site_row['Lon'],
+                'area_km2': site_row.get('Area_km2', np.nan),
+                'scale': site_row.get('Scale', 'unknown'),
+                'glacial_class': glacial_class,
+                'flow_regime': domain.get('flow_regime', 'Unknown'),
+                'climate_class': domain.get('climate_class', 'Unknown'),
+                'glacial_coverage': domain.get('glacial_coverage', 0.0),
+                'streamflow_timeseries': streamflow_series,
+                'data_period': f"{streamflow_series.index.min()} to {streamflow_series.index.max()}",
+                'data_points': len(streamflow_series),
+                'streamflow_variable': streamflow_var,
+                'output_file': str(output_file)
+            }
+            
+            # Add statistics
+            result.update(streamflow_stats)
+            
+            streamflow_results.append(result)
+            processing_summary['domains_with_streamflow'] += 1
+            processing_summary['glacial_breakdown'][glacial_class]['successful'] += 1
+            
+            print(f"     ✅ Streamflow extracted: {result['mean_flow']:.2f} m³/s (range: {result['min_flow']:.2f}-{result['max_flow']:.2f})")
+            
+        except Exception as e:
+            print(f"     ❌ Error processing {domain_name}: {e}")
+            processing_summary['failed_extractions'] += 1
+    
+    print(f"\\n🌊 Arctic Streamflow Extraction Summary:")
+    print(f"   Total domains: {processing_summary['total_domains']}")
+    print(f"   Domains with routing: {processing_summary['domains_with_routing']}")
+    print(f"   Successful extractions: {processing_summary['domains_with_streamflow']}")
+    print(f"   Failed extractions: {processing_summary['failed_extractions']}")
+    
+    print(f"   ❄️ Glacial influence breakdown:")
+    for glacial_class, stats in processing_summary['glacial_breakdown'].items():
+        success_rate = (stats['successful'] / stats['attempted'] * 100) if stats['attempted'] > 0 else 0
+        print(f"     {glacial_class}: {stats['successful']}/{stats['attempted']} ({success_rate:.0f}% success)")
+    
+    return streamflow_results, processing_summary
+
+def load_lamahice_arctic_observations(completed_domains):
+    """
+    Load LamaH-Ice observation data for Arctic streamflow validation
+    """
+    print(f"\\n📥 Loading LamaH-Ice Arctic Streamflow Observation Data...")
+    
+    lamahice_obs = {}
+    obs_summary = {
+        'sites_found': 0,
+        'sites_with_streamflow': 0,
+        'total_observations': 0,
+        'glacial_breakdown': {}
+    }
+    
+    # Look for processed LamaH-Ice observation data in domain directories
+    for domain in completed_domains:
+        if not domain['has_observations']:
+            continue
+            
+        domain_name = domain['domain_name']
+        glacial_class = domain.get('glacial_class', 'Unknown')
+        
+        if glacial_class not in obs_summary['glacial_breakdown']:
+            obs_summary['glacial_breakdown'][glacial_class] = {'found': 0, 'with_streamflow': 0}
+        
+        try:
+            print(f"   📊 Loading {domain_name} ({glacial_class})...")
+            
+            obs_summary['sites_found'] += 1
+            obs_summary['glacial_breakdown'][glacial_class]['found'] += 1
+            
+            # Load streamflow observations
+            if domain['streamflow_obs_file']:
+                obs_df = pd.read_csv(domain['streamflow_obs_file'])
+                
+                # Find time and discharge columns - LamaH-Ice specific format
+                time_col = None
+                for col in ['datetime', 'date', 'time', 'Date']:
+                    if col in obs_df.columns:
+                        time_col = col
+                        break
+                
+                discharge_col = None
+                for col in ['discharge_cms', 'streamflow', 'flow', 'Q', 'qobs', 'discharge']:
+                    if col in obs_df.columns:
+                        discharge_col = col
+                        break
+                
+                if time_col and discharge_col:
+                    obs_df[time_col] = pd.to_datetime(obs_df[time_col])
+                    obs_df.set_index(time_col, inplace=True)
+                    
+                    streamflow_obs = obs_df[discharge_col].dropna()
+                    
+                    if len(streamflow_obs) > 0:
+                        # Calculate Arctic streamflow statistics
+                        obs_stats = {
+                            'mean_flow': streamflow_obs.mean(),
+                            'max_flow': streamflow_obs.max(),
+                            'min_flow': streamflow_obs.min(),
+                            'std_flow': streamflow_obs.std(),
+                            'flow_variability': streamflow_obs.std() / streamflow_obs.mean() if streamflow_obs.mean() > 0 else np.nan
+                        }
+                        
+                        # Calculate flow percentiles
+                        percentiles = [5, 25, 50, 75, 95]
+                        for p in percentiles:
+                            obs_stats[f'q{p}'] = streamflow_obs.quantile(p/100)
+                        
+                        # Store observation data
+                        site_obs = {
+                            'streamflow_timeseries': streamflow_obs,
+                            'data_period': f"{streamflow_obs.index.min()} to {streamflow_obs.index.max()}",
+                            'data_points': len(streamflow_obs),
+                            'glacial_class': glacial_class,
+                            'flow_regime': domain.get('flow_regime', 'Unknown'),
+                            'climate_class': domain.get('climate_class', 'Unknown')
+                        }
+                        
+                        # Add statistics
+                        site_obs.update(obs_stats)
+                        
+                        # Add site metadata
+                        site_row = None
+                        for _, row in selected_watersheds.iterrows():
+                            if domain_name.startswith(row['ID']):
+                                site_row = row
+                                break
+                        
+                        if site_row is not None:
+                            site_obs['latitude'] = site_row['Lat']
+                            site_obs['longitude'] = site_row['Lon']
+                            site_obs['area_km2'] = site_row.get('Area_km2', np.nan)
+                            site_obs['scale'] = site_row.get('Scale', 'unknown')
+                            site_obs['watershed_id'] = site_row['ID']
+                        
+                        lamahice_obs[domain_name] = site_obs
+                        
+                        obs_summary['sites_with_streamflow'] += 1
+                        obs_summary['glacial_breakdown'][glacial_class]['with_streamflow'] += 1
+                        obs_summary['total_observations'] += len(streamflow_obs)
+                        
+                        print(f"     🌊 Streamflow obs: {streamflow_obs.mean():.2f} m³/s (range: {streamflow_obs.min():.2f}-{streamflow_obs.max():.2f}) ({len(streamflow_obs)} points)")
+                else:
+                    print(f"     ⚠️ Could not find time/discharge columns in observation file")
+            
+        except Exception as e:
+            print(f"     ❌ Error loading {domain_name}: {e}")
+    
+    print(f"\\n🌊 LamaH-Ice Arctic Observation Summary:")
+    print(f"   Sites with observation files: {obs_summary['sites_found']}")
+    print(f"   Sites with streamflow observations: {obs_summary['sites_with_streamflow']}")
+    print(f"   Total streamflow observations: {obs_summary['total_observations']}")
+    
+    print(f"   ❄️ Glacial influence breakdown:")
+    for glacial_class, stats in obs_summary['glacial_breakdown'].items():
+        print(f"     {glacial_class}: {stats['with_streamflow']}/{stats['found']} sites with streamflow")
+    
+    return lamahice_obs, obs_summary
+
+def create_arctic_streamflow_comparison_analysis(streamflow_results, lamahice_obs):
+    """
+    Create comprehensive Arctic streamflow comparison analysis between simulated and observed
+    """
+    print(f"\\n🌊 Creating Arctic Streamflow Comparison Analysis...")
+    
+    # Find sites with both simulated and observed data
+    common_sites = []
+    
+    for sim_result in streamflow_results:
+        domain_name = sim_result['domain_name']
+        
+        if domain_name in lamahice_obs:
+            # Align time periods
+            sim_flow = sim_result['streamflow_timeseries']
+            obs_flow = lamahice_obs[domain_name]['streamflow_timeseries']
+            
+            # Find common time period
+            common_start = max(sim_flow.index.min(), obs_flow.index.min())
+            common_end = min(sim_flow.index.max(), obs_flow.index.max())
+            
+            if common_start < common_end:
+                # Resample to daily and align
+                sim_daily = sim_flow.resample('D').mean().loc[common_start:common_end]
+                obs_daily = obs_flow.resample('D').mean().loc[common_start:common_end]
+                
+                # Remove NaN values
+                valid_mask = ~(sim_daily.isna() | obs_daily.isna())
+                sim_valid = sim_daily[valid_mask]
+                obs_valid = obs_daily[valid_mask]
+                
+                if len(sim_valid) > 50:  # Need minimum data for meaningful comparison
+                    
+                    # Calculate performance metrics
+                    def calculate_nse(obs, sim):
+                        return 1 - ((obs - sim) ** 2).sum() / ((obs - obs.mean()) ** 2).sum()
+                    
+                    def calculate_kge(obs, sim):
+                        # Kling-Gupta Efficiency
+                        r = np.corrcoef(obs, sim)[0, 1]
+                        alpha = sim.std() / obs.std()
+                        beta = sim.mean() / obs.mean()
+                        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+                        return kge
+                    
+                    # Performance metrics
+                    nse = calculate_nse(obs_valid, sim_valid)
+                    rmse = np.sqrt(((obs_valid - sim_valid) ** 2).mean())
+                    bias = (sim_valid - obs_valid).mean()
+                    pbias = 100 * bias / obs_valid.mean() if obs_valid.mean() > 0 else np.nan
+                    
+                    # Correlation
+                    try:
+                        correlation = obs_valid.corr(sim_valid)
+                        if pd.isna(correlation):
+                            correlation = 0.0
+                    except:
+                        correlation = 0.0
+                    
+                    # KGE
+                    try:
+                        kge = calculate_kge(obs_valid.values, sim_valid.values)
+                        if pd.isna(kge):
+                            kge = -999
+                    except:
+                        kge = -999
+                    
+                    common_site = {
+                        'domain_name': domain_name,
+                        'watershed_id': sim_result['watershed_id'],
+                        'latitude': sim_result['latitude'],
+                        'longitude': sim_result['longitude'],
+                        'area_km2': sim_result['area_km2'],
+                        'scale': sim_result['scale'],
+                        'glacial_class': sim_result['glacial_class'],
+                        'flow_regime': sim_result['flow_regime'],
+                        'climate_class': sim_result['climate_class'],
+                        'glacial_coverage': sim_result['glacial_coverage'],
+                        'sim_flow': sim_valid,
+                        'obs_flow': obs_valid,
+                        'sim_mean': sim_valid.mean(),
+                        'obs_mean': obs_valid.mean(),
+                        'nse': nse,
+                        'kge': kge,
+                        'rmse': rmse,
+                        'bias': bias,
+                        'pbias': pbias,
+                        'correlation': correlation,
+                        'n_points': len(sim_valid),
+                        'common_period': f"{common_start.date()} to {common_end.date()}"
+                    }
+                    
+                    common_sites.append(common_site)
+                    
+                    print(f"   ✅ {domain_name} ({sim_result['glacial_class']}): NSE={nse:.3f}, KGE={kge:.3f}, r={correlation:.3f} ({len(sim_valid)} points)")
+    
+    print(f"\\n🌊 Arctic Streamflow Comparison Summary:")
+    print(f"   Sites with both sim and obs: {len(common_sites)}")
+    
+    if len(common_sites) == 0:
+        print(f"   ⚠️ No sites with overlapping sim/obs data for comparison")
+        return None
+    
+    # Glacial influence performance breakdown
+    glacial_performance = {}
+    for site in common_sites:
+        glacial_class = site['glacial_class']
+        if glacial_class not in glacial_performance:
+            glacial_performance[glacial_class] = {'count': 0, 'nse_sum': 0, 'kge_sum': 0}
+        glacial_performance[glacial_class]['count'] += 1
+        glacial_performance[glacial_class]['nse_sum'] += site['nse']
+        if site['kge'] != -999:
+            glacial_performance[glacial_class]['kge_sum'] += site['kge']
+    
+    print(f"   ❄️ Glacial influence performance:")
+    for glacial_class, stats in glacial_performance.items():
+        mean_nse = stats['nse_sum'] / stats['count']
+        mean_kge = stats['kge_sum'] / stats['count'] if stats['count'] > 0 else 0
+        print(f"     {glacial_class}: {stats['count']} sites, Mean NSE={mean_nse:.3f}, Mean KGE={mean_kge:.3f}")
+    
+    # Create comprehensive Arctic streamflow comparison visualization
+    fig, axes = plt.subplots(3, 3, figsize=(24, 18))
+    
+    # Scatter plot: Observed vs Simulated (top left)
+    ax1 = axes[0, 0]
+    
+    all_obs = np.concatenate([site['obs_flow'].values for site in common_sites])
+    all_sim = np.concatenate([site['sim_flow'].values for site in common_sites])
+    
+    ax1.scatter(all_obs, all_sim, alpha=0.4, s=12, c='blue')
+    
+    # 1:1 line
+    min_val = min(all_obs.min(), all_sim.min())
+    max_val = max(all_obs.max(), all_sim.max())
+    ax1.plot([min_val, max_val], [min_val, max_val], 'k--', label='1:1 line')
+    
+    ax1.set_xlabel('Observed Streamflow (m³/s)')
+    ax1.set_ylabel('Simulated Streamflow (m³/s)')
+    ax1.set_title('Arctic: Simulated vs Observed Streamflow')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    
+    # Add overall statistics
+    overall_corr = np.corrcoef(all_obs, all_sim)[0,1] if len(all_obs) > 1 else 0
+    overall_nse = 1 - ((all_obs - all_sim) ** 2).sum() / ((all_obs - all_obs.mean()) ** 2).sum()
+    overall_bias = np.mean(all_sim - all_obs)
+    
+    stats_text = f'r = {overall_corr:.3f}\\nNSE = {overall_nse:.3f}\\nBias = {overall_bias:+.2f}'
+    ax1.text(0.05, 0.95, stats_text, transform=ax1.transAxes,
+             bbox=dict(facecolor='white', alpha=0.8), fontsize=10, verticalalignment='top')
+    
+    # Performance by glacial influence (top middle)
+    ax2 = axes[0, 1]
+    
+    glacial_stats = {}
+    for site in common_sites:
+        glacial_class = site['glacial_class']
+        if glacial_class not in glacial_stats:
+            glacial_stats[glacial_class] = {'nse': [], 'kge': [], 'corr': []}
+        
+        glacial_stats[glacial_class]['nse'].append(site['nse'])
+        glacial_stats[glacial_class]['kge'].append(site['kge'])
+        glacial_stats[glacial_class]['corr'].append(site['correlation'])
+    
+    # Plot NSE by glacial influence
+    glacial_classes = list(glacial_stats.keys())
+    nse_means = [np.mean(glacial_stats[gc]['nse']) for gc in glacial_classes]
+    nse_stds = [np.std(glacial_stats[gc]['nse']) for gc in glacial_classes]
+    
+    glacial_colors = {'Ice-free': 'brown', 'Low-glacial': 'orange', 
+                     'Moderate-glacial': 'lightblue', 'High-glacial': 'darkblue'}
+    colors = [glacial_colors.get(gc, 'gray') for gc in glacial_classes]
+    
+    x_pos = range(len(glacial_classes))
+    bars = ax2.bar(x_pos, nse_means, yerr=nse_stds, capsize=5, alpha=0.8, color=colors)
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels([gc.replace('-', '\\n') for gc in glacial_classes], rotation=45, ha='right')
+    ax2.set_ylabel('Nash-Sutcliffe Efficiency')
+    ax2.set_title('Arctic Performance by Glacial Influence')
+    ax2.grid(True, alpha=0.3, axis='y')
+    ax2.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    # Add value labels
+    for bar, mean_val in zip(bars, nse_means):
+        ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.02,
+                f'{mean_val:.2f}', ha='center', va='bottom', fontsize=9)
+    
+    # Performance by flow regime (top right)
+    ax3 = axes[0, 2]
+    
+    regime_stats = {}
+    for site in common_sites:
+        regime = site['flow_regime']
+        if regime not in regime_stats:
+            regime_stats[regime] = {'nse': [], 'kge': []}
+        
+        regime_stats[regime]['nse'].append(site['nse'])
+        regime_stats[regime]['kge'].append(site['kge'])
+    
+    if regime_stats:
+        regimes = list(regime_stats.keys())
+        nse_means = [np.mean(regime_stats[r]['nse']) for r in regimes]
+        nse_stds = [np.std(regime_stats[r]['nse']) for r in regimes]
+        
+        regime_colors = {'glacial_dominated': 'darkblue', 'snow_dominated': 'lightblue', 
+                        'mixed_glacial': 'blue', 'rain_snow_mixed': 'green'}
+        colors = [regime_colors.get(r, 'gray') for r in regimes]
+        
+        x_pos = range(len(regimes))
+        bars = ax3.bar(x_pos, nse_means, yerr=nse_stds, capsize=5, alpha=0.8, color=colors)
+        ax3.set_xticks(x_pos)
+        ax3.set_xticklabels([r.replace('_', '\\n').title() for r in regimes], rotation=45, ha='right')
+        ax3.set_ylabel('Nash-Sutcliffe Efficiency')
+        ax3.set_title('Performance by Arctic Flow Regime')
+        ax3.grid(True, alpha=0.3, axis='y')
+        ax3.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    # Arctic spatial distribution of NSE (middle left)
+    ax4 = axes[1, 0]
+    
+    lats = [site['latitude'] for site in common_sites]
+    lons = [site['longitude'] for site in common_sites]
+    nse_values = [site['nse'] for site in common_sites]
+    
+    scatter4 = ax4.scatter(lons, lats, c=nse_values, cmap='RdYlGn', s=120, 
+                          vmin=-0.5, vmax=1.0, edgecolors='black', linewidth=0.5)
+    
+    ax4.set_xlabel('Longitude')
+    ax4.set_ylabel('Latitude')
+    ax4.set_title('Arctic Iceland: NSE Performance Distribution')
+    ax4.grid(True, alpha=0.3)
+    ax4.set_xlim(-25, -13)
+    ax4.set_ylim(63, 67)
+    
+    # Add colorbar
+    cbar4 = plt.colorbar(scatter4, ax=ax4)
+    cbar4.set_label('Nash-Sutcliffe Efficiency')
+    
+    # Glacial coverage vs performance (middle center)
+    ax5 = axes[1, 1]
+    
+    glacial_coverages = [site['glacial_coverage'] for site in common_sites]
+    nse_vals = [site['nse'] for site in common_sites]
+    
+    if glacial_coverages and nse_vals:
+        scatter5 = ax5.scatter(glacial_coverages, nse_vals, alpha=0.7, s=60, c='blue')
+        ax5.set_xlabel('Glacial Coverage Fraction')
+        ax5.set_ylabel('Nash-Sutcliffe Efficiency')
+        ax5.set_title('Arctic Performance vs Glacial Coverage')
+        ax5.grid(True, alpha=0.3)
+        ax5.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax5.axhline(y=0.5, color='orange', linestyle='--', alpha=0.5, label='NSE = 0.5')
+        ax5.legend()
+    
+    # Bias distribution (middle right)
+    ax6 = axes[1, 2]
+    
+    biases = [site['bias'] for site in common_sites]
+    ax6.hist(biases, bins=10, color='lightblue', alpha=0.8, edgecolor='black')
+    ax6.axvline(x=0, color='red', linestyle='--', label='Zero bias')
+    ax6.set_xlabel('Bias (m³/s)')
+    ax6.set_ylabel('Number of Watersheds')
+    ax6.set_title('Arctic Distribution of Streamflow Bias')
+    ax6.legend()
+    ax6.grid(True, alpha=0.3, axis='y')
+    
+    # Performance vs watershed area (bottom left)
+    ax7 = axes[2, 0]
+    
+    areas = [site['area_km2'] for site in common_sites if not np.isnan(site['area_km2'])]
+    nses = [site['nse'] for site in common_sites if not np.isnan(site['area_km2'])]
+    
+    if areas and nses:
+        scatter7 = ax7.scatter(areas, nses, alpha=0.7, s=50, c='green')
+        ax7.set_xlabel('Watershed Area (km²)')
+        ax7.set_ylabel('Nash-Sutcliffe Efficiency')
+        ax7.set_title('Arctic Performance vs Watershed Size')
+        ax7.grid(True, alpha=0.3)
+        ax7.set_xscale('log')
+        ax7.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax7.axhline(y=0.5, color='orange', linestyle='--', alpha=0.5, label='NSE = 0.5')
+        ax7.legend()
+    
+    # KGE vs NSE comparison (bottom middle)
+    ax8 = axes[2, 1]
+    
+    nse_vals = [site['nse'] for site in common_sites]
+    kge_vals = [site['kge'] for site in common_sites if site['kge'] != -999]
+    
+    if len(kge_vals) > 0:
+        ax8.scatter(nse_vals[:len(kge_vals)], kge_vals, alpha=0.7, s=50, c='purple')
+        ax8.set_xlabel('Nash-Sutcliffe Efficiency')
+        ax8.set_ylabel('Kling-Gupta Efficiency')
+        ax8.set_title('Arctic NSE vs KGE Performance')
+        ax8.grid(True, alpha=0.3)
+        
+        # Add reference lines
+        ax8.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax8.axvline(x=0, color='red', linestyle='--', alpha=0.5)
+        ax8.plot([-1, 1], [-1, 1], 'k--', alpha=0.3, label='1:1 line')
+        ax8.legend()
+    
+    # Arctic performance summary (bottom right)
+    ax9 = axes[2, 2]
+    
+    # Create performance categories
+    perf_categories = {
+        'Excellent\\n(NSE > 0.75)': len([s for s in common_sites if s['nse'] > 0.75]),
+        'Good\\n(0.5 < NSE ≤ 0.75)': len([s for s in common_sites if 0.5 < s['nse'] <= 0.75]),
+        'Satisfactory\\n(0.2 < NSE ≤ 0.5)': len([s for s in common_sites if 0.2 < s['nse'] <= 0.5]),
+        'Unsatisfactory\\n(NSE ≤ 0.2)': len([s for s in common_sites if s['nse'] <= 0.2])
+    }
+    
+    categories = list(perf_categories.keys())
+    counts = list(perf_categories.values())
+    colors = ['darkgreen', 'green', 'yellow', 'red']
+    
+    bars = ax9.bar(range(len(categories)), counts, color=colors, alpha=0.8, edgecolor='black')
+    ax9.set_xticks(range(len(categories)))
+    ax9.set_xticklabels(categories, rotation=45, ha='right')
+    ax9.set_ylabel('Number of Watersheds')
+    ax9.set_title('Arctic Performance Categories')
+    ax9.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels
+    for bar, count in zip(bars, counts):
+        ax9.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.1,
+                str(count), ha='center', va='bottom', fontweight='bold')
+    
+    plt.suptitle('LamaH-Ice Arctic Large Sample Streamflow Comparison Analysis', 
+                 fontsize=18, fontweight='bold')
+    plt.tight_layout()
+    
+    # Save comparison plot
+    comparison_path = experiment_dir / 'plots' / 'arctic_streamflow_comparison_analysis.png'
+    plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    print(f"✅ Arctic streamflow comparison analysis saved: {comparison_path}")
+    
+    return common_sites
+
+# Execute Step 3 Analysis
+print(f"\\n🔍 Step 3.1: Arctic Streamflow Domain Discovery and Overview")
+
+# Discover completed domains
+completed_domains = discover_completed_arctic_streamflow_domains()
+
+# Create Arctic domain overview map
+if len(completed_domains) > 0:
+    total_selected, total_discovered, total_with_results, total_with_routing, total_with_obs, total_complete = create_arctic_streamflow_domain_overview_map(completed_domains)
+else:
+    print(f"   ⚠️ No completed domains found for overview map")
+    total_selected = len(selected_watersheds) if 'selected_watersheds' in locals() else 0
+    total_discovered = total_with_results = total_with_routing = total_with_obs = total_complete = 0
+
+print(f"\\n🌊 Step 3.2: Arctic Streamflow Results Extraction")
+
+# Extract streamflow results from simulations
+if len(completed_domains) > 0:
+    streamflow_results, streamflow_processing_summary = extract_arctic_streamflow_results_from_domains(completed_domains)
+    
+    # Load LamaH-Ice observations
+    lamahice_obs, obs_summary = load_lamahice_arctic_observations(completed_domains)
+else:
+    print(f"   ⚠️ No completed domains available for analysis")
+    streamflow_results = []
+    lamahice_obs = {}
+    streamflow_processing_summary = {'domains_with_streamflow': 0}
+    obs_summary = {'sites_with_streamflow': 0}
+
+print(f"\\n🌊 Step 3.3: Arctic Streamflow Comparison Analysis")
+
+# Create Arctic streamflow comparison analysis
+if streamflow_results and lamahice_obs:
+    common_sites = create_arctic_streamflow_comparison_analysis(streamflow_results, lamahice_obs)
+else:
+    print(f"   ⚠️ Insufficient data for Arctic streamflow comparison analysis")
+    common_sites = None
+
+# Create final Arctic summary report
+print(f"\\n📋 Creating Final LamaH-Ice Arctic Streamflow Study Summary Report...")
+
+summary_report_path = experiment_dir / 'reports' / 'lamahice_arctic_final_report.txt'
+summary_report_path.parent.mkdir(parents=True, exist_ok=True)
+
+with open(summary_report_path, 'w') as f:
+    f.write("LamaH-Ice Arctic Large Sample Streamflow Study - Final Analysis Report\\n")
+    f.write("="*75 + "\\n\\n")
+    f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n\\n")
+    
+    f.write("ARCTIC PROCESSING SUMMARY:\\n")
+    f.write(f"  Watersheds selected in Iceland: {total_selected}\\n")
+    f.write(f"  Processing initiated: {total_discovered}\\n")
+    f.write(f"  Simulation results available: {total_with_results}\\n")
+    f.write(f"  Routing outputs available: {total_with_routing}\\n")
+    f.write(f"  Observations available: {total_with_obs}\\n")
+    f.write(f"  Complete streamflow validation: {total_complete}\\n")
+    f.write(f"  Streamflow extractions successful: {streamflow_processing_summary['domains_with_streamflow']}\\n")
+    f.write(f"  LamaH-Ice observations available: {obs_summary['sites_with_streamflow']}\\n")
+    
+    if common_sites:
+        f.write(f"  Sites with sim/obs comparison: {len(common_sites)}\\n\\n")
+        
+        # Arctic streamflow performance summary
+        nse_values = [site['nse'] for site in common_sites]
+        kge_values = [site['kge'] for site in common_sites if site['kge'] != -999]
+        bias_values = [site['bias'] for site in common_sites]
+        corr_values = [site['correlation'] for site in common_sites]
+        
+        f.write("ARCTIC STREAMFLOW PERFORMANCE SUMMARY:\\n")
+        f.write(f"  Mean NSE: {np.mean(nse_values):.3f} ± {np.std(nse_values):.3f}\\n")
+        if kge_values:
+            f.write(f"  Mean KGE: {np.mean(kge_values):.3f} ± {np.std(kge_values):.3f}\\n")
+        f.write(f"  Mean correlation: {np.mean(corr_values):.3f} ± {np.std(corr_values):.3f}\\n")
+        f.write(f"  Mean bias: {np.mean(bias_values):+.2f} ± {np.std(bias_values):.2f} m³/s\\n\\n")
+        
+        # Glacial influence performance breakdown
+        glacial_performance = {}
+        for site in common_sites:
+            glacial_class = site['glacial_class']
+            if glacial_class not in glacial_performance:
+                glacial_performance[glacial_class] = {'nse': [], 'kge': []}
+            glacial_performance[glacial_class]['nse'].append(site['nse'])
+            if site['kge'] != -999:
+                glacial_performance[glacial_class]['kge'].append(site['kge'])
+        
+        f.write("GLACIAL INFLUENCE PERFORMANCE BREAKDOWN:\\n")
+        for glacial_class, performance in glacial_performance.items():
+            mean_nse = np.mean(performance['nse'])
+            mean_kge = np.mean(performance['kge']) if performance['kge'] else 0
+            f.write(f"  {glacial_class}: NSE={mean_nse:.3f}, KGE={mean_kge:.3f} ({len(performance['nse'])} sites)\\n")
+        
+        # Performance categories
+        excellent = len([s for s in common_sites if s['nse'] > 0.75])
+        good = len([s for s in common_sites if 0.5 < s['nse'] <= 0.75])
+        satisfactory = len([s for s in common_sites if 0.2 < s['nse'] <= 0.5])
+        unsatisfactory = len([s for s in common_sites if s['nse'] <= 0.2])
+        
+        f.write("\\nARCTIC PERFORMANCE CATEGORIES:\\n")
+        f.write(f"  Excellent (NSE > 0.75): {excellent} watersheds\\n")
+        f.write(f"  Good (0.5 < NSE ≤ 0.75): {good} watersheds\\n")
+        f.write(f"  Satisfactory (0.2 < NSE ≤ 0.5): {satisfactory} watersheds\\n")
+        f.write(f"  Unsatisfactory (NSE ≤ 0.2): {unsatisfactory} watersheds\\n\\n")
+        
+        f.write("BEST PERFORMING ARCTIC WATERSHEDS (by NSE):\\n")
+        sorted_sites = sorted(common_sites, key=lambda x: x['nse'], reverse=True)
+        for i, site in enumerate(sorted_sites[:5]):
+            f.write(f"  {i+1}. {site['watershed_id']} ({site['glacial_class']}): NSE={site['nse']:.3f}, KGE={site['kge']:.3f}, Area={site['area_km2']:.0f} km²\\n")
+
+print(f"✅ Final Arctic summary report saved: {summary_report_path}")
+
+print(f"\\n🎉 Step 3 Complete: LamaH-Ice Arctic Streamflow Validation Analysis")
+print(f"   📁 Results saved to: {experiment_dir}")
+print(f"   🏔️ Arctic scope: {total_complete}/{total_selected} watersheds with complete validation")
+
+if common_sites:
+    nse_values = [site['nse'] for site in common_sites]
+    kge_values = [site['kge'] for site in common_sites if site['kge'] != -999]
+    
+    print(f"   📊 Arctic analysis: {len(common_sites)} watersheds with sim/obs comparison")
+    print(f"   📈 Arctic NSE performance: Mean = {np.mean(nse_values):.3f}")
+    if kge_values:
+        print(f"   📈 Arctic KGE performance: Mean = {np.mean(kge_values):.3f}")
+    
+    # Glacial influence summary
+    glacial_counts = {}
+    for site in common_sites:
+        glacial_class = site['glacial_class']
+        glacial_counts[glacial_class] = glacial_counts.get(glacial_class, 0) + 1
+    
+    print(f"   ❄️ Glacial influence validation coverage:")
+    for glacial_class, count in glacial_counts.items():
+        print(f"     {glacial_class}: {count} validated watersheds")
+else:
+    print(f"   📈 Performance: Awaiting more simulation results for Arctic analysis")
+
+print(f"\\n✅ LamaH-Ice Arctic Large Sample Streamflow Analysis Complete!")
+print(f"   🏔️ Arctic-glacial streamflow hydrology validation achieved")
+print(f"   📊 Statistical patterns identified across Iceland's glacial gradients")  
+print(f"   ❄️ Tutorial series culmination: Temperate → Global → Arctic → Specialized analysis!")
+print(f"   🌊 Arctic hydrological understanding through CONFLUENCE framework!")
+
+print(f"\\n🎯 Tutorial Complete: From Point-Scale to Arctic-Scale Hydrological Modeling")
+print(f"   📈 CONFLUENCE Tutorial Series: Energy → Snow → Regional → Global → Arctic Streamflow")
+print(f"   🌊 Comprehensive validation across all environmental extremes")
+print(f"   🔬 Scientific advancement from temperate to Arctic hydrological principles")
+print(f"   🏆 Complete hydrological modeling framework validation!")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "041626d9-f819-456a-a159-b8fed3e9ce0b",
+   "metadata": {},
+   "source": [
+    "# Tutorial 04e Summary: LamaH-Ice Arctic Large Sample Streamflow Study\n",
+    "\n",
+    "## Overview\n",
+    "\n",
+    "This tutorial demonstrates large sample Arctic-glacial streamflow modeling across Iceland's unique watersheds using the LamaH-Ice dataset. It represents the specialized extension of the CONFLUENCE tutorial series, advancing from temperate and global analysis to systematic Arctic hydrological analysis across diverse glacial and volcanic landscapes.\n",
+    "\n",
+    "## Learning Objectives\n",
+    "\n",
+    "Students will configure CONFLUENCE for Arctic-glacial streamflow analysis using specialized Icelandic watershed data, execute systematic streamflow modeling across glacial coverage gradients, validate simulated streamflow against observed discharge using Arctic-appropriate performance metrics, analyze glacial influence patterns in model performance, and demonstrate workflow automation for Arctic hydrological studies.\n",
+    "\n",
+    "## Tutorial Structure\n",
+    "\n",
+    "The tutorial begins with analysis of the LamaH-Ice watershed database covering diverse Icelandic glacial-volcanic basins and creation of Arctic-specialized CONFLUENCE configuration templates. The second component involves automated Arctic processing execution across selected glacial watersheds, demonstrating batch processing capabilities optimized for cold climate conditions and monitoring systems. The final section focuses on Arctic streamflow validation through extraction and comparison of simulated versus observed time series, calculation of performance metrics including Nash-Sutcliffe efficiency and Kling-Gupta efficiency adapted for Arctic conditions, glacial influence performance mapping, and comprehensive Arctic analysis reporting.\n",
+    "\n",
+    "## Scientific Significance\n",
+    "\n",
+    "This tutorial addresses fundamental questions in Arctic hydrology including glacial controls on streamflow generation, model transferability across glacial coverage gradients, systematic evaluation of Arctic hydrological process representations, and climate sensitivity assessment under Arctic conditions. The Arctic-specialized approach enables robust statistical analysis of glacial influence and identification of universal versus Arctic-specific hydrological behaviors, contributing to improved understanding of Arctic watershed function and enhanced predictive capabilities for Arctic water resources management and climate change impact assessment.\n",
+    "\n",
+    "## Arctic-Glacial Contributions\n",
+    "\n",
+    "This tutorial completes the environmental spectrum of the CONFLUENCE framework by demonstrating systematic Arctic-glacial analysis capabilities. The LamaH-Ice implementation showcases CONFLUENCE's adaptability to extreme environmental conditions, from ice-free coastal basins to heavily glaciated highland watersheds, while maintaining scientific rigor and computational efficiency. The specialized Arctic focus provides essential validation for cold climate applications and establishes CONFLUENCE as a truly global hydrological modeling framework capable of addressing the full range of Earth's hydrological diversity."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.7"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

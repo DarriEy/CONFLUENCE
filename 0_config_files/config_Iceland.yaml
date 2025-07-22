@@ -127,7 +127,7 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 FORCING_PATH: default                                          # If default, uses, self.project_dir / forcing / raw_data
 
 # EM-Earth forcing supplementation settings
-SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
+SUPPLEMENT_FORCING: True                                       # Supplement forcing data with precip and temperature from EM-EARTH
 EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
 EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
 EM_PRCP: 'prcp_corrected'
