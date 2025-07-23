@@ -43,6 +43,55 @@ import re
 import fcntl
 import random
 
+
+def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
+    """Safe worker function with proper cleanup and resource management"""
+    import os
+    import gc
+    import tempfile
+    import signal
+    import sys
+    
+    # Set up signal handler for clean termination
+    def signal_handler(signum, frame):
+        sys.exit(1)
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Force garbage collection at start
+    gc.collect()
+    
+    try:
+        # Set environment for single-threaded, isolated execution
+        os.environ.update({
+            'OMP_NUM_THREADS': '1',
+            'MKL_NUM_THREADS': '1',
+            'OPENBLAS_NUM_THREADS': '1',
+            'NETCDF_DISABLE_LOCKING': '1',
+            'HDF5_USE_FILE_LOCKING': 'FALSE'
+        })
+        
+        # Call the original worker function
+        result = _evaluate_parameters_worker(task_data)
+        
+        # Force cleanup
+        gc.collect()
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        return {
+            'individual_id': task_data.get('individual_id', -1),
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': f'Safe worker exception: {str(e)}\n{traceback.format_exc()}'
+        }
+    
+    finally:
+        # Final cleanup
+        gc.collect()
 # ============= ABSTRACT BASE CLASSES =============
 
 class CalibrationTarget(ABC):
@@ -1957,9 +2006,15 @@ class DEOptimizer:
             trial_scores[individual_id] = result['score'] if result['score'] is not None else float('-inf')
         
         return trial_scores
-    
+        
     def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
-        """Run parallel evaluations using process pool"""
+        """Run parallel evaluations using fresh processes for each task"""
+        import multiprocessing as mp
+        from concurrent.futures import as_completed
+        import subprocess
+        import tempfile
+        import pickle
+        
         start_time = time.time()
         num_tasks = len(evaluation_tasks)
         
@@ -1995,54 +2050,64 @@ class DEOptimizer:
             
             worker_tasks.append(task_data)
         
-        # Execute tasks in parallel
+        # Execute with limited concurrency to avoid overwhelming system
+        max_concurrent = min(self.num_processes, 10)  # Limit concurrent processes
         results = []
         completed_count = 0
         
         try:
-            with ProcessPoolExecutor(max_workers=self.num_processes) as executor:
-                # Submit all tasks
-                future_to_task = {
-                    executor.submit(_evaluate_parameters_worker, task_data): task_data
-                    for task_data in worker_tasks
-                }
+            # Process tasks in batches to avoid overwhelming the system
+            batch_size = max_concurrent
+            for batch_start in range(0, len(worker_tasks), batch_size):
+                batch_end = min(batch_start + batch_size, len(worker_tasks))
+                batch_tasks = worker_tasks[batch_start:batch_end]
                 
-                # Collect results as they complete
-                for future in as_completed(future_to_task):
-                    completed_count += 1
+                # Submit batch with fresh processes
+                with ProcessPoolExecutor(max_workers=len(batch_tasks)) as executor:
+                    future_to_task = {
+                        executor.submit(_evaluate_parameters_worker_safe, task_data): task_data
+                        for task_data in batch_tasks
+                    }
                     
-                    try:
-                        result = future.result(timeout=1800)  # 30 minute timeout
-                        results.append(result)
+                    # Collect results for this batch
+                    for future in as_completed(future_to_task):
+                        completed_count += 1
                         
-                        if result['score'] is not None:
-                            self.logger.info(f"✅ Task {completed_count}/{num_tasks} completed - score={result['score']:.6f}")
-                        else:
-                            self.logger.error(f"❌ Task {completed_count}/{num_tasks} failed: {result.get('error', 'Unknown error')}")
-                    
-                    except Exception as e:
-                        task_data = future_to_task[future]
-                        error_result = {
-                            'individual_id': task_data['individual_id'],
-                            'params': task_data['params'],
-                            'score': None,
-                            'error': f'Task exception: {str(e)}'
-                        }
-                        results.append(error_result)
-                        self.logger.error(f"❌ Task {completed_count}/{num_tasks} exception: {str(e)}")
+                        try:
+                            result = future.result(timeout=2400)  # 40 minute timeout per task
+                            results.append(result)
+                            
+                            if result['score'] is not None:
+                                self.logger.info(f"✅ Task {completed_count}/{num_tasks} completed - score={result['score']:.6f}")
+                            else:
+                                self.logger.warning(f"❌ Task {completed_count}/{num_tasks} failed: {result.get('error', 'Unknown error')}")
+                        
+                        except Exception as e:
+                            task_data = future_to_task[future]
+                            error_result = {
+                                'individual_id': task_data['individual_id'],
+                                'params': task_data['params'],
+                                'score': None,
+                                'error': f'Task exception: {str(e)}'
+                            }
+                            results.append(error_result)
+                            self.logger.error(f"❌ Task {completed_count}/{num_tasks} exception: {str(e)}")
+                
+                # Small delay between batches to let system recover
+                if batch_end < len(worker_tasks):
+                    time.sleep(2)
             
             # Final summary
             elapsed = time.time() - start_time
             successful_count = sum(1 for r in results if r['score'] is not None)
             
             self.logger.info(f"Parallel evaluation completed: {successful_count}/{num_tasks} successful "
-                           f"({100*successful_count/num_tasks:.1f}%) in {elapsed/60:.1f} minutes")
+                        f"({100*successful_count/num_tasks:.1f}%) in {elapsed/60:.1f} minutes")
             
             return results
             
         except Exception as e:
             self.logger.error(f"Critical error in parallel evaluation: {str(e)}")
-            # Return failure results for all tasks
             return [
                 {
                     'individual_id': task['individual_id'],
@@ -2052,6 +2117,7 @@ class DEOptimizer:
                 }
                 for task in evaluation_tasks
             ]
+
     
     def _evaluate_individual(self, normalized_params: np.ndarray) -> float:
         """Evaluate a single parameter set (sequential mode)"""
@@ -2506,7 +2572,11 @@ def _update_mizuroute_params_worker(params: Dict, task_data: Dict, logger) -> bo
 
 
 def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger) -> bool:
-    """Generate trial parameters file in worker process"""
+    """Generate trial parameters file in worker process with file locking"""
+    import time
+    import random
+    import os
+    
     try:
         if not params:
             return True
@@ -2518,58 +2588,96 @@ def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger) -> b
             logger.error(f"Attributes file not found: {attr_file_path}")
             return False
         
-        # Define parameter levels
-        routing_params = ['routingGammaShape', 'routingGammaScale']
-        basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
-        gru_level_params = routing_params + basin_params
+        # Add retry logic with file locking
+        max_retries = 5
+        base_delay = 0.1
         
-        with xr.open_dataset(attr_file_path) as ds:
-            num_hrus = ds.sizes.get('hru', 1)
-            num_grus = ds.sizes.get('gru', 1)
-            hru_ids = ds['hruId'].values if 'hruId' in ds else np.arange(1, num_hrus + 1)
-            gru_ids = ds['gruId'].values if 'gruId' in ds else np.array([1])
-        
-        with nc.Dataset(trial_params_path, 'w', format='NETCDF4') as output_ds:
-            # Create dimensions
-            output_ds.createDimension('hru', num_hrus)
-            output_ds.createDimension('gru', num_grus)
-            
-            # Create coordinate variables
-            hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
-            hru_var[:] = hru_ids
-            
-            gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
-            gru_var[:] = gru_ids
-            
-            # Add parameters
-            for param_name, param_values in params.items():
-                param_values_array = np.asarray(param_values)
+        for attempt in range(max_retries):
+            try:
+                # Create temporary file first, then move it
+                temp_path = trial_params_path.with_suffix(f'.tmp_{os.getpid()}_{random.randint(1000,9999)}')
                 
-                if param_values_array.ndim > 1:
-                    param_values_array = param_values_array.flatten()
+                # Define parameter levels
+                routing_params = ['routingGammaShape', 'routingGammaScale']
+                basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
+                gru_level_params = routing_params + basin_params
                 
-                if param_name in gru_level_params:
-                    # GRU-level parameters
-                    param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
-                    param_var.long_name = f"Trial value for {param_name}"
+                with xr.open_dataset(attr_file_path) as ds:
+                    num_hrus = ds.sizes.get('hru', 1)
+                    num_grus = ds.sizes.get('gru', 1)
+                    hru_ids = ds['hruId'].values if 'hruId' in ds else np.arange(1, num_hrus + 1)
+                    gru_ids = ds['gruId'].values if 'gruId' in ds else np.array([1])
+                
+                # Write to temporary file with exclusive access
+                with nc.Dataset(temp_path, 'w', format='NETCDF4') as output_ds:
+                    # Create dimensions
+                    output_ds.createDimension('hru', num_hrus)
+                    output_ds.createDimension('gru', num_grus)
                     
-                    if len(param_values_array) >= num_grus:
-                        param_var[:] = param_values_array[:num_grus]
-                    else:
-                        param_var[:] = param_values_array[0]
+                    # Create coordinate variables
+                    hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
+                    hru_var[:] = hru_ids
+                    
+                    gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
+                    gru_var[:] = gru_ids
+                    
+                    # Add parameters
+                    for param_name, param_values in params.items():
+                        param_values_array = np.asarray(param_values)
+                        
+                        if param_values_array.ndim > 1:
+                            param_values_array = param_values_array.flatten()
+                        
+                        if param_name in gru_level_params:
+                            # GRU-level parameters
+                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            
+                            if len(param_values_array) >= num_grus:
+                                param_var[:] = param_values_array[:num_grus]
+                            else:
+                                param_var[:] = param_values_array[0]
+                        else:
+                            # HRU-level parameters
+                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            
+                            if len(param_values_array) == num_hrus:
+                                param_var[:] = param_values_array
+                            elif len(param_values_array) == 1:
+                                param_var[:] = param_values_array[0]
+                            else:
+                                param_var[:] = param_values_array[:num_hrus]
+                
+                # Atomically move temporary file to final location
+                try:
+                    os.chmod(temp_path, 0o664)  # Set appropriate permissions
+                    temp_path.rename(trial_params_path)
+                    return True
+                except Exception as move_error:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    raise move_error
+                
+            except (OSError, IOError, PermissionError) as e:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+                
+                # Clean up temp file if it exists
+                if 'temp_path' in locals() and temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except:
+                        pass
+                
+                if attempt < max_retries - 1:
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)
+                    time.sleep(delay)
                 else:
-                    # HRU-level parameters
-                    param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
-                    param_var.long_name = f"Trial value for {param_name}"
-                    
-                    if len(param_values_array) == num_hrus:
-                        param_var[:] = param_values_array
-                    elif len(param_values_array) == 1:
-                        param_var[:] = param_values_array[0]
-                    else:
-                        param_var[:] = param_values_array[:num_hrus]
+                    logger.error(f"Failed to generate trial params after {max_retries} attempts: {str(e)}")
+                    return False
         
-        return True
+        return False
         
     except Exception as e:
         logger.error(f"Error generating trial params: {str(e)}")

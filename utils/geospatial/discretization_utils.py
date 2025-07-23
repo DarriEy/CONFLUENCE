@@ -645,7 +645,6 @@ class DomainDiscretizer:
             self.logger.warning(f"Error creating HRU for combination {combination}: {str(e)}")
             return None
 
-
     def _use_grus_as_hrus(self):
         """
         Use Grouped Response Units (GRUs) as Hydrologic Response Units (HRUs) without further discretization.
@@ -672,32 +671,76 @@ class DomainDiscretizer:
         gru_gdf['HRU_ID'] = range(1, len(gru_gdf) + 1)
         gru_gdf['hru_type'] = 'GRU'
 
-        # Calculate mean elevation for each HRU
+        # Calculate mean elevation for each HRU with proper CRS handling
         self.logger.info("Calculating mean elevation for each HRU")
+        
+        # Get CRS information
         with rasterio.open(self.dem_path) as src:
-            dem_data = src.read(1)
-            dem_affine = src.transform
-            dem_nodata = src.nodata
-
-        # Use rasterstats to calculate zonal statistics with explicit nodata
-        zs = rasterstats.zonal_stats(
-            gru_gdf.geometry, 
-            dem_data, 
-            affine=dem_affine, 
-            stats=['mean'],
-            nodata=dem_nodata if dem_nodata is not None else -9999
-        )
-        gru_gdf['elev_mean'] = [item['mean'] for item in zs]
+            dem_crs = src.crs
+            self.logger.info(f"DEM CRS: {dem_crs}")
+        
+        shapefile_crs = gru_gdf.crs
+        self.logger.info(f"Shapefile CRS: {shapefile_crs}")
+        
+        # Check if CRS match
+        if dem_crs != shapefile_crs:
+            self.logger.info(f"CRS mismatch detected. Reprojecting shapefile from {shapefile_crs} to {dem_crs}")
+            gru_gdf_projected = gru_gdf.to_crs(dem_crs)
+        else:
+            self.logger.info("CRS match - no reprojection needed")
+            gru_gdf_projected = gru_gdf.copy()
+        
+        # Use rasterstats with the raster file path directly (more efficient and handles CRS properly)
+        try:
+            zs = rasterstats.zonal_stats(
+                gru_gdf_projected.geometry, 
+                str(self.dem_path),  # Use file path instead of array
+                stats=['mean'],
+                nodata=-9999  # Explicit nodata value
+            )
+            gru_gdf['elev_mean'] = [item['mean'] if item['mean'] is not None else -9999 for item in zs]
+            self.logger.info(f"Successfully calculated elevation statistics for {len(gru_gdf)} HRUs")
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating zonal statistics: {str(e)}")
+            # Fallback: set all elevation means to -9999
+            gru_gdf['elev_mean'] = -9999
+            self.logger.warning("Setting all elevation means to -9999 due to calculation error")
         
         # Calculate centroids in projected CRS for accuracy
-        # Project to UTM for accurate centroid calculation
-        utm_crs = gru_gdf.estimate_utm_crs()
-        gru_gdf_utm = gru_gdf.to_crs(utm_crs)
-        centroids_utm = gru_gdf_utm.geometry.centroid
-        centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
-        
-        gru_gdf['center_lon'] = centroids_wgs84.x
-        gru_gdf['center_lat'] = centroids_wgs84.y
+        # Project to UTM for accurate centroid calculation if not already in UTM
+        try:
+            if gru_gdf.crs.is_geographic:
+                utm_crs = gru_gdf.estimate_utm_crs()
+                gru_gdf_utm = gru_gdf.to_crs(utm_crs)
+            else:
+                # Already in projected coordinate system
+                gru_gdf_utm = gru_gdf.copy()
+                utm_crs = gru_gdf.crs
+            
+            centroids_utm = gru_gdf_utm.geometry.centroid
+            centroids_wgs84 = centroids_utm.to_crs(CRS.from_epsg(4326))
+            
+            gru_gdf['center_lon'] = centroids_wgs84.x
+            gru_gdf['center_lat'] = centroids_wgs84.y
+            
+            self.logger.info(f"Calculated centroids in WGS84: lat range {centroids_wgs84.y.min():.6f} to {centroids_wgs84.y.max():.6f}, lon range {centroids_wgs84.x.min():.6f} to {centroids_wgs84.x.max():.6f}")
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating centroids: {str(e)}")
+            # Fallback: try to use existing center_lat/center_lon if they exist and look reasonable
+            if 'center_lat' in gru_gdf.columns and 'center_lon' in gru_gdf.columns:
+                # Check if existing values look like actual lat/lon (rough check)
+                if (gru_gdf['center_lat'].between(-90, 90).all() and 
+                    gru_gdf['center_lon'].between(-180, 180).all()):
+                    self.logger.info("Using existing center_lat/center_lon coordinates")
+                else:
+                    self.logger.warning("Existing center_lat/center_lon appear to be in projected coordinates, setting to default values")
+                    gru_gdf['center_lat'] = 0.0
+                    gru_gdf['center_lon'] = 0.0
+            else:
+                gru_gdf['center_lat'] = 0.0
+                gru_gdf['center_lon'] = 0.0
         
         if 'COMID' in gru_gdf.columns:
             gru_gdf['GRU_ID'] = gru_gdf['COMID']
@@ -1468,23 +1511,31 @@ class DomainDiscretizer:
         # Convert back to original CRS
         hru_gdf = hru_gdf_utm.to_crs(hru_gdf.crs)
         
-        # Calculate mean elevation for each HRU
+        # Calculate mean elevation for each HRU with proper CRS handling
         self.logger.info("Calculating mean elevation for each HRU")
         try:
+            # Get CRS information
             with rasterio.open(self.dem_path) as src:
-                dem_data = src.read(1)
-                dem_affine = src.transform
-                dem_nodata = src.nodata
-
-            # Use rasterstats to calculate zonal statistics with explicit nodata
+                dem_crs = src.crs
+            
+            shapefile_crs = hru_gdf.crs
+            
+            # Check if CRS match
+            if dem_crs != shapefile_crs:
+                self.logger.info(f"CRS mismatch detected. Reprojecting HRUs from {shapefile_crs} to {dem_crs}")
+                hru_gdf_projected = hru_gdf.to_crs(dem_crs)
+            else:
+                hru_gdf_projected = hru_gdf.copy()
+            
+            # Use rasterstats with the raster file path directly (more efficient and handles CRS properly)
             zs = rasterstats.zonal_stats(
-                hru_gdf.geometry, 
-                dem_data, 
-                affine=dem_affine, 
+                hru_gdf_projected.geometry, 
+                str(self.dem_path),  # Use file path instead of array
                 stats=['mean'],
-                nodata=dem_nodata if dem_nodata is not None else -9999
+                nodata=-9999  # Explicit nodata value
             )
             hru_gdf['elev_mean'] = [item['mean'] if item['mean'] is not None else -9999 for item in zs]
+            
         except Exception as e:
             self.logger.error(f"Error calculating mean elevation: {str(e)}")
             hru_gdf['elev_mean'] = -9999

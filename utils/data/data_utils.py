@@ -690,7 +690,10 @@ class ObservedDataProcessor:
         
     def _process_vi_data(self):
         self.logger.info("Processing VI (Iceland) streamflow data")
-        vi_data = pd.read_csv(self.streamflow_raw_path / self.streamflow_raw_name, 
+
+        vi_files = list(self.streamflow_raw_path.glob('*.csv'))
+        vi_file = vi_files[0]
+        vi_data = pd.read_csv(vi_file, 
                               sep=';', 
                               header=None, 
                               names=['YYYY', 'MM', 'DD', 'qobs', 'qc_flag'],

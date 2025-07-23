@@ -209,6 +209,9 @@ def generate_config_file(template_path, output_path, domain_name, basin_path, ba
     # Update domain discretization to use GRUs
     config_content = re.sub(r'DOMAIN_DISCRETIZATION:.*', f'DOMAIN_DISCRETIZATION: GRUs', config_content)
 
+    # Update optimisation method to use GRUs
+    config_content = re.sub(r'OPTIMISATION_METHODS:.*', f'OPTIMISATION_METHODS: [iteration]', config_content)
+
     # Update domain shapefile 
     config_content = re.sub(r'RIVER_BASINS_NAME:.*', f'RIVER_BASINS_NAME: temp_basin.shp', config_content)
 
@@ -314,7 +317,7 @@ def run_confluence(config_path, watershed_name, dry_run=False):
 #SBATCH --job-name={watershed_name}
 #SBATCH --output=CONFLUENCE_{watershed_name}_%j.log
 #SBATCH --error=CONFLUENCE_{watershed_name}_%j.err
-#SBATCH --time=40:00:00
+#SBATCH --time=96:00:00
 #SBATCH --ntasks=1
 #SBATCH --mem=1G
 
@@ -613,3 +616,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
