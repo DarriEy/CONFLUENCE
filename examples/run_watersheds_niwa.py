@@ -236,13 +236,13 @@ def extract_station_timeseries(netcdf_file, station_id, output_file):
         
         # Create DataFrame
         data = {
-            'date': times,
-            'discharge': flow_data
+            'datetime': times,
+            'discharge_cms': flow_data
         }
         df = pd.DataFrame(data)
         
         # Replace NaN values with -9999
-        df['discharge'] = df['discharge'].replace(-9999, np.nan)
+        df['discharge_cms'] = df['discharge_cms'].replace(-9999, np.nan)
         
         # Save to CSV
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -293,6 +293,7 @@ def generate_config_file(template_path, output_path, domain_name, basin_path, ba
     
     config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/Oceania', config_content)
     config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/Oceania', config_content)
+    config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: Oceania', config_content)
 
     # Update pour point coordinates if provided and valid
     if pour_point and str(pour_point).lower() != 'nan' and '/' in str(pour_point):
@@ -539,10 +540,10 @@ def process_nz_watersheds(flowdata_nc, metainfo_excel, attrs_excel, output_dir, 
         bounding_box = calculate_bounding_box(latitude, longitude, buffer_degrees=0.1)
         
         # Extract streamflow data for this station
-        obs_dir = domain_dir / "observations" / "streamflow" / "raw_data"
+        obs_dir = domain_dir / "observations" / "streamflow" / "preprocessed"
         obs_dir.mkdir(parents=True, exist_ok=True)
         
-        output_file = obs_dir / f"{watershed_id}_streamflow.csv"
+        output_file = obs_dir / f"{watershed_id}_streamflow_processed.csv"
         extract_success = extract_station_timeseries(flowdata_nc, station_id, output_file)
         
         if not extract_success:

@@ -3,8 +3,7 @@
 from pathlib import Path
 import logging
 from typing import Dict, Any, Optional, List
-import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 import calendar
 import xarray as xr
 import geopandas as gpd
@@ -12,7 +11,8 @@ from rasterstats import zonal_stats # type: ignore
 import rasterio # type: ignore
 import numpy as np
 import pandas as pd 
-
+import multiprocessing as mp
+import time
 from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatoolRunner # type: ignore 
 from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
 from utils.data.variable_utils import VariableHandler # type: ignore 
@@ -336,10 +336,11 @@ class DataManager:
             em_earth_dir.mkdir(parents=True, exist_ok=True)
             
             # Get EM-Earth data paths from configuration
+            em_region = self.config.get('EM_EARTH_REGION', 'NorthAmerica')
             em_earth_prcp_dir = self.config.get('EM_EARTH_PRCP_DIR', 
-                '/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica')
+                f"/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/{em_region}")
             em_earth_tmean_dir = self.config.get('EM_EARTH_TMEAN_DIR',
-                '/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica')
+                f"/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/{em_region}")
             
             # Check if EM-Earth directories exist
             if not Path(em_earth_prcp_dir).exists():
@@ -467,8 +468,10 @@ class DataManager:
             Path to processed file, or None if processing failed
         """
         # Find input files for this month
-        prcp_pattern = f"EM_Earth_deterministic_hourly_NorthAmerica_{year_month}.nc"
-        tmean_pattern = f"EM_Earth_deterministic_hourly_NorthAmerica_{year_month}.nc"
+        em_region = self.config.get('EM_EARTH_REGION', 'NorthAmerica')
+
+        prcp_pattern = f"EM_Earth_deterministic_hourly_{em_region}_{year_month}.nc"
+        tmean_pattern = f"EM_Earth_deterministic_hourly_{em_region}_{year_month}.nc"
         
         prcp_file = Path(prcp_dir) / prcp_pattern
         tmean_file = Path(tmean_dir) / tmean_pattern
@@ -923,6 +926,7 @@ class DataManager:
         
         This method uses spatial averaging to convert the EM-Earth gridded data to
         basin-averaged values that match the structure of the primary forcing data.
+        Uses parallel processing when multiple processors are available.
         """
         self.logger.info("Remapping EM-Earth data to basin grid")
         
@@ -948,27 +952,139 @@ class DataManager:
             em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
             em_earth_files = sorted(em_earth_dir.glob("watershed_subset_*.nc"))
             
-            # Process each EM-Earth file
+            if not em_earth_files:
+                self.logger.warning("No EM-Earth files found for remapping")
+                return
+            
+            # Filter out files that already exist (unless forcing rerun)
+            files_to_process = []
             for em_file in em_earth_files:
                 output_file = remapped_dir / f"remapped_{em_file.name}"
-                
-                # Skip if output already exists and not forcing rerun
-                if output_file.exists() and not self.config.get('FORCE_RUN_ALL_STEPS', False):
-                    continue
-                
-                #self.logger.info(f"Remapping {em_file.name}")
-                
-                # Use easymore or similar tool for remapping
-                # For now, implement a simple spatial averaging approach
-                self._remap_single_em_earth_file(em_file, output_file, basin_shapefile)
+                if not output_file.exists() or self.config.get('FORCE_RUN_ALL_STEPS', False):
+                    files_to_process.append(em_file)
+            
+            if not files_to_process:
+                self.logger.info("All EM-Earth files already remapped, skipping")
+                return
+            
+            self.logger.info(f"Found {len(files_to_process)} EM-Earth files to remap")
+            
+            # Check if we should use parallel processing
+            num_processes = self.config.get('MPI_PROCESSES', 1)
+            use_parallel = num_processes > 1 and len(files_to_process) > 1
+            
+            if use_parallel:
+                self.logger.info(f"Using parallel processing with {num_processes} workers")
+                self._remap_em_earth_files_parallel(files_to_process, basin_shapefile, remapped_dir, num_processes)
+            else:
+                self.logger.info("Using sequential processing")
+                self._remap_em_earth_files_sequential(files_to_process, basin_shapefile, remapped_dir)
             
         except Exception as e:
             self.logger.error(f"Error remapping EM-Earth data: {str(e)}")
             raise
 
+    def _remap_em_earth_files_sequential(self, files_to_process, basin_shapefile, remapped_dir):
+        """
+        Remap EM-Earth files sequentially (original method).
+        
+        Args:
+            files_to_process: List of EM-Earth files to process
+            basin_shapefile: Path to basin shapefile
+            remapped_dir: Output directory for remapped files
+        """
+        # Process each EM-Earth file
+        for i, em_file in enumerate(files_to_process, 1):
+            output_file = remapped_dir / f"remapped_{em_file.name}"
+            
+            self.logger.info(f"Processing file {i}/{len(files_to_process)}: {em_file.name}")
+            
+            try:
+                self._remap_single_em_earth_file(em_file, output_file, basin_shapefile)
+                self.logger.info(f"✓ Successfully remapped {em_file.name}")
+            except Exception as e:
+                self.logger.error(f"✗ Failed to remap {em_file.name}: {str(e)}")
+                continue
+
+    def _remap_em_earth_files_parallel(self, files_to_process, basin_shapefile, remapped_dir, num_processes):
+        """
+        Remap EM-Earth files in parallel using multiprocessing.
+        
+        Args:
+            files_to_process: List of EM-Earth files to process
+            basin_shapefile: Path to basin shapefile
+            remapped_dir: Output directory for remapped files
+            num_processes: Number of parallel processes to use
+        """
+
+        
+        # Limit workers to available files
+        num_workers = min(num_processes, len(files_to_process))
+        
+        self.logger.info(f"Starting parallel EM-Earth remapping with {num_workers} workers")
+        
+        # Create shared arguments for workers
+        worker_args = []
+        for em_file in files_to_process:
+            output_file = remapped_dir / f"remapped_{em_file.name}"
+            worker_args.append((
+                str(em_file),
+                str(output_file), 
+                str(basin_shapefile),
+                self.config.copy()  # Pass config copy to workers
+            ))
+        
+        # Start timer
+        start_time = time.time()
+        
+        # Create and run process pool
+        with mp.Pool(processes=num_workers) as pool:
+            try:
+                # Use map_async for better error handling and progress tracking
+                result = pool.map_async(
+                    _remap_em_earth_worker, 
+                    worker_args,
+                    chunksize=1
+                )
+                
+                # Wait for completion with timeout checking
+                results = []
+                while True:
+                    try:
+                        results = result.get(timeout=30)  # Check every 30 seconds
+                        break
+                    except mp.TimeoutError:
+                        # Log progress periodically
+                        if hasattr(result, '_number_left'):
+                            completed = len(worker_args) - result._number_left
+                            self.logger.info(f"Parallel remapping progress: {completed}/{len(worker_args)} files completed")
+                        continue
+                
+            except Exception as e:
+                self.logger.error(f"Error in parallel processing: {str(e)}")
+                # Terminate pool
+                pool.terminate()
+                pool.join()
+                raise
+        
+        # Process results
+        successful = sum(results)
+        failed = len(files_to_process) - successful
+        elapsed_time = time.time() - start_time
+        
+        self.logger.info(f"Parallel EM-Earth remapping completed in {elapsed_time:.1f} seconds")
+        self.logger.info(f"Success rate: {successful}/{len(files_to_process)} files ({successful/len(files_to_process)*100:.1f}%)")
+        
+        if failed > 0:
+            self.logger.warning(f"{failed} files failed to process")
+        
+        if successful == 0:
+            raise ValueError("No EM-Earth files were successfully remapped")
+
     def _remap_single_em_earth_file(self, input_file: Path, output_file: Path, basin_shapefile: Path):
         """
         Remap a single EM-Earth file to basin-averaged values.
+        Updated to be more robust for parallel processing.
         
         Args:
             input_file: Path to EM-Earth NetCDF file
@@ -976,11 +1092,19 @@ class DataManager:
             basin_shapefile: Path to basin shapefile for spatial averaging
         """
         try:
+
             # Read EM-Earth data
             em_ds = xr.open_dataset(input_file)
             
             # Read basin shapefile
             basins_gdf = gpd.read_file(basin_shapefile)
+            
+            # Check and reproject shapefile to WGS84 if necessary
+            original_crs = basins_gdf.crs
+            if basins_gdf.crs is None:
+                basins_gdf = basins_gdf.set_crs('EPSG:4326')
+            elif not basins_gdf.crs.equals(4326) and not basins_gdf.crs.to_string().upper() == 'EPSG:4326':
+                basins_gdf = basins_gdf.to_crs('EPSG:4326')
             
             # Get basin ID column
             basin_id_col = self.config.get('RIVER_BASIN_SHP_RM_GRUID', 'GRU_ID')
@@ -1007,13 +1131,8 @@ class DataManager:
             small_watershed_flag = em_ds.attrs.get('small_watershed_processing', 0)
             spatial_averaging_flag = em_ds.attrs.get('spatial_averaging_applied', 0)
             
-            #self.logger.info(f"Small watershed processing flag: {small_watershed_flag}")
-            #self.logger.info(f"Spatial averaging applied flag: {spatial_averaging_flag}")
-            
             # Use either dimension check or flag check
             is_single_point = is_single_point or (small_watershed_flag == 1) or (spatial_averaging_flag == 1)
-            
-            #self.logger.info(f"Final is_single_point decision: {is_single_point}")
             
             # Process variables - restart with single-point if multi-point fails
             processing_attempt = 0
@@ -1023,72 +1142,39 @@ class DataManager:
                 processing_attempt += 1
                 
                 if is_single_point:
-                    self.logger.info("Processing spatially averaged small watershed - using direct value assignment")
-                    
-                    # For single point data, assign the same value to all basins
+                    # Single point processing (faster)
                     for var_name in em_ds.data_vars:
                         if var_name in ['prcp', 'prcp_corrected', 'tmean']:
-                            #self.logger.info(f"Processing variable: {var_name}")
-                            
                             # Get variable data (single point for all times)
                             var_data = em_ds[var_name]
                             
                             # Extract time series - handle different possible shapes
-                            #self.logger.info(f"Time dimension location: {var_data.dims.index('time')}")
-                            
-                            if len(var_data.dims) == 3:  # (time, lat, lon) or (lon, lat, time) etc.
+                            if len(var_data.dims) == 3:  # (time, lat, lon) or similar
                                 time_dim_index = var_data.dims.index('time')
-                                #self.logger.info(f"3D data with time at index {time_dim_index}")
-                                
                                 if time_dim_index == 0:  # (time, lat, lon)
                                     time_series = var_data.values[:, 0, 0]
-                                    #self.logger.info(f"Extracting as [:, 0, 0] from shape {var_data.shape}")
-                                elif time_dim_index == 1:  # (lat, time, lon) - unusual but possible
+                                elif time_dim_index == 1:  # (lat, time, lon)
                                     time_series = var_data.values[0, :, 0]
-                                    #self.logger.info(f"Extracting as [0, :, 0] from shape {var_data.shape}")
-                                elif time_dim_index == 2:  # (lon, lat, time) or (lat, lon, time)
+                                elif time_dim_index == 2:  # (lat, lon, time)
                                     time_series = var_data.values[0, 0, :]
-                                    #self.logger.info(f"Extracting as [0, 0, :] from shape {var_data.shape}")
-                                else:
-                                    raise ValueError(f"Unexpected time dimension index: {time_dim_index}")
-                                    
                             elif len(var_data.dims) == 1:  # Already time series
                                 if var_data.dims[0] == 'time':
                                     time_series = var_data.values
-                                    #self.logger.info(f"Using 1D time series directly")
-                                else:
-                                    raise ValueError(f"1D data but dimension is not time: {var_data.dims}")
-                                    
                             elif len(var_data.dims) == 2 and 'time' in var_data.dims:
-                                # Could be (time, lat) or (time, lon) or (lat, time) etc.
                                 time_dim_index = var_data.dims.index('time')
-                                #self.logger.info(f"2D data with time at index {time_dim_index}")
-                                
                                 if time_dim_index == 0:
                                     time_series = var_data.values[:, 0] if var_data.shape[1] > 0 else var_data.values.flatten()
-                                    #self.logger.info(f"Extracting as [:, 0] from shape {var_data.shape}")
                                 else:
                                     time_series = var_data.values[0, :] if var_data.shape[0] > 0 else var_data.values.flatten()
-                                    #self.logger.info(f"Extracting as [0, :] from shape {var_data.shape}")
-                            else:
-                                self.logger.error(f"Unexpected variable dimensions: {var_data.dims}, shape: {var_data.shape}")
-                                raise ValueError(f"Cannot handle variable {var_name} with dimensions {var_data.dims}")
                             
                             # Ensure it's a 1D array
                             time_series = np.asarray(time_series).flatten()
-                            
-                            # Ensure we have the right number of time steps
-                            if len(time_series) != len(em_ds.time):
-                                self.logger.error(f"Time series length ({len(time_series)}) doesn't match time coordinate length ({len(em_ds.time)})")
-                                raise ValueError(f"Time dimension mismatch for variable {var_name}")
                             
                             # Create basin-averaged values by repeating the time series for all basins
                             basin_values = np.tile(
                                 time_series.reshape(-1, 1),  # Ensure column vector shape (time, 1)
                                 (1, len(basin_ids))          # Repeat for each basin (time, hru)
-                            )                            
-                            #self.logger.info(f"Basin values shape: {basin_values.shape}")
-                            #self.logger.info(f"Expected shape: ({len(em_ds.time)}, {len(basin_ids)})")
+                            )
                             
                             # Add to output dataset
                             output_ds[var_name] = xr.DataArray(
@@ -1098,7 +1184,7 @@ class DataManager:
                                 attrs=var_data.attrs
                             )
                             
-                            # Update attributes to indicate single point processing
+                            # Update attributes
                             output_ds[var_name].attrs.update({
                                 'spatial_processing': 'single_point_replication',
                                 'note': 'Single spatially-averaged value applied to all basins'
@@ -1108,15 +1194,11 @@ class DataManager:
                     break
                 
                 else:
-                    self.logger.info("Processing multi-point EM-Earth data - using zonal statistics")
-                    
-                    # Process each variable using zonal statistics (original approach)
+                    # Multi-point processing using zonal statistics
                     fallback_needed = False
                     
                     for var_name in em_ds.data_vars:
                         if var_name in ['prcp', 'prcp_corrected', 'tmean']:
-                            #self.logger.info(f"Processing variable: {var_name}")
-                            
                             # Get variable data
                             var_data = em_ds[var_name]
                             
@@ -1125,44 +1207,32 @@ class DataManager:
                             
                             # Create rasterio transform for zonal statistics
                             try:
-                                # Check for valid spatial extent before creating transform
+                                # Check for valid spatial extent
                                 lat_min, lat_max = float(em_ds.lat.min()), float(em_ds.lat.max())
                                 lon_min, lon_max = float(em_ds.lon.min()), float(em_ds.lon.max())
                                 
-                                #self.logger.info(f"Spatial extent - Lat: {lat_min} to {lat_max}, Lon: {lon_min} to {lon_max}")
-                                
-                                # Check for zero extent (which would cause division by zero)
+                                # Check for zero extent
                                 lat_extent = lat_max - lat_min
                                 lon_extent = lon_max - lon_min
                                 
                                 if lat_extent == 0 or lon_extent == 0:
-                                    self.logger.warning(f"Zero spatial extent detected (lat: {lat_extent}, lon: {lon_extent})")
-                                    self.logger.warning("Falling back to single-point processing")
-                                    
                                     # Force single-point processing
                                     is_single_point = True
                                     fallback_needed = True
-                                    break  # Break out of variable loop to restart with single-point logic
+                                    break
                                 
                                 transform = rasterio.transform.from_bounds(
                                     lon_min, lat_min, lon_max, lat_max,
                                     len(em_ds.lon), len(em_ds.lat)
                                 )
                                 
-                                self.logger.info(f"Created transform: {transform}")
-                                
                             except Exception as e:
-                                self.logger.error(f"Failed to create rasterio transform: {str(e)}")
-                                self.logger.error(f"Lon range: {lon_min} to {lon_max}")
-                                self.logger.error(f"Lat range: {lat_min} to {lat_max}")
-                                self.logger.error(f"Grid size: {len(em_ds.lon)} x {len(em_ds.lat)}")
-                                
                                 # Fall back to single-point processing
-                                self.logger.warning("Falling back to single-point processing due to transform error")
                                 is_single_point = True
                                 fallback_needed = True
                                 break
                             
+                            # Process each time step
                             for t_idx, time_val in enumerate(em_ds.time):
                                 # Get data for this time step
                                 time_data = var_data.isel(time=t_idx)
@@ -1177,8 +1247,7 @@ class DataManager:
                                         nodata=np.nan
                                     )
                                 except Exception as e:
-                                    self.logger.error(f"Zonal statistics failed for time {t_idx}: {str(e)}")
-                                    raise
+                                    raise ValueError(f"Zonal statistics failed for time {t_idx}: {str(e)}")
                                 
                                 # Store basin-averaged values
                                 for b_idx, basin_id in enumerate(basin_ids):
@@ -1209,7 +1278,7 @@ class DataManager:
                             'time': em_ds.time,
                             'hru': basin_ids
                         })
-                        continue  # Restart the while loop
+                        continue
                     else:
                         # Success - break out of retry loop
                         break
@@ -1220,8 +1289,6 @@ class DataManager:
                     raise ValueError("Failed to process EM-Earth data after multiple attempts")
                 else:
                     raise ValueError("No variables were successfully processed from EM-Earth data")
-            
-            #self.logger.info(f"Successfully processed {len(output_ds.data_vars)} variables from EM-Earth data")
             
             # Add metadata
             processing_method = 'single_point_replication' if is_single_point else 'zonal_statistics'
@@ -1239,15 +1306,21 @@ class DataManager:
             # Save remapped dataset
             output_ds.to_netcdf(output_file)
             
-            self.logger.info(f"Successfully remapped {input_file.name} to basin grid using {processing_method}")
-            
             # Close datasets
             em_ds.close()
             output_ds.close()
             
+            return True
+            
         except Exception as e:
-            self.logger.error(f"Error remapping {input_file.name}: {str(e)}")
-            raise
+            # Log error with file context for debugging
+            import logging
+            logger = logging.getLogger('confluence')
+            logger.error(f"Error remapping {input_file.name}: {str(e)}")
+            return False
+
+
+
 
     def _replace_forcing_variables_with_em_earth(self):
         """
@@ -1534,3 +1607,153 @@ class DataManager:
             status['em_earth_integrated'] = False
         
         return status
+
+# Worker function for parallel processing (must be at module level)
+def _remap_em_earth_worker(args):
+    """
+    Worker function for parallel EM-Earth remapping.
+    
+    Args:
+        args: Tuple containing (input_file_str, output_file_str, basin_shapefile_str, config)
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    input_file_str, output_file_str, basin_shapefile_str, config = args
+    
+    try:
+        
+        # Convert strings back to Path objects
+        input_file = Path(input_file_str)
+        output_file = Path(output_file_str)
+        basin_shapefile = Path(basin_shapefile_str)
+        
+        # Read EM-Earth data
+        em_ds = xr.open_dataset(input_file)
+        
+        # Read basin shapefile
+        basins_gdf = gpd.read_file(basin_shapefile)
+        
+        # Check and reproject shapefile to WGS84 if necessary
+        if basins_gdf.crs is None:
+            basins_gdf = basins_gdf.set_crs('EPSG:4326')
+        elif not basins_gdf.crs.equals(4326) and not basins_gdf.crs.to_string().upper() == 'EPSG:4326':
+            basins_gdf = basins_gdf.to_crs('EPSG:4326')
+        
+        # Get basin ID column
+        basin_id_col = config.get('RIVER_BASIN_SHP_RM_GRUID', 'GRU_ID')
+        
+        if basin_id_col not in basins_gdf.columns:
+            raise ValueError(f"Basin ID column '{basin_id_col}' not found in shapefile")
+        
+        # Create output dataset structure
+        basin_ids = sorted(basins_gdf[basin_id_col].unique())
+        
+        # Initialize output dataset
+        output_ds = xr.Dataset()
+        output_ds = output_ds.assign_coords({
+            'time': em_ds.time,
+            'hru': basin_ids
+        })
+        
+        # Check if this is a spatially averaged small watershed
+        is_single_point = (len(em_ds.lat) == 1 and len(em_ds.lon) == 1)
+        small_watershed_flag = em_ds.attrs.get('small_watershed_processing', 0)
+        spatial_averaging_flag = em_ds.attrs.get('spatial_averaging_applied', 0)
+        is_single_point = is_single_point or (small_watershed_flag == 1) or (spatial_averaging_flag == 1)
+        
+        # Process variables
+        for var_name in em_ds.data_vars:
+            if var_name in ['prcp', 'prcp_corrected', 'tmean']:
+                var_data = em_ds[var_name]
+                
+                if is_single_point:
+                    # Single point processing - much faster
+                    if len(var_data.dims) == 3:
+                        time_dim_index = var_data.dims.index('time')
+                        if time_dim_index == 0:
+                            time_series = var_data.values[:, 0, 0]
+                        elif time_dim_index == 1:
+                            time_series = var_data.values[0, :, 0]
+                        else:
+                            time_series = var_data.values[0, 0, :]
+                    elif len(var_data.dims) == 1:
+                        time_series = var_data.values
+                    elif len(var_data.dims) == 2:
+                        time_dim_index = var_data.dims.index('time')
+                        if time_dim_index == 0:
+                            time_series = var_data.values[:, 0]
+                        else:
+                            time_series = var_data.values[0, :]
+                    
+                    time_series = np.asarray(time_series).flatten()
+                    basin_values = np.tile(time_series.reshape(-1, 1), (1, len(basin_ids)))
+                    
+                    output_ds[var_name] = xr.DataArray(
+                        basin_values,
+                        dims=['time', 'hru'],
+                        coords={'time': em_ds.time, 'hru': basin_ids},
+                        attrs=var_data.attrs
+                    )
+                    
+                else:
+                    # Multi-point processing with zonal statistics
+                    basin_values = np.full((len(em_ds.time), len(basin_ids)), np.nan)
+                    
+                    # Create transform
+                    lat_min, lat_max = float(em_ds.lat.min()), float(em_ds.lat.max())
+                    lon_min, lon_max = float(em_ds.lon.min()), float(em_ds.lon.max())
+                    
+                    transform = rasterio.transform.from_bounds(
+                        lon_min, lat_min, lon_max, lat_max,
+                        len(em_ds.lon), len(em_ds.lat)
+                    )
+                    
+                    # Process each time step
+                    for t_idx, time_val in enumerate(em_ds.time):
+                        time_data = var_data.isel(time=t_idx)
+                        
+                        stats = zonal_stats(
+                            basins_gdf.geometry,
+                            time_data.values,
+                            affine=transform,
+                            stats=['mean'],
+                            nodata=np.nan
+                        )
+                        
+                        for b_idx, basin_id in enumerate(basin_ids):
+                            geom_idx = basins_gdf.index[basins_gdf[basin_id_col] == basin_id].tolist()[0]
+                            if geom_idx < len(stats) and stats[geom_idx]['mean'] is not None:
+                                basin_values[t_idx, b_idx] = stats[geom_idx]['mean']
+                    
+                    output_ds[var_name] = xr.DataArray(
+                        basin_values,
+                        dims=['time', 'hru'],
+                        coords={'time': em_ds.time, 'hru': basin_ids},
+                        attrs=var_data.attrs
+                    )
+        
+        # Add metadata
+        processing_method = 'single_point_replication' if is_single_point else 'zonal_statistics'
+        output_ds.attrs.update({
+            'remapped_from': str(input_file),
+            'remapping_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'remapping_method': processing_method,
+            'basin_shapefile': str(basin_shapefile),
+            'input_grid_size': f"{len(em_ds.lat)}x{len(em_ds.lon)}",
+            'output_basins': len(basin_ids),
+            'small_watershed_processing': int(is_single_point)
+        })
+        
+        # Save remapped dataset
+        output_ds.to_netcdf(output_file)
+        
+        # Close datasets
+        em_ds.close()
+        output_ds.close()
+        
+        return True
+        
+    except Exception as e:
+        # Return False to indicate failure
+        return False

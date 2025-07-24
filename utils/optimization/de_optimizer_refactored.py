@@ -33,24 +33,21 @@ from pathlib import Path
 import logging
 from datetime import datetime
 import shutil
-from typing import Dict, Any, List, Tuple, Optional, Union, Callable
+from typing import Dict, Any, List, Tuple, Optional
 from abc import ABC, abstractmethod
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing as mp
-import tempfile
+from concurrent.futures import ProcessPoolExecutor
 import re
-import fcntl
-import random
-
 
 def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
-    """Safe worker function with proper cleanup and resource management"""
+    """Enhanced safe worker function with better file handle management"""
     import os
     import gc
     import tempfile
     import signal
     import sys
+    import time
+    import random
     
     # Set up signal handler for clean termination
     def signal_handler(signum, frame):
@@ -59,26 +56,67 @@ def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Force garbage collection at start
-    gc.collect()
+    # Set process-specific environment for isolation
+    process_id = os.getpid()
+    
+    # Force single-threaded execution and disable problematic file locking
+    os.environ.update({
+        'OMP_NUM_THREADS': '1',
+        'MKL_NUM_THREADS': '1',
+        'OPENBLAS_NUM_THREADS': '1',
+        'NETCDF_DISABLE_LOCKING': '1',
+        'HDF5_USE_FILE_LOCKING': 'FALSE',
+        'HDF5_DISABLE_VERSION_CHECK': '1',
+    })
+    
+    # Add small random delay to stagger file system access
+    initial_delay = random.uniform(0.1, 0.8)
+    time.sleep(initial_delay)
     
     try:
-        # Set environment for single-threaded, isolated execution
-        os.environ.update({
-            'OMP_NUM_THREADS': '1',
-            'MKL_NUM_THREADS': '1',
-            'OPENBLAS_NUM_THREADS': '1',
-            'NETCDF_DISABLE_LOCKING': '1',
-            'HDF5_USE_FILE_LOCKING': 'FALSE'
-        })
-        
-        # Call the original worker function
-        result = _evaluate_parameters_worker(task_data)
-        
-        # Force cleanup
+        # Force garbage collection at start
         gc.collect()
         
-        return result
+        # Try the evaluation with basic retry for stale file handle errors
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    # Wait longer between retries with jitter
+                    retry_delay = 2.0 * (attempt + 1) + random.uniform(0, 1)
+                    time.sleep(retry_delay)
+                    gc.collect()
+                
+                # Call the original worker function
+                result = _evaluate_parameters_worker(task_data)
+                
+                # Force cleanup
+                gc.collect()
+                return result
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check for stale file handle or similar filesystem errors
+                if any(term in error_str for term in ['stale file handle', 'errno 116', 'input/output error', 'errno 5']):
+                    if attempt < max_retries - 1:  # Not the last attempt
+                        continue
+                
+                # For other errors or final attempt, return the error
+                return {
+                    'individual_id': task_data.get('individual_id', -1),
+                    'params': task_data.get('params', {}),
+                    'score': None,
+                    'error': f'Worker exception (attempt {attempt + 1}): {str(e)}'
+                }
+        
+        # If we get here, all retries failed
+        return {
+            'individual_id': task_data.get('individual_id', -1),
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': f'Worker failed after {max_retries} attempts'
+        }
         
     except Exception as e:
         import traceback
@@ -86,12 +124,14 @@ def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
             'individual_id': task_data.get('individual_id', -1),
             'params': task_data.get('params', {}),
             'score': None,
-            'error': f'Safe worker exception: {str(e)}\n{traceback.format_exc()}'
+            'error': f'Critical worker exception: {str(e)}\n{traceback.format_exc()}'
         }
     
     finally:
         # Final cleanup
         gc.collect()
+
+
 # ============= ABSTRACT BASE CLASSES =============
 
 class CalibrationTarget(ABC):
@@ -1516,7 +1556,7 @@ class DEOptimizer:
         self.logger.info(f"Population size: {self.population_size}, Max generations: {self.max_iterations}")
         
         if self.use_parallel:
-            self.logger.info(f"🚀 Parallel processing: {self.num_processes} processes")
+            self.logger.info(f"Parallel processing: {self.num_processes} processes")
         
         self.logger.info("=" * 60)
         
@@ -1631,20 +1671,31 @@ class DEOptimizer:
         if mizu_control_path.exists():
             self._update_mizuroute_control_file(mizu_control_path)
     
+
     def _update_summa_file_manager(self, file_manager_path: Path) -> None:
         """Update SUMMA file manager for optimization"""
         with open(file_manager_path, 'r') as f:
             lines = f.readlines()
         
         # Parse time periods
-        calibration_period = self.parameter_manager.calibration_period if hasattr(self.parameter_manager, 'calibration_period') else (None, None)
+        #calibration_period = self.config.get('CALIBRATION_PERIOD').split(',')
+        calibration_period = None
         if not calibration_period or not calibration_period[0]:
             # Use experiment period as fallback
             sim_start = self.config.get('EXPERIMENT_TIME_START', '1980-01-01 01:00')
             sim_end = self.config.get('EXPERIMENT_TIME_END', '2018-12-31 23:00')
         else:
-            sim_start = calibration_period[0].strftime('%Y-%m-%d %H:%M')
-            sim_end = calibration_period[1].strftime('%Y-%m-%d %H:%M')
+            # Parse the date strings and add default time
+            start_date_str = calibration_period[0].strip()  # Remove any whitespace
+            end_date_str = calibration_period[1].strip()    # Remove any whitespace
+            
+            # Parse to datetime and add default time (01:00 for start, 23:00 for end)
+            start_dt = datetime.strptime(start_date_str, '%Y-%m-%d').replace(hour=1, minute=0)
+            end_dt = datetime.strptime(end_date_str, '%Y-%m-%d').replace(hour=23, minute=0)
+            
+            # Format back to string
+            sim_start = start_dt.strftime('%Y-%m-%d %H:%M')
+            sim_end = end_dt.strftime('%Y-%m-%d %H:%M')
         
         updated_lines = []
         for line in lines:
@@ -2008,15 +2059,22 @@ class DEOptimizer:
         return trial_scores
         
     def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
-        """Run parallel evaluations using fresh processes for each task"""
+        """Quick fix version with stale file handle recovery and fallback to sequential"""
         import multiprocessing as mp
-        from concurrent.futures import as_completed
+        from concurrent.futures import ProcessPoolExecutor, as_completed
         import subprocess
         import tempfile
         import pickle
+        import time
+        import random
+        import gc
         
         start_time = time.time()
         num_tasks = len(evaluation_tasks)
+        
+        # Track consecutive failures for recovery
+        if not hasattr(self, '_consecutive_parallel_failures'):
+            self._consecutive_parallel_failures = 0
         
         self.logger.info(f"Starting parallel evaluation of {num_tasks} tasks with {self.num_processes} processes")
         
@@ -2050,64 +2108,93 @@ class DEOptimizer:
             
             worker_tasks.append(task_data)
         
-        # Execute with limited concurrency to avoid overwhelming system
-        max_concurrent = min(self.num_processes, 10)  # Limit concurrent processes
+        # RECOVERY LOGIC: If we've had consecutive failures, try recovery
+        if self._consecutive_parallel_failures >= 3:
+            self.logger.warning(f"Detected {self._consecutive_parallel_failures} consecutive parallel failures. Attempting recovery...")
+            
+            # Recovery measures
+            gc.collect()
+            time.sleep(3.0)  # Let file system settle
+            
+            # Reduce concurrent processes temporarily
+            effective_processes = max(4, self.num_processes // 2)
+            self.logger.info(f"Reducing concurrent processes from {self.num_processes} to {effective_processes} for recovery")
+            
+            # Touch critical files to refresh handles
+            try:
+                for proc_dirs in self.parallel_dirs[:effective_processes]:
+                    settings_dir = Path(proc_dirs['summa_settings_dir'])
+                    for critical_file in ['fileManager.txt', 'attributes.nc', 'coldState.nc', 'trialParams.nc']:
+                        file_path = settings_dir / critical_file
+                        if file_path.exists():
+                            file_path.touch()
+                            time.sleep(0.01)  # Small delay between touches
+            except Exception as e:
+                self.logger.debug(f"File handle refresh failed: {str(e)}")
+        else:
+            effective_processes = self.num_processes
+        
+        # FALLBACK LOGIC: If too many consecutive failures, fall back to sequential
+        if self._consecutive_parallel_failures >= 5:
+            self.logger.warning("Too many consecutive parallel failures. Falling back to sequential evaluation.")
+            return self._run_sequential_fallback(evaluation_tasks)
+        
         results = []
         completed_count = 0
         
         try:
-            # Process tasks in batches to avoid overwhelming the system
-            batch_size = max_concurrent
+            # Execute with reduced concurrency and batching
+            batch_size = min(effective_processes, 6)  # Smaller batches
+            
             for batch_start in range(0, len(worker_tasks), batch_size):
                 batch_end = min(batch_start + batch_size, len(worker_tasks))
                 batch_tasks = worker_tasks[batch_start:batch_end]
                 
-                # Submit batch with fresh processes
-                with ProcessPoolExecutor(max_workers=len(batch_tasks)) as executor:
-                    future_to_task = {
-                        executor.submit(_evaluate_parameters_worker_safe, task_data): task_data
-                        for task_data in batch_tasks
-                    }
-                    
-                    # Collect results for this batch
-                    for future in as_completed(future_to_task):
-                        completed_count += 1
-                        
-                        try:
-                            result = future.result(timeout=2400)  # 40 minute timeout per task
-                            results.append(result)
-                            
-                            if result['score'] is not None:
-                                self.logger.info(f"✅ Task {completed_count}/{num_tasks} completed - score={result['score']:.6f}")
-                            else:
-                                self.logger.warning(f"❌ Task {completed_count}/{num_tasks} failed: {result.get('error', 'Unknown error')}")
-                        
-                        except Exception as e:
-                            task_data = future_to_task[future]
-                            error_result = {
-                                'individual_id': task_data['individual_id'],
-                                'params': task_data['params'],
-                                'score': None,
-                                'error': f'Task exception: {str(e)}'
-                            }
-                            results.append(error_result)
-                            self.logger.error(f"❌ Task {completed_count}/{num_tasks} exception: {str(e)}")
+                # Add pre-batch delay to reduce file system pressure
+                if batch_start > 0:
+                    time.sleep(1.0)
                 
-                # Small delay between batches to let system recover
-                if batch_end < len(worker_tasks):
-                    time.sleep(2)
+                # Execute batch with timeout and retry
+                batch_results = self._execute_batch_safe(batch_tasks, len(batch_tasks))
+                results.extend(batch_results)
+                completed_count += len(batch_tasks)
+                
+                # Check for stale file handle errors in this batch
+                stale_errors = sum(1 for r in batch_results if r.get('error') and 'stale file handle' in str(r['error']).lower())
+                if stale_errors > len(batch_tasks) * 0.5:  # More than 50% stale file handle errors
+                    self.logger.warning(f"High rate of stale file handle errors in batch ({stale_errors}/{len(batch_tasks)})")
+                    # Add extra recovery time
+                    time.sleep(2.0)
             
-            # Final summary
-            elapsed = time.time() - start_time
+            # Calculate success rate
             successful_count = sum(1 for r in results if r['score'] is not None)
+            success_rate = successful_count / num_tasks if num_tasks > 0 else 0
             
+            elapsed = time.time() - start_time
             self.logger.info(f"Parallel evaluation completed: {successful_count}/{num_tasks} successful "
-                        f"({100*successful_count/num_tasks:.1f}%) in {elapsed/60:.1f} minutes")
+                        f"({100*success_rate:.1f}%) in {elapsed/60:.1f} minutes")
+            
+            # Update failure counter based on success rate
+            if success_rate >= 0.7:  # 70% or better success
+                self._consecutive_parallel_failures = 0
+            else:
+                self._consecutive_parallel_failures += 1
+                
+            # If success rate is too low, warn about potential sequential fallback
+            if success_rate < 0.5:
+                self.logger.warning(f"Low success rate ({100*success_rate:.1f}%). Next failure may trigger sequential fallback.")
             
             return results
             
         except Exception as e:
             self.logger.error(f"Critical error in parallel evaluation: {str(e)}")
+            self._consecutive_parallel_failures += 1
+            
+            # Check if this is a stale file handle error
+            if 'stale file handle' in str(e).lower() or 'errno 116' in str(e).lower():
+                self.logger.error("Detected stale file handle error - file system may be overloaded")
+                
+            # Return failed results for all tasks
             return [
                 {
                     'individual_id': task['individual_id'],
@@ -2117,6 +2204,101 @@ class DEOptimizer:
                 }
                 for task in evaluation_tasks
             ]
+
+    def _execute_batch_safe(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
+        """Execute a batch with enhanced error handling and recovery"""
+        from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
+        import time
+        
+        results = []
+        
+        try:
+            # Use a conservative timeout
+            timeout_seconds = 2400  # 40 minutes per task
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                future_to_task = {
+                    executor.submit(_evaluate_parameters_worker_safe, task_data): task_data
+                    for task_data in batch_tasks
+                }
+                
+                for future in as_completed(future_to_task, timeout=timeout_seconds + 300):
+                    task_data = future_to_task[future]
+                    
+                    try:
+                        result = future.result(timeout=timeout_seconds)
+                        results.append(result)
+                        
+                    except TimeoutError:
+                        self.logger.error(f"Task {task_data['individual_id']} timed out")
+                        results.append({
+                            'individual_id': task_data['individual_id'],
+                            'params': task_data['params'],
+                            'score': None,
+                            'error': f'Task timeout after {timeout_seconds}s'
+                        })
+                        
+                    except Exception as e:
+                        self.logger.error(f"Task {task_data['individual_id']} failed: {str(e)}")
+                        results.append({
+                            'individual_id': task_data['individual_id'],
+                            'params': task_data['params'],
+                            'score': None,
+                            'error': f'Task execution error: {str(e)}'
+                        })
+        
+        except Exception as e:
+            self.logger.error(f"Batch execution failed: {str(e)}")
+            
+            # Return failed results for all tasks in this batch
+            for task_data in batch_tasks:
+                results.append({
+                    'individual_id': task_data['individual_id'],
+                    'params': task_data['params'],
+                    'score': None,
+                    'error': f'Batch execution failed: {str(e)}'
+                })
+        
+        return results
+
+    def _run_sequential_fallback(self, evaluation_tasks: List[Dict]) -> List[Dict]:
+        """Fallback to sequential evaluation when parallel processing fails"""
+        self.logger.info("Running sequential fallback evaluation")
+        
+        results = []
+        
+        for i, task in enumerate(evaluation_tasks):
+            self.logger.info(f"Sequential evaluation {i+1}/{len(evaluation_tasks)}")
+            
+            try:
+                # Extract parameters and evaluate sequentially
+                params = task['params']
+                normalized_params = self.parameter_manager.normalize_parameters(params)
+                score = self._evaluate_individual(normalized_params)
+                
+                results.append({
+                    'individual_id': task['individual_id'],
+                    'params': params,
+                    'score': score if score != float('-inf') else None,
+                    'error': None if score != float('-inf') else 'Sequential evaluation failed'
+                })
+                
+            except Exception as e:
+                self.logger.error(f"Sequential evaluation {i+1} failed: {str(e)}")
+                results.append({
+                    'individual_id': task['individual_id'],
+                    'params': task['params'],
+                    'score': None,
+                    'error': f'Sequential evaluation error: {str(e)}'
+                })
+        
+        # Reset parallel failure counter after successful sequential run
+        successful_count = sum(1 for r in results if r['score'] is not None)
+        if successful_count > 0:
+            self._consecutive_parallel_failures = max(0, self._consecutive_parallel_failures - 1)
+        
+        return results
+
 
     
     def _evaluate_individual(self, normalized_params: np.ndarray) -> float:

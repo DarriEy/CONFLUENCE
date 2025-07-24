@@ -26,6 +26,24 @@ import argparse
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
+import ezodf # type: ignore
+
+def make_timezone_naive(date_obj):
+    """
+    Convert a datetime object to timezone-naive
+    
+    Args:
+        date_obj: datetime or Timestamp object
+        
+    Returns:
+        Timezone-naive datetime object
+    """
+    if hasattr(date_obj, 'tz') and date_obj.tz is not None:
+        return date_obj.tz_localize(None)
+    elif hasattr(date_obj, 'dt') and hasattr(date_obj.dt, 'tz') and date_obj.dt.tz is not None:
+        return date_obj.dt.tz_localize(None)
+    else:
+        return date_obj
 
 def process_ggmn_stations(stations_csv, ggmn_data_dir, output_csv_path, 
                          start_year=None, end_year=None, use_existing_csv=True):
@@ -189,19 +207,29 @@ def assess_data_availability(stations_df, ggmn_data_dir, start_year=None, end_ye
     # Build a mapping of station IDs to files
     station_files = find_station_data_files(ggmn_data_dir, stations_df)
     
+    print(f"Assessing data availability for {len(station_files)} stations with data files...")
+    
     for idx, station in stations_df.iterrows():
-        station_id = str(station.get('station_id', ''))
+        # Try different ID columns
+        station_id = None
+        for col in ['station_id', 'id', 'name']:
+            if col in station.index and pd.notna(station[col]):
+                station_id = str(station[col])
+                break
         
+        if station_id is None:
+            continue
+            
         if station_id in station_files:
             files = station_files[station_id]
             stations_df.at[idx, 'data_files_found'] = len(files)
             
-            # Quick assessment of data availability
+            # Quick assessment of data availability (limit to first 2 files for performance)
             total_records = 0
             start_dates = []
             end_dates = []
             
-            for file_path in files[:3]:  # Limit to first 3 files for performance
+            for file_path in files[:2]:  # Limit to first 2 files for performance with .ods
                 try:
                     records, start_date, end_date = quick_file_assessment(file_path)
                     total_records += records
@@ -217,13 +245,19 @@ def assess_data_availability(stations_df, ggmn_data_dir, start_year=None, end_ye
                 stations_df.at[idx, 'record_count'] = total_records
                 
                 if start_dates:
-                    stations_df.at[idx, 'start_date'] = min(start_dates)
+                    # Make all dates timezone-naive to avoid comparison issues
+                    start_dates_naive = [make_timezone_naive(d) for d in start_dates]
+                    stations_df.at[idx, 'start_date'] = min(start_dates_naive)
                 if end_dates:
-                    stations_df.at[idx, 'end_date'] = max(end_dates)
+                    # Make all dates timezone-naive to avoid comparison issues
+                    end_dates_naive = [make_timezone_naive(d) for d in end_dates]
+                    stations_df.at[idx, 'end_date'] = max(end_dates_naive)
                 
                 # Calculate data years and completeness
                 if start_dates and end_dates:
-                    data_span_years = (max(end_dates) - min(start_dates)).days / 365.25
+                    start_dates_naive = [make_timezone_naive(d) for d in start_dates]
+                    end_dates_naive = [make_timezone_naive(d) for d in end_dates]
+                    data_span_years = (max(end_dates_naive) - min(start_dates_naive)).days / 365.25
                     stations_df.at[idx, 'data_years'] = data_span_years
                     
                     # Rough completeness estimate (records per year)
@@ -231,6 +265,11 @@ def assess_data_availability(stations_df, ggmn_data_dir, start_year=None, end_ye
                         expected_records = data_span_years * 12  # Assume monthly data
                         completeness = min(100, (total_records / expected_records) * 100)
                         stations_df.at[idx, 'data_completeness'] = completeness
+        
+        # Progress update every 100 stations
+        if (idx + 1) % 100 == 0:
+            assessed = sum(stations_df['data_files_found'] > 0)
+            print(f"Assessed {idx + 1} stations, {assessed} have data files")
     
     return stations_df
 
@@ -249,18 +288,20 @@ def find_station_data_files(ggmn_data_dir, stations_df):
     
     # Get list of station IDs to search for
     station_ids = []
-    for col in ['station_id', 'station_name']:
+    for col in ['station_id', 'station_name', 'id', 'name']:
         if col in stations_df.columns:
             ids = stations_df[col].dropna().astype(str).unique().tolist()
             station_ids.extend(ids)
     
+    # Remove duplicates and clean up
+    station_ids = list(set(station_ids))
     print(f"Scanning for data files for {len(station_ids)} station identifiers...")
     
-    # Scan monitoring directory
+    # Scan monitoring directory, focusing on .ods files (main GGMN format)
     file_count = 0
     for root, dirs, files in os.walk(ggmn_data_dir):
         for filename in files:
-            if filename.lower().endswith(('.csv', '.txt', '.ods', '.xlsx')):
+            if filename.lower().endswith(('.ods', '.csv', '.txt', '.xlsx')):
                 file_count += 1
                 file_path = os.path.join(root, filename)
                 file_stem = os.path.splitext(filename)[0].lower()
@@ -268,9 +309,10 @@ def find_station_data_files(ggmn_data_dir, stations_df):
                 # Check if filename contains any station ID
                 for station_id in station_ids:
                     clean_station_id = str(station_id).lower().replace(' ', '').replace('-', '').replace('_', '')
-                    clean_filename = file_stem.replace('-', '').replace('_', '').replace(' ', '')
+                    clean_filename = file_stem.replace('-', '').replace('_', '').replace(' ', '').replace('(', '').replace(')', '')
                     
-                    if clean_station_id in clean_filename:
+                    # Match exact station ID or station ID contained in filename
+                    if clean_station_id == clean_filename or clean_station_id in clean_filename:
                         if station_id not in station_files:
                             station_files[station_id] = []
                         station_files[station_id].append(file_path)
@@ -307,6 +349,61 @@ def quick_file_assessment(file_path):
                     pass
             
             return len(df), None, None
+        
+        elif file_path.lower().endswith('.ods'):
+
+            
+            try:
+                doc = ezodf.opendoc(file_path)
+                
+                # Look for 'Groundwater Level' sheet
+                if 'Groundwater Level' in doc.sheets.names():
+                    sheet = doc.sheets['Groundwater Level']
+                    
+                    if sheet.nrows() < 5:
+                        return 0, None, None
+                    
+                    # Quick scan for date and value data
+                    record_count = max(0, sheet.nrows() - 2)  # Subtract headers
+                    
+                    # Try to extract date range from a sample of rows
+                    start_date = None
+                    end_date = None
+                    
+                    # Check rows 2-5 and last few rows for date info
+                    sample_rows = list(range(2, min(6, sheet.nrows()))) + list(range(max(2, sheet.nrows()-3), sheet.nrows()))
+                    dates_found = []
+                    
+                    for row_idx in sample_rows:
+                        if row_idx >= sheet.nrows():
+                            continue
+                        row = sheet.row(row_idx)
+                        
+                        # Check first few columns for date values
+                        for col_idx in range(min(3, len(row))):
+                            cell_value = row[col_idx].value
+                            if cell_value is not None:
+                                try:
+                                    date_val = pd.to_datetime(cell_value)
+                                    # Ensure timezone-naive
+                                    date_val = make_timezone_naive(date_val)
+                                    dates_found.append(date_val)
+                                except:
+                                    continue
+                    
+                    if dates_found:
+                        start_date = min(dates_found)
+                        end_date = max(dates_found)
+                    
+                    return record_count, start_date, end_date
+                
+                else:
+                    # No Groundwater Level sheet, assume minimal data
+                    return 1, None, None
+                
+            except Exception as e:
+                # If ODS parsing fails, assume file exists but can't assess
+                return 1, None, None
         
         elif file_path.lower().endswith('.txt'):
             # For text files, count lines
@@ -356,7 +453,13 @@ def extract_groundwater_data(ggmn_data_dir, station_id, output_dir, start_year=N
     
     for file_path in files:
         try:
-            if file_path.lower().endswith('.csv'):
+            if file_path.lower().endswith('.ods'):
+                # Handle ODS files (main GGMN format)
+                gw_df = extract_ods_groundwater_data(file_path, start_year, end_year)
+                if not gw_df.empty:
+                    all_data.append(gw_df)
+                    
+            elif file_path.lower().endswith('.csv'):
                 df = pd.read_csv(file_path)
                 
                 # Look for date and value columns
@@ -402,6 +505,119 @@ def extract_groundwater_data(ggmn_data_dir, station_id, output_dir, start_year=N
     
     return None
 
+def extract_ods_groundwater_data(file_path, start_year=None, end_year=None):
+    """
+    Extract groundwater data from an ODS file (adapted from extract_gw_data.py)
+    
+    Args:
+        file_path: Path to ODS file
+        start_year: Optional start year for filtering
+        end_year: Optional end year for filtering
+        
+    Returns:
+        pandas.DataFrame: DataFrame with groundwater time series data
+    """
+    try:
+        
+        filename = os.path.basename(file_path)
+        
+        # Open the ODS file
+        doc = ezodf.opendoc(file_path)
+        
+        # Check if we have a "Groundwater Level" sheet
+        if 'Groundwater Level' not in doc.sheets.names():
+            return pd.DataFrame()
+        
+        sheet = doc.sheets['Groundwater Level']
+        
+        # Skip sheets with too few rows
+        if sheet.nrows() < 5:
+            return pd.DataFrame()
+        
+        # Identify the column structure by checking the first row
+        header_row = sheet.row(0)
+        header_values = [str(cell.value).lower() if cell.value is not None else '' for cell in header_row]
+        
+        # Determine column indices
+        date_col = None
+        value_col = None
+        
+        for i, header in enumerate(header_values):
+            if 'date' in header or 'time' in header:
+                date_col = i
+            elif 'value' in header:
+                value_col = i
+        
+        # If we don't have essential columns, try the next row
+        if date_col is None or value_col is None:
+            header_row = sheet.row(1)
+            desc_values = [str(cell.value).lower() if cell.value is not None else '' for cell in header_row]
+            
+            for i, desc in enumerate(desc_values):
+                if 'date' in desc or 'time' in desc:
+                    date_col = i
+                elif 'value' in desc:
+                    value_col = i
+        
+        if date_col is None or value_col is None:
+            return pd.DataFrame()
+        
+        # Extract data starting from row 2 (after headers)
+        data_rows = []
+        for row_idx in range(2, sheet.nrows()):
+            row = sheet.row(row_idx)
+            
+            # Skip if row doesn't have enough cells
+            if len(row) <= max(date_col, value_col):
+                continue
+            
+            date_val = row[date_col].value
+            value_val = row[value_col].value
+            
+            # Skip if essential values are missing
+            if date_val is None or value_val is None:
+                continue
+            
+            # Convert date to datetime
+            try:
+                date_val = pd.to_datetime(date_val)
+                # Ensure timezone-naive
+                date_val = make_timezone_naive(date_val)
+            except:
+                continue
+            
+            # Convert value to float
+            try:
+                value_val = float(value_val)
+            except:
+                continue
+            
+            # Apply year filter if specified
+            if start_year is not None and end_year is not None:
+                if date_val.year < start_year or date_val.year > end_year:
+                    continue
+            
+            # Build data row
+            data_row = {
+                'date': date_val,
+                'groundwater_level': value_val,
+                'source_file': filename
+            }
+            
+            data_rows.append(data_row)
+        
+        # Create DataFrame
+        if data_rows:
+            df = pd.DataFrame(data_rows)
+            df = df.sort_values('date')
+            return df
+        else:
+            return pd.DataFrame()
+    
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return pd.DataFrame()
+
 def generate_config_file(template_path, output_path, domain_name, pour_point, bounding_box, station_id):
     """
     Generate a CONFLUENCE config file for a groundwater station
@@ -423,6 +639,9 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
     config_content = re.sub(r'POUR_POINT_COORDS:.*', f'POUR_POINT_COORDS: {pour_point}', config_content)
     config_content = re.sub(r'BOUNDING_BOX_COORDS:.*', f'BOUNDING_BOX_COORDS: {bounding_box}', config_content)
     
+    # Update CONFLUENCE_DATA_DIR for ISMN data
+    config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: "/anvil/projects/x-ees240082/data/CONFLUENCE_data/ggmn"', config_content)
+
     # Update observation settings for groundwater
     config_content = re.sub(r'DOWNLOAD_USGS_GW:.*', 'DOWNLOAD_USGS_GW: false', config_content)
     config_content = re.sub(r'USGS_STATION:.*', f'USGS_STATION: "{station_id}"', config_content)
@@ -463,25 +682,11 @@ def run_confluence(config_path, watershed_name, job_time="24:00:00", memory="8G"
 #SBATCH --mem={memory}
 
 # Load necessary modules
-. /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
-module unuse $MODULEPATH
-module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
-
-module load netcdf-fortran/4.6.1
-module load openblas/0.3.27
-module load hdf/4.3.0
-module load hdf5/1.14.3
-module load gdal/3.9.2
-module load netlib-lapack/3.11.0
-module load openmpi/4.1.6
-module load python/3.11.7
-module load r/4.4.1
-
+module restore confluence_modules
 # Activate Python environment
-source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
-
+conda activate confluence
 # Run CONFLUENCE
-python CONFLUENCE.py --config {config_path}
+python ../CONFLUENCE/CONFLUENCE.py --config {config_path}
 
 echo "CONFLUENCE job for {watershed_name} complete"
 """
@@ -515,9 +720,9 @@ def main():
                         help='Directory to store processed data and outputs')
     parser.add_argument('--config_dir', type=str, default='ggmn_configs',
                         help='Directory to store generated config files')
-    parser.add_argument('--min_completeness', type=float, default=30.0,
+    parser.add_argument('--min_completeness', type=float, default=10.0,
                         help='Minimum data completeness percentage')
-    parser.add_argument('--min_records', type=int, default=50,
+    parser.add_argument('--min_records', type=int, default=10,
                         help='Minimum number of records required')
     parser.add_argument('--max_stations', type=int, default=None,
                         help='Maximum number of stations to process')
@@ -527,7 +732,7 @@ def main():
                         help='End year for filtering data')
     parser.add_argument('--no_submit', action='store_true',
                         help='Generate configs but don\'t submit jobs')
-    parser.add_argument('--base_path', type=str, default='/work/comphyd_lab/data/CONFLUENCE_data/ggmn',
+    parser.add_argument('--base_path', type=str, default='/anvil/projects/x-ees240082/data/CONFLUENCE_data/ggmn',
                         help='Base path for CONFLUENCE data directory')
     parser.add_argument('--force_reprocess', action='store_true',
                         help='Force reprocessing even if CSV exists')

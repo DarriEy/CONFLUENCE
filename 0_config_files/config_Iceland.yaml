@@ -131,6 +131,7 @@ SUPPLEMENT_FORCING: True                                       # Supplement forc
 EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
 EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
 EM_PRCP: 'prcp_corrected'
+EM_EARTH_REGION: NorthAmerica
 
 # Intersection paths (for zonal statistics)
 INTERSECT_SOIL_PATH: default                                   # If 'default', uses 'root_path/domain_[name]/shapefiles/catchment_intersection/with_soilgrids'.

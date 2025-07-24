@@ -1669,7 +1669,7 @@ class datatoolRunner:
         self.tool_cache = self.config.get('TOOL_CACHE')
         if self.tool_cache == 'default':
             self.tool_cache = '$HOME/cache_dir/'
-
+        
         #Get the path to the directory containing the datatool script
         self.datatool_path = self.config['DATATOOL_PATH']
         if self.datatool_path == 'default':

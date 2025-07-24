@@ -209,6 +209,11 @@ def generate_config_file(template_path, output_path, domain_name, basin_path, ba
     # Update domain discretization to use GRUs
     config_content = re.sub(r'DOMAIN_DISCRETIZATION:.*', f'DOMAIN_DISCRETIZATION: GRUs', config_content)
 
+    config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/Europe', config_content)
+    config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/Europe', config_content)
+    config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: Europe', config_content)
+
+
     # Update optimisation method to use GRUs
     config_content = re.sub(r'OPTIMISATION_METHODS:.*', f'OPTIMISATION_METHODS: [iteration]', config_content)
 

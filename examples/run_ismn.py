@@ -595,28 +595,56 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
     
     # Update the bounding box coordinates using regex
     config_content = re.sub(r'BOUNDING_BOX_COORDS:.*', f'BOUNDING_BOX_COORDS: {bounding_box}', config_content)
+
+    # Update CONFLUENCE_DATA_DIR for ISMN data
+    config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: "/anvil/projects/x-ees240082/data/CONFLUENCE_data/ismn"', config_content)
+
+    # Update domain discretization to use GRUs
+    config_content = re.sub(r'DOMAIN_DISCRETIZATION:.*', f'DOMAIN_DISCRETIZATION: GRUs', config_content)
     
+    # Update EM-Earth paths for North America
+    if 'EM_EARTH_PRCP_DIR:' in config_content:
+        config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"', config_content)
+    
+    if 'EM_EARTH_TMEAN_DIR:' in config_content:
+        config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica"', config_content)
+
     # Add or modify soil moisture specific settings
     # Enable soil moisture observations
-    if 'DOWNLOAD_ISMN' not in config_content:
+    if 'DOWNLOAD_ISMN:' not in config_content:
         # Add ISMN settings if not present
         ismn_settings = """
 # ISMN soil moisture data settings
 DOWNLOAD_ISMN: 'true'                                          # Download ISMN data, options: 'true' or 'false'
-ISMN_PATH: '/path/to/ismn/data'                                # Path to directory containing ISMN data files
-"""
-        # Insert after other observation settings
-        if 'FLUXNET_PATH:' in config_content:
-            config_content = config_content.replace(
-                'FLUXNET_PATH: \'/path/to/fluxnet\'',
-                'FLUXNET_PATH: \'/path/to/fluxnet\'\n' + ismn_settings
-            )
+ISMN_PATH: '/anvil/projects/x-ees240082/data/geospatial-data/ISMN/'   # Path to directory containing ISMN data files"""
+        
+        # Insert after USGS GW data settings if they exist
+        if 'USGS_STATION:' in config_content:
+            # Find the line with USGS_STATION and add ISMN settings after it
+            lines = config_content.split('\n')
+            for i, line in enumerate(lines):
+                if 'USGS_STATION:' in line:
+                    lines.insert(i + 1, ismn_settings)
+                    break
+            config_content = '\n'.join(lines)
+        elif 'FLUXNET_PATH:' in config_content:
+            # Find the FLUXNET_PATH line and add after it
+            lines = config_content.split('\n')
+            for i, line in enumerate(lines):
+                if 'FLUXNET_PATH:' in line:
+                    lines.insert(i + 1, ismn_settings)
+                    break
+            config_content = '\n'.join(lines)
         else:
             # Add at the end of evaluation settings
             config_content = config_content.replace(
                 '### ============================================= 6. Optimisation settings:',
-                ismn_settings + '\n### ============================================= 6. Optimisation settings:'
+                ismn_settings + '\n\n### ============================================= 6. Optimisation settings:'
             )
+    else:
+        # Update existing ISMN settings
+        config_content = re.sub(r'DOWNLOAD_ISMN:.*', f'DOWNLOAD_ISMN: \'true\'', config_content)
+        config_content = re.sub(r'ISMN_PATH:.*', f'ISMN_PATH: \'/anvil/projects/x-ees240082/data/geospatial-data/ISMN/\'', config_content)
     
     # Save the new config file
     with open(output_path, 'w') as f:
@@ -648,22 +676,10 @@ def run_confluence(config_path, watershed_name):
 #SBATCH --mem=1G
 
 # Load necessary modules (adjust as needed for your HPC environment)
-. /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
-module unuse $MODULEPATH
-module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
-
-module load netcdf-fortran/4.6.1
-module load openblas/0.3.27
-module load hdf/4.3.0
-module load hdf5/1.14.3
-module load gdal/3.9.2
-module load netlib-lapack/3.11.0
-module load openmpi/4.1.6
-module load python/3.11.7
-module load r/4.4.1
+module restore confluence_modules
 
 # Activate Python environment
-source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
+conda activate confluence
 
 # Run CONFLUENCE with the specified config
 python ../CONFLUENCE/CONFLUENCE.py --config {config_path}
@@ -706,7 +722,7 @@ def main():
                         help='End year for filtering data')
     parser.add_argument('--no_submit', action='store_true',
                         help='Generate configs but don\'t submit jobs')
-    parser.add_argument('--base_path', type=str, default='/work/comphyd_lab/data/CONFLUENCE_data/ismn',
+    parser.add_argument('--base_path', type=str, default='/anvil/projects/x-ees240082/data/CONFLUENCE_data/ismn',
                         help='Base path for CONFLUENCE data directory')
     parser.add_argument('--force_reprocess', action='store_true',
                         help='Force reprocessing of station data even if CSV exists')

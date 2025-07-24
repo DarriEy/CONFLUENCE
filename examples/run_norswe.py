@@ -192,6 +192,7 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
     if 'RHMI' in domain_name:
         config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/Europe', config_content)
         config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/Europe', config_content)
+        config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: Europe', config_content)
 
     # Save the new config file
     with open(output_path, 'w') as f:

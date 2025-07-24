@@ -1117,29 +1117,183 @@ class forcingResampler:
         
         return success_count
 
+    def _process_files_parallel(self, files, num_cpus):
+        """Process files in parallel mode using multiprocessing"""
+        self.logger.info(f"Processing {len(files)} files in parallel with {num_cpus} CPUs")
+        
+        # Process in smaller batches to avoid memory issues
+        batch_size = min(10, len(files))
+        total_batches = (len(files) + batch_size - 1) // batch_size
+        
+        self.logger.info(f"Processing {total_batches} batches of up to {batch_size} files each")
+        
+        success_count = 0
+        
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(files))
+            batch_files = files[start_idx:end_idx]
+            
+            self.logger.info(f"Processing batch {batch_num+1}/{total_batches} with {len(batch_files)} files")
+            
+            # Process files in parallel using Pool
+            try:
+                with mp.Pool(processes=num_cpus) as pool:
+                    # Create a list of (file, worker_id) tuples
+                    worker_assignments = [(file, i % num_cpus) for i, file in enumerate(batch_files)]
+                    
+                    # Map the processing function to each file with its worker ID
+                    results = pool.starmap(self._process_forcing_file, worker_assignments)
+                
+                # Count successes in this batch
+                batch_success = sum(1 for r in results if r)
+                success_count += batch_success
+                
+                self.logger.info(f"Batch {batch_num+1}/{total_batches} complete: {batch_success}/{len(batch_files)} successful")
+                
+            except Exception as e:
+                self.logger.error(f"Error processing batch {batch_num+1}: {str(e)}")
+                # Continue with next batch
+            
+            # Force garbage collection between batches
+            import gc
+            gc.collect()
+        
+        return success_count
+
+    def _ensure_unique_hru_ids(self, shapefile_path, hru_id_field):
+        """
+        Ensure HRU IDs are unique in the shapefile. Create new unique IDs if needed.
+        
+        Args:
+            shapefile_path: Path to the shapefile
+            hru_id_field: Name of the HRU ID field
+            
+        Returns:
+            tuple: (updated_shapefile_path, actual_hru_id_field_used)
+        """
+        try:
+            # Read the shapefile
+            gdf = gpd.read_file(shapefile_path)
+            self.logger.info(f"Checking HRU ID uniqueness in {shapefile_path.name}")
+            self.logger.info(f"Available fields: {list(gdf.columns)}")
+            
+            # Check if the HRU ID field exists
+            if hru_id_field not in gdf.columns:
+                self.logger.error(f"HRU ID field '{hru_id_field}' not found in shapefile.")
+                raise ValueError(f"HRU ID field '{hru_id_field}' not found in shapefile")
+            
+            # Check for uniqueness
+            original_count = len(gdf)
+            unique_count = gdf[hru_id_field].nunique()
+            
+            self.logger.info(f"Shapefile has {original_count} rows, {unique_count} unique {hru_id_field} values")
+            
+            if unique_count == original_count:
+                self.logger.info(f"All {hru_id_field} values are unique")
+                return shapefile_path, hru_id_field
+            
+            # Handle duplicate IDs
+            self.logger.warning(f"Found {original_count - unique_count} duplicate {hru_id_field} values")
+            
+            # Create new unique ID field with shorter name (shapefile 10-char limit)
+            new_hru_field = "hru_id_new"  # 10 characters max for shapefile compatibility
+            
+            # Check if we already have a unique field
+            if new_hru_field in gdf.columns:
+                if gdf[new_hru_field].nunique() == len(gdf):
+                    self.logger.info(f"Using existing unique field: {new_hru_field}")
+                    gdf_updated = gdf.copy()
+                    actual_field = new_hru_field
+                else:
+                    # Create new unique IDs
+                    self.logger.info(f"Creating new unique IDs in field: {new_hru_field}")
+                    gdf_updated = gdf.copy()
+                    gdf_updated[new_hru_field] = range(1, len(gdf_updated) + 1)
+                    actual_field = new_hru_field
+            else:
+                # Create new unique IDs
+                self.logger.info(f"Creating new unique IDs in field: {new_hru_field}")
+                gdf_updated = gdf.copy()
+                gdf_updated[new_hru_field] = range(1, len(gdf_updated) + 1)
+                actual_field = new_hru_field
+            
+            # Create output path for the fixed shapefile
+            output_path = shapefile_path.parent / f"{shapefile_path.stem}_unique_ids.shp"
+            
+            # Save the updated shapefile
+            gdf_updated.to_file(output_path)
+            self.logger.info(f"Updated shapefile with unique IDs saved to: {output_path}")
+            
+            # Verify the fix worked - check what fields actually exist
+            verify_gdf = gpd.read_file(output_path)
+            self.logger.info(f"Fields in saved shapefile: {list(verify_gdf.columns)}")
+            
+            # Find the actual field name (may be truncated by shapefile format)
+            possible_fields = [col for col in verify_gdf.columns if col.startswith('hru_id')]
+            if not possible_fields:
+                self.logger.error(f"No hru_id fields found in saved shapefile. Available: {list(verify_gdf.columns)}")
+                raise ValueError("Could not find unique HRU ID field in saved shapefile")
+            
+            # Use the first matching field (should be our new unique field)
+            actual_saved_field = possible_fields[0]
+            self.logger.info(f"Using field '{actual_saved_field}' from saved shapefile")
+            
+            if verify_gdf[actual_saved_field].nunique() == len(verify_gdf):
+                self.logger.info(f"Verification successful: All {actual_saved_field} values are unique")
+                return output_path, actual_saved_field
+            else:
+                self.logger.error("Verification failed: Still have duplicate IDs after fix")
+                raise ValueError("Could not create unique HRU IDs")
+                
+        except Exception as e:
+            self.logger.error(f"Error ensuring unique HRU IDs: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+
     def _ensure_shapefile_wgs84(self, shapefile_path, output_suffix="_wgs84"):
         """
         Ensure shapefile is in WGS84 (EPSG:4326) for easymore compatibility.
-        Creates a WGS84 version if needed.
+        Creates a WGS84 version if needed and ensures unique HRU IDs.
         
         Args:
             shapefile_path: Path to the shapefile
             output_suffix: Suffix to add to WGS84 version filename
             
         Returns:
-            Path to WGS84 shapefile
+            tuple: (wgs84_shapefile_path, hru_id_field_used) for target shapefiles,
+                just wgs84_shapefile_path for source shapefiles
         """
         shapefile_path = Path(shapefile_path)
+        is_target_shapefile = 'catchment' in str(shapefile_path).lower()
         
         try:
             # Read the shapefile and check its CRS
             gdf = gpd.read_file(shapefile_path)
             current_crs = gdf.crs
-                        
+            
+            self.logger.info(f"Checking CRS for {shapefile_path.name}: {current_crs}")
+            
+            # For target shapefiles, ensure unique HRU IDs first
+            if is_target_shapefile:
+                hru_id_field = self.config.get('CATCHMENT_SHP_HRUID')
+                try:
+                    shapefile_path, actual_hru_field = self._ensure_unique_hru_ids(shapefile_path, hru_id_field)
+                    # Re-read the potentially updated shapefile
+                    gdf = gpd.read_file(shapefile_path)
+                    current_crs = gdf.crs
+                except Exception as e:
+                    self.logger.error(f"Failed to ensure unique HRU IDs: {str(e)}")
+                    raise
+            
             # Check if already in WGS84
             if current_crs is not None and current_crs.to_epsg() == 4326:
-                #self.logger.info(f"Shapefile {shapefile_path.name} already in WGS84")
-                return shapefile_path
+                self.logger.info(f"Shapefile {shapefile_path.name} already in WGS84")
+                if is_target_shapefile:
+                    return shapefile_path, actual_hru_field
+                else:
+                    return shapefile_path
             
             # Create WGS84 version
             wgs84_shapefile = shapefile_path.parent / f"{shapefile_path.stem}{output_suffix}.shp"
@@ -1149,29 +1303,51 @@ class forcingResampler:
                 try:
                     wgs84_gdf = gpd.read_file(wgs84_shapefile)
                     if wgs84_gdf.crs is not None and wgs84_gdf.crs.to_epsg() == 4326:
-                        #self.logger.info(f"WGS84 version already exists: {wgs84_shapefile.name}")
-                        return wgs84_shapefile
+                        # For target shapefiles, also check if it has unique IDs
+                        if is_target_shapefile:
+                            # Check if the unique field exists (might be truncated)
+                            possible_fields = [col for col in wgs84_gdf.columns if col.startswith('hru_id')]
+                            if possible_fields and wgs84_gdf[possible_fields[0]].nunique() == len(wgs84_gdf):
+                                self.logger.info(f"WGS84 version with unique IDs already exists: {wgs84_shapefile.name}")
+                                return wgs84_shapefile, possible_fields[0]
+                            else:
+                                self.logger.warning(f"Existing WGS84 file missing unique ID field. Recreating.")
+                        else:
+                            self.logger.info(f"WGS84 version already exists: {wgs84_shapefile.name}")
+                            return wgs84_shapefile
                     else:
                         self.logger.warning(f"Existing WGS84 file has wrong CRS: {wgs84_gdf.crs}. Recreating.")
                 except Exception as e:
                     self.logger.warning(f"Error reading existing WGS84 file: {str(e)}. Recreating.")
             
             # Convert to WGS84
-            #self.logger.info(f"Converting {shapefile_path.name} from {current_crs} to WGS84")
+            self.logger.info(f"Converting {shapefile_path.name} from {current_crs} to WGS84")
             gdf_wgs84 = gdf.to_crs('EPSG:4326')
             
             # Save WGS84 version
             gdf_wgs84.to_file(wgs84_shapefile)
-            #self.logger.info(f"WGS84 shapefile created: {wgs84_shapefile}")
+            self.logger.info(f"WGS84 shapefile created: {wgs84_shapefile}")
             
-            return wgs84_shapefile
+            if is_target_shapefile:
+                # Re-read to get the actual field name (may be truncated)
+                saved_gdf = gpd.read_file(wgs84_shapefile)
+                possible_fields = [col for col in saved_gdf.columns if col.startswith('hru_id')]
+                if possible_fields:
+                    actual_saved_field = possible_fields[0]
+                    self.logger.info(f"Using field '{actual_saved_field}' from WGS84 shapefile")
+                    return wgs84_shapefile, actual_saved_field
+                else:
+                    self.logger.error(f"No hru_id field found in WGS84 shapefile")
+                    return wgs84_shapefile, actual_hru_field  # fallback
+            else:
+                return wgs84_shapefile
             
         except Exception as e:
             self.logger.error(f"Error ensuring WGS84 for {shapefile_path}: {str(e)}")
             raise
 
     def _process_single_forcing_file_serial(self, file):
-        """Process a single forcing file in serial mode with proper WGS84 handling"""
+        """Process a single forcing file in serial mode with proper WGS84 and unique ID handling"""
         try:
             start_time = time.time()
             
@@ -1206,7 +1382,7 @@ class forcingResampler:
                 
                 # Convert to WGS84 if needed
                 source_shp_wgs84 = self._ensure_shapefile_wgs84(source_shp_path, "_wgs84")
-                target_shp_wgs84 = self._ensure_shapefile_wgs84(target_shp_path, "_wgs84")
+                target_shp_wgs84, actual_hru_field = self._ensure_shapefile_wgs84(target_shp_path, "_wgs84")
                 
                 # Setup easymore configuration with WGS84 shapefiles
                 esmr = easymore.Easymore()
@@ -1221,7 +1397,7 @@ class forcingResampler:
                 esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
                 
                 esmr.target_shp = str(target_shp_wgs84)
-                esmr.target_shp_ID = self.config.get('CATCHMENT_SHP_HRUID')
+                esmr.target_shp_ID = actual_hru_field  # Use the actual unique field name
                 esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
                 esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
                 
@@ -1251,16 +1427,16 @@ class forcingResampler:
                 esmr.remap_csv = ''
                 esmr.sort_ID = False
                 
-                # Handle remap file creation/reuse
-                remap_file = f"{esmr.case_name}_remapping.nc"
+                # Handle remap file creation/reuse - include unique field in filename
+                remap_file = f"{esmr.case_name}_{actual_hru_field}_remapping.nc"
                 remap_path = intersect_path / remap_file
                 
                 if not remap_path.exists():
-                    self.logger.info(f"Creating new remap file for {file.name}")
+                    self.logger.info(f"Creating new remap file for {file.name} using field {actual_hru_field}")
                     esmr.nc_remapper()
                     
                     # Move the remap file to the intersection path
-                    temp_remap = Path(esmr.temp_dir) / remap_file
+                    temp_remap = Path(esmr.temp_dir) / f"{esmr.case_name}_remapping.nc"
                     if temp_remap.exists():
                         shutil.move(str(temp_remap), str(remap_path))
                         
@@ -1301,54 +1477,86 @@ class forcingResampler:
             return False
 
     def _process_forcing_file(self, file, worker_id):
-        """Process a single forcing file for parallel execution with WGS84 handling"""
+        """Process a single forcing file - tuple handling fix"""
         try:
             start_time = time.time()
             
-            # Check output file first before doing any processing
+            # Check output file first
             output_file = self._determine_output_filename(file)
-            
             if output_file.exists():
                 try:
                     file_size = output_file.stat().st_size
-                    if file_size > 1000:  # Basic size check to ensure file isn't corrupted
+                    if file_size > 1000:
                         self.logger.info(f"Worker {worker_id}: Skipping already processed file {file.name}")
                         return True
                 except Exception:
-                    # If we can't check the file, we'll reprocess it
                     pass
             
             self.logger.info(f"Worker {worker_id}: Processing file {file.name}")
             
-            # For CASR and RDRS, files are already processed during merging, no need for additional processing
+            # Save current working directory
+            original_cwd = os.getcwd()
+            
+            # For CASR and RDRS, files are already processed during merging
             file_to_process = file
             
-            # Define the output directory and remapped file name based on your configuration
+            # Define paths
             intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
             intersect_path.mkdir(parents=True, exist_ok=True)
             
-            # Generate a unique temp directory for this process
+            # Generate unique temp directory
             unique_id = str(uuid.uuid4())[:8]
             temp_dir = self.project_dir / 'forcing' / f'temp_easymore_{unique_id}_{worker_id}'
             temp_dir.mkdir(parents=True, exist_ok=True)
             
             try:
-                # Ensure shapefiles are in WGS84 for easymore
+                # Get shapefile paths
                 source_shp_path = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
                 target_shp_path = self.catchment_path / self.catchment_name
                 
-                # Convert to WGS84 if needed
-                source_shp_wgs84 = self._ensure_shapefile_wgs84(source_shp_path, "_wgs84")
-                target_shp_wgs84 = self._ensure_shapefile_wgs84(target_shp_path, "_wgs84")
+                # Verify files exist
+                if not source_shp_path.exists():
+                    self.logger.error(f"Worker {worker_id}: Source shapefile missing: {source_shp_path}")
+                    return False
+                if not target_shp_path.exists():
+                    self.logger.error(f"Worker {worker_id}: Target shapefile missing: {target_shp_path}")
+                    return False
                 
-                # Setup easymore configuration
+                # Convert to WGS84 and handle potential tuple returns
+                source_result = self._ensure_shapefile_wgs84(source_shp_path, "_wgs84")
+                target_result = self._ensure_shapefile_wgs84(target_shp_path, "_wgs84")
+                
+                # Handle tuple returns - extract just the path
+                if isinstance(source_result, tuple):
+                    source_shp_wgs84 = Path(source_result[0]).resolve()
+                else:
+                    source_shp_wgs84 = Path(source_result).resolve()
+                    
+                if isinstance(target_result, tuple):
+                    target_shp_wgs84 = Path(target_result[0]).resolve()
+                else:
+                    target_shp_wgs84 = Path(target_result).resolve()
+                
+                # Verify WGS84 files exist
+                if not source_shp_wgs84.exists():
+                    self.logger.error(f"Worker {worker_id}: WGS84 source shapefile missing: {source_shp_wgs84}")
+                    return False
+                if not target_shp_wgs84.exists():
+                    self.logger.error(f"Worker {worker_id}: WGS84 target shapefile missing: {target_shp_wgs84}")
+                    return False
+                
+                # Change to temp directory to avoid any relative path issues
+                os.chdir(temp_dir)
+                self.logger.info(f"Worker {worker_id}: Working in temp directory: {temp_dir}")
+                
+                # Setup easymore configuration with absolute paths
                 esmr = easymore.Easymore()
                 
                 esmr.author_name = 'SUMMA public workflow scripts'
                 esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
                 esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
                 
-                # Use WGS84 shapefiles
+                # Use absolute paths
                 esmr.source_shp = str(source_shp_wgs84)
                 esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
                 esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
@@ -1358,22 +1566,24 @@ class forcingResampler:
                 esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
                 esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
                 
-                # Set coordinate variable names based on forcing dataset
+                # Set coordinate variable names
                 if self.forcing_dataset in ['rdrs', 'casr']:
                     var_lat = 'lat' 
                     var_lon = 'lon'
-                else:  # era5, carra, etc.
+                else:
                     var_lat = 'latitude'
                     var_lon = 'longitude'
                 
-                esmr.source_nc = str(file_to_process)
+                # Use absolute path for NetCDF file
+                esmr.source_nc = str(Path(file_to_process).resolve())
                 esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
                 esmr.var_lat = var_lat
                 esmr.var_lon = var_lon
                 esmr.var_time = 'time'
                 
-                esmr.temp_dir = str(temp_dir) + '/'
-                esmr.output_dir = str(self.forcing_basin_path) + '/'
+                # Use current directory (temp_dir) for easymore operations
+                esmr.temp_dir = './'
+                esmr.output_dir = str(self.forcing_basin_path.resolve()) + '/'
                 
                 esmr.remapped_dim_id = 'hru'
                 esmr.remapped_var_id = 'hruId'
@@ -1384,49 +1594,58 @@ class forcingResampler:
                 esmr.remap_csv = ''
                 esmr.sort_ID = False
                 
-                # Only create the remap file if it doesn't exist yet
+                # Check for existing remap file
                 remap_file = f"{esmr.case_name}_remapping.nc"
-                if not (intersect_path / remap_file).exists():
+                remap_final_path = intersect_path / remap_file
+                
+                if not remap_final_path.exists():
                     try:
+                        self.logger.info(f"Worker {worker_id}: Creating new remap file...")
                         esmr.nc_remapper()
                         
-                        # Move the remap file to the intersection path
-                        if os.path.exists(os.path.join(esmr.temp_dir, remap_file)):
-                            os.rename(os.path.join(esmr.temp_dir, remap_file), intersect_path / remap_file)
+                        # Move files from current directory to final locations
+                        if Path(remap_file).exists():
+                            shutil.move(remap_file, remap_final_path)
+                            self.logger.info(f"Worker {worker_id}: Moved remap file to {remap_final_path}")
+                        
+                        # Move shapefile files
+                        for shp_file in Path('.').glob(f"{esmr.case_name}_intersected_shapefile.*"):
+                            shutil.move(shp_file, intersect_path / shp_file.name)
+                            self.logger.info(f"Worker {worker_id}: Moved {shp_file.name}")
                             
-                        # Move the shapefile files
-                        for shp_file in Path(esmr.temp_dir).glob(f"{esmr.case_name}_intersected_shapefile.*"):
-                            os.rename(shp_file, intersect_path / shp_file.name)
                     except Exception as e:
-                        self.logger.error(f"Worker {worker_id}: Error in creating remap file: {str(e)}")
+                        self.logger.error(f"Worker {worker_id}: Error creating remap file: {str(e)}")
+                        import traceback
+                        self.logger.error(f"Worker {worker_id}: Traceback: {traceback.format_exc()}")
+                        return False
                 else:
                     # Use existing remap file
-                    esmr.remap_csv = str(intersect_path / remap_file)
+                    self.logger.info(f"Worker {worker_id}: Using existing remap file")
+                    esmr.remap_csv = str(remap_final_path.resolve())
                     esmr.nc_remapper()
                     
             finally:
-                # Clean up temporary files
+                # Always restore original working directory
+                os.chdir(original_cwd)
+                
+                # Clean up temp directory
                 try:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 except Exception as e:
-                    self.logger.warning(f"Worker {worker_id}: Failed to clean up temp files: {str(e)}")
-                    
-            # Verify output file exists
+                    self.logger.warning(f"Worker {worker_id}: Failed to clean temp files: {e}")
+            
+            # Verify output
             if output_file.exists():
                 file_size = output_file.stat().st_size
-                if file_size > 1000:  # Basic size check
+                if file_size > 1000:
                     elapsed_time = time.time() - start_time
                     self.logger.info(f"Worker {worker_id}: Successfully processed {file.name} in {elapsed_time:.2f} seconds")
                     return True
                 else:
-                    self.logger.error(f"Worker {worker_id}: Output file {output_file} exists but may be corrupted (size: {file_size} bytes)")
+                    self.logger.error(f"Worker {worker_id}: Output file corrupted (size: {file_size})")
                     return False
             else:
-                self.logger.error(f"Worker {worker_id}: Expected output file {output_file} was not created")
-                # Let's check if the file might exist with a different naming convention
-                possible_files = list(self.forcing_basin_path.glob(f"*{file.stem}*"))
-                if possible_files:
-                    self.logger.info(f"Worker {worker_id}: Found possible matching files: {[f.name for f in possible_files]}")
+                self.logger.error(f"Worker {worker_id}: Output file not created: {output_file}")
                 return False
                     
         except Exception as e:
