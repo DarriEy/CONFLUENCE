@@ -4516,181 +4516,165 @@ def _run_summa_worker(summa_exe: str, file_manager: Path, summa_dir: Path,
         logger.error(f"Process {proc_id}: Traceback: {traceback.format_exc()}")
         return False
 
-def _calculate_metrics_worker(summa_dir: Path, task_data: Dict, logger) -> float:
-    """Calculate performance metrics with increased timeout and better error handling."""
+def _calculate_metrics_worker(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
+    """Calculate metrics in worker process - FIXED for spinup handling"""
     try:
-        proc_id = task_data.get('proc_id', 0)
-        
-        # Get observed data
-        obs_file = task_data['obs_file']
-        if not Path(obs_file).exists():
-            logger.error(f"Process {proc_id}: Observed data not found: {obs_file}")
-            return None
+        calibration_var = task_data.get('calibration_variable', 'streamflow')
+        config = task_data['config']
+        target_metric = task_data['target_metric']
         
         # Load observed data
+        if calibration_var == 'streamflow':
+            obs_file = Path(task_data['project_dir']) / "observations" / "streamflow" / "preprocessed" / f"{task_data['domain_name']}_streamflow_processed.csv"
+        elif calibration_var == 'snow':
+            obs_file = Path(task_data['project_dir']) / "observations" / "snow" / "swe" / "processed" / f"{task_data['domain_name']}_swe_processed.csv"
+        else:
+            return None
+        
+        if not obs_file.exists():
+            logger.error(f"Observed data not found: {obs_file}")
+            return None
+        
         obs_df = pd.read_csv(obs_file)
         
-        # Find columns with more robust detection
+        # Find columns
         date_col = None
-        flow_col = None
+        data_col = None
         
         for col in obs_df.columns:
             col_lower = col.lower()
             if date_col is None and any(term in col_lower for term in ['date', 'time', 'datetime']):
                 date_col = col
-            if flow_col is None and any(term in col_lower for term in ['flow', 'discharge', 'q_', 'streamflow']):
-                flow_col = col
+            if data_col is None:
+                if calibration_var == 'streamflow' and any(term in col_lower for term in ['flow', 'discharge', 'q_']):
+                    data_col = col
+                elif calibration_var == 'snow' and any(term in col_lower for term in ['swe', 'snow']):
+                    data_col = col
         
-        if not date_col or not flow_col:
-            logger.error(f"Process {proc_id}: Could not identify date/flow columns")
-            logger.error(f"Process {proc_id}: Available columns: {obs_df.columns.tolist()}")
+        if not date_col or not data_col:
+            logger.error("Could not identify date/data columns")
             return None
         
         # Process observed data
         obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
         obs_df.set_index('DateTime', inplace=True)
-        observed_flow = obs_df[flow_col]
+        observed_data = obs_df[data_col]
         
-        # Find SUMMA output with extended retry logic
-        max_retries = 10  # Increased from 5
-        retry_delay = 30  # Increased to 30 seconds between retries
+        # CRITICAL FIX: Filter observed data to CALIBRATION period only (not spinup)
+        calibration_period_str = config.get('CALIBRATION_PERIOD', '')
+        if calibration_period_str:
+            try:
+                dates = [d.strip() for d in calibration_period_str.split(',')]
+                if len(dates) >= 2:
+                    cal_start = pd.Timestamp(dates[0].strip())
+                    cal_end = pd.Timestamp(dates[1].strip())
+                    
+                    # Filter observed data to calibration period ONLY
+                    cal_mask = (observed_data.index >= cal_start) & (observed_data.index <= cal_end)
+                    observed_data = observed_data[cal_mask]
+                    
+                    logger.debug(f"Filtered observed data to calibration period: {cal_start} to {cal_end}")
+                    logger.debug(f"Observed data points: {len(observed_data)}")
+            except Exception as e:
+                logger.warning(f"Could not filter to calibration period: {str(e)}")
         
-        for attempt in range(max_retries):
-            # Try multiple patterns for finding simulation files
-            patterns = [
-                f"proc_{proc_id:02d}_opt_*_timestep.nc",
-                f"*proc_{proc_id:02d}*timestep.nc",
-                f"*timestep.nc"  # Fallback
-            ]
-            
-            sim_files = []
-            for pattern in patterns:
-                found_files = list(summa_dir.glob(pattern))
-                if found_files:
-                    sim_files = found_files
-                    logger.debug(f"Process {proc_id}: Found files with pattern '{pattern}': {[f.name for f in found_files]}")
-                    break
-            
-            if sim_files:
-                # Verify the file is readable and complete
-                sim_file = sim_files[0]  # Take the first match
-                
-                try:
-                    # Test if file can be opened and has reasonable data
-                    with xr.open_dataset(sim_file) as ds:
-                        if 'time' in ds.dims and len(ds.time) > 10:  # At least 10 time steps
-                            logger.debug(f"Process {proc_id}: Found valid simulation file: {sim_file.name} with {len(ds.time)} time steps")
-                            break
-                        else:
-                            logger.debug(f"Process {proc_id}: File {sim_file.name} exists but has insufficient data (time dim: {len(ds.time) if 'time' in ds.dims else 'missing'})")
-                            sim_files = []  # Reset to trigger retry
-                except Exception as e:
-                    logger.debug(f"Process {proc_id}: File {sim_file.name} not ready yet: {str(e)}")
-                    sim_files = []  # Reset to trigger retry
-            
-            if attempt < max_retries - 1:
-                logger.debug(f"Process {proc_id}: No valid timestep files found (attempt {attempt+1}/{max_retries}), retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
+        # Get simulated data (this will be from spinup+calibration run)
+        if calibration_var == 'streamflow' and _needs_mizuroute_routing_worker(config):
+            sim_files = list(mizuroute_dir.glob("*.nc"))
+            if not sim_files:
+                logger.error("No mizuRoute output files found")
+                return None
+            sim_file = sim_files[0]
+            simulated_data = _extract_streamflow_from_mizuroute_worker(sim_file, config, logger)
+        else:
+            if calibration_var == 'streamflow':
+                sim_files = list(summa_dir.glob("*timestep.nc"))
+                if not sim_files:
+                    logger.error("No SUMMA timestep files found")
+                    return None
+                sim_file = sim_files[0]
+                simulated_data = _extract_streamflow_from_summa_worker(sim_file, config, logger)
+            elif calibration_var == 'snow':
+                sim_files = list(summa_dir.glob("*day.nc"))
+                if not sim_files:
+                    logger.error("No SUMMA daily files found")
+                    return None
+                sim_file = sim_files[0]
+                simulated_data = _extract_swe_from_summa_worker(sim_file, logger)
             else:
-                logger.error(f"Process {proc_id}: No SUMMA timestep files found after {max_retries} attempts over {max_retries * retry_delay / 60:.1f} minutes")
-                
-                # Debug: list all files in directory
-                all_files = list(summa_dir.glob("*"))
-                nc_files = list(summa_dir.glob("*.nc"))
-                logger.error(f"Process {proc_id}: All files in {summa_dir}: {[f.name for f in all_files]}")
-                logger.error(f"Process {proc_id}: NetCDF files: {[f.name for f in nc_files]}")
-                
-                # If there are NetCDF files but they don't match our pattern, investigate
-                if nc_files:
-                    logger.error(f"Process {proc_id}: Investigating NetCDF files that don't match expected pattern...")
-                    for nc_file in nc_files[:3]:  # Check first 3 files
-                        try:
-                            with xr.open_dataset(nc_file) as ds:
-                                logger.error(f"Process {proc_id}: File {nc_file.name}: dims={dict(ds.sizes)}, vars={list(ds.variables.keys())[:10]}")
-                        except Exception as e:
-                            logger.error(f"Process {proc_id}: Could not read {nc_file.name}: {str(e)}")
-                
                 return None
         
-        # Process simulated data (rest of function remains the same)
-        with xr.open_dataset(sim_file) as ds:
-            # Find runoff variable with better detection
-            runoff_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff', 
-                          'averageRoutedRunoff_mean', 'basin__TotalRunoff_mean']
-            
-            runoff_var = None
-            for var_name in runoff_vars:
-                if var_name in ds.variables:
-                    runoff_var = var_name
-                    logger.debug(f"Process {proc_id}: Found runoff variable: {var_name}")
-                    break
-            
-            if not runoff_var:
-                available_vars = list(ds.variables.keys())
-                logger.error(f"Process {proc_id}: No runoff variable found")
-                logger.error(f"Process {proc_id}: Available variables: {available_vars}")
-                
-                # Try to find any variable with "runoff" in the name
-                runoff_like = [v for v in available_vars if 'runoff' in v.lower()]
-                if runoff_like:
-                    runoff_var = runoff_like[0]
-                    logger.warning(f"Process {proc_id}: Using fallback variable: {runoff_var}")
-                else:
-                    return None
-            
-            # Extract simulated flow
-            var = ds[runoff_var]
-            logger.debug(f"Process {proc_id}: Variable {runoff_var} has dimensions: {var.dims}, shape: {var.shape}")
-            
-            if len(var.shape) > 1:
-                # Multi-dimensional - extract spatial dimension
-                if 'hru' in var.dims:
-                    simulated_flow = var.isel(hru=0).to_pandas()
-                elif 'gru' in var.dims:
-                    simulated_flow = var.isel(gru=0).to_pandas()
-                else:
-                    # Get non-time dimensions and use first spatial index
-                    non_time_dims = [dim for dim in var.dims if dim != 'time']
-                    if non_time_dims:
-                        simulated_flow = var.isel({non_time_dims[0]: 0}).to_pandas()
-                    else:
-                        simulated_flow = var.to_pandas()
-            else:
-                simulated_flow = var.to_pandas()
-            
-            # Convert units (m/s to m³/s)
-            catchment_area = task_data.get('catchment_area', 1e6)
-            simulated_flow = simulated_flow * catchment_area
-            
-            logger.debug(f"Process {proc_id}: Extracted {len(simulated_flow)} simulated flow values")
-            logger.debug(f"Process {proc_id}: Simulated flow range: {simulated_flow.min():.2f} to {simulated_flow.max():.2f} m³/s")
-        
-        # Align time series with better synchronization
-        simulated_flow.index = simulated_flow.index.round('h')
-        common_idx = observed_flow.index.intersection(simulated_flow.index)
-        
-        logger.debug(f"Process {proc_id}: Time alignment: {len(observed_flow)} obs, {len(simulated_flow)} sim, {len(common_idx)} common")
-        
-        if len(common_idx) == 0:
-            logger.error(f"Process {proc_id}: No time overlap between observed and simulated data")
-            logger.error(f"Process {proc_id}: Observed range: {observed_flow.index.min()} to {observed_flow.index.max()}")
-            logger.error(f"Process {proc_id}: Simulated range: {simulated_flow.index.min()} to {simulated_flow.index.max()}")
+        if simulated_data is None or len(simulated_data) == 0:
+            logger.error("Failed to extract simulated data")
             return None
         
-        obs_common = observed_flow.loc[common_idx]
-        sim_common = simulated_flow.loc[common_idx]
+        # CRITICAL FIX: Filter simulated data to CALIBRATION period only (exclude spinup)
+        if calibration_period_str:
+            try:
+                dates = [d.strip() for d in calibration_period_str.split(',')]
+                if len(dates) >= 2:
+                    cal_start = pd.Timestamp(dates[0].strip())
+                    cal_end = pd.Timestamp(dates[1].strip())
+                    
+                    # Filter simulated data to calibration period ONLY
+                    sim_mask = (simulated_data.index >= cal_start) & (simulated_data.index <= cal_end)
+                    simulated_data = simulated_data[sim_mask]
+                    
+                    logger.debug(f"Filtered simulated data to calibration period: {cal_start} to {cal_end}")
+                    logger.debug(f"Simulated data points: {len(simulated_data)}")
+            except Exception as e:
+                logger.warning(f"Could not filter simulated data to calibration period: {str(e)}")
         
-        # Calculate target metric
-        score = _calculate_single_metric_worker(obs_common, sim_common, task_data['target_metric'])
+        # Check for reasonable data ranges
+        if len(simulated_data) == 0:
+            logger.error("No simulated data after calibration period filtering")
+            return None
         
-        logger.debug(f"Process {proc_id}: Calculated {task_data['target_metric']} = {score}")
+        # Check for NaN or infinite values
+        sim_nan_count = simulated_data.isna().sum()
+        if sim_nan_count > 0:
+            logger.warning(f"Simulated data contains {sim_nan_count} NaN values")
         
-        return score
+        sim_inf_count = np.isinf(simulated_data).sum()
+        if sim_inf_count > 0:
+            logger.warning(f"Simulated data contains {sim_inf_count} infinite values")
+        
+        # Align time series
+        simulated_data.index = simulated_data.index.round('h')
+        common_idx = observed_data.index.intersection(simulated_data.index)
+        
+        if len(common_idx) == 0:
+            logger.error("No common time indices between observed and simulated data")
+            logger.debug(f"Observed period: {observed_data.index.min()} to {observed_data.index.max()}")
+            logger.debug(f"Simulated period: {simulated_data.index.min()} to {simulated_data.index.max()}")
+            return None
+        
+        obs_common = observed_data.loc[common_idx]
+        sim_common = simulated_data.loc[common_idx]
+        
+        logger.debug(f"Common data points for evaluation: {len(common_idx)}")
+        logger.debug(f"Observed range: {obs_common.min():.3f} to {obs_common.max():.3f}")
+        logger.debug(f"Simulated range: {sim_common.min():.3f} to {sim_common.max():.3f}")
+        
+        # Calculate metrics
+        metrics = _calculate_performance_metrics_worker(obs_common, sim_common)
+        
+        # Extract target metric
+        score = metrics.get(target_metric, metrics.get('KGE', np.nan))
+        
+        # IMPORTANT: For NSE, don't apply negation! NSE should be maximized (1 is perfect)
+        # Only negate metrics where lower values are better
+        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
+            score = -score
+        
+        logger.debug(f"Calculated {target_metric}: {score}")
+        
+        return score if not np.isnan(score) else None
         
     except Exception as e:
-        logger.error(f"Process {proc_id}: Error calculating metrics: {str(e)}")
+        logger.error(f"Error calculating metrics: {str(e)}")
         import traceback
-        logger.error(f"Process {proc_id}: Traceback: {traceback.format_exc()}")
+        logger.debug(traceback.format_exc())
         return None
 
 
@@ -5052,27 +5036,84 @@ class ParameterEvaluator:
         mizuroute_control = self.mizuroute_settings_dir / 'mizuroute.control'
         if mizuroute_control.exists():
             self._update_mizuroute_control_file(mizuroute_control)
-    
-    def _update_summa_file_manager(self, filemanager_path):
-        """Update SUMMA file manager with process-specific paths."""
-        with open(filemanager_path, 'r') as f:
+        
+    def _update_summa_file_manager(self, file_manager_path: Path, use_calibration_period: bool = True) -> None:
+        """
+        Update SUMMA file manager - FIXED to include spinup period
+        """
+        with open(file_manager_path, 'r') as f:
             lines = f.readlines()
         
+        if use_calibration_period:
+            # CRITICAL FIX: Include spinup period before calibration
+            calibration_period_str = self.config.get('CALIBRATION_PERIOD', '')
+            spinup_period_str = self.config.get('SPINUP_PERIOD', '')
+            
+            if calibration_period_str and spinup_period_str:
+                try:
+                    # Parse spinup period
+                    spinup_dates = [d.strip() for d in spinup_period_str.split(',')]
+                    cal_dates = [d.strip() for d in calibration_period_str.split(',')]
+                    
+                    if len(spinup_dates) >= 2 and len(cal_dates) >= 2:
+                        # Use spinup start, calibration end
+                        spinup_start = datetime.strptime(spinup_dates[0], '%Y-%m-%d').replace(hour=1, minute=0)
+                        cal_end = datetime.strptime(cal_dates[1], '%Y-%m-%d').replace(hour=23, minute=0)
+                        
+                        sim_start = spinup_start.strftime('%Y-%m-%d %H:%M')
+                        sim_end = cal_end.strftime('%Y-%m-%d %H:%M')
+                        
+                        self.logger.info(f"Using spinup + calibration period: {sim_start} to {sim_end}")
+                    else:
+                        raise ValueError("Invalid period format")
+                        
+                except Exception as e:
+                    self.logger.warning(f"Could not parse spinup+calibration periods: {str(e)}")
+                    # Fallback to full experiment period
+                    sim_start = self.config.get('EXPERIMENT_TIME_START', '1980-01-01 01:00')
+                    sim_end = self.config.get('EXPERIMENT_TIME_END', '2018-12-31 23:00')
+            else:
+                # No spinup specified, use calibration only (but warn)
+                if calibration_period_str:
+                    self.logger.warning("No SPINUP_PERIOD specified - model initialization may be poor")
+                    cal_dates = [d.strip() for d in calibration_period_str.split(',')]
+                    if len(cal_dates) >= 2:
+                        cal_start = datetime.strptime(cal_dates[0], '%Y-%m-%d').replace(hour=1, minute=0)
+                        cal_end = datetime.strptime(cal_dates[1], '%Y-%m-%d').replace(hour=23, minute=0)
+                        sim_start = cal_start.strftime('%Y-%m-%d %H:%M')
+                        sim_end = cal_end.strftime('%Y-%m-%d %H:%M')
+                    else:
+                        sim_start = self.config.get('EXPERIMENT_TIME_START', '1980-01-01 01:00')
+                        sim_end = self.config.get('EXPERIMENT_TIME_END', '2018-12-31 23:00')
+                else:
+                    sim_start = self.config.get('EXPERIMENT_TIME_START', '1980-01-01 01:00')
+                    sim_end = self.config.get('EXPERIMENT_TIME_END', '2018-12-31 23:00')
+        else:
+            # Use full experiment period for final evaluation
+            sim_start = self.config.get('EXPERIMENT_TIME_START', '1980-01-01 01:00')
+            sim_end = self.config.get('EXPERIMENT_TIME_END', '2018-12-31 23:00')
+            self.logger.info(f"Using full experiment period: {sim_start} to {sim_end}")
+        
+        # Update file manager with proper periods
         updated_lines = []
         for line in lines:
-            if 'outputPath' in line:
-                output_path = str(self.summa_dir).replace('\\', '/')
+            if 'simStartTime' in line:
+                updated_lines.append(f"simStartTime         '{sim_start}'\n")
+            elif 'simEndTime' in line:
+                updated_lines.append(f"simEndTime           '{sim_end}'\n")
+            elif 'outFilePrefix' in line:
+                prefix = 'run_de_final' if not use_calibration_period else 'run_de_opt'
+                updated_lines.append(f"outFilePrefix        '{prefix}_{self.experiment_id}'\n")
+            elif 'outputPath' in line:
+                output_path = str(self.summa_sim_dir).replace('\\', '/')
                 updated_lines.append(f"outputPath           '{output_path}/'\n")
             elif 'settingsPath' in line:
-                settings_path = str(self.summa_settings_dir).replace('\\', '/')
+                settings_path = str(self.optimization_settings_dir).replace('\\', '/')
                 updated_lines.append(f"settingsPath         '{settings_path}/'\n")
-            elif 'outFilePrefix' in line:
-                prefix = f"proc_{self.proc_id:02d}_opt_{self.experiment_id}"
-                updated_lines.append(f"outFilePrefix        '{prefix}'\n")
             else:
                 updated_lines.append(line)
         
-        with open(filemanager_path, 'w') as f:
+        with open(file_manager_path, 'w') as f:
             f.writelines(updated_lines)
     
     def _update_mizuroute_control_file(self, control_path):
