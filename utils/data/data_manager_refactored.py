@@ -9,7 +9,7 @@ import xarray as xr
 import geopandas as gpd
 from rasterstats import zonal_stats # type: ignore
 import rasterio # type: ignore
-from rasterio.features import rasterize # Added for optimization
+from rasterio.features import rasterize # type: ignore # Added for optimization
 import numpy as np
 import pandas as pd 
 import multiprocessing as mp

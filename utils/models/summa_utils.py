@@ -714,7 +714,7 @@ class SummaPreProcessor:
 
         # Get forcing files and log memory info
         forcing_files = [f for f in os.listdir(self.forcing_basin_path) 
-                        if f.startswith(f"{self.domain_name}_{self.config.get('FORCING_DATASET')}") and f.endswith('.nc')]
+                        if f.startswith(f"{self.domain_name}") and f.endswith('.nc')]
         forcing_files.sort()
         
         total_files = len(forcing_files)
@@ -1446,6 +1446,274 @@ class SummaPreProcessor:
         self.insert_land_class(attribute_path)
         self.insert_soil_class(attribute_path)
         self.insert_elevation(attribute_path)
+        self.insert_aspect(attribute_path)
+        self.insert_tan_slope(attribute_path)
+
+
+    def insert_aspect(self, attribute_file):
+        """
+        Calculate and insert aspect data into the attributes file.
+        
+        Aspect is calculated from the DEM using gradient analysis and represents
+        the compass direction that the slope faces (in degrees from North).
+        
+        Args:
+            attribute_file (str): Path to the SUMMA attributes NetCDF file
+        """
+        self.logger.info("Calculating and inserting aspect into attributes file")
+        
+        try:
+            # Load the catchment shapefile
+            shp = gpd.read_file(self.catchment_path / self.catchment_name)
+            
+            # Calculate aspect for each HRU using the DEM
+            aspect_values = self._calculate_aspect_from_dem(shp)
+            
+            # Update the attributes file
+            with nc4.Dataset(attribute_file, "r+") as att:
+                # Check if aspect variable already exists, if not create it
+                if 'aspect' not in att.variables:
+                    aspect_var = att.createVariable('aspect', 'f8', 'hru', fill_value=False)
+                    aspect_var.setncattr('units', 'degrees')
+                    aspect_var.setncattr('long_name', 'Mean aspect of HRU (degrees from North)')
+                
+                # Fill aspect values for each HRU
+                for idx in range(len(att['hruId'])):
+                    hru_id_raw = att['hruId'][idx]
+                    # Convert to proper scalar type (handle potential MaskedArray)
+                    if hasattr(hru_id_raw, 'item'):
+                        hru_id = int(hru_id_raw.item())
+                    else:
+                        hru_id = int(hru_id_raw)
+                        
+                    if hru_id in aspect_values:
+                        att['aspect'][idx] = aspect_values[hru_id]
+                    else:
+                        self.logger.warning(f"No aspect data found for HRU {hru_id}, using default value")
+                        att['aspect'][idx] = 180.0  # Default to south-facing
+                        
+            self.logger.info("Successfully inserted aspect data into attributes file")
+            
+        except Exception as e:
+            self.logger.error(f"Error inserting aspect data: {str(e)}")
+            # Set default values if calculation fails
+            with nc4.Dataset(attribute_file, "r+") as att:
+                if 'aspect' not in att.variables:
+                    aspect_var = att.createVariable('aspect', 'f8', 'hru', fill_value=False)
+                    aspect_var.setncattr('units', 'degrees')
+                    aspect_var.setncattr('long_name', 'Mean aspect of HRU (degrees from North)')
+                att['aspect'][:] = 180.0  # Default to south-facing
+                self.logger.warning("Set all aspect values to default (180 degrees - south-facing)")
+
+    def insert_tan_slope(self, attribute_file):
+        """
+        Calculate and insert tangent of slope data into the attributes file.
+        
+        Tangent of slope is calculated from the DEM using gradient analysis.
+        This updates the existing tan_slope values that were set to default in create_attributes_file.
+        
+        Args:
+            attribute_file (str): Path to the SUMMA attributes NetCDF file
+        """
+        self.logger.info("Calculating and inserting tangent of slope into attributes file")
+        
+        try:
+            # Load the catchment shapefile
+            shp = gpd.read_file(self.catchment_path / self.catchment_name)
+            
+            # Calculate tan_slope for each HRU using the DEM
+            tan_slope_values = self._calculate_tan_slope_from_dem(shp)
+            
+            # Update the attributes file
+            with nc4.Dataset(attribute_file, "r+") as att:
+                # tan_slope variable should already exist from create_attributes_file
+                # Fill tan_slope values for each HRU
+                for idx in range(len(att['hruId'])):
+                    hru_id_raw = att['hruId'][idx]
+                    # Convert to proper scalar type (handle potential MaskedArray)
+                    if hasattr(hru_id_raw, 'item'):
+                        hru_id = int(hru_id_raw.item())
+                    else:
+                        hru_id = int(hru_id_raw)
+                        
+                    if hru_id in tan_slope_values:
+                        att['tan_slope'][idx] = tan_slope_values[hru_id]
+                    else:
+                        self.logger.warning(f"No slope data found for HRU {hru_id}, using default value")
+                        att['tan_slope'][idx] = 0.1  # Default slope
+                        
+            self.logger.info("Successfully inserted tangent of slope data into attributes file")
+            
+        except Exception as e:
+            self.logger.error(f"Error inserting tangent of slope data: {str(e)}")
+            # Set default values if calculation fails
+            with nc4.Dataset(attribute_file, "r+") as att:
+                att['tan_slope'][:] = 0.1  # Default slope
+                self.logger.warning("Set all tan_slope values to default (0.1)")
+
+    def _calculate_aspect_from_dem(self, shp):
+        """
+        Calculate mean aspect for each HRU from the DEM.
+        
+        Args:
+            shp (gpd.GeoDataFrame): GeoDataFrame containing HRU polygons
+            
+        Returns:
+            dict: Dictionary with HRU IDs as keys and aspect values (degrees) as values
+        """
+        self.logger.info("Calculating aspect from DEM for each HRU")
+        
+        results = {}
+        
+        try:
+            with rasterio.open(self.dem_path) as src:
+                dem = src.read(1)
+                transform = src.transform
+                
+                # Get cell sizes
+                cell_size_x = abs(transform[0])  # dx
+                cell_size_y = abs(transform[4])  # dy
+                
+                # Calculate gradients
+                dy, dx = np.gradient(dem.astype(np.float64), cell_size_y, cell_size_x)
+                
+                # Calculate aspect in radians (-π to π)
+                aspect_rad = np.arctan2(-dy, dx)  # Note: -dy because aspect is measured from North
+                
+                # Convert to degrees (0 to 360, where 0/360 = North, 90 = East, 180 = South, 270 = West)
+                aspect_deg = np.degrees(aspect_rad)
+                aspect_deg = (90 - aspect_deg) % 360  # Convert from math convention to compass bearing
+                
+                # Handle flat areas (where both dx and dy are near zero)
+                flat_mask = (np.abs(dx) < 1e-8) & (np.abs(dy) < 1e-8)
+                aspect_deg[flat_mask] = -1  # Special value for flat areas
+                
+                # Use zonal_stats to get mean aspect for all HRUs at once
+                mean_aspects = rasterstats.zonal_stats(
+                    shp.geometry,
+                    aspect_deg,
+                    affine=transform,
+                    stats=['mean'],
+                    nodata=src.nodata
+                )
+            
+            # Create results dictionary
+            hru_id_col = self.config.get('CATCHMENT_SHP_HRUID')
+            for idx, row in shp.iterrows():
+                # Convert HRU ID to proper scalar type (handle MaskedArray)
+                hru_id_raw = row[hru_id_col]
+                if hasattr(hru_id_raw, 'item'):
+                    hru_id = int(hru_id_raw.item())  # Extract scalar from MaskedArray
+                else:
+                    hru_id = int(hru_id_raw)  # Already a scalar
+                    
+                mean_aspect = mean_aspects[idx]['mean']
+                
+                if mean_aspect is None or np.isnan(mean_aspect):
+                    self.logger.warning(f"No valid aspect data found for HRU {hru_id}")
+                    results[hru_id] = 180.0  # Default to south-facing
+                elif mean_aspect == -1:
+                    # Flat area
+                    results[hru_id] = 180.0  # Default to south-facing for flat areas
+                else:
+                    results[hru_id] = float(mean_aspect)
+        
+        except Exception as e:
+            self.logger.error(f"Error calculating aspect from DEM: {str(e)}")
+            # Return default values for all HRUs
+            hru_id_col = self.config.get('CATCHMENT_SHP_HRUID')
+            for idx, row in shp.iterrows():
+                # Convert HRU ID to proper scalar type (handle MaskedArray)
+                hru_id_raw = row[hru_id_col]
+                if hasattr(hru_id_raw, 'item'):
+                    hru_id = int(hru_id_raw.item())
+                else:
+                    hru_id = int(hru_id_raw)
+                results[hru_id] = 180.0
+        
+        return results
+
+    def _calculate_tan_slope_from_dem(self, shp):
+        """
+        Calculate mean tangent of slope for each HRU from the DEM.
+        
+        Args:
+            shp (gpd.GeoDataFrame): GeoDataFrame containing HRU polygons
+            
+        Returns:
+            dict: Dictionary with HRU IDs as keys and tan_slope values as values
+        """
+        self.logger.info("Calculating tangent of slope from DEM for each HRU")
+        
+        results = {}
+        
+        try:
+            with rasterio.open(self.dem_path) as src:
+                dem = src.read(1)
+                transform = src.transform
+                
+                # Get cell sizes
+                cell_size_x = abs(transform[0])  # dx
+                cell_size_y = abs(transform[4])  # dy
+                
+                # Calculate gradients
+                dy, dx = np.gradient(dem.astype(np.float64), cell_size_y, cell_size_x)
+                
+                # Calculate slope magnitude (rise over run)
+                slope_magnitude = np.sqrt(dx*dx + dy*dy)
+                
+                # Convert to tangent of slope angle
+                # slope_magnitude is already rise/run = tan(slope_angle)
+                tan_slope = slope_magnitude
+                
+                # Set minimum slope to avoid zero values (SUMMA may have issues with zero slope)
+                min_slope = 1e-6
+                tan_slope = np.maximum(tan_slope, min_slope)
+                
+                # Use zonal_stats to get mean tan_slope for all HRUs at once
+                mean_tan_slopes = rasterstats.zonal_stats(
+                    shp.geometry,
+                    tan_slope,
+                    affine=transform,
+                    stats=['mean'],
+                    nodata=src.nodata
+                )
+            
+            # Create results dictionary
+            hru_id_col = self.config.get('CATCHMENT_SHP_HRUID')
+            for idx, row in shp.iterrows():
+                # Convert HRU ID to proper scalar type (handle MaskedArray)
+                hru_id_raw = row[hru_id_col]
+                if hasattr(hru_id_raw, 'item'):
+                    hru_id = int(hru_id_raw.item())  # Extract scalar from MaskedArray
+                else:
+                    hru_id = int(hru_id_raw)  # Already a scalar
+                    
+                mean_tan_slope = mean_tan_slopes[idx]['mean']
+                
+                if mean_tan_slope is None or np.isnan(mean_tan_slope):
+                    self.logger.warning(f"No valid slope data found for HRU {hru_id}")
+                    results[hru_id] = 0.1  # Default slope
+                else:
+                    # Ensure minimum slope value
+                    results[hru_id] = max(float(mean_tan_slope), min_slope)
+        
+        except Exception as e:
+            self.logger.error(f"Error calculating tan_slope from DEM: {str(e)}")
+            # Return default values for all HRUs
+            hru_id_col = self.config.get('CATCHMENT_SHP_HRUID')
+            for idx, row in shp.iterrows():
+                # Convert HRU ID to proper scalar type (handle MaskedArray)
+                hru_id_raw = row[hru_id_col]
+                if hasattr(hru_id_raw, 'item'):
+                    hru_id = int(hru_id_raw.item())
+                else:
+                    hru_id = int(hru_id_raw)
+                results[hru_id] = 0.1
+        
+        return results
+
+
 
     def insert_soil_class(self, attribute_file):
         """Insert soil class data into the attributes file."""

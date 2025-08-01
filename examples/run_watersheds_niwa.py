@@ -18,16 +18,17 @@ from datetime import datetime
 def setup_confluence_directory(station_id, station_name, latitude, longitude, nz_shapefile=None):
     """
     Set up the CONFLUENCE directory structure for a NZ watershed
+    (Modified to skip shapefile creation)
     
     Args:
         station_id: ID of the station
         station_name: Name of the station
         latitude: Station latitude
         longitude: Station longitude
-        nz_shapefile: Optional path to shapefile for this catchment
+        nz_shapefile: Optional path to shapefile for this catchment (ignored in this version)
         
     Returns:
-        Tuple of (basin_target_path, river_target_path)
+        Tuple of (basin_target_path, river_target_path, basin_filename, river_filename)
     """
     # Base CONFLUENCE data directory
     confluence_data_dir = Path("/anvil/projects/x-ees240082/data/CONFLUENCE_data")
@@ -43,131 +44,15 @@ def setup_confluence_directory(station_id, station_name, latitude, longitude, nz
     # Create directories if they don't exist
     for directory in [domain_dir, basin_target_dir, river_target_dir]:
         directory.mkdir(parents=True, exist_ok=True)
+        print(f"Created directory: {directory}")
     
-    # If we have a shapefile, use it, otherwise create a simple point shapefile
-    if nz_shapefile and os.path.exists(nz_shapefile):
-        # Copy existing shapefile
-        basin_filename = f"{watershed_id}_basin.shp"
-        basin_target_base = str(basin_target_dir / basin_filename).rsplit('.', 1)[0]
-        
-        # Copy all shapefile components (shp, shx, dbf, prj, etc.)
-        for extension in ['shp', 'shx', 'dbf', 'prj', 'cpg']:
-            source_file = f"{nz_shapefile.rsplit('.', 1)[0]}.{extension}"
-            target_file = f"{basin_target_base}.{extension}"
-            if os.path.exists(source_file):
-                shutil.copy2(source_file, target_file)
-                print(f"Copied {source_file} to {target_file}")
-    else:
-        # Create a simple point buffer shapefile for the catchment
-        try:
-            # Create a point geometry
-            point = gpd.GeoDataFrame({
-                'gauge_id': [watershed_id],
-                'name': [station_name],
-                'geometry': [gpd.points_from_xy([longitude], [latitude])[0]]
-            }, crs="EPSG:4326")
-            
-            # Buffer the point to create a simple polygon (5km buffer)
-            # First convert to projected CRS for accurate buffering
-            point_proj = point.to_crs("+proj=aea +lat_1=-30 +lat_2=-45 +lat_0=-40 +lon_0=175")
-            buffered = point_proj.buffer(5000)  # 5km buffer
-            polygon = gpd.GeoDataFrame({
-                'gauge_id': point['gauge_id'],
-                'name': point['name'],
-                'geometry': buffered
-            }, crs=point_proj.crs)
-            
-            # Convert back to WGS84
-            polygon = polygon.to_crs("EPSG:4326")
-            
-            # Save as basin shapefile
-            basin_filename = f"{watershed_id}_basin.shp"
-            basin_target = basin_target_dir / basin_filename
-            polygon.to_file(basin_target)
-            print(f"Created simple buffer shapefile at {basin_target}")
-        except Exception as e:
-            print(f"Error creating buffer shapefile: {e}")
-            basin_filename = None
+    # Skip shapefile creation entirely
+    print(f"Skipping shapefile creation for {watershed_id}")
     
-    # For lumped approach, use the same shapefile for river network
-    if basin_filename:
-        river_filename = basin_filename
-        river_target = river_target_dir / river_filename
-        
-        # Copy from basin to river if needed
-        if not os.path.exists(river_target):
-            # Copy all shapefile components
-            for extension in ['shp', 'shx', 'dbf', 'prj', 'cpg']:
-                source_file = f"{str(basin_target_dir / basin_filename).rsplit('.', 1)[0]}.{extension}"
-                target_file = f"{str(river_target_dir / river_filename).rsplit('.', 1)[0]}.{extension}"
-                if os.path.exists(source_file):
-                    shutil.copy2(source_file, target_file)
-    else:
-        river_filename = None
-        
-    # Now modify the shapefiles to add required attributes
-    try:
-        if basin_filename:
-            # Read the basin shapefile
-            basin_shp = gpd.read_file(basin_target_dir / basin_filename)
-            
-            # Add GRU_ID and gru_to_seg fields
-            basin_shp['GRU_ID'] = watershed_id
-            basin_shp['gru_to_seg'] = 1
-            basin_shp['HRU_ID'] = watershed_id
-            
-            # Calculate GRU_area in square meters
-            if basin_shp.crs is None:
-                print(f"Warning: CRS not defined for {basin_filename}. Setting to EPSG:4326 (WGS84).")
-                basin_shp.set_crs(epsg=4326, inplace=True)
-            
-            # Convert to equal area projection for accurate area calculation
-            basin_shp_ea = basin_shp.to_crs('+proj=aea +lat_1=-30 +lat_2=-45 +lat_0=-40 +lon_0=175')
-            basin_shp['GRU_area'] = basin_shp_ea.geometry.area
-            basin_shp['HRU_area'] = basin_shp['GRU_area']
-            print(f"Calculated GRU_area based on geometry")
-            
-            # Add centroid coordinates
-            basin_shp['center_lat'] = basin_shp.geometry.centroid.y
-            basin_shp['center_lon'] = basin_shp.geometry.centroid.x
-            
-            # Save the modified basin shapefile
-            basin_shp.to_file(basin_target_dir / basin_filename)
-            print(f"Added GRU_ID, GRU_area, and other attributes to {basin_filename}")
-            
-            # Modify river shapefile (for lumped, this is the same as basin)
-            river_shp = gpd.read_file(river_target_dir / river_filename)
-            
-            # Add required properties for the river shapefile
-            if 'LINKNO' not in river_shp.columns:
-                river_shp['LINKNO'] = 1
-            
-            if 'DSLINKNO' not in river_shp.columns:
-                river_shp['DSLINKNO'] = 0  # Outlet
-            
-            if 'Length' not in river_shp.columns:
-                # For polygons, use the perimeter as an approximation of river length
-                river_shp_ea = river_shp.to_crs('+proj=aea +lat_1=-30 +lat_2=-45 +lat_0=-40 +lon_0=175')
-                river_shp['Length'] = river_shp_ea.geometry.area ** 0.5  # Simplified approximation
-            
-            if 'Slope' not in river_shp.columns:
-                river_shp['Slope'] = 0.001  # Default gentle slope
-                
-            # Save the modified river shapefile
-            river_shp.to_file(river_target_dir / river_filename)
-            print(f"Added LINKNO, DSLINKNO, Length, and Slope columns to river file")
-            
-            return basin_target_dir, river_target_dir, basin_filename, river_filename
-        else:
-            return None, None, None, None
-            
-    except Exception as e:
-        print(f"Error modifying shapefile attributes: {e}")
-        import traceback
-        print(traceback.format_exc())
-        return None, None, None, None
+    # Return directory paths and empty filenames since no shapefiles are created
+    return basin_target_dir, river_target_dir, "", ""
 
-def calculate_bounding_box(lat, lon, buffer_degrees=0.1):
+def calculate_bounding_box(lat, lon, buffer_degrees=1):
     """
     Calculate a bounding box around a point with a buffer
     

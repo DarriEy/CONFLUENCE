@@ -103,6 +103,115 @@ LC_COLORS = {
     'Mixed': '#7CFC00',         # Lawn green
 }
 
+def determine_em_earth_region(latitude, longitude):
+    """
+    Determine the EM-Earth region based on latitude and longitude coordinates.
+    
+    Args:
+        latitude: Latitude in decimal degrees
+        longitude: Longitude in decimal degrees
+    
+    Returns:
+        str: Region name matching EM-Earth directory structure
+        
+    Available regions: Africa, Asia, Europe, NorthAmerica, Oceania, SouthAmerica
+    """
+    lat = float(latitude)
+    lon = float(longitude)
+    
+    # Define regional boundaries (approximate)
+    # These boundaries are designed to match typical meteorological data coverage
+    # and may overlap in some areas - priority is given to the most likely region
+    
+    # North America: Generally western hemisphere, north of ~10°N
+    if -180 <= lon <= -30 and 10 <= lat <= 90:
+        return "NorthAmerica"
+    
+    # Central America and Caribbean are often included with North America
+    if -120 <= lon <= -60 and 5 <= lat <= 35:
+        return "NorthAmerica"
+    
+    # South America: Western hemisphere, generally south of North America
+    if -90 <= lon <= -30 and -60 <= lat <= 15:
+        return "SouthAmerica"
+    
+    # Europe: Roughly -10°W to 40°E, 35°N to 75°N
+    if -15 <= lon <= 45 and 35 <= lat <= 75:
+        return "Europe"
+    
+    # Africa: Roughly -20°W to 55°E, -35°S to 40°N
+    if -25 <= lon <= 60 and -40 <= lat <= 40:
+        # Exclude Europe overlap region
+        if not (-15 <= lon <= 45 and 35 <= lat <= 75):
+            return "Africa"
+    
+    # Oceania: Pacific region including Australia, New Zealand, Pacific Islands
+    # Australia and New Zealand
+    if 110 <= lon <= 180 and -50 <= lat <= -10:
+        return "Oceania"
+    # Pacific Islands
+    if 130 <= lon <= -130 and -30 <= lat <= 30:
+        return "Oceania"
+    # Handle longitude wraparound for Pacific
+    if lon >= 130 or lon <= -130:
+        if -30 <= lat <= 30:
+            return "Oceania"
+    
+    # Asia: Large region covering the rest of Eurasia
+    # Main Asian landmass
+    if 40 <= lon <= 180 and 5 <= lat <= 80:
+        return "Asia"
+    # Eastern Russia and far east
+    if 100 <= lon <= 180 and 40 <= lat <= 75:
+        return "Asia"
+    # Middle East (transition zone, but often grouped with Asia)
+    if 35 <= lon <= 65 and 10 <= lat <= 45:
+        return "Asia"
+    # Indian subcontinent and Southeast Asia
+    if 65 <= lon <= 140 and -10 <= lat <= 40:
+        return "Asia"
+    
+    # Default fallback logic based on hemisphere and latitude
+    if lon < -30:  # Western hemisphere
+        if lat > 10:
+            return "NorthAmerica"
+        else:
+            return "SouthAmerica"
+    else:  # Eastern hemisphere
+        if lat > 35:
+            if lon < 45:
+                return "Europe"
+            else:
+                return "Asia"
+        elif lat > -35:
+            if lon > 110:
+                return "Oceania"
+            else:
+                return "Africa"
+        else:
+            return "Oceania"
+
+def parse_pour_point_coords(pour_point_str):
+    """
+    Parse pour point coordinates from string format.
+    
+    Args:
+        pour_point_str: String in format "latitude/longitude"
+    
+    Returns:
+        tuple: (latitude, longitude) as floats
+    """
+    try:
+        parts = pour_point_str.split('/')
+        if len(parts) == 2:
+            lat = float(parts[0])
+            lon = float(parts[1])
+            return lat, lon
+        else:
+            raise ValueError(f"Invalid pour point format: {pour_point_str}")
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"Error parsing pour point coordinates '{pour_point_str}': {e}")
+
 def generate_config_file(template_path, output_path, domain_name, pour_point, bounding_box):
     """
     Generate a new config file based on the template with updated parameters
@@ -118,6 +227,16 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
     with open(template_path, 'r') as f:
         config_content = f.read()
     
+    # Parse pour point coordinates to determine region
+    try:
+        lat, lon = parse_pour_point_coords(pour_point)
+        em_earth_region = determine_em_earth_region(lat, lon)
+        print(f"Determined EM-Earth region for {domain_name}: {em_earth_region} (lat: {lat}, lon: {lon})")
+    except ValueError as e:
+        print(f"Warning: Could not parse pour point coordinates for {domain_name}: {e}")
+        print("Defaulting to Europe region")
+        em_earth_region = "Europe"
+    
     # Update the domain name using regex
     config_content = re.sub(r'DOMAIN_NAME:.*', f'DOMAIN_NAME: "{domain_name}"', config_content)
     
@@ -130,6 +249,11 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
     # Update CONFLUENCE_DATA_DIR for ISMN data
     config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: "/anvil/projects/x-ees240082/data/CONFLUENCE_data/fluxnet"', config_content)
 
+    # Update EM-Earth paths based on determined region
+    em_earth_base_path = "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly"
+    config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: {em_earth_base_path}/prcp/{em_earth_region}', config_content)
+    config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: {em_earth_base_path}/tmean/{em_earth_region}', config_content)
+    config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: {em_earth_region}', config_content)
 
     # Save the new config file
     with open(output_path, 'w') as f:
@@ -165,6 +289,14 @@ def generate_config_file(template_path, output_path, domain_name, pour_point, bo
         print(f"Bounding box setting: {bbox_match.group().strip()}")
     else:
         print("Warning: Bounding box not found in config!")
+    
+    # Verify EM-Earth region was updated
+    em_earth_pattern = re.compile(r'EM_EARTH_REGION:.*')
+    em_earth_match = em_earth_pattern.search(new_content)
+    if em_earth_match:
+        print(f"EM-Earth region setting: {em_earth_match.group().strip()}")
+    else:
+        print("Warning: EM-Earth region not found in config!")
     
     return output_path
 

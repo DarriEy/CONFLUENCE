@@ -26,7 +26,7 @@ def setup_confluence_directory(dataset, watershed_id, basin_shapefile_path, basi
         Tuple of (basin_target_path, success_flag)
     """        
     # Base CONFLUENCE data directory
-    confluence_data_dir = Path("/work/comphyd_lab/data/CONFLUENCE_data")
+    confluence_data_dir = Path("/anvil/scratch/x-deythorsson/CONFLUENCE_data/")
     
     # Create the domain directory structure
     domain_dir = confluence_data_dir / "caravan" / f"domain_{dataset}_{watershed_id}"
@@ -182,7 +182,7 @@ def copy_attributes(dataset, watershed_id, domain_dir):
         Success flag
     """
     # Source path for attributes
-    caravan_base = Path("/work/comphyd_lab/data/misc-data/Caravan/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
+    caravan_base = Path("/anvil/projects/x-ees240082/data/misc-data/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
     attributes_dir = caravan_base / "attributes" / dataset
     
     # Target directory for attributes
@@ -247,7 +247,7 @@ def copy_streamflow_data(dataset, watershed_id, domain_dir):
         Path to copied streamflow file or None if failed
     """
     # Source path for streamflow data
-    caravan_base = Path("/work/comphyd_lab/data/misc-data/Caravan/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
+    caravan_base = Path("/anvil/projects/x-ees240082/data/misc-data/Caravan/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
     streamflow_dir = caravan_base / "timeseries" / "csv" / dataset
     
     # Target directory for streamflow data
@@ -445,7 +445,7 @@ def generate_config_file(template_path, output_path, domain_name, basin_name,
     config_content = re.sub(r'DOMAIN_NAME:.*', f'DOMAIN_NAME: "{domain_name}"', config_content)
 
     # Update the data directory to point to the large sample dir
-    config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: /work/comphyd_lab/data/CONFLUENCE_data/caravan', config_content)
+    config_content = re.sub(r'CONFLUENCE_DATA_DIR:.*', f'CONFLUENCE_DATA_DIR: /anvil/scratch/x-deythorsson/CONFLUENCE_data/caravan', config_content)
 
     # Update the river basin and river network names
     config_content = re.sub(r'RIVER_BASINS_NAME:.*', f'RIVER_BASINS_NAME: "{basin_name}"', config_content)
@@ -461,7 +461,24 @@ def generate_config_file(template_path, output_path, domain_name, basin_name,
     # Update bounding box coordinates if provided
     if bounding_box and '/' in bounding_box:
         config_content = re.sub(r'BOUNDING_BOX_COORDS:.*', f'BOUNDING_BOX_COORDS: {bounding_box}', config_content)
-    
+
+    if 'camelsaus' in domain_name:
+        config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/Oceania', config_content)
+        config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/Oceania', config_content)
+        config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: Oceania', config_content)
+
+    if 'camelscl' in domain_name or 'camelsbr' in domain_name  :
+        config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/SouthAmerica', config_content)
+        config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/SouthAmerica', config_content)
+        config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: SouthAmerica', config_content)
+
+    if 'camelsgb' in domain_name:
+        config_content = re.sub(r'EM_EARTH_PRCP_DIR:.*', f'EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/Europe', config_content)
+        config_content = re.sub(r'EM_EARTH_TMEAN_DIR:.*', f'EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/Europe', config_content)
+        config_content = re.sub(r'EM_EARTH_REGION:.*', f'EM_EARTH_REGION: Europe', config_content)
+
+
+
     # Update streamflow file name if provided
     if streamflow_file:
         streamflow_name = os.path.basename(streamflow_file)
@@ -519,25 +536,13 @@ def run_confluence(config_path, job_name, dry_run=False):
 #SBATCH --mem=8G
 
 # Load necessary modules
-. /work/comphyd_lab/local/modules/spack/2024v5/lmod-init-bash
-module unuse $MODULEPATH
-module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
-
-module load netcdf-fortran/4.6.1
-module load openblas/0.3.27
-module load hdf/4.3.0
-module load hdf5/1.14.3
-module load gdal/3.9.2
-module load netlib-lapack/3.11.0
-module load openmpi/4.1.6
-module load python/3.11.7
-module load r/4.4.1
+module restore confluence_modules
 
 # Activate Python environment
-source /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/conf-env/bin/activate
+conda activate confluence 
 
 # Run CONFLUENCE with the specified config
-python /home/darri.eythorsson/code/CONFLUENCE/CONFLUENCE.py --config {config_path}
+python ../CONFLUENCE/CONFLUENCE.py --config {config_path}
 
 echo "CONFLUENCE job for {job_name} complete"
 """)
@@ -692,10 +697,10 @@ def main():
     parser.add_argument('--dataset', type=str, default='camels', 
                         help='CARAVAN dataset to process (e.g., camels, camelsaus, camelsbr, etc.)')
     parser.add_argument('--template', type=str, 
-                        default='/home/darri.eythorsson/code/CONFLUENCE/0_config_files/config_template.yaml',
+                        default='/home/x-deythorsson/code/CONFLUENCE/0_config_files/config_Bow_lumped.yaml',
                         help='Path to the template config file')
     parser.add_argument('--config-dir', type=str, 
-                        default='/home/darri.eythorsson/code/CONFLUENCE/0_config_files/caravan',
+                        default='/home/x-deythorsson/code/CONFLUENCE/0_config_files/caravan',
                         help='Directory to store generated config files')
     parser.add_argument('--max-watersheds', type=int, default=0, 
                         help='Maximum number of watersheds to process (0 = all)')
@@ -708,7 +713,7 @@ def main():
     args = parser.parse_args()
     
     # Base paths
-    caravan_base = Path("/work/comphyd_lab/data/misc-data/Caravan/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
+    caravan_base = Path("/anvil/projects/x-ees240082/data/misc-data/Caravan/usr/local/google/home/kratzert/Data/Caravan-Jan25-csv")
     
     # Check if CARAVAN directory exists
     if not caravan_base.exists():
@@ -814,11 +819,17 @@ def main():
         domain_name = f"{args.dataset}_{watershed_id}"        
 
         # Check if the simulations directory already exists
-        simulation_dir = Path(f"/work/comphyd_lab/data/CONFLUENCE_data/caravan/domain_{domain_name}/simulations")
-        
+        simulation_dir = Path(f"/anvil/scratch/x-deythorsson/CONFLUENCE_data/domain_{domain_name}")
+        simulation_tar = Path(f"/anvil/scratch/x-deythorsson/CONFLUENCE_data/caravan/domain_{domain_name}.tar.gz")
+
         if simulation_dir.exists():
             print(f"Skipping {domain_name} - simulation directory already exists: {simulation_dir}")
             continue
+
+        if simulation_tar.exists():
+            print(f"Skipping {domain_name} - simulation tar already exists: {simulation_tar}")
+            continue
+
 
         # Get shapefile information
         basin_path = watershed_info['shapefile_path']
