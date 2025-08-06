@@ -38,6 +38,8 @@ from abc import ABC, abstractmethod
 import time
 from concurrent.futures import ProcessPoolExecutor
 import re
+from joblib import Parallel, delayed
+import logging
 
 def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
     """Enhanced safe worker function with better error reporting and debugging"""
@@ -3670,7 +3672,7 @@ class DEOptimizer:
         
         try:
             # Execute with reduced concurrency and batching
-            batch_size = min(effective_processes, 6)  # Smaller batches
+            batch_size = min(effective_processes, 100)
             
             for batch_start in range(0, len(worker_tasks), batch_size):
                 batch_end = min(batch_start + batch_size, len(worker_tasks))
@@ -3681,7 +3683,7 @@ class DEOptimizer:
                     time.sleep(1.0)
                 
                 # Execute batch with timeout and retry
-                batch_results = self._execute_batch_safe(batch_tasks, len(batch_tasks))
+                batch_results = self._execute_batch_joblib(batch_tasks, len(batch_tasks))
                 results.extend(batch_results)
                 completed_count += len(batch_tasks)
                 
@@ -3730,6 +3732,52 @@ class DEOptimizer:
                 }
                 for task in evaluation_tasks
             ]
+
+
+
+
+    def _execute_batch_joblib(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
+        """
+        Drop-in replacement for ProcessPoolExecutor using Joblib
+        - Better handling of scientific data (numpy arrays)
+        - More robust error handling
+        - Less file system contention
+        """
+        try:
+            self.logger.info(f"Starting Joblib batch execution with {max_workers} workers")
+            
+            # Joblib is specifically designed for scientific computing
+            results = Parallel(
+                n_jobs=max_workers,
+                backend='multiprocessing',  # or 'threading' for I/O bound tasks
+                timeout=2400,  # 40 minutes per task
+                verbose=5 if self.logger.isEnabledFor(logging.DEBUG) else 0,
+                batch_size=1,  # Process one task at a time for better resource management
+                pre_dispatch='n_jobs',  # Don't over-subscribe
+                max_nbytes=None,  # Allow large arrays
+            )(
+                delayed(_evaluate_parameters_worker_safe)(task_data)
+                for task_data in batch_tasks
+            )
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Joblib batch execution failed: {str(e)}")
+            
+            # Return failed results for all tasks
+            return [
+                {
+                    'individual_id': task_data['individual_id'],
+                    'params': task_data['params'],
+                    'score': None,
+                    'error': f'Joblib batch failed: {str(e)}'
+                }
+                for task_data in batch_tasks
+            ]
+
+
+
 
     def _execute_batch_safe(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
         """Execute a batch with enhanced error handling and recovery"""
