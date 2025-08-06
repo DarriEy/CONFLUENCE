@@ -205,7 +205,7 @@ class SummaPreProcessor:
             self.logger.error(f"Unexpected error in create_file_manager: {str(e)}")
             raise
 
-    def _process_single_file_comprehensive_fix(self, file: str, lapse_values: pd.DataFrame, lapse_rate: float):
+    def _process_single_file(self, file: str, lapse_values: pd.DataFrame, lapse_rate: float):
         """
         Process a single forcing file with comprehensive fixes for SUMMA compatibility.
         
@@ -313,8 +313,8 @@ class SummaPreProcessor:
 
     def _fix_time_coordinate_comprehensive(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
         """
-        Comprehensive fix for time coordinate to ensure SUMMA compatibility.
-        Creates IDENTICAL time coordinates across ALL files to prevent SUMMA mismatches.
+        Fix time coordinate to ensure SUMMA compatibility using only the data's time coordinate.
+        No filename parsing - just uses the actual time data which is always authoritative.
         
         Args:
             dataset (xr.Dataset): Input dataset
@@ -333,63 +333,30 @@ class SummaPreProcessor:
                 pd_times = pd.to_datetime(time_coord.values)
             elif np.issubdtype(time_coord.dtype, np.number):
                 if 'units' in time_coord.attrs and 'since' in time_coord.attrs['units']:
-                    pd_times = pd.to_datetime(time_coord.values, unit='s', origin=time_coord.attrs['units'].split('since ')[1])
+                    # Parse existing time units to understand the reference
+                    units_str = time_coord.attrs['units']
+                    if 'since' in units_str:
+                        reference_str = units_str.split('since ')[1]
+                        pd_times = pd.to_datetime(time_coord.values, unit='s', origin=reference_str)
+                    else:
+                        # Assume seconds since unix epoch if no reference given
+                        pd_times = pd.to_datetime(time_coord.values, unit='s')
                 else:
+                    # Try to interpret as seconds since unix epoch
                     pd_times = pd.to_datetime(time_coord.values, unit='s')
             else:
+                # Try direct conversion
                 pd_times = pd.to_datetime(time_coord.values)
             
-            import re
+            self.logger.debug(f"File {filename}: Time range from data: {pd_times[0]} to {pd_times[-1]}")
             
-            # Try to extract date from filename (adjust pattern for your CASR files)
-            date_patterns = [
-                r'(\d{4})(\d{2})(\d{2})(\d{2})',  # YYYYMMDDHH
-                r'(\d{4})-(\d{2})-(\d{2})',       # YYYY-MM-DD
-                r'(\d{4})(\d{3})',                # YYYYDDD (day of year)
-            ]
-            
-            file_date = None
-            for pattern in date_patterns:
-                match = re.search(pattern, filename)
-                if match:
-                    try:
-                        if len(match.groups()) == 4:  # YYYYMMDDHH
-                            year, month, day, hour = match.groups()
-                            file_date = pd.Timestamp(f"{year}-{month}-{day}")
-                            break
-                        elif len(match.groups()) == 3:  # YYYY-MM-DD
-                            year, month, day = match.groups()
-                            file_date = pd.Timestamp(f"{year}-{month}-{day}")
-                            break
-                        elif len(match.groups()) == 2:  # YYYYDDD
-                            year, doy = match.groups()
-                            file_date = pd.Timestamp(f"{year}-01-01") + pd.Timedelta(days=int(doy)-1)
-                            break
-                    except:
-                        continue
-            
-            if file_date is None:
-                # Fallback: use the first time from the data
-                file_date = pd_times[0].normalize()  # Start of day
-                #self.logger.warning(f"File {filename}: Could not extract date from filename, using data start date: {file_date}")
-            
-            # Create STANDARDIZED time coordinate that will be IDENTICAL across all files
+            # Get time step from config
             time_step_seconds = int(self.config.get('FORCING_TIME_STEP_SIZE', 3600))
             num_steps = len(pd_times)
             
-            # Force all files to start at midnight of their respective days
-            standard_start_time = file_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            
-            # Create exact time series from the standardized start time
-            time_deltas_seconds = np.arange(0, num_steps * time_step_seconds, time_step_seconds)
-            pd_times_standard = standard_start_time + pd.to_timedelta(time_deltas_seconds, unit='s')
-            
-            self.logger.debug(f"File {filename}: Standardized to start at: {standard_start_time}")
-            self.logger.debug(f"File {filename}: Time steps: {num_steps}, Step size: {time_step_seconds}s")
-            
             # Convert to SUMMA's expected format: seconds since 1990-01-01 00:00:00
             reference_date = pd.Timestamp('1990-01-01 00:00:00')
-            seconds_since_ref = (pd_times_standard - reference_date).total_seconds().values
+            seconds_since_ref = (pd_times - reference_date).total_seconds().values
             
             # Ensure perfect integer seconds to avoid floating point precision issues
             seconds_since_ref = np.round(seconds_since_ref).astype(np.int64).astype(np.float64)
@@ -414,20 +381,21 @@ class SummaPreProcessor:
             if np.any(np.isnan(seconds_since_ref)):
                 raise ValueError(f"NaN values in converted time coordinate")
             
-            # Verify exact time step consistency
-            time_diffs = np.diff(seconds_since_ref)
-            if not np.all(time_diffs == time_step_seconds):
-                inconsistent_count = np.sum(time_diffs != time_step_seconds)
-                self.logger.warning(f"File {filename}: {inconsistent_count} inconsistent time steps - forcing consistency")
+            # Check time step consistency (but don't force it - preserve actual data timing)
+            if len(seconds_since_ref) > 1:
+                time_diffs = np.diff(seconds_since_ref)
+                expected_step = time_step_seconds
                 
-                # Force perfectly consistent time steps
-                consistent_times = np.arange(
-                    seconds_since_ref[0],
-                    seconds_since_ref[0] + num_steps * time_step_seconds,
-                    time_step_seconds
-                )
-                dataset = dataset.assign_coords(time=consistent_times)
-                self.logger.info(f"File {filename}: Enforced perfectly consistent time steps")
+                # Check if most time steps match expected (allowing for some variability)
+                step_matches = np.abs(time_diffs - expected_step) < (expected_step * 0.01)  # 1% tolerance
+                match_percentage = np.sum(step_matches) / len(step_matches) * 100
+                
+                if match_percentage < 90:
+                    self.logger.warning(f"File {filename}: Only {match_percentage:.1f}% of time steps match expected step size")
+                    actual_median_step = np.median(time_diffs)
+                    self.logger.warning(f"File {filename}: Expected step: {expected_step}s, Actual median: {actual_median_step:.0f}s")
+                else:
+                    self.logger.debug(f"File {filename}: Time steps are consistent ({match_percentage:.1f}% match)")
             
             return dataset
             
@@ -611,8 +579,8 @@ class SummaPreProcessor:
             above_max = (var_data > max_val).sum()
             
             if below_min > 0 or above_max > 0:
-                self.logger.warning(f"File {filename}: Variable {var} has {below_min} values below {min_val} "
-                                f"and {above_max} values above {max_val}")
+                #self.logger.warning(f"File {filename}: Variable {var} has {below_min} values below {min_val} "
+                #                f"and {above_max} values above {max_val}")
                 
                 # Clip to valid range
                 clipped_data = var_data.clip(min=min_val, max=max_val)
@@ -772,7 +740,7 @@ class SummaPreProcessor:
             # Process each file in the batch
             for i, file in enumerate(batch_files):
                 try:
-                    self._process_single_file_comprehensive_fix(file, lapse_values, lapse_rate)
+                    self._process_single_file(file, lapse_values, lapse_rate)
                     
                     # Log progress every 10 files or for small batches
                     if (i + 1) % 10 == 0 or batch_size <= 10:
@@ -839,185 +807,6 @@ class SummaPreProcessor:
             self.logger.warning(f"Could not determine optimal batch size: {str(e)}. Using default.")
             return min(10, total_files)  # Conservative fallback
 
-    def _process_single_file(self, file: str, lapse_values: pd.DataFrame, lapse_rate: float):
-        """
-        Process a single forcing file with memory-efficient operations and SUMMA-compatible time formatting.
-        
-        Args:
-            file (str): Filename to process
-            lapse_values (pd.DataFrame): Pre-calculated lapse values
-            lapse_rate (float): Lapse rate value
-        """
-        input_path = self.forcing_basin_path / file
-        output_path = self.forcing_summa_path / file
-        
-        # Use context manager and process efficiently
-        with xr.open_dataset(input_path) as dat:
-            # Create a copy to avoid modifying the original
-            dat = dat.copy()
-            
-            # Fix time coordinate for SUMMA compatibility
-            dat = self._fix_time_coordinate(dat, file)
-            
-            # Find which HRU IDs exist in the forcing data but not in the lapse values
-            valid_hru_mask = np.isin(dat['hruId'].values, lapse_values.index)
-            
-            # Log and filter invalid HRUs
-            if not np.all(valid_hru_mask):
-                missing_hrus = dat['hruId'].values[~valid_hru_mask]
-                if len(missing_hrus) <= 10:  # Only log first 10 to avoid spam
-                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values: {missing_hrus}")
-                else:
-                    self.logger.warning(f"File {file}: Removing {len(missing_hrus)} HRU IDs without lapse values")
-                
-                # Filter the dataset
-                dat = dat.sel(hru=valid_hru_mask)
-                
-                if len(dat.hru) == 0:
-                    raise ValueError(f"File {file}: No valid HRUs found after filtering")
-            
-            # Apply data step (memory efficient - in-place operation)
-            dat['data_step'] = self.data_step
-            dat.data_step.attrs.update({
-                'long_name': 'data step length in seconds',
-                'units': 's'
-            })
-
-            # Update precipitation units if present
-            if 'pptrate' in dat:
-                dat.pptrate.attrs.update({
-                    'units': 'mm/s',
-                    'long_name': 'Mean total precipitation rate'
-                })
-
-            # Apply lapse rate correction efficiently if enabled
-            if self.config.get('APPLY_LAPSE_RATE') == True:
-                # Get lapse values for the HRUs (vectorized operation)
-                hru_lapse_values = lapse_values.loc[dat['hruId'].values, 'lapse_values'].values
-                
-                # Create correction array more efficiently
-                n_time, n_hru = len(dat['time']), len(dat['hru'])
-                lapse_correction = np.broadcast_to(hru_lapse_values[np.newaxis, :], (n_time, n_hru))
-                
-                # Store original attributes
-                tmp_units = dat['airtemp'].attrs.get('units', 'K')
-                
-                # Apply correction (in-place operation)
-                dat['airtemp'].values += lapse_correction
-                dat.airtemp.attrs['units'] = tmp_units
-                
-                # Clean up temporary arrays
-                del hru_lapse_values, lapse_correction
-
-            # Prepare encoding with time coordinate fix
-            encoding = {
-                var: {'zlib': True, 'complevel': 1, 'shuffle': True} 
-                for var in dat.data_vars
-            }
-            
-            # Ensure time coordinate is properly encoded
-            encoding['time'] = {
-                'dtype': 'float64',
-                'zlib': True,
-                'complevel': 1,
-                '_FillValue': None
-            }
-            
-            dat.to_netcdf(output_path, encoding=encoding)
-            
-            # Explicit cleanup
-            dat.close()
-            del dat
-
-    def _fix_time_coordinate(self, dataset: xr.Dataset, filename: str) -> xr.Dataset:
-        """
-        Fix time coordinate to ensure SUMMA compatibility.
-        
-        Args:
-            dataset (xr.Dataset): Input dataset with potentially problematic time coordinate
-            filename (str): Filename for logging purposes
-            
-        Returns:
-            xr.Dataset: Dataset with corrected time coordinate
-        """
-        try:
-            # Check current time coordinate
-            time_coord = dataset.time
-            
-            # If time is already numeric (seconds since reference), check the format
-            if np.issubdtype(time_coord.dtype, np.number):
-                # Ensure proper time attributes for SUMMA
-                if 'units' not in time_coord.attrs or 'since' not in time_coord.attrs.get('units', ''):
-                    self.logger.debug(f"File {filename}: Fixing time coordinate attributes")
-                    
-                    # Convert to pandas datetime to understand the time range
-                    try:
-                        time_values = pd.to_datetime(time_coord.values)
-                        
-                        # Use a standard reference date for SUMMA
-                        reference_date = pd.Timestamp('1990-01-01 00:00:00')
-                        
-                        # Calculate seconds since reference
-                        seconds_since_ref = (time_values - reference_date).total_seconds().values
-                        
-                        # Update the time coordinate
-                        dataset = dataset.assign_coords(time=seconds_since_ref)
-                        
-                        # Set proper attributes
-                        dataset.time.attrs = {
-                            'units': 'seconds since 1990-01-01 00:00:00',
-                            'calendar': 'standard',
-                            'long_name': 'time',
-                            'axis': 'T'
-                        }
-                        
-                    except Exception as e:
-                        self.logger.warning(f"File {filename}: Could not parse existing time coordinate: {str(e)}")
-            
-            else:
-                # Time coordinate is not numeric, need to convert
-                self.logger.debug(f"File {filename}: Converting non-numeric time coordinate")
-                
-                try:
-                    # Convert to pandas datetime first
-                    time_values = pd.to_datetime(dataset.time.values)
-                    
-                    # Use a standard reference date for SUMMA
-                    reference_date = pd.Timestamp('1990-01-01 00:00:00')
-                    
-                    # Calculate seconds since reference
-                    seconds_since_ref = (time_values - reference_date).total_seconds().values
-                    
-                    # Replace the time coordinate
-                    dataset = dataset.assign_coords(time=seconds_since_ref)
-                    
-                    # Set proper attributes for SUMMA
-                    dataset.time.attrs = {
-                        'units': 'seconds since 1990-01-01 00:00:00',
-                        'calendar': 'standard',
-                        'long_name': 'time',
-                        'axis': 'T'
-                    }
-                    
-                    self.logger.debug(f"File {filename}: Successfully converted time coordinate to seconds since reference")
-                    
-                except Exception as e:
-                    self.logger.error(f"File {filename}: Failed to convert time coordinate: {str(e)}")
-                    raise ValueError(f"Cannot convert time coordinate in file {filename}: {str(e)}")
-            
-            # Validate the time coordinate
-            if len(dataset.time) == 0:
-                raise ValueError(f"File {filename}: Empty time coordinate after conversion")
-            
-            # Check for any NaN values in time
-            if np.any(np.isnan(dataset.time.values)):
-                raise ValueError(f"File {filename}: NaN values found in time coordinate")
-            
-            return dataset
-            
-        except Exception as e:
-            self.logger.error(f"File {filename}: Error fixing time coordinate: {str(e)}")
-            raise
         
     def create_forcing_file_list(self):
         """

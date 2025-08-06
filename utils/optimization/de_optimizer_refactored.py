@@ -144,7 +144,7 @@ def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
 
 
 def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
-    """Enhanced worker function with better debugging and error handling"""
+    """Enhanced worker function with consistent metrics calculation and robust error handling"""
     import sys
     import logging
     from pathlib import Path
@@ -227,11 +227,11 @@ def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
         
         logger.info("All critical paths verified")
         
-        # Apply parameters to files
+        # Apply parameters to files using CONSISTENT method
         debug_info['stage'] = 'parameter_application'
-        logger.info("Applying parameters to model files")
+        logger.info("Applying parameters to model files (consistent method)")
         
-        if not _apply_parameters_worker_enhanced(params, task_data, summa_settings_dir, logger, debug_info):
+        if not _apply_parameters_worker_consistent(params, task_data, summa_settings_dir, logger, debug_info):
             error_msg = 'Failed to apply parameters'
             logger.error(error_msg)
             debug_info['errors'].append(error_msg)
@@ -288,14 +288,14 @@ def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
                 
                 logger.info("mizuRoute execution completed successfully")
         
-        # Calculate metrics
+        # Calculate metrics using CONSISTENT method
         debug_info['stage'] = 'metrics_calculation'
-        logger.info("Calculating performance metrics")
+        logger.info("Calculating performance metrics (consistent with sequential)")
         
-        score = _calculate_metrics_worker_enhanced(task_data, summa_dir, mizuroute_dir, logger, debug_info)
+        score = _calculate_metrics_worker_consistent(task_data, summa_dir, mizuroute_dir, logger)
         
         if score is None:
-            error_msg = 'Failed to calculate metrics'
+            error_msg = 'Failed to calculate metrics (consistent method)'
             logger.error(error_msg)
             debug_info['errors'].append(error_msg)
             return {
@@ -306,7 +306,7 @@ def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
                 'debug_info': debug_info
             }
         
-        logger.info(f"Evaluation completed successfully. Score: {score:.6f}")
+        logger.info(f"Evaluation completed successfully. Score: {score:.6f} (consistent)")
         
         return {
             'individual_id': individual_id,
@@ -330,46 +330,128 @@ def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
             'full_traceback': error_trace
         }
 
-def _apply_parameters_worker_enhanced(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced parameter application with better error handling"""
+
+def _apply_parameters_worker_consistent(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
+    """Apply parameters consistently with sequential approach"""
     try:
         config = task_data['config']
-        logger.debug(f"Applying parameters: {list(params.keys())}")
+        logger.debug(f"Applying parameters: {list(params.keys())} (consistent method)")
         
-        # Handle soil depth parameters
-        if config.get('CALIBRATE_DEPTH', False) and 'total_mult' in params and 'shape_factor' in params:
-            logger.debug("Updating soil depths")
+        # Parse parameter lists EXACTLY as ParameterManager does
+        local_params = [p.strip() for p in config.get('PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
+        basin_params = [p.strip() for p in config.get('BASIN_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
+        depth_params = ['total_mult', 'shape_factor'] if config.get('CALIBRATE_DEPTH', False) else []
+        mizuroute_params = []
+        
+        if config.get('CALIBRATE_MIZUROUTE', False):
+            mizuroute_params_str = config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', 'velo,diff')
+            mizuroute_params = [p.strip() for p in mizuroute_params_str.split(',') if p.strip()]
+        
+        # Apply in same order as ParameterManager.apply_parameters()
+        
+        # 1. Handle soil depth parameters
+        if depth_params and 'total_mult' in params and 'shape_factor' in params:
+            logger.debug("Updating soil depths (consistent)")
             if not _update_soil_depths_worker_enhanced(params, task_data, settings_dir, logger, debug_info):
                 return False
         
-        # Handle mizuRoute parameters
-        if config.get('CALIBRATE_MIZUROUTE', False):
-            mizuroute_params = [p.strip() for p in config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
-            if mizuroute_params and any(p in params for p in mizuroute_params):
-                logger.debug("Updating mizuRoute parameters")
-                if not _update_mizuroute_params_worker_enhanced(params, task_data, logger, debug_info):
-                    return False
+        # 2. Handle mizuRoute parameters
+        if mizuroute_params and any(p in params for p in mizuroute_params):
+            logger.debug("Updating mizuRoute parameters (consistent)")
+            if not _update_mizuroute_params_worker_enhanced(params, task_data, logger, debug_info):
+                return False
         
-        # Generate trial parameters file
-        depth_params = ['total_mult', 'shape_factor'] if config.get('CALIBRATE_DEPTH', False) else []
-        mizuroute_params = [p.strip() for p in config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()] if config.get('CALIBRATE_MIZUROUTE', False) else []
-        
+        # 3. Generate trial parameters file (same exclusion logic as ParameterManager)
         hydraulic_params = {k: v for k, v in params.items() 
                           if k not in depth_params + mizuroute_params}
         
         if hydraulic_params:
-            logger.debug(f"Generating trial parameters file with: {list(hydraulic_params.keys())}")
+            logger.debug(f"Generating trial parameters file with: {list(hydraulic_params.keys())} (consistent)")
             if not _generate_trial_params_worker_enhanced(hydraulic_params, settings_dir, logger, debug_info):
                 return False
         
-        logger.debug("Parameter application completed successfully")
+        logger.debug("Parameter application completed successfully (consistent)")
         return True
         
     except Exception as e:
-        error_msg = f"Error applying parameters: {str(e)}"
+        error_msg = f"Error applying parameters (consistent): {str(e)}"
         logger.error(error_msg)
         debug_info['errors'].append(error_msg)
         return False
+
+
+def _calculate_metrics_worker_consistent(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
+    """Calculate metrics consistently with sequential evaluation using CalibrationTarget.calculate_metrics()"""
+    try:
+        # Recreate the CalibrationTarget to use same metrics calculation
+        calibration_var = task_data.get('calibration_variable', 'streamflow')
+        config = task_data['config']
+        project_dir = Path(task_data['project_dir'])
+        
+        # Create the same calibration target as sequential
+        if calibration_var == 'streamflow':
+            target = StreamflowTarget(config, project_dir, logger)
+        elif calibration_var == 'snow':
+            target = SnowTarget(config, project_dir, logger)
+        else:
+            logger.error(f"Unsupported calibration variable: {calibration_var}")
+            return None
+        
+        logger.debug("Created calibration target, calculating metrics...")
+        
+        # Use the SAME metrics calculation as sequential (calibration period only)
+        metrics = target.calculate_metrics(summa_dir, mizuroute_dir, calibration_only=True)
+        
+        if not metrics:
+            logger.error("Failed to calculate metrics using target.calculate_metrics()")
+            return None
+        
+        logger.debug(f"Calculated metrics: {list(metrics.keys())}")
+        
+        # Use the SAME target metric extraction logic as sequential
+        target_metric = task_data['target_metric']
+        
+        # Try exact match first
+        if target_metric in metrics:
+            score = metrics[target_metric]
+            logger.debug(f"Found exact match for {target_metric}")
+        # Try with calibration prefix
+        elif f"Calib_{target_metric}" in metrics:
+            score = metrics[f"Calib_{target_metric}"]
+            logger.debug(f"Found calibration prefixed {target_metric}")
+        # Try without prefix (remove Calib_ or Eval_)
+        else:
+            score = None
+            for key, value in metrics.items():
+                if key.endswith(f"_{target_metric}"):
+                    score = value
+                    logger.debug(f"Found suffixed match: {key}")
+                    break
+            
+            # Fallback to first available metric (same as sequential)
+            if score is None:
+                score = next(iter(metrics.values())) if metrics else None
+                if score is not None:
+                    logger.warning(f"Using fallback metric: {list(metrics.keys())[0]} = {score}")
+        
+        if score is None or np.isnan(score):
+            logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
+            return None
+        
+        # Apply same negation logic as sequential
+        # Note: Don't negate NSE - it should be maximized!
+        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
+            score = -score
+            logger.debug(f"Applied negation for {target_metric}: {score}")
+        
+        logger.debug(f"Final {target_metric}: {score:.6f} (using consistent target.calculate_metrics)")
+        return score
+        
+    except Exception as e:
+        logger.error(f"Error in consistent metrics calculation: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return None
 
 def _update_soil_depths_worker_enhanced(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
     """Enhanced soil depth update with better error handling"""
@@ -804,157 +886,67 @@ def _run_mizuroute_worker_enhanced(task_data: Dict, mizuroute_dir: Path, logger,
         debug_info['errors'].append(error_msg)
         return False
 
-
-def _calculate_metrics_worker_enhanced(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger, debug_info: Dict) -> Optional[float]:
-    """Enhanced metrics calculation with better error handling"""
+def _calculate_metrics_worker_enhanced(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
+    """Calculate metrics in worker process - CONSISTENT with sequential evaluation"""
     try:
+        # Recreate the CalibrationTarget to use same metrics calculation
         calibration_var = task_data.get('calibration_variable', 'streamflow')
         config = task_data['config']
+        project_dir = Path(task_data['project_dir'])
+        
+        # Create the same calibration target as sequential
+        if calibration_var == 'streamflow':
+            target = StreamflowTarget(config, project_dir, logger)
+        elif calibration_var == 'snow':
+            target = SnowTarget(config, project_dir, logger)
+        else:
+            logger.error(f"Unsupported calibration variable: {calibration_var}")
+            return None
+        
+        # Use the SAME metrics calculation as sequential (calibration period only)
+        metrics = target.calculate_metrics(summa_dir, mizuroute_dir, calibration_only=True)
+        
+        if not metrics:
+            logger.error("Failed to calculate metrics using target.calculate_metrics()")
+            return None
+        
+        # Use the SAME target metric extraction logic as sequential
         target_metric = task_data['target_metric']
         
-        logger.debug(f"Calculating metrics for {calibration_var} using {target_metric}")
-        
-        # Load observed data
-        if calibration_var == 'streamflow':
-            obs_file = Path(task_data['project_dir']) / "observations" / "streamflow" / "preprocessed" / f"{task_data['domain_name']}_streamflow_processed.csv"
-        elif calibration_var == 'snow':
-            obs_file = Path(task_data['project_dir']) / "observations" / "snow" / "swe" / "processed" / f"{task_data['domain_name']}_swe_processed.csv"
+        # Try exact match first
+        if target_metric in metrics:
+            score = metrics[target_metric]
+        # Try with calibration prefix
+        elif f"Calib_{target_metric}" in metrics:
+            score = metrics[f"Calib_{target_metric}"]
+        # Try without prefix (remove Calib_ or Eval_)
         else:
-            error_msg = f"Unsupported calibration variable: {calibration_var}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return None
-        
-        if not obs_file.exists():
-            error_msg = f"Observed data not found: {obs_file}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return None
-        
-        debug_info['files_checked'].append(f"Observed data: {obs_file}")
-        
-        obs_df = pd.read_csv(obs_file)
-        logger.debug(f"Loaded observed data: {len(obs_df)} records")
-        
-        # Find columns
-        date_col = None
-        data_col = None
-        
-        for col in obs_df.columns:
-            col_lower = col.lower()
-            if date_col is None and any(term in col_lower for term in ['date', 'time', 'datetime']):
-                date_col = col
-            if data_col is None:
-                if calibration_var == 'streamflow' and any(term in col_lower for term in ['flow', 'discharge', 'q_']):
-                    data_col = col
-                elif calibration_var == 'snow' and any(term in col_lower for term in ['swe', 'snow']):
-                    data_col = col
-        
-        if not date_col or not data_col:
-            error_msg = f"Could not identify date/data columns in observed data. Columns: {list(obs_df.columns)}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return None
-        
-        logger.debug(f"Using columns: date={date_col}, data={data_col}")
-        
-        # Process observed data
-        obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
-        obs_df.set_index('DateTime', inplace=True)
-        observed_data = obs_df[data_col]
-        
-        logger.debug(f"Processed observed data: {len(observed_data)} records")
-        
-        # Get simulated data
-        if calibration_var == 'streamflow' and _needs_mizuroute_routing_worker(config):
-            # Use mizuRoute output
-            sim_files = list(mizuroute_dir.glob("*.nc"))
-            if not sim_files:
-                error_msg = f"No mizuRoute output files found in {mizuroute_dir}"
-                logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
-                return None
+            score = None
+            for key, value in metrics.items():
+                if key.endswith(f"_{target_metric}"):
+                    score = value
+                    break
             
-            sim_file = sim_files[0]
-            logger.debug(f"Using mizuRoute output: {sim_file}")
-            simulated_data = _extract_streamflow_from_mizuroute_worker(sim_file, config, logger)
-        else:
-            # Use SUMMA output
-            if calibration_var == 'streamflow':
-                sim_files = list(summa_dir.glob("*timestep.nc"))
-                if not sim_files:
-                    error_msg = f"No SUMMA timestep files found in {summa_dir}"
-                    logger.error(error_msg)
-                    debug_info['errors'].append(error_msg)
-                    return None
-                sim_file = sim_files[0]
-                logger.debug(f"Using SUMMA timestep output: {sim_file}")
-                simulated_data = _extract_streamflow_from_summa_worker(sim_file, config, logger)
-            elif calibration_var == 'snow':
-                sim_files = list(summa_dir.glob("*day.nc"))
-                if not sim_files:
-                    error_msg = f"No SUMMA daily files found in {summa_dir}"
-                    logger.error(error_msg)
-                    debug_info['errors'].append(error_msg)
-                    return None
-                sim_file = sim_files[0]
-                logger.debug(f"Using SUMMA daily output: {sim_file}")
-                simulated_data = _extract_swe_from_summa_worker(sim_file, logger)
-            else:
-                error_msg = f"Unsupported calibration variable: {calibration_var}"
-                logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
-                return None
+            # Fallback to first available metric (same as sequential)
+            if score is None:
+                score = next(iter(metrics.values())) if metrics else None
         
-        if simulated_data is None or len(simulated_data) == 0:
-            error_msg = "Failed to extract simulated data or no data available"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
+        if score is None or np.isnan(score):
+            logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
             return None
         
-        logger.debug(f"Extracted simulated data: {len(simulated_data)} records")
-        
-        # Align time series
-        simulated_data.index = simulated_data.index.round('h')
-        common_idx = observed_data.index.intersection(simulated_data.index)
-        
-        if len(common_idx) == 0:
-            error_msg = "No common time indices between observed and simulated data"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return None
-        
-        obs_common = observed_data.loc[common_idx]
-        sim_common = simulated_data.loc[common_idx]
-        
-        logger.debug(f"Common time period: {len(common_idx)} records")
-        
-        # Calculate metrics
-        metrics = _calculate_performance_metrics_worker(obs_common, sim_common)
-        
-        # Extract target metric
-        score = metrics.get(target_metric, metrics.get('KGE', np.nan))
-        
-        if np.isnan(score):
-            error_msg = f"Target metric {target_metric} is NaN. Available metrics: {list(metrics.keys())}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return None
-        
-        # Apply negation for metrics where lower is better
+        # Apply same negation logic as sequential
+        # Note: Don't negate NSE - it should be maximized!
         if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
             score = -score
         
-        logger.debug(f"Calculated {target_metric}: {score:.6f}")
-        debug_info['metrics'] = metrics
-        debug_info['final_score'] = score
-        
+        logger.debug(f"Calculated {target_metric}: {score:.6f} (using target.calculate_metrics)")
         return score
         
     except Exception as e:
-        error_msg = f"Error calculating metrics: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
+        logger.error(f"Error in consistent metrics calculation: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return None
 
 
@@ -1242,28 +1234,45 @@ class CalibrationTarget(ABC):
     def _get_observed_data_column(self, columns: List[str]) -> Optional[str]:
         """Identify the data column in observed data file"""
         pass
-    
+        
     def _calculate_period_metrics(self, obs_data: pd.Series, sim_data: pd.Series, 
-                                 period: Tuple, prefix: str) -> Dict[str, float]:
-        """Calculate metrics for a specific time period"""
+                                period: Tuple, prefix: str) -> Dict[str, float]:
+        """Calculate metrics for a specific time period with explicit filtering"""
         try:
-            # Filter data to period if specified
+            # EXPLICIT filtering for both datasets (consistent with parallel worker)
             if period[0] and period[1]:
+                # Filter observed data to period
                 period_mask = (obs_data.index >= period[0]) & (obs_data.index <= period[1])
                 obs_period = obs_data[period_mask]
+                
+                # Explicitly filter simulated data to same period (like parallel worker)
+                sim_data.index = sim_data.index.round('h')  # Round first for consistency
+                sim_period_mask = (sim_data.index >= period[0]) & (sim_data.index <= period[1])
+                sim_period = sim_data[sim_period_mask]
+                
+                # Log filtering results for debugging
+                self.logger.debug(f"{prefix} period filtering: {period[0]} to {period[1]}")
+                self.logger.debug(f"{prefix} observed points: {len(obs_period)}")
+                self.logger.debug(f"{prefix} simulated points: {len(sim_period)}")
             else:
                 obs_period = obs_data
+                sim_period = sim_data
+                sim_period.index = sim_period.index.round('h')
             
-            # Align time series
-            sim_data.index = sim_data.index.round('h')
-            common_idx = obs_period.index.intersection(sim_data.index)
+            # Find common time indices
+            common_idx = obs_period.index.intersection(sim_period.index)
             
             if len(common_idx) == 0:
                 self.logger.warning(f"No common time indices for {prefix} period")
                 return {}
             
             obs_common = obs_period.loc[common_idx]
-            sim_common = sim_data.loc[common_idx]
+            sim_common = sim_period.loc[common_idx]
+            
+            # Log final aligned data for debugging
+            self.logger.debug(f"{prefix} aligned data points: {len(common_idx)}")
+            self.logger.debug(f"{prefix} obs range: {obs_common.min():.3f} to {obs_common.max():.3f}")
+            self.logger.debug(f"{prefix} sim range: {sim_common.min():.3f} to {sim_common.max():.3f}")
             
             # Calculate metrics
             base_metrics = self._calculate_performance_metrics(obs_common, sim_common)
