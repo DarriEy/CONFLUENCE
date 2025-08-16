@@ -290,7 +290,7 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
+ITERATIVE_OPTIMIZATION_ALGORITHM: DDS                           # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 30                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: NSE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"

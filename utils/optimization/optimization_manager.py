@@ -8,7 +8,7 @@ import numpy as np
 
 
 # Optimizers
-from utils.optimization.dds_optimizer import DDSOptimizer # type: ignore
+from utils.optimization.dds_optimizer_refactored import DDSOptimizer # type: ignore
 from utils.optimization.pso_optimizer import PSOOptimizer # type: ignore
 from utils.optimization.sce_ua_optimizer import SCEUAOptimizer # type: ignore
 from utils.optimization.de_optimizer_refactored import DEOptimizer # type: ignore

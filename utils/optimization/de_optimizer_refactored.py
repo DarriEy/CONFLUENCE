@@ -35,1073 +35,17 @@ from datetime import datetime
 import shutil
 from typing import Dict, Any, List, Tuple, Optional
 from abc import ABC, abstractmethod
-import time
-from concurrent.futures import ProcessPoolExecutor
 import re
 from joblib import Parallel, delayed
 import logging
+import gc
+import signal
+import sys
+import time
+import random
+import traceback
+import mpi4py # type: ignore
 
-def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
-    """Enhanced safe worker function with better error reporting and debugging"""
-    import os
-    import gc
-    import signal
-    import sys
-    import time
-    import random
-    import traceback
-    
-    # Set up signal handler for clean termination
-    def signal_handler(signum, frame):
-        sys.exit(1)
-    
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    # Set process-specific environment for isolation
-    process_id = os.getpid()
-    
-    # Force single-threaded execution and disable problematic file locking
-    os.environ.update({
-        'OMP_NUM_THREADS': '1',
-        'MKL_NUM_THREADS': '1',
-        'OPENBLAS_NUM_THREADS': '1',
-        'NETCDF_DISABLE_LOCKING': '1',
-        'HDF5_USE_FILE_LOCKING': 'FALSE',
-        'HDF5_DISABLE_VERSION_CHECK': '1',
-    })
-    
-    # Add small random delay to stagger file system access
-    initial_delay = random.uniform(0.1, 0.8)
-    time.sleep(initial_delay)
-    
-    try:
-        # Force garbage collection at start
-        gc.collect()
-        
-        # Enhanced logging setup for debugging
-        proc_id = task_data.get('proc_id', 0)
-        individual_id = task_data.get('individual_id', -1)
-        
-        # Try the evaluation with basic retry for stale file handle errors
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    retry_delay = 2.0 * (attempt + 1) + random.uniform(0, 1)
-                    time.sleep(retry_delay)
-                    gc.collect()
-                
-                # Call the enhanced worker function
-                result = _evaluate_parameters_worker_enhanced(task_data)
-                
-                # Force cleanup
-                gc.collect()
-                return result
-                
-            except Exception as e:
-                error_str = str(e).lower()
-                error_trace = traceback.format_exc()
-                
-                # Check for stale file handle or similar filesystem errors
-                if any(term in error_str for term in ['stale file handle', 'errno 116', 'input/output error', 'errno 5']):
-                    if attempt < max_retries - 1:  # Not the last attempt
-                        continue
-                
-                # For other errors or final attempt, return the error with full traceback
-                return {
-                    'individual_id': individual_id,
-                    'params': task_data.get('params', {}),
-                    'score': None,
-                    'error': f'Worker exception (attempt {attempt + 1}): {str(e)}\nTraceback:\n{error_trace}',
-                    'proc_id': proc_id,
-                    'debug_info': {
-                        'attempt': attempt + 1,
-                        'max_retries': max_retries,
-                        'process_id': process_id
-                    }
-                }
-        
-        # If we get here, all retries failed
-        return {
-            'individual_id': individual_id,
-            'params': task_data.get('params', {}),
-            'score': None,
-            'error': f'Worker failed after {max_retries} attempts',
-            'proc_id': proc_id
-        }
-        
-    except Exception as e:
-        return {
-            'individual_id': task_data.get('individual_id', -1),
-            'params': task_data.get('params', {}),
-            'score': None,
-            'error': f'Critical worker exception: {str(e)}\n{traceback.format_exc()}',
-            'proc_id': task_data.get('proc_id', -1)
-        }
-    
-    finally:
-        # Final cleanup
-        gc.collect()
-
-
-def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
-    """Enhanced worker function with consistent metrics calculation and robust error handling"""
-    import sys
-    import logging
-    from pathlib import Path
-    import subprocess
-    import traceback
-    
-    # Enhanced error collection
-    debug_info = {
-        'stage': 'initialization',
-        'files_checked': [],
-        'commands_run': [],
-        'errors': []
-    }
-    
-    try:
-        # Extract task info
-        individual_id = task_data['individual_id']
-        params = task_data['params']
-        proc_id = task_data['proc_id']
-        
-        debug_info['individual_id'] = individual_id
-        debug_info['proc_id'] = proc_id
-        
-        # Setup process logger with more detail
-        logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
-        if not logger.handlers:
-            logger.setLevel(logging.DEBUG)  # More verbose logging
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        
-        logger.info(f"Starting evaluation of individual {individual_id}")
-        
-        # Convert all paths to absolute Path objects early
-        debug_info['stage'] = 'path_setup'
-        
-        summa_exe = Path(task_data['summa_exe']).resolve()
-        file_manager = Path(task_data['file_manager']).resolve()
-        summa_dir = Path(task_data['summa_dir']).resolve()
-        mizuroute_dir = Path(task_data['mizuroute_dir']).resolve()
-        summa_settings_dir = Path(task_data['summa_settings_dir']).resolve()
-        
-        # Log paths for debugging
-        logger.debug(f"SUMMA exe: {summa_exe}")
-        logger.debug(f"File manager: {file_manager}")
-        logger.debug(f"SUMMA dir: {summa_dir}")
-        logger.debug(f"Settings dir: {summa_settings_dir}")
-        
-        debug_info['paths'] = {
-            'summa_exe': str(summa_exe),
-            'file_manager': str(file_manager),
-            'summa_dir': str(summa_dir),
-            'summa_settings_dir': str(summa_settings_dir)
-        }
-        
-        # Verify critical paths exist
-        debug_info['stage'] = 'path_verification'
-        
-        critical_paths = {
-            'SUMMA executable': summa_exe,
-            'File manager': file_manager,
-            'SUMMA directory': summa_dir,
-            'Settings directory': summa_settings_dir
-        }
-        
-        for name, path in critical_paths.items():
-            debug_info['files_checked'].append(f"{name}: {path}")
-            if not path.exists():
-                error_msg = f'{name} not found: {path}'
-                logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
-                return {
-                    'individual_id': individual_id,
-                    'params': params,
-                    'score': None,
-                    'error': error_msg,
-                    'debug_info': debug_info
-                }
-        
-        logger.info("All critical paths verified")
-        
-        # Apply parameters to files using CONSISTENT method
-        debug_info['stage'] = 'parameter_application'
-        logger.info("Applying parameters to model files (consistent method)")
-        
-        if not _apply_parameters_worker_consistent(params, task_data, summa_settings_dir, logger, debug_info):
-            error_msg = 'Failed to apply parameters'
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return {
-                'individual_id': individual_id,
-                'params': params,
-                'score': None,
-                'error': error_msg,
-                'debug_info': debug_info
-            }
-        
-        logger.info("Parameters applied successfully")
-        
-        # Run SUMMA with enhanced debugging
-        debug_info['stage'] = 'summa_execution'
-        logger.info("Starting SUMMA execution")
-        
-        if not _run_summa_worker_enhanced(summa_exe, file_manager, summa_dir, logger, debug_info):
-            error_msg = 'SUMMA simulation failed'
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return {
-                'individual_id': individual_id,
-                'params': params,
-                'score': None,
-                'error': error_msg,
-                'debug_info': debug_info
-            }
-        
-        logger.info("SUMMA execution completed successfully")
-        
-        # Run mizuRoute if needed
-        debug_info['stage'] = 'mizuroute_check'
-        calibration_var = task_data.get('calibration_variable', 'streamflow')
-        if calibration_var == 'streamflow':
-            config = task_data['config']
-            needs_routing = _needs_mizuroute_routing_worker(config)
-            
-            if needs_routing:
-                debug_info['stage'] = 'mizuroute_execution'
-                logger.info("Starting mizuRoute execution")
-                
-                if not _run_mizuroute_worker_enhanced(task_data, mizuroute_dir, logger, debug_info):
-                    error_msg = 'mizuRoute simulation failed'
-                    logger.error(error_msg)
-                    debug_info['errors'].append(error_msg)
-                    return {
-                        'individual_id': individual_id,
-                        'params': params,
-                        'score': None,
-                        'error': error_msg,
-                        'debug_info': debug_info
-                    }
-                
-                logger.info("mizuRoute execution completed successfully")
-        
-        # Calculate metrics using CONSISTENT method
-        debug_info['stage'] = 'metrics_calculation'
-        logger.info("Calculating performance metrics (consistent with sequential)")
-        
-        score = _calculate_metrics_worker_consistent(task_data, summa_dir, mizuroute_dir, logger)
-        
-        if score is None:
-            error_msg = 'Failed to calculate metrics (consistent method)'
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return {
-                'individual_id': individual_id,
-                'params': params,
-                'score': None,
-                'error': error_msg,
-                'debug_info': debug_info
-            }
-        
-        logger.info(f"Evaluation completed successfully. Score: {score:.6f} (consistent)")
-        
-        return {
-            'individual_id': individual_id,
-            'params': params,
-            'score': score,
-            'error': None,
-            'debug_info': debug_info
-        }
-        
-    except Exception as e:
-        error_trace = traceback.format_exc()
-        error_msg = f'Worker exception at stage {debug_info.get("stage", "unknown")}: {str(e)}'
-        debug_info['errors'].append(f"{error_msg}\nTraceback:\n{error_trace}")
-        
-        return {
-            'individual_id': task_data.get('individual_id', -1),
-            'params': task_data.get('params', {}),
-            'score': None,
-            'error': error_msg,
-            'debug_info': debug_info,
-            'full_traceback': error_trace
-        }
-
-
-def _apply_parameters_worker_consistent(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
-    """Apply parameters consistently with sequential approach"""
-    try:
-        config = task_data['config']
-        logger.debug(f"Applying parameters: {list(params.keys())} (consistent method)")
-        
-        # Parse parameter lists EXACTLY as ParameterManager does
-        local_params = [p.strip() for p in config.get('PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
-        basin_params = [p.strip() for p in config.get('BASIN_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
-        depth_params = ['total_mult', 'shape_factor'] if config.get('CALIBRATE_DEPTH', False) else []
-        mizuroute_params = []
-        
-        if config.get('CALIBRATE_MIZUROUTE', False):
-            mizuroute_params_str = config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', 'velo,diff')
-            mizuroute_params = [p.strip() for p in mizuroute_params_str.split(',') if p.strip()]
-        
-        # Apply in same order as ParameterManager.apply_parameters()
-        
-        # 1. Handle soil depth parameters
-        if depth_params and 'total_mult' in params and 'shape_factor' in params:
-            logger.debug("Updating soil depths (consistent)")
-            if not _update_soil_depths_worker_enhanced(params, task_data, settings_dir, logger, debug_info):
-                return False
-        
-        # 2. Handle mizuRoute parameters
-        if mizuroute_params and any(p in params for p in mizuroute_params):
-            logger.debug("Updating mizuRoute parameters (consistent)")
-            if not _update_mizuroute_params_worker_enhanced(params, task_data, logger, debug_info):
-                return False
-        
-        # 3. Generate trial parameters file (same exclusion logic as ParameterManager)
-        hydraulic_params = {k: v for k, v in params.items() 
-                          if k not in depth_params + mizuroute_params}
-        
-        if hydraulic_params:
-            logger.debug(f"Generating trial parameters file with: {list(hydraulic_params.keys())} (consistent)")
-            if not _generate_trial_params_worker_enhanced(hydraulic_params, settings_dir, logger, debug_info):
-                return False
-        
-        logger.debug("Parameter application completed successfully (consistent)")
-        return True
-        
-    except Exception as e:
-        error_msg = f"Error applying parameters (consistent): {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-
-def _calculate_metrics_worker_consistent(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
-    """Calculate metrics consistently with sequential evaluation using CalibrationTarget.calculate_metrics()"""
-    try:
-        # Recreate the CalibrationTarget to use same metrics calculation
-        calibration_var = task_data.get('calibration_variable', 'streamflow')
-        config = task_data['config']
-        project_dir = Path(task_data['project_dir'])
-        
-        # Create the same calibration target as sequential
-        if calibration_var == 'streamflow':
-            target = StreamflowTarget(config, project_dir, logger)
-        elif calibration_var == 'snow':
-            target = SnowTarget(config, project_dir, logger)
-        else:
-            logger.error(f"Unsupported calibration variable: {calibration_var}")
-            return None
-        
-        logger.debug("Created calibration target, calculating metrics...")
-        
-        # Use the SAME metrics calculation as sequential (calibration period only)
-        metrics = target.calculate_metrics(summa_dir, mizuroute_dir, calibration_only=True)
-        
-        if not metrics:
-            logger.error("Failed to calculate metrics using target.calculate_metrics()")
-            return None
-        
-        logger.debug(f"Calculated metrics: {list(metrics.keys())}")
-        
-        # Use the SAME target metric extraction logic as sequential
-        target_metric = task_data['target_metric']
-        
-        # Try exact match first
-        if target_metric in metrics:
-            score = metrics[target_metric]
-            logger.debug(f"Found exact match for {target_metric}")
-        # Try with calibration prefix
-        elif f"Calib_{target_metric}" in metrics:
-            score = metrics[f"Calib_{target_metric}"]
-            logger.debug(f"Found calibration prefixed {target_metric}")
-        # Try without prefix (remove Calib_ or Eval_)
-        else:
-            score = None
-            for key, value in metrics.items():
-                if key.endswith(f"_{target_metric}"):
-                    score = value
-                    logger.debug(f"Found suffixed match: {key}")
-                    break
-            
-            # Fallback to first available metric (same as sequential)
-            if score is None:
-                score = next(iter(metrics.values())) if metrics else None
-                if score is not None:
-                    logger.warning(f"Using fallback metric: {list(metrics.keys())[0]} = {score}")
-        
-        if score is None or np.isnan(score):
-            logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
-            return None
-        
-        # Apply same negation logic as sequential
-        # Note: Don't negate NSE - it should be maximized!
-        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
-            score = -score
-            logger.debug(f"Applied negation for {target_metric}: {score}")
-        
-        logger.debug(f"Final {target_metric}: {score:.6f} (using consistent target.calculate_metrics)")
-        return score
-        
-    except Exception as e:
-        logger.error(f"Error in consistent metrics calculation: {str(e)}")
-        import traceback
-        logger.debug(traceback.format_exc())
-        return None
-
-def _update_soil_depths_worker_enhanced(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced soil depth update with better error handling"""
-    try:
-        original_depths_list = task_data.get('original_depths')
-        if not original_depths_list:
-            logger.warning("No original depths provided, skipping soil depth update")
-            return True
-        
-        original_depths = np.array(original_depths_list)
-        
-        total_mult = params['total_mult'][0] if isinstance(params['total_mult'], np.ndarray) else params['total_mult']
-        shape_factor = params['shape_factor'][0] if isinstance(params['shape_factor'], np.ndarray) else params['shape_factor']
-        
-        logger.debug(f"Updating soil depths: total_mult={total_mult:.3f}, shape_factor={shape_factor:.3f}")
-        
-        # Calculate new depths
-        arr = original_depths.copy()
-        n = len(arr)
-        idx = np.arange(n)
-        
-        if shape_factor > 1:
-            w = np.exp(idx / (n - 1) * np.log(shape_factor))
-        elif shape_factor < 1:
-            w = np.exp((n - 1 - idx) / (n - 1) * np.log(1 / shape_factor))
-        else:
-            w = np.ones(n)
-        
-        w /= w.mean()
-        new_depths = arr * w * total_mult
-        
-        # Calculate heights
-        heights = np.zeros(len(new_depths) + 1)
-        for i in range(len(new_depths)):
-            heights[i + 1] = heights[i] + new_depths[i]
-        
-        # Update coldState.nc
-        coldstate_path = settings_dir / 'coldState.nc'
-        if not coldstate_path.exists():
-            error_msg = f"coldState.nc not found: {coldstate_path}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        debug_info['files_checked'].append(f"coldState.nc: {coldstate_path}")
-        
-        with nc.Dataset(coldstate_path, 'r+') as ds:
-            if 'mLayerDepth' not in ds.variables or 'iLayerHeight' not in ds.variables:
-                error_msg = "Required depth variables not found in coldState.nc"
-                logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
-                return False
-            
-            num_hrus = ds.dimensions['hru'].size
-            for h in range(num_hrus):
-                ds.variables['mLayerDepth'][:, h] = new_depths
-                ds.variables['iLayerHeight'][:, h] = heights
-        
-        logger.debug("Soil depths updated successfully")
-        return True
-        
-    except Exception as e:
-        error_msg = f"Error updating soil depths: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-
-def _update_mizuroute_params_worker_enhanced(params: Dict, task_data: Dict, logger, debug_info: Dict) -> bool:
-    """Enhanced mizuRoute parameter update with better error handling"""
-    try:
-        config = task_data['config']
-        mizuroute_params = [p.strip() for p in config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
-        
-        mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
-        param_file = mizuroute_settings_dir / "param.nml.default"
-        
-        if not param_file.exists():
-            logger.warning(f"mizuRoute param file not found: {param_file}")
-            return True
-        
-        debug_info['files_checked'].append(f"mizuRoute param file: {param_file}")
-        
-        with open(param_file, 'r') as f:
-            content = f.read()
-        
-        updated_content = content
-        for param_name in mizuroute_params:
-            if param_name in params:
-                param_value = params[param_name]
-                pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
-                
-                if param_name in ['tscale']:
-                    replacement = rf'\g<1>{int(param_value)}'
-                else:
-                    replacement = rf'\g<1>{param_value:.6f}'
-                
-                updated_content = re.sub(pattern, replacement, updated_content)
-                logger.debug(f"Updated {param_name} = {param_value}")
-        
-        with open(param_file, 'w') as f:
-            f.write(updated_content)
-        
-        logger.debug("mizuRoute parameters updated successfully")
-        return True
-        
-    except Exception as e:
-        error_msg = f"Error updating mizuRoute params: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-
-def _generate_trial_params_worker_enhanced(params: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced trial parameters generation with better error handling and file locking"""
-    import time
-    import random
-    import os
-    
-    try:
-        if not params:
-            logger.debug("No hydraulic parameters to write")
-            return True
-        
-        trial_params_path = settings_dir / 'trialParams.nc'
-        attr_file_path = settings_dir / 'attributes.nc'
-        
-        if not attr_file_path.exists():
-            error_msg = f"Attributes file not found: {attr_file_path}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        debug_info['files_checked'].append(f"attributes.nc: {attr_file_path}")
-        
-        # Add retry logic with file locking
-        max_retries = 5
-        base_delay = 0.1
-        
-        for attempt in range(max_retries):
-            try:
-                # Create temporary file first, then move it
-                temp_path = trial_params_path.with_suffix(f'.tmp_{os.getpid()}_{random.randint(1000,9999)}')
-                
-                logger.debug(f"Attempt {attempt + 1}: Writing trial parameters to {temp_path}")
-                
-                # Define parameter levels
-                routing_params = ['routingGammaShape', 'routingGammaScale']
-                basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
-                gru_level_params = routing_params + basin_params
-                
-                with xr.open_dataset(attr_file_path) as ds:
-                    num_hrus = ds.sizes.get('hru', 1)
-                    num_grus = ds.sizes.get('gru', 1)
-                    hru_ids = ds['hruId'].values if 'hruId' in ds else np.arange(1, num_hrus + 1)
-                    gru_ids = ds['gruId'].values if 'gruId' in ds else np.array([1])
-                
-                logger.debug(f"Writing parameters for {num_hrus} HRUs, {num_grus} GRUs")
-                
-                # Write to temporary file with exclusive access
-                with nc.Dataset(temp_path, 'w', format='NETCDF4') as output_ds:
-                    # Create dimensions
-                    output_ds.createDimension('hru', num_hrus)
-                    output_ds.createDimension('gru', num_grus)
-                    
-                    # Create coordinate variables
-                    hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
-                    hru_var[:] = hru_ids
-                    
-                    gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
-                    gru_var[:] = gru_ids
-                    
-                    # Add parameters
-                    for param_name, param_values in params.items():
-                        param_values_array = np.asarray(param_values)
-                        
-                        if param_values_array.ndim > 1:
-                            param_values_array = param_values_array.flatten()
-                        
-                        if param_name in gru_level_params:
-                            # GRU-level parameters
-                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
-                            param_var.long_name = f"Trial value for {param_name}"
-                            
-                            if len(param_values_array) >= num_grus:
-                                param_var[:] = param_values_array[:num_grus]
-                            else:
-                                param_var[:] = param_values_array[0]
-                        else:
-                            # HRU-level parameters
-                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
-                            param_var.long_name = f"Trial value for {param_name}"
-                            
-                            if len(param_values_array) == num_hrus:
-                                param_var[:] = param_values_array
-                            elif len(param_values_array) == 1:
-                                param_var[:] = param_values_array[0]
-                            else:
-                                param_var[:] = param_values_array[:num_hrus]
-                        
-                        logger.debug(f"Added parameter {param_name} with shape {param_var.shape}")
-                
-                # Atomically move temporary file to final location
-                try:
-                    os.chmod(temp_path, 0o664)  # Set appropriate permissions
-                    temp_path.rename(trial_params_path)
-                    logger.debug(f"Trial parameters file created successfully: {trial_params_path}")
-                    debug_info['files_checked'].append(f"trialParams.nc (created): {trial_params_path}")
-                    return True
-                except Exception as move_error:
-                    if temp_path.exists():
-                        temp_path.unlink()
-                    raise move_error
-                
-            except (OSError, IOError, PermissionError) as e:
-                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
-                
-                # Clean up temp file if it exists
-                if 'temp_path' in locals() and temp_path.exists():
-                    try:
-                        temp_path.unlink()
-                    except:
-                        pass
-                
-                if attempt < max_retries - 1:
-                    # Exponential backoff with jitter
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)
-                    time.sleep(delay)
-                else:
-                    error_msg = f"Failed to generate trial params after {max_retries} attempts: {str(e)}"
-                    logger.error(error_msg)
-                    debug_info['errors'].append(error_msg)
-                    return False
-        
-        return False
-        
-    except Exception as e:
-        error_msg = f"Error generating trial params: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-
-def _run_summa_worker_enhanced(summa_exe: Path, file_manager: Path, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced SUMMA execution with better error handling and debugging"""
-    try:
-        # Create log directory
-        log_dir = summa_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"summa_worker_{os.getpid()}.log"
-        
-        # Set environment for single-threaded execution
-        env = os.environ.copy()
-        env.update({
-            'OMP_NUM_THREADS': '1',
-            'MKL_NUM_THREADS': '1',
-            'OPENBLAS_NUM_THREADS': '1'
-        })
-        
-        # Convert paths to strings for subprocess
-        summa_exe_str = str(summa_exe)
-        file_manager_str = str(file_manager)
-        
-        # Build command
-        cmd = f"{summa_exe_str} -m {file_manager_str}"
-        
-        logger.info(f"Executing SUMMA command: {cmd}")
-        logger.debug(f"Working directory: {summa_dir}")
-        logger.debug(f"Log file: {log_file}")
-        
-        debug_info['commands_run'].append(f"SUMMA: {cmd}")
-        debug_info['summa_log'] = str(log_file)
-        
-        # Verify executable permissions
-        if not os.access(summa_exe, os.X_OK):
-            error_msg = f"SUMMA executable is not executable: {summa_exe}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        # Run SUMMA with explicit working directory
-        with open(log_file, 'w') as f:
-            f.write(f"SUMMA Execution Log\n")
-            f.write(f"Command: {cmd}\n")
-            f.write(f"Working Directory: {summa_dir}\n")
-            f.write(f"Environment: OMP_NUM_THREADS={env.get('OMP_NUM_THREADS', 'unset')}\n")
-            f.write("=" * 50 + "\n")
-            f.flush()
-            
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                check=True,
-                timeout=1800,  # 30 minute timeout
-                env=env,
-                cwd=str(summa_dir)  # Explicit working directory
-            )
-        
-        # Check if output files were created
-        timestep_files = list(summa_dir.glob("*timestep.nc"))
-        if not timestep_files:
-            # Look for any .nc files
-            nc_files = list(summa_dir.glob("*.nc"))
-            if not nc_files:
-                error_msg = f"No SUMMA output files found in {summa_dir}"
-                logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
-                
-                # Read log file for more details
-                if log_file.exists():
-                    with open(log_file, 'r') as f:
-                        log_content = f.read()
-                        debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
-                
-                return False
-        
-        logger.info(f"SUMMA execution completed successfully. Output files: {len(timestep_files)} timestep files")
-        debug_info['summa_output_files'] = [str(f) for f in timestep_files[:3]]  # First 3 files
-        
-        return True
-        
-    except subprocess.CalledProcessError as e:
-        error_msg = f"SUMMA simulation failed with exit code {e.returncode}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        
-        # Read log file for error details
-        if 'log_file' in locals() and log_file.exists():
-            try:
-                with open(log_file, 'r') as f:
-                    log_content = f.read()
-                    debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
-            except:
-                pass
-                
-        return False
-        
-    except subprocess.TimeoutExpired:
-        error_msg = "SUMMA simulation timed out (30 minutes)"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-        
-    except Exception as e:
-        error_msg = f"Error running SUMMA: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-
-def _run_mizuroute_worker_enhanced(task_data: Dict, mizuroute_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced mizuRoute execution with better error handling"""
-    try:
-        config = task_data['config']
-        
-        # Get mizuRoute executable
-        mizu_path = config.get('INSTALL_PATH_MIZUROUTE', 'default')
-        if mizu_path == 'default':
-            mizu_path = Path(config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
-        else:
-            mizu_path = Path(mizu_path)
-        
-        mizu_exe = mizu_path / config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
-        control_file = Path(task_data['mizuroute_settings_dir']) / 'mizuroute.control'
-        
-        # Verify files exist
-        if not mizu_exe.exists():
-            error_msg = f"mizuRoute executable not found: {mizu_exe}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-            
-        if not control_file.exists():
-            error_msg = f"mizuRoute control file not found: {control_file}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        debug_info['files_checked'].extend([
-            f"mizuRoute exe: {mizu_exe}",
-            f"mizuRoute control: {control_file}"
-        ])
-        
-        # Create log directory
-        log_dir = mizuroute_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"mizuroute_worker_{os.getpid()}.log"
-        
-        # Build command
-        cmd = f"{mizu_exe} {control_file}"
-        
-        logger.info(f"Executing mizuRoute command: {cmd}")
-        debug_info['commands_run'].append(f"mizuRoute: {cmd}")
-        debug_info['mizuroute_log'] = str(log_file)
-        
-        # Run mizuRoute
-        with open(log_file, 'w') as f:
-            f.write(f"mizuRoute Execution Log\n")
-            f.write(f"Command: {cmd}\n")
-            f.write(f"Working Directory: {control_file.parent}\n")
-            f.write("=" * 50 + "\n")
-            f.flush()
-            
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                check=True,
-                timeout=1800,  # 30 minute timeout
-                cwd=str(control_file.parent)
-            )
-        
-        # Check for output files
-        nc_files = list(mizuroute_dir.glob("*.nc"))
-        if not nc_files:
-            error_msg = f"No mizuRoute output files found in {mizuroute_dir}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        logger.info(f"mizuRoute execution completed successfully. Output files: {len(nc_files)}")
-        debug_info['mizuroute_output_files'] = [str(f) for f in nc_files[:3]]
-        
-        return True
-        
-    except Exception as e:
-        error_msg = f"mizuRoute execution failed: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
-
-def _calculate_metrics_worker_enhanced(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
-    """Calculate metrics in worker process - CONSISTENT with sequential evaluation"""
-    try:
-        # Recreate the CalibrationTarget to use same metrics calculation
-        calibration_var = task_data.get('calibration_variable', 'streamflow')
-        config = task_data['config']
-        project_dir = Path(task_data['project_dir'])
-        
-        # Create the same calibration target as sequential
-        if calibration_var == 'streamflow':
-            target = StreamflowTarget(config, project_dir, logger)
-        elif calibration_var == 'snow':
-            target = SnowTarget(config, project_dir, logger)
-        else:
-            logger.error(f"Unsupported calibration variable: {calibration_var}")
-            return None
-        
-        # Use the SAME metrics calculation as sequential (calibration period only)
-        metrics = target.calculate_metrics(summa_dir, mizuroute_dir, calibration_only=True)
-        
-        if not metrics:
-            logger.error("Failed to calculate metrics using target.calculate_metrics()")
-            return None
-        
-        # Use the SAME target metric extraction logic as sequential
-        target_metric = task_data['target_metric']
-        
-        # Try exact match first
-        if target_metric in metrics:
-            score = metrics[target_metric]
-        # Try with calibration prefix
-        elif f"Calib_{target_metric}" in metrics:
-            score = metrics[f"Calib_{target_metric}"]
-        # Try without prefix (remove Calib_ or Eval_)
-        else:
-            score = None
-            for key, value in metrics.items():
-                if key.endswith(f"_{target_metric}"):
-                    score = value
-                    break
-            
-            # Fallback to first available metric (same as sequential)
-            if score is None:
-                score = next(iter(metrics.values())) if metrics else None
-        
-        if score is None or np.isnan(score):
-            logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
-            return None
-        
-        # Apply same negation logic as sequential
-        # Note: Don't negate NSE - it should be maximized!
-        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
-            score = -score
-        
-        logger.debug(f"Calculated {target_metric}: {score:.6f} (using target.calculate_metrics)")
-        return score
-        
-    except Exception as e:
-        logger.error(f"Error in consistent metrics calculation: {str(e)}")
-        import traceback
-        logger.debug(traceback.format_exc())
-        return None
-
-
-# Keep the existing helper functions but add logging parameters where needed
-def _needs_mizuroute_routing_worker(config: Dict) -> bool:
-    """Check if mizuRoute routing is needed"""
-    domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
-    routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
-    
-    if domain_method not in ['point', 'lumped']:
-        return True
-    
-    if domain_method == 'lumped' and routing_delineation == 'river_network':
-        return True
-    
-    return False
-
-
-def _extract_streamflow_from_mizuroute_worker(sim_file: Path, config: Dict, logger) -> Optional[pd.Series]:
-    """Extract streamflow from mizuRoute output with error handling"""
-    try:
-        with xr.open_dataset(sim_file) as ds:
-            reach_id = int(config.get('SIM_REACH_ID', 123))
-            
-            if 'reachID' not in ds.variables:
-                logger.error("reachID variable not found in mizuRoute output")
-                return None
-            
-            reach_ids = ds['reachID'].values
-            reach_indices = np.where(reach_ids == reach_id)[0]
-            
-            if len(reach_indices) == 0:
-                logger.error(f"Reach ID {reach_id} not found in mizuRoute output")
-                return None
-            
-            reach_index = reach_indices[0]
-            
-            # Find streamflow variable
-            for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']:
-                if var_name in ds.variables:
-                    var = ds[var_name]
-                    if 'seg' in var.dims:
-                        return var.isel(seg=reach_index).to_pandas()
-                    elif 'reachID' in var.dims:
-                        return var.isel(reachID=reach_index).to_pandas()
-            
-            logger.error("No suitable streamflow variable found in mizuRoute output")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error extracting mizuRoute streamflow: {str(e)}")
-        return None
-
-
-def _extract_streamflow_from_summa_worker(sim_file: Path, config: Dict, logger) -> Optional[pd.Series]:
-    """Extract streamflow from SUMMA output with error handling"""
-    try:
-        with xr.open_dataset(sim_file) as ds:
-            # Find streamflow variable
-            for var_name in ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']:
-                if var_name in ds.variables:
-                    var = ds[var_name]
-                    
-                    if len(var.shape) > 1:
-                        if 'hru' in var.dims:
-                            sim_data = var.isel(hru=0).to_pandas()
-                        elif 'gru' in var.dims:
-                            sim_data = var.isel(gru=0).to_pandas()
-                        else:
-                            non_time_dims = [dim for dim in var.dims if dim != 'time']
-                            if non_time_dims:
-                                sim_data = var.isel({non_time_dims[0]: 0}).to_pandas()
-                            else:
-                                sim_data = var.to_pandas()
-                    else:
-                        sim_data = var.to_pandas()
-                    
-                    # Convert units (m/s to m³/s) - use default catchment area
-                    catchment_area = 1e6  # 1 km² default
-                    return sim_data * catchment_area
-            
-            logger.error("No suitable streamflow variable found in SUMMA output")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error extracting SUMMA streamflow: {str(e)}")
-        return None
-
-
-def _extract_swe_from_summa_worker(sim_file: Path, logger) -> Optional[pd.Series]:
-    """Extract SWE from SUMMA daily output with error handling"""
-    try:
-        with xr.open_dataset(sim_file) as ds:
-            if 'scalarSWE' not in ds.variables:
-                logger.error("scalarSWE variable not found in SUMMA daily output")
-                return None
-            
-            var = ds['scalarSWE']
-            
-            if len(var.shape) > 1:
-                if 'hru' in var.dims:
-                    return var.isel(hru=0).to_pandas()
-                elif 'gru' in var.dims:
-                    return var.isel(gru=0).to_pandas()
-                else:
-                    non_time_dims = [dim for dim in var.dims if dim != 'time']
-                    if non_time_dims:
-                        return var.isel({non_time_dims[0]: 0}).to_pandas()
-                    else:
-                        return var.to_pandas()
-            else:
-                return var.to_pandas()
-                
-    except Exception as e:
-        logger.error(f"Error extracting SWE: {str(e)}")
-        return None
-
-
-def _calculate_performance_metrics_worker(observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
-    """Calculate performance metrics with error handling"""
-    try:
-        # Clean data
-        observed = pd.to_numeric(observed, errors='coerce')
-        simulated = pd.to_numeric(simulated, errors='coerce')
-        
-        valid = ~(observed.isna() | simulated.isna())
-        observed = observed[valid]
-        simulated = simulated[valid]
-        
-        if len(observed) == 0:
-            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan}
-        
-        # Calculate metrics
-        mean_obs = observed.mean()
-        
-        # NSE
-        nse_num = ((observed - simulated) ** 2).sum()
-        nse_den = ((observed - mean_obs) ** 2).sum()
-        nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
-        
-        # RMSE
-        rmse = np.sqrt(((observed - simulated) ** 2).mean())
-        
-        # KGE
-        r = observed.corr(simulated)
-        alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
-        beta = simulated.mean() / mean_obs if mean_obs != 0 else np.nan
-        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
-        
-        return {'KGE': kge, 'NSE': nse, 'RMSE': rmse, 'r': r, 'alpha': alpha, 'beta': beta}
-        
-    except Exception:
-        return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan}
 
 # ============= ABSTRACT BASE CLASSES =============
 
@@ -3580,7 +2524,6 @@ class DEOptimizer:
         return results
 
 
-    # You would replace the existing _run_parallel_evaluations method with this:
     def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
         """Main parallel evaluation method - now uses enhanced version"""
         return self._run_parallel_evaluations_enhanced(evaluation_tasks)
@@ -3637,7 +2580,7 @@ class DEOptimizer:
             worker_tasks.append(task_data)
         
         # RECOVERY LOGIC: If we've had consecutive failures, try recovery
-        if self._consecutive_parallel_failures >= 3:
+        if self._consecutive_parallel_failures >= 50:
             self.logger.warning(f"Detected {self._consecutive_parallel_failures} consecutive parallel failures. Attempting recovery...")
             
             # Recovery measures
@@ -3683,7 +2626,7 @@ class DEOptimizer:
                     time.sleep(1.0)
                 
                 # Execute batch with timeout and retry
-                batch_results = self._execute_batch_joblib(batch_tasks, len(batch_tasks))
+                batch_results = self._execute_batch_mpi(batch_tasks, len(batch_tasks))
                 results.extend(batch_results)
                 completed_count += len(batch_tasks)
                 
@@ -3734,6 +2677,331 @@ class DEOptimizer:
             ]
 
 
+    def _execute_batch_mpi(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
+        """
+        Internal MPI execution - spawns MPI processes from within CONFLUENCE
+        This allows running CONFLUENCE normally while using MPI internally for DE optimization
+        """
+        try:
+            from mpi4py import MPI
+            import subprocess
+            import tempfile
+            import pickle
+            import os
+            import time
+            
+            # Check if we're already running under MPI
+            try:
+                comm = MPI.COMM_WORLD
+                size = comm.Get_size()
+                rank = comm.Get_rank()
+                
+                if size > 1:
+                    # We're already in an MPI environment, use existing approach
+                    return self._execute_batch_mpi_existing(batch_tasks, max_workers)
+                else:
+                    # Single process, need to spawn MPI workers
+                    return self._execute_batch_mpi_spawn(batch_tasks, max_workers)
+                    
+            except:
+                # MPI not initialized, spawn new MPI processes
+                return self._execute_batch_mpi_spawn(batch_tasks, max_workers)
+        
+        except ImportError:
+            # MPI not available - fallback to joblib
+            self.logger.warning("mpi4py not available, falling back to joblib")
+            return self._execute_batch_joblib(batch_tasks, max_workers)
+        
+        except Exception as e:
+            self.logger.error(f"MPI batch execution failed: {str(e)}")
+            return self._execute_batch_joblib(batch_tasks, max_workers)
+
+
+    def _execute_batch_mpi_spawn(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
+        """
+        Spawn MPI processes internally for parallel execution
+        """
+        import subprocess
+        import tempfile
+        import pickle
+        import os
+        import time
+        import sys
+        
+        try:
+            # Determine number of processes to use
+            num_processes = min(max_workers, self.num_processes, len(batch_tasks))
+            
+            self.logger.info(f"Spawning {num_processes} MPI processes for batch execution")
+            
+            # Create temporary files for communication
+            with tempfile.TemporaryDirectory(prefix='confluence_mpi_') as temp_dir:
+                temp_dir = Path(temp_dir)
+                
+                # Save tasks to file
+                tasks_file = temp_dir / 'tasks.pkl'
+                with open(tasks_file, 'wb') as f:
+                    pickle.dump(batch_tasks, f)
+                
+                # Create worker script
+                worker_script = temp_dir / 'mpi_worker.py'
+                self._create_mpi_worker_script(worker_script, tasks_file, temp_dir)
+                
+                # Run MPI command
+                results_file = temp_dir / 'results.pkl'
+                mpi_cmd = [
+                    'mpirun', '-n', str(num_processes),
+                    sys.executable, str(worker_script),
+                    str(tasks_file), str(results_file)
+                ]
+                
+                self.logger.debug(f"Running MPI command: {' '.join(mpi_cmd)}")
+                
+                # Execute MPI process
+                start_time = time.time()
+                result = subprocess.run(
+                    mpi_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=7200,  # 2 hour timeout
+                    env=os.environ.copy()
+                )
+                
+                elapsed = time.time() - start_time
+                
+                if result.returncode != 0:
+                    self.logger.error(f"MPI execution failed: {result.stderr}")
+                    raise RuntimeError(f"MPI process failed with return code {result.returncode}")
+                
+                # Load results
+                if results_file.exists():
+                    with open(results_file, 'rb') as f:
+                        results = pickle.load(f)
+                    
+                    successful_count = sum(1 for r in results if r.get('score') is not None)
+                    self.logger.info(f"MPI batch completed in {elapsed:.1f}s: {successful_count}/{len(results)} successful")
+                    
+                    return results
+                else:
+                    raise RuntimeError("MPI results file not created")
+        
+        except subprocess.TimeoutExpired:
+            self.logger.error("MPI execution timed out")
+            return self._create_error_results(batch_tasks, "MPI execution timeout")
+        
+        except FileNotFoundError:
+            self.logger.warning("mpirun not found, falling back to joblib")
+            return self._execute_batch_joblib(batch_tasks, max_workers)
+        
+        except Exception as e:
+            self.logger.error(f"MPI spawn execution failed: {str(e)}")
+            return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
+
+
+    def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
+        """Create a standalone MPI worker script"""
+        script_content = f'''#!/usr/bin/env python3
+import sys
+import pickle
+import os
+from pathlib import Path
+from mpi4py import MPI
+
+# Add CONFLUENCE path
+sys.path.append(r"{Path(__file__).parent}")
+
+# Import the worker function
+from de_optimizer_refactored import _evaluate_parameters_worker_safe
+
+def main():
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    
+    tasks_file = Path(sys.argv[1])
+    results_file = Path(sys.argv[2])
+    
+    # Load tasks on rank 0
+    if rank == 0:
+        with open(tasks_file, 'rb') as f:
+            all_tasks = pickle.load(f)
+        
+        # Distribute tasks
+        tasks_per_rank = len(all_tasks) // size
+        extra_tasks = len(all_tasks) % size
+        
+        all_results = []
+        
+        for worker_rank in range(size):
+            start_idx = worker_rank * tasks_per_rank + min(worker_rank, extra_tasks)
+            end_idx = start_idx + tasks_per_rank + (1 if worker_rank < extra_tasks else 0)
+            
+            if worker_rank == 0:
+                my_tasks = all_tasks[start_idx:end_idx]
+            else:
+                worker_tasks = all_tasks[start_idx:end_idx]
+                comm.send(worker_tasks, dest=worker_rank, tag=1)
+        
+        # Execute rank 0 tasks
+        my_results = []
+        for task in my_tasks:
+            try:
+                result = _evaluate_parameters_worker_safe(task)
+                my_results.append(result)
+            except Exception as e:
+                error_result = {{
+                    'individual_id': task.get('individual_id', -1),
+                    'params': task.get('params', {{}}),
+                    'score': None,
+                    'error': f'Rank 0 error: {{str(e)}}'
+                }}
+                my_results.append(error_result)
+        
+        all_results.extend(my_results)
+        
+        # Collect from workers
+        for worker_rank in range(1, size):
+            try:
+                worker_results = comm.recv(source=worker_rank, tag=2)
+                all_results.extend(worker_results)
+            except Exception as e:
+                print(f"Error receiving from worker {{worker_rank}}: {{e}}")
+        
+        # Save results
+        with open(results_file, 'wb') as f:
+            pickle.dump(all_results, f)
+    
+    else:
+        # Worker process
+        try:
+            my_tasks = comm.recv(source=0, tag=1)
+            my_results = []
+            
+            for task in my_tasks:
+                try:
+                    result = _evaluate_parameters_worker_safe(task)
+                    my_results.append(result)
+                except Exception as e:
+                    error_result = {{
+                        'individual_id': task.get('individual_id', -1),
+                        'params': task.get('params', {{}}),
+                        'score': None,
+                        'error': f'Rank {{rank}} error: {{str(e)}}'
+                    }}
+                    my_results.append(error_result)
+            
+            comm.send(my_results, dest=0, tag=2)
+            
+        except Exception as e:
+            print(f"Worker {{rank}} failed: {{e}}")
+
+if __name__ == "__main__":
+    main()
+'''
+        
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Make executable
+        os.chmod(script_path, 0o755)
+
+
+    def _execute_batch_mpi_existing(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
+        """Use existing MPI environment (when already running under mpirun)"""
+        from mpi4py import MPI
+        
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        
+        self.logger.info(f"Using existing MPI environment with {size} processes")
+        
+        if rank == 0:
+            # Master process
+            num_tasks = len(batch_tasks)
+            results = [None] * num_tasks
+            
+            # Distribute tasks
+            task_assignments = [[] for _ in range(size)]
+            for i, task in enumerate(batch_tasks):
+                proc_rank = i % size
+                task_assignments[proc_rank].append((i, task))
+            
+            # Send tasks to workers
+            for worker_rank in range(1, size):
+                comm.send(task_assignments[worker_rank], dest=worker_rank, tag=1)
+            
+            # Execute master's tasks
+            master_results = []
+            for task_idx, task_data in task_assignments[0]:
+                try:
+                    result = _evaluate_parameters_worker_safe(task_data)
+                    master_results.append((task_idx, result))
+                except Exception as e:
+                    error_result = {
+                        'individual_id': task_data.get('individual_id', -1),
+                        'params': task_data.get('params', {}),
+                        'score': None,
+                        'error': f'Master error: {str(e)}'
+                    }
+                    master_results.append((task_idx, error_result))
+            
+            # Store master results
+            for task_idx, result in master_results:
+                results[task_idx] = result
+            
+            # Collect from workers
+            for worker_rank in range(1, size):
+                try:
+                    worker_results = comm.recv(source=worker_rank, tag=2)
+                    for task_idx, result in worker_results:
+                        results[task_idx] = result
+                except Exception as e:
+                    self.logger.error(f"Error receiving from worker {worker_rank}: {str(e)}")
+            
+            final_results = [r for r in results if r is not None]
+            successful_count = sum(1 for r in final_results if r.get('score') is not None)
+            self.logger.info(f"Existing MPI completed: {successful_count}/{len(final_results)} successful")
+            
+            return final_results
+        
+        else:
+            # Worker process
+            try:
+                my_tasks = comm.recv(source=0, tag=1)
+                my_results = []
+                
+                for task_idx, task_data in my_tasks:
+                    try:
+                        result = _evaluate_parameters_worker_safe(task_data)
+                        my_results.append((task_idx, result))
+                    except Exception as e:
+                        error_result = {
+                            'individual_id': task_data.get('individual_id', -1),
+                            'params': task_data.get('params', {}),
+                            'score': None,
+                            'error': f'Worker {rank} error: {str(e)}'
+                        }
+                        my_results.append((task_idx, error_result))
+                
+                comm.send(my_results, dest=0, tag=2)
+                return []
+                
+            except Exception as e:
+                return []
+
+
+    def _create_error_results(self, batch_tasks: List[Dict], error_msg: str) -> List[Dict]:
+        """Create error results for all tasks"""
+        return [
+            {
+                'individual_id': task_data.get('individual_id', -1),
+                'params': task_data.get('params', {}),
+                'score': None,
+                'error': error_msg
+            }
+            for task_data in batch_tasks
+        ]
 
 
     def _execute_batch_joblib(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
@@ -4463,7 +3731,7 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 check=True,
-                timeout=1800,  # 30 minute timeout
+                timeout=7200,  
                 env=env
             )
         
@@ -4850,3 +4118,993 @@ if __name__ == "__main__":
     
     print(f"Optimization completed. Best {results['optimization_metric']}: {results['best_score']:.6f}")
     print(f"Results saved to: {results['output_dir']}")
+
+
+def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
+    
+    # Set up signal handler for clean termination
+    def signal_handler(signum, frame):
+        sys.exit(1)
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Set process-specific environment for isolation
+    process_id = os.getpid()
+    
+    # Force single-threaded execution and disable problematic file locking
+    os.environ.update({
+        'OMP_NUM_THREADS': '1',
+        'MKL_NUM_THREADS': '1',
+        'OPENBLAS_NUM_THREADS': '1',
+        'NETCDF_DISABLE_LOCKING': '1',
+        'HDF5_USE_FILE_LOCKING': 'FALSE',
+        'HDF5_DISABLE_VERSION_CHECK': '1',
+    })
+    
+    # Add small random delay to stagger file system access
+    initial_delay = random.uniform(0.1, 0.8)
+    time.sleep(initial_delay)
+    
+    try:
+        # Force garbage collection at start
+        gc.collect()
+        
+        # Enhanced logging setup for debugging
+        proc_id = task_data.get('proc_id', 0)
+        individual_id = task_data.get('individual_id', -1)
+        
+        # Try the evaluation with basic retry for stale file handle errors
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    retry_delay = 2.0 * (attempt + 1) + random.uniform(0, 1)
+                    time.sleep(retry_delay)
+                    gc.collect()
+                
+                # Call the enhanced worker function
+                result = _evaluate_parameters_worker_enhanced(task_data)
+                
+                # Force cleanup
+                gc.collect()
+                return result
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                error_trace = traceback.format_exc()
+                
+                # Check for stale file handle or similar filesystem errors
+                if any(term in error_str for term in ['stale file handle', 'errno 116', 'input/output error', 'errno 5']):
+                    if attempt < max_retries - 1:  # Not the last attempt
+                        continue
+                
+                # For other errors or final attempt, return the error with full traceback
+                return {
+                    'individual_id': individual_id,
+                    'params': task_data.get('params', {}),
+                    'score': None,
+                    'error': f'Worker exception (attempt {attempt + 1}): {str(e)}\nTraceback:\n{error_trace}',
+                    'proc_id': proc_id,
+                    'debug_info': {
+                        'attempt': attempt + 1,
+                        'max_retries': max_retries,
+                        'process_id': process_id
+                    }
+                }
+        
+        # If we get here, all retries failed
+        return {
+            'individual_id': individual_id,
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': f'Worker failed after {max_retries} attempts',
+            'proc_id': proc_id
+        }
+        
+    except Exception as e:
+        return {
+            'individual_id': task_data.get('individual_id', -1),
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': f'Critical worker exception: {str(e)}\n{traceback.format_exc()}',
+            'proc_id': task_data.get('proc_id', -1)
+        }
+    
+    finally:
+        # Final cleanup
+        gc.collect()
+
+
+def _evaluate_parameters_worker_enhanced(task_data: Dict) -> Dict:
+    """Enhanced worker function with consistent metrics calculation and robust error handling"""
+    import sys
+    import logging
+    from pathlib import Path
+    import subprocess
+    import traceback
+    
+    # Enhanced error collection
+    debug_info = {
+        'stage': 'initialization',
+        'files_checked': [],
+        'commands_run': [],
+        'errors': []
+    }
+    
+    try:
+        # Extract task info
+        individual_id = task_data['individual_id']
+        params = task_data['params']
+        proc_id = task_data['proc_id']
+        
+        debug_info['individual_id'] = individual_id
+        debug_info['proc_id'] = proc_id
+        
+        # Setup process logger with more detail
+        logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
+        if not logger.handlers:
+            logger.setLevel(logging.DEBUG)  # More verbose logging
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        
+        logger.info(f"Starting evaluation of individual {individual_id}")
+        
+        # Convert all paths to absolute Path objects early
+        debug_info['stage'] = 'path_setup'
+        
+        summa_exe = Path(task_data['summa_exe']).resolve()
+        file_manager = Path(task_data['file_manager']).resolve()
+        summa_dir = Path(task_data['summa_dir']).resolve()
+        mizuroute_dir = Path(task_data['mizuroute_dir']).resolve()
+        summa_settings_dir = Path(task_data['summa_settings_dir']).resolve()
+        
+        # Log paths for debugging
+        logger.debug(f"SUMMA exe: {summa_exe}")
+        logger.debug(f"File manager: {file_manager}")
+        logger.debug(f"SUMMA dir: {summa_dir}")
+        logger.debug(f"Settings dir: {summa_settings_dir}")
+        
+        debug_info['paths'] = {
+            'summa_exe': str(summa_exe),
+            'file_manager': str(file_manager),
+            'summa_dir': str(summa_dir),
+            'summa_settings_dir': str(summa_settings_dir)
+        }
+        
+        # Verify critical paths exist
+        debug_info['stage'] = 'path_verification'
+        
+        critical_paths = {
+            'SUMMA executable': summa_exe,
+            'File manager': file_manager,
+            'SUMMA directory': summa_dir,
+            'Settings directory': summa_settings_dir
+        }
+        
+        for name, path in critical_paths.items():
+            debug_info['files_checked'].append(f"{name}: {path}")
+            if not path.exists():
+                error_msg = f'{name} not found: {path}'
+                logger.error(error_msg)
+                debug_info['errors'].append(error_msg)
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': None,
+                    'error': error_msg,
+                    'debug_info': debug_info
+                }
+        
+        logger.info("All critical paths verified")
+        
+        # Apply parameters to files using CONSISTENT method
+        debug_info['stage'] = 'parameter_application'
+        logger.info("Applying parameters to model files (consistent method)")
+        
+        if not _apply_parameters_worker_consistent(params, task_data, summa_settings_dir, logger, debug_info):
+            error_msg = 'Failed to apply parameters'
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': error_msg,
+                'debug_info': debug_info
+            }
+        
+        logger.info("Parameters applied successfully")
+        
+        # Run SUMMA with enhanced debugging
+        debug_info['stage'] = 'summa_execution'
+        logger.info("Starting SUMMA execution")
+        
+        if not _run_summa_worker_enhanced(summa_exe, file_manager, summa_dir, logger, debug_info):
+            error_msg = 'SUMMA simulation failed'
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': error_msg,
+                'debug_info': debug_info
+            }
+        
+        logger.info("SUMMA execution completed successfully")
+        
+        # Run mizuRoute if needed
+        debug_info['stage'] = 'mizuroute_check'
+        calibration_var = task_data.get('calibration_variable', 'streamflow')
+        if calibration_var == 'streamflow':
+            config = task_data['config']
+            needs_routing = _needs_mizuroute_routing_worker(config)
+            
+            if needs_routing:
+                debug_info['stage'] = 'mizuroute_execution'
+                logger.info("Starting mizuRoute execution")
+                
+                if not _run_mizuroute_worker_enhanced(task_data, mizuroute_dir, logger, debug_info):
+                    error_msg = 'mizuRoute simulation failed'
+                    logger.error(error_msg)
+                    debug_info['errors'].append(error_msg)
+                    return {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': None,
+                        'error': error_msg,
+                        'debug_info': debug_info
+                    }
+                
+                logger.info("mizuRoute execution completed successfully")
+        
+        # Calculate metrics using CONSISTENT method
+        debug_info['stage'] = 'metrics_calculation'
+        logger.info("Calculating performance metrics (consistent with sequential)")
+        
+        score = _calculate_metrics_worker_consistent(task_data, summa_dir, mizuroute_dir, logger)
+        
+        if score is None:
+            error_msg = 'Failed to calculate metrics (consistent method)'
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': None,
+                'error': error_msg,
+                'debug_info': debug_info
+            }
+        
+        logger.info(f"Evaluation completed successfully. Score: {score:.6f} (consistent)")
+        
+        return {
+            'individual_id': individual_id,
+            'params': params,
+            'score': score,
+            'error': None,
+            'debug_info': debug_info
+        }
+        
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        error_msg = f'Worker exception at stage {debug_info.get("stage", "unknown")}: {str(e)}'
+        debug_info['errors'].append(f"{error_msg}\nTraceback:\n{error_trace}")
+        
+        return {
+            'individual_id': task_data.get('individual_id', -1),
+            'params': task_data.get('params', {}),
+            'score': None,
+            'error': error_msg,
+            'debug_info': debug_info,
+            'full_traceback': error_trace
+        }
+
+
+def _apply_parameters_worker_consistent(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
+    """Apply parameters consistently with sequential approach"""
+    try:
+        config = task_data['config']
+        logger.debug(f"Applying parameters: {list(params.keys())} (consistent method)")
+        
+        # Parse parameter lists EXACTLY as ParameterManager does
+        local_params = [p.strip() for p in config.get('PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
+        basin_params = [p.strip() for p in config.get('BASIN_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
+        depth_params = ['total_mult', 'shape_factor'] if config.get('CALIBRATE_DEPTH', False) else []
+        mizuroute_params = []
+        
+        if config.get('CALIBRATE_MIZUROUTE', False):
+            mizuroute_params_str = config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', 'velo,diff')
+            mizuroute_params = [p.strip() for p in mizuroute_params_str.split(',') if p.strip()]
+        
+        # Apply in same order as ParameterManager.apply_parameters()
+        
+        # 1. Handle soil depth parameters
+        if depth_params and 'total_mult' in params and 'shape_factor' in params:
+            logger.debug("Updating soil depths (consistent)")
+            if not _update_soil_depths_worker_enhanced(params, task_data, settings_dir, logger, debug_info):
+                return False
+        
+        # 2. Handle mizuRoute parameters
+        if mizuroute_params and any(p in params for p in mizuroute_params):
+            logger.debug("Updating mizuRoute parameters (consistent)")
+            if not _update_mizuroute_params_worker_enhanced(params, task_data, logger, debug_info):
+                return False
+        
+        # 3. Generate trial parameters file (same exclusion logic as ParameterManager)
+        hydraulic_params = {k: v for k, v in params.items() 
+                          if k not in depth_params + mizuroute_params}
+        
+        if hydraulic_params:
+            logger.debug(f"Generating trial parameters file with: {list(hydraulic_params.keys())} (consistent)")
+            if not _generate_trial_params_worker_enhanced(hydraulic_params, settings_dir, logger, debug_info):
+                return False
+        
+        logger.debug("Parameter application completed successfully (consistent)")
+        return True
+        
+    except Exception as e:
+        error_msg = f"Error applying parameters (consistent): {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+
+def _calculate_metrics_worker_consistent(task_data: Dict, summa_dir: Path, mizuroute_dir: Path, logger) -> Optional[float]:
+    """Calculate metrics consistently with sequential evaluation using CalibrationTarget.calculate_metrics()"""
+    try:
+        # Recreate the CalibrationTarget to use same metrics calculation
+        calibration_var = task_data.get('calibration_variable', 'streamflow')
+        config = task_data['config']
+        project_dir = Path(task_data['project_dir'])
+        
+        # Create the same calibration target as sequential
+        if calibration_var == 'streamflow':
+            target = StreamflowTarget(config, project_dir, logger)
+        elif calibration_var == 'snow':
+            target = SnowTarget(config, project_dir, logger)
+        else:
+            logger.error(f"Unsupported calibration variable: {calibration_var}")
+            return None
+        
+        logger.debug("Created calibration target, calculating metrics...")
+        
+        # Use the SAME metrics calculation as sequential (calibration period only)
+        metrics = target.calculate_metrics(summa_dir, mizuroute_dir, calibration_only=True)
+        
+        if not metrics:
+            logger.error("Failed to calculate metrics using target.calculate_metrics()")
+            return None
+        
+        logger.debug(f"Calculated metrics: {list(metrics.keys())}")
+        
+        # Use the SAME target metric extraction logic as sequential
+        target_metric = task_data['target_metric']
+        
+        # Try exact match first
+        if target_metric in metrics:
+            score = metrics[target_metric]
+            logger.debug(f"Found exact match for {target_metric}")
+        # Try with calibration prefix
+        elif f"Calib_{target_metric}" in metrics:
+            score = metrics[f"Calib_{target_metric}"]
+            logger.debug(f"Found calibration prefixed {target_metric}")
+        # Try without prefix (remove Calib_ or Eval_)
+        else:
+            score = None
+            for key, value in metrics.items():
+                if key.endswith(f"_{target_metric}"):
+                    score = value
+                    logger.debug(f"Found suffixed match: {key}")
+                    break
+            
+            # Fallback to first available metric (same as sequential)
+            if score is None:
+                score = next(iter(metrics.values())) if metrics else None
+                if score is not None:
+                    logger.warning(f"Using fallback metric: {list(metrics.keys())[0]} = {score}")
+        
+        if score is None or np.isnan(score):
+            logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
+            return None
+        
+        # Apply same negation logic as sequential
+        if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
+            score = -score
+            logger.debug(f"Applied negation for {target_metric}: {score}")
+        
+        logger.debug(f"Final {target_metric}: {score:.6f} (using consistent target.calculate_metrics)")
+        return score
+        
+    except Exception as e:
+        logger.error(f"Error in consistent metrics calculation: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return None
+
+def _update_soil_depths_worker_enhanced(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
+    """Enhanced soil depth update with better error handling"""
+    try:
+        original_depths_list = task_data.get('original_depths')
+        if not original_depths_list:
+            logger.warning("No original depths provided, skipping soil depth update")
+            return True
+        
+        original_depths = np.array(original_depths_list)
+        
+        total_mult = params['total_mult'][0] if isinstance(params['total_mult'], np.ndarray) else params['total_mult']
+        shape_factor = params['shape_factor'][0] if isinstance(params['shape_factor'], np.ndarray) else params['shape_factor']
+        
+        logger.debug(f"Updating soil depths: total_mult={total_mult:.3f}, shape_factor={shape_factor:.3f}")
+        
+        # Calculate new depths
+        arr = original_depths.copy()
+        n = len(arr)
+        idx = np.arange(n)
+        
+        if shape_factor > 1:
+            w = np.exp(idx / (n - 1) * np.log(shape_factor))
+        elif shape_factor < 1:
+            w = np.exp((n - 1 - idx) / (n - 1) * np.log(1 / shape_factor))
+        else:
+            w = np.ones(n)
+        
+        w /= w.mean()
+        new_depths = arr * w * total_mult
+        
+        # Calculate heights
+        heights = np.zeros(len(new_depths) + 1)
+        for i in range(len(new_depths)):
+            heights[i + 1] = heights[i] + new_depths[i]
+        
+        # Update coldState.nc
+        coldstate_path = settings_dir / 'coldState.nc'
+        if not coldstate_path.exists():
+            error_msg = f"coldState.nc not found: {coldstate_path}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        debug_info['files_checked'].append(f"coldState.nc: {coldstate_path}")
+        
+        with nc.Dataset(coldstate_path, 'r+') as ds:
+            if 'mLayerDepth' not in ds.variables or 'iLayerHeight' not in ds.variables:
+                error_msg = "Required depth variables not found in coldState.nc"
+                logger.error(error_msg)
+                debug_info['errors'].append(error_msg)
+                return False
+            
+            num_hrus = ds.dimensions['hru'].size
+            for h in range(num_hrus):
+                ds.variables['mLayerDepth'][:, h] = new_depths
+                ds.variables['iLayerHeight'][:, h] = heights
+        
+        logger.debug("Soil depths updated successfully")
+        return True
+        
+    except Exception as e:
+        error_msg = f"Error updating soil depths: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+
+def _update_mizuroute_params_worker_enhanced(params: Dict, task_data: Dict, logger, debug_info: Dict) -> bool:
+    """Enhanced mizuRoute parameter update with better error handling"""
+    try:
+        config = task_data['config']
+        mizuroute_params = [p.strip() for p in config.get('MIZUROUTE_PARAMS_TO_CALIBRATE', '').split(',') if p.strip()]
+        
+        mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
+        param_file = mizuroute_settings_dir / "param.nml.default"
+        
+        if not param_file.exists():
+            logger.warning(f"mizuRoute param file not found: {param_file}")
+            return True
+        
+        debug_info['files_checked'].append(f"mizuRoute param file: {param_file}")
+        
+        with open(param_file, 'r') as f:
+            content = f.read()
+        
+        updated_content = content
+        for param_name in mizuroute_params:
+            if param_name in params:
+                param_value = params[param_name]
+                pattern = rf'(\s+{param_name}\s*=\s*)[0-9.-]+'
+                
+                if param_name in ['tscale']:
+                    replacement = rf'\g<1>{int(param_value)}'
+                else:
+                    replacement = rf'\g<1>{param_value:.6f}'
+                
+                updated_content = re.sub(pattern, replacement, updated_content)
+                logger.debug(f"Updated {param_name} = {param_value}")
+        
+        with open(param_file, 'w') as f:
+            f.write(updated_content)
+        
+        logger.debug("mizuRoute parameters updated successfully")
+        return True
+        
+    except Exception as e:
+        error_msg = f"Error updating mizuRoute params: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+
+def _generate_trial_params_worker_enhanced(params: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
+    """Enhanced trial parameters generation with better error handling and file locking"""
+    import time
+    import random
+    import os
+    
+    try:
+        if not params:
+            logger.debug("No hydraulic parameters to write")
+            return True
+        
+        trial_params_path = settings_dir / 'trialParams.nc'
+        attr_file_path = settings_dir / 'attributes.nc'
+        
+        if not attr_file_path.exists():
+            error_msg = f"Attributes file not found: {attr_file_path}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        debug_info['files_checked'].append(f"attributes.nc: {attr_file_path}")
+        
+        # Add retry logic with file locking
+        max_retries = 5
+        base_delay = 0.1
+        
+        for attempt in range(max_retries):
+            try:
+                # Create temporary file first, then move it
+                temp_path = trial_params_path.with_suffix(f'.tmp_{os.getpid()}_{random.randint(1000,9999)}')
+                
+                logger.debug(f"Attempt {attempt + 1}: Writing trial parameters to {temp_path}")
+                
+                # Define parameter levels
+                routing_params = ['routingGammaShape', 'routingGammaScale']
+                basin_params = ['basin__aquiferBaseflowExp', 'basin__aquiferScaleFactor', 'basin__aquiferHydCond']
+                gru_level_params = routing_params + basin_params
+                
+                with xr.open_dataset(attr_file_path) as ds:
+                    num_hrus = ds.sizes.get('hru', 1)
+                    num_grus = ds.sizes.get('gru', 1)
+                    hru_ids = ds['hruId'].values if 'hruId' in ds else np.arange(1, num_hrus + 1)
+                    gru_ids = ds['gruId'].values if 'gruId' in ds else np.array([1])
+                
+                logger.debug(f"Writing parameters for {num_hrus} HRUs, {num_grus} GRUs")
+                
+                # Write to temporary file with exclusive access
+                with nc.Dataset(temp_path, 'w', format='NETCDF4') as output_ds:
+                    # Create dimensions
+                    output_ds.createDimension('hru', num_hrus)
+                    output_ds.createDimension('gru', num_grus)
+                    
+                    # Create coordinate variables
+                    hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
+                    hru_var[:] = hru_ids
+                    
+                    gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
+                    gru_var[:] = gru_ids
+                    
+                    # Add parameters
+                    for param_name, param_values in params.items():
+                        param_values_array = np.asarray(param_values)
+                        
+                        if param_values_array.ndim > 1:
+                            param_values_array = param_values_array.flatten()
+                        
+                        if param_name in gru_level_params:
+                            # GRU-level parameters
+                            param_var = output_ds.createVariable(param_name, 'f8', ('gru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            
+                            if len(param_values_array) >= num_grus:
+                                param_var[:] = param_values_array[:num_grus]
+                            else:
+                                param_var[:] = param_values_array[0]
+                        else:
+                            # HRU-level parameters
+                            param_var = output_ds.createVariable(param_name, 'f8', ('hru',), fill_value=np.nan)
+                            param_var.long_name = f"Trial value for {param_name}"
+                            
+                            if len(param_values_array) == num_hrus:
+                                param_var[:] = param_values_array
+                            elif len(param_values_array) == 1:
+                                param_var[:] = param_values_array[0]
+                            else:
+                                param_var[:] = param_values_array[:num_hrus]
+                        
+                        logger.debug(f"Added parameter {param_name} with shape {param_var.shape}")
+                
+                # Atomically move temporary file to final location
+                try:
+                    os.chmod(temp_path, 0o664)  # Set appropriate permissions
+                    temp_path.rename(trial_params_path)
+                    logger.debug(f"Trial parameters file created successfully: {trial_params_path}")
+                    debug_info['files_checked'].append(f"trialParams.nc (created): {trial_params_path}")
+                    return True
+                except Exception as move_error:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    raise move_error
+                
+            except (OSError, IOError, PermissionError) as e:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+                
+                # Clean up temp file if it exists
+                if 'temp_path' in locals() and temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except:
+                        pass
+                
+                if attempt < max_retries - 1:
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)
+                    time.sleep(delay)
+                else:
+                    error_msg = f"Failed to generate trial params after {max_retries} attempts: {str(e)}"
+                    logger.error(error_msg)
+                    debug_info['errors'].append(error_msg)
+                    return False
+        
+        return False
+        
+    except Exception as e:
+        error_msg = f"Error generating trial params: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+
+def _run_summa_worker_enhanced(summa_exe: Path, file_manager: Path, summa_dir: Path, logger, debug_info: Dict) -> bool:
+    """Enhanced SUMMA execution with better error handling and debugging"""
+    try:
+        # Create log directory
+        log_dir = summa_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"summa_worker_{os.getpid()}.log"
+        
+        # Set environment for single-threaded execution
+        env = os.environ.copy()
+        env.update({
+            'OMP_NUM_THREADS': '1',
+            'MKL_NUM_THREADS': '1',
+            'OPENBLAS_NUM_THREADS': '1'
+        })
+        
+        # Convert paths to strings for subprocess
+        summa_exe_str = str(summa_exe)
+        file_manager_str = str(file_manager)
+        
+        # Build command
+        cmd = f"{summa_exe_str} -m {file_manager_str}"
+        
+        logger.info(f"Executing SUMMA command: {cmd}")
+        logger.debug(f"Working directory: {summa_dir}")
+        logger.debug(f"Log file: {log_file}")
+        
+        debug_info['commands_run'].append(f"SUMMA: {cmd}")
+        debug_info['summa_log'] = str(log_file)
+        
+        # Verify executable permissions
+        if not os.access(summa_exe, os.X_OK):
+            error_msg = f"SUMMA executable is not executable: {summa_exe}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        # Run SUMMA with explicit working directory
+        with open(log_file, 'w') as f:
+            f.write(f"SUMMA Execution Log\n")
+            f.write(f"Command: {cmd}\n")
+            f.write(f"Working Directory: {summa_dir}\n")
+            f.write(f"Environment: OMP_NUM_THREADS={env.get('OMP_NUM_THREADS', 'unset')}\n")
+            f.write("=" * 50 + "\n")
+            f.flush()
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                check=True,
+                timeout=1800,  # 30 minute timeout
+                env=env,
+                cwd=str(summa_dir)  # Explicit working directory
+            )
+        
+        # Check if output files were created
+        timestep_files = list(summa_dir.glob("*timestep.nc"))
+        if not timestep_files:
+            # Look for any .nc files
+            nc_files = list(summa_dir.glob("*.nc"))
+            if not nc_files:
+                error_msg = f"No SUMMA output files found in {summa_dir}"
+                logger.error(error_msg)
+                debug_info['errors'].append(error_msg)
+                
+                # Read log file for more details
+                if log_file.exists():
+                    with open(log_file, 'r') as f:
+                        log_content = f.read()
+                        debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
+                
+                return False
+        
+        logger.info(f"SUMMA execution completed successfully. Output files: {len(timestep_files)} timestep files")
+        debug_info['summa_output_files'] = [str(f) for f in timestep_files[:3]]  # First 3 files
+        
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        error_msg = f"SUMMA simulation failed with exit code {e.returncode}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        
+        # Read log file for error details
+        if 'log_file' in locals() and log_file.exists():
+            try:
+                with open(log_file, 'r') as f:
+                    log_content = f.read()
+                    debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
+            except:
+                pass
+                
+        return False
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "SUMMA simulation timed out (30 minutes)"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+        
+    except Exception as e:
+        error_msg = f"Error running SUMMA: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+
+def _run_mizuroute_worker_enhanced(task_data: Dict, mizuroute_dir: Path, logger, debug_info: Dict) -> bool:
+    """Enhanced mizuRoute execution with better error handling"""
+    try:
+        config = task_data['config']
+        
+        # Get mizuRoute executable
+        mizu_path = config.get('INSTALL_PATH_MIZUROUTE', 'default')
+        if mizu_path == 'default':
+            mizu_path = Path(config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
+        else:
+            mizu_path = Path(mizu_path)
+        
+        mizu_exe = mizu_path / config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
+        control_file = Path(task_data['mizuroute_settings_dir']) / 'mizuroute.control'
+        
+        # Verify files exist
+        if not mizu_exe.exists():
+            error_msg = f"mizuRoute executable not found: {mizu_exe}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+            
+        if not control_file.exists():
+            error_msg = f"mizuRoute control file not found: {control_file}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        debug_info['files_checked'].extend([
+            f"mizuRoute exe: {mizu_exe}",
+            f"mizuRoute control: {control_file}"
+        ])
+        
+        # Create log directory
+        log_dir = mizuroute_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"mizuroute_worker_{os.getpid()}.log"
+        
+        # Build command
+        cmd = f"{mizu_exe} {control_file}"
+        
+        logger.info(f"Executing mizuRoute command: {cmd}")
+        debug_info['commands_run'].append(f"mizuRoute: {cmd}")
+        debug_info['mizuroute_log'] = str(log_file)
+        
+        # Run mizuRoute
+        with open(log_file, 'w') as f:
+            f.write(f"mizuRoute Execution Log\n")
+            f.write(f"Command: {cmd}\n")
+            f.write(f"Working Directory: {control_file.parent}\n")
+            f.write("=" * 50 + "\n")
+            f.flush()
+            
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                check=True,
+                timeout=1800,  # 30 minute timeout
+                cwd=str(control_file.parent)
+            )
+        
+        # Check for output files
+        nc_files = list(mizuroute_dir.glob("*.nc"))
+        if not nc_files:
+            error_msg = f"No mizuRoute output files found in {mizuroute_dir}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        logger.info(f"mizuRoute execution completed successfully. Output files: {len(nc_files)}")
+        debug_info['mizuroute_output_files'] = [str(f) for f in nc_files[:3]]
+        
+        return True
+        
+    except Exception as e:
+        error_msg = f"mizuRoute execution failed: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
+
+# Keep the existing helper functions but add logging parameters where needed
+def _needs_mizuroute_routing_worker(config: Dict) -> bool:
+    """Check if mizuRoute routing is needed"""
+    domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+    routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
+    
+    if domain_method not in ['point', 'lumped']:
+        return True
+    
+    if domain_method == 'lumped' and routing_delineation == 'river_network':
+        return True
+    
+    return False
+
+
+def _extract_streamflow_from_mizuroute_worker(sim_file: Path, config: Dict, logger) -> Optional[pd.Series]:
+    """Extract streamflow from mizuRoute output with error handling"""
+    try:
+        with xr.open_dataset(sim_file) as ds:
+            reach_id = int(config.get('SIM_REACH_ID', 123))
+            
+            if 'reachID' not in ds.variables:
+                logger.error("reachID variable not found in mizuRoute output")
+                return None
+            
+            reach_ids = ds['reachID'].values
+            reach_indices = np.where(reach_ids == reach_id)[0]
+            
+            if len(reach_indices) == 0:
+                logger.error(f"Reach ID {reach_id} not found in mizuRoute output")
+                return None
+            
+            reach_index = reach_indices[0]
+            
+            # Find streamflow variable
+            for var_name in ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']:
+                if var_name in ds.variables:
+                    var = ds[var_name]
+                    if 'seg' in var.dims:
+                        return var.isel(seg=reach_index).to_pandas()
+                    elif 'reachID' in var.dims:
+                        return var.isel(reachID=reach_index).to_pandas()
+            
+            logger.error("No suitable streamflow variable found in mizuRoute output")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error extracting mizuRoute streamflow: {str(e)}")
+        return None
+
+
+def _extract_streamflow_from_summa_worker(sim_file: Path, config: Dict, logger) -> Optional[pd.Series]:
+    """Extract streamflow from SUMMA output with error handling"""
+    try:
+        with xr.open_dataset(sim_file) as ds:
+            # Find streamflow variable
+            for var_name in ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']:
+                if var_name in ds.variables:
+                    var = ds[var_name]
+                    
+                    if len(var.shape) > 1:
+                        if 'hru' in var.dims:
+                            sim_data = var.isel(hru=0).to_pandas()
+                        elif 'gru' in var.dims:
+                            sim_data = var.isel(gru=0).to_pandas()
+                        else:
+                            non_time_dims = [dim for dim in var.dims if dim != 'time']
+                            if non_time_dims:
+                                sim_data = var.isel({non_time_dims[0]: 0}).to_pandas()
+                            else:
+                                sim_data = var.to_pandas()
+                    else:
+                        sim_data = var.to_pandas()
+                    
+                    # Convert units (m/s to m³/s) - use default catchment area
+                    catchment_area = 1e6  # 1 km² default
+                    return sim_data * catchment_area
+            
+            logger.error("No suitable streamflow variable found in SUMMA output")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error extracting SUMMA streamflow: {str(e)}")
+        return None
+
+
+def _extract_swe_from_summa_worker(sim_file: Path, logger) -> Optional[pd.Series]:
+    """Extract SWE from SUMMA daily output with error handling"""
+    try:
+        with xr.open_dataset(sim_file) as ds:
+            if 'scalarSWE' not in ds.variables:
+                logger.error("scalarSWE variable not found in SUMMA daily output")
+                return None
+            
+            var = ds['scalarSWE']
+            
+            if len(var.shape) > 1:
+                if 'hru' in var.dims:
+                    return var.isel(hru=0).to_pandas()
+                elif 'gru' in var.dims:
+                    return var.isel(gru=0).to_pandas()
+                else:
+                    non_time_dims = [dim for dim in var.dims if dim != 'time']
+                    if non_time_dims:
+                        return var.isel({non_time_dims[0]: 0}).to_pandas()
+                    else:
+                        return var.to_pandas()
+            else:
+                return var.to_pandas()
+                
+    except Exception as e:
+        logger.error(f"Error extracting SWE: {str(e)}")
+        return None
+
+
+def _calculate_performance_metrics_worker(observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+    """Calculate performance metrics with error handling"""
+    try:
+        # Clean data
+        observed = pd.to_numeric(observed, errors='coerce')
+        simulated = pd.to_numeric(simulated, errors='coerce')
+        
+        valid = ~(observed.isna() | simulated.isna())
+        observed = observed[valid]
+        simulated = simulated[valid]
+        
+        if len(observed) == 0:
+            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan}
+        
+        # Calculate metrics
+        mean_obs = observed.mean()
+        
+        # NSE
+        nse_num = ((observed - simulated) ** 2).sum()
+        nse_den = ((observed - mean_obs) ** 2).sum()
+        nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
+        
+        # RMSE
+        rmse = np.sqrt(((observed - simulated) ** 2).mean())
+        
+        # KGE
+        r = observed.corr(simulated)
+        alpha = simulated.std() / observed.std() if observed.std() != 0 else np.nan
+        beta = simulated.mean() / mean_obs if mean_obs != 0 else np.nan
+        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
+        
+        return {'KGE': kge, 'NSE': nse, 'RMSE': rmse, 'r': r, 'alpha': alpha, 'beta': beta}
+        
+    except Exception:
+        return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan}
