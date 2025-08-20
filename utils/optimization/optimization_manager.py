@@ -5,15 +5,7 @@ import logging
 from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
-
-
-# Optimizers
-from utils.optimization.dds_optimizer_refactored import DDSOptimizer # type: ignore
-from utils.optimization.pso_optimizer import PSOOptimizer # type: ignore
-from utils.optimization.sce_ua_optimizer import SCEUAOptimizer # type: ignore
-from utils.optimization.de_optimizer_refactored import DEOptimizer # type: ignore
-
-# Emulation
+from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
 from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
 
 
@@ -94,18 +86,21 @@ class OptimizationManager:
         
         # Define optimizer mapping
         self.optimizers = {
-            'PSO': PSOOptimizer,
-            'SCE-UA': SCEUAOptimizer,
             'DDS': DDSOptimizer,
-            'DE' : DEOptimizer
+            'DE' : DEOptimizer,
+            'PSO': PSOOptimizer,
+            'NSGA-II': NSGA2Optimizer,
+            'SCE-UA': SCEUAOptimizer
         }
         
         # Define optimizer run method names
         self.optimizer_methods = {
-            'PSO': 'run_pso_optimization',
-            'SCE-UA': 'run_sceua_optimization',
-            'DDS': 'run_dds_optimization',
-            'DE': 'run_de_optimization'
+            'DDS': 'run_optimization',
+            'DE': 'run_optimization',
+            'PSO': 'run_optimization',
+            'NSGA-II': 'run_optimization',
+            'SCE-UA': 'run_optimization' 
+
         }
     
     def calibrate_model(self) -> Optional[Path]:
