@@ -2222,7 +2222,6 @@ class BaseOptimizer(ABC):
                 }
                 for task in evaluation_tasks
             ]
-        
     def _execute_batch_mpi(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
         """Spawn MPI processes internally for parallel execution with HPC-friendly file handling"""
         import os
@@ -2254,7 +2253,7 @@ class BaseOptimizer(ABC):
                 tasks_file = temp_dir / 'tasks.pkl'
                 with open(tasks_file, 'wb') as f:
                     pickle.dump(batch_tasks, f)
-                    # Ensure file is written and synced
+                    # Ensure file is written and synced INSIDE the with block
                     f.flush()
                     os.fsync(f.fileno())
                 
@@ -2262,9 +2261,9 @@ class BaseOptimizer(ABC):
                 worker_script = temp_dir / 'mpi_worker.py'
                 self._create_mpi_worker_script(worker_script, tasks_file, temp_dir)
                 
-                # Ensure worker script is written and synced
+                # Ensure all filesystem operations are complete
                 os.sync()  # Force filesystem sync
-                time.sleep(0.1)  # Small delay to ensure filesystem consistency
+                time.sleep(0.2)  # Slightly longer delay to ensure filesystem consistency
                 
                 # Verify files exist before proceeding
                 if not tasks_file.exists():
@@ -2515,12 +2514,11 @@ if __name__ == "__main__":
         
         with open(script_path, 'w') as f:
             f.write(script_content)
+            # Ensure file is synced and flushed INSIDE the with block
+            f.flush()
+            os.fsync(f.fileno())
         
-        # Ensure file is synced and flushed
-        f.flush()
-        os.fsync(f.fileno())
-        
-        # Force filesystem sync
+        # Force filesystem sync after file is closed
         os.sync()
         
         # Make executable
