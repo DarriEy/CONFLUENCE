@@ -2224,25 +2224,51 @@ class BaseOptimizer(ABC):
             ]
 
     def _execute_batch_mpi(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
-        """Spawn MPI processes internally for parallel execution"""
+        """Spawn MPI processes internally for parallel execution with HPC-friendly file handling"""
         try:
             # Determine number of processes to use
             num_processes = min(max_workers, self.num_processes, len(batch_tasks))
             
             self.logger.info(f"Spawning {num_processes} MPI processes for batch execution")
             
-            # Create temporary files for communication
-            with tempfile.TemporaryDirectory(prefix='confluence_mpi_') as temp_dir:
-                temp_dir = Path(temp_dir)
-                
+            # Use project directory for temporary files instead of /tmp
+            # This avoids permission issues and ensures all nodes can access the files
+            temp_base_dir = self.output_dir / 'mpi_temp'
+            temp_base_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create unique directory name with timestamp and process ID
+            import time
+            timestamp = int(time.time() * 1000)  # milliseconds
+            temp_dir_name = f'mpi_batch_{timestamp}_{os.getpid()}'
+            temp_dir = temp_base_dir / temp_dir_name
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
                 # Save tasks to file
                 tasks_file = temp_dir / 'tasks.pkl'
                 with open(tasks_file, 'wb') as f:
                     pickle.dump(batch_tasks, f)
                 
+                # Ensure file is written and synced
+                import os
+                os.fsync(f.fileno())
+                
                 # Create worker script
                 worker_script = temp_dir / 'mpi_worker.py'
                 self._create_mpi_worker_script(worker_script, tasks_file, temp_dir)
+                
+                # Ensure worker script is written and synced
+                os.sync()  # Force filesystem sync
+                time.sleep(0.1)  # Small delay to ensure filesystem consistency
+                
+                # Verify files exist before proceeding
+                if not tasks_file.exists():
+                    raise RuntimeError(f"Tasks file was not created: {tasks_file}")
+                if not worker_script.exists():
+                    raise RuntimeError(f"Worker script was not created: {worker_script}")
+                
+                # Make worker script executable
+                os.chmod(worker_script, 0o755)
                 
                 # Run MPI command
                 results_file = temp_dir / 'results.pkl'
@@ -2253,24 +2279,34 @@ class BaseOptimizer(ABC):
                 ]
                 
                 self.logger.debug(f"Running MPI command: {' '.join(mpi_cmd)}")
+                self.logger.debug(f"Temporary directory: {temp_dir}")
+                self.logger.debug(f"Worker script: {worker_script}")
                 
-                # Execute MPI process
+                # Execute MPI process with explicit working directory
                 start_time = time.time()
                 result = subprocess.run(
                     mpi_cmd,
                     capture_output=True,
                     text=True,
                     timeout=7200,  # 2 hour timeout
-                    env=os.environ.copy()
+                    env=os.environ.copy(),
+                    cwd=str(temp_dir)  # Set working directory to temp dir
                 )
                 
                 elapsed = time.time() - start_time
                 
                 if result.returncode != 0:
                     self.logger.error(f"MPI execution failed: {result.stderr}")
+                    self.logger.error(f"MPI stdout: {result.stdout}")
                     raise RuntimeError(f"MPI process failed with return code {result.returncode}")
                 
-                # Load results
+                # Load results with retry logic for filesystem delays
+                max_result_wait = 30  # seconds
+                result_wait_start = time.time()
+                
+                while not results_file.exists() and (time.time() - result_wait_start) < max_result_wait:
+                    time.sleep(0.5)
+                
                 if results_file.exists():
                     with open(results_file, 'rb') as f:
                         results = pickle.load(f)
@@ -2281,6 +2317,16 @@ class BaseOptimizer(ABC):
                     return results
                 else:
                     raise RuntimeError("MPI results file not created")
+            
+            finally:
+                # Cleanup temporary directory
+                try:
+                    if temp_dir.exists():
+                        import shutil
+                        shutil.rmtree(temp_dir)
+                        self.logger.debug(f"Cleaned up temporary directory: {temp_dir}")
+                except Exception as cleanup_error:
+                    self.logger.warning(f"Error cleaning up temp directory: {cleanup_error}")
         
         except subprocess.TimeoutExpired:
             self.logger.error("MPI execution timed out")
@@ -2294,12 +2340,14 @@ class BaseOptimizer(ABC):
             self.logger.error(f"MPI spawn execution failed: {str(e)}")
             return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
 
+
     def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
-        """MPI worker script with extensive debugging"""
+        """MPI worker script with better error handling for HPC environments"""
         script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
 import os
+import time
 from pathlib import Path
 from mpi4py import MPI
 import logging
@@ -2321,106 +2369,103 @@ def main():
     
     logger.info(f"MPI worker rank {{rank}}/{{size}} starting")
     
+    if len(sys.argv) != 3:
+        logger.error(f"Usage: {{sys.argv[0]}} <tasks_file> <results_file>")
+        sys.exit(1)
+    
     tasks_file = Path(sys.argv[1])
     results_file = Path(sys.argv[2])
     
+    # Verify input file exists with retry
+    max_wait = 10  # seconds
+    wait_start = time.time()
+    while not tasks_file.exists() and (time.time() - wait_start) < max_wait:
+        logger.info(f"Rank {{rank}}: Waiting for tasks file {{tasks_file}}")
+        time.sleep(0.5)
+    
+    if not tasks_file.exists():
+        logger.error(f"Rank {{rank}}: Tasks file not found after waiting: {{tasks_file}}")
+        sys.exit(1)
+    
     if rank == 0:
-        # Load tasks
-        logger.info(f"Rank 0: Loading tasks from {{tasks_file}}")
-        with open(tasks_file, 'rb') as f:
-            all_tasks = pickle.load(f)
-        
-        logger.info(f"Rank 0: Loaded {{len(all_tasks)}} tasks")
-        
-        # 🎯 DEBUG: Check first task
-        if all_tasks:
-            first_task = all_tasks[0]
-            logger.info(f"🎯 RANK 0 - First task multiobjective: {{first_task.get('multiobjective', 'MISSING')}}")
-            logger.info(f"🎯 RANK 0 - First task target_metric: {{first_task.get('target_metric', 'MISSING')}}")
-            logger.info(f"🎯 RANK 0 - First task keys: {{list(first_task.keys())}}")
-        
-        # Distribute tasks
-        tasks_per_rank = len(all_tasks) // size
-        extra_tasks = len(all_tasks) % size
-        all_results = []
-        
-        for worker_rank in range(size):
-            start_idx = worker_rank * tasks_per_rank + min(worker_rank, extra_tasks)
-            end_idx = start_idx + tasks_per_rank + (1 if worker_rank < extra_tasks else 0)
+        # Load tasks with retry logic
+        try:
+            logger.info(f"Rank 0: Loading tasks from {{tasks_file}}")
+            with open(tasks_file, 'rb') as f:
+                all_tasks = pickle.load(f)
             
-            if worker_rank == 0:
-                my_tasks = all_tasks[start_idx:end_idx]
-                logger.info(f"Rank 0: Processing {{len(my_tasks)}} tasks locally")
-            else:
-                worker_tasks = all_tasks[start_idx:end_idx]
-                logger.info(f"Rank 0: Sending {{len(worker_tasks)}} tasks to rank {{worker_rank}}")
-                comm.send(worker_tasks, dest=worker_rank, tag=1)
-        
-        # Process rank 0 tasks
-        for i, task in enumerate(my_tasks):
-            logger.info(f"Rank 0: Processing task {{i+1}}/{{len(my_tasks)}}")
-            logger.info(f"🎯 RANK 0 TASK {{i}} - multiobjective: {{task.get('multiobjective')}}")
-            logger.info(f"🎯 RANK 0 TASK {{i}} - target_metric: {{task.get('target_metric')}}")
+            logger.info(f"Rank 0: Loaded {{len(all_tasks)}} tasks")
             
-            try:
-                worker_result = _evaluate_parameters_worker_safe(task)
+            # Distribute tasks
+            tasks_per_rank = len(all_tasks) // size
+            extra_tasks = len(all_tasks) % size
+            all_results = []
+            
+            for worker_rank in range(size):
+                start_idx = worker_rank * tasks_per_rank + min(worker_rank, extra_tasks)
+                end_idx = start_idx + tasks_per_rank + (1 if worker_rank < extra_tasks else 0)
                 
-                # 🎯 DEBUG: Log what the worker returned
-                logger.info(f"🎯 RANK 0 WORKER RESULT {{i}}:")
-                logger.info(f"🎯   score: {{worker_result.get('score')}}")
-                logger.info(f"🎯   objectives: {{worker_result.get('objectives')}}")
-                logger.info(f"🎯   error: {{worker_result.get('error')}}")
-                logger.info(f"🎯   all keys: {{list(worker_result.keys())}}")
+                if worker_rank == 0:
+                    my_tasks = all_tasks[start_idx:end_idx]
+                    logger.info(f"Rank 0: Processing {{len(my_tasks)}} tasks locally")
+                else:
+                    worker_tasks = all_tasks[start_idx:end_idx]
+                    logger.info(f"Rank 0: Sending {{len(worker_tasks)}} tasks to rank {{worker_rank}}")
+                    comm.send(worker_tasks, dest=worker_rank, tag=1)
+            
+            # Process rank 0 tasks
+            for i, task in enumerate(my_tasks):
+                logger.info(f"Rank 0: Processing task {{i+1}}/{{len(my_tasks)}}")
                 
-                # 🎯 PRESERVE ALL FIELDS - DO NOT FILTER
-                all_results.append(worker_result)
-                
-            except Exception as e:
-                logger.error(f"Rank 0: Task {{i}} failed: {{e}}")
-                error_result = {{
-                    'individual_id': task.get('individual_id', -1),
-                    'params': task.get('params', {{}}),
-                    'score': None,
-                    'objectives': None,
-                    'error': f'Rank 0 error: {{str(e)}}'
-                }}
-                all_results.append(error_result)
+                try:
+                    worker_result = _evaluate_parameters_worker_safe(task)
+                    all_results.append(worker_result)
+                    
+                except Exception as e:
+                    logger.error(f"Rank 0: Task {{i}} failed: {{e}}")
+                    error_result = {{
+                        'individual_id': task.get('individual_id', -1),
+                        'params': task.get('params', {{}}),
+                        'score': None,
+                        'objectives': None,
+                        'error': f'Rank 0 error: {{str(e)}}'
+                    }}
+                    all_results.append(error_result)
+            
+            # Collect from workers
+            for worker_rank in range(1, size):
+                try:
+                    logger.info(f"Rank 0: Waiting for results from rank {{worker_rank}}")
+                    worker_results = comm.recv(source=worker_rank, tag=2)
+                    logger.info(f"Rank 0: Received {{len(worker_results)}} results from rank {{worker_rank}}")
+                    all_results.extend(worker_results)
+                    
+                except Exception as e:
+                    logger.error(f"Error receiving from worker {{worker_rank}}: {{e}}")
+            
+            # Save results with retry logic
+            logger.info(f"Rank 0: Saving {{len(all_results)}} results to {{results_file}}")
+            max_save_attempts = 3
+            for attempt in range(max_save_attempts):
+                try:
+                    with open(results_file, 'wb') as f:
+                        pickle.dump(all_results, f)
+                    
+                    # Force file sync
+                    os.fsync(f.fileno())
+                    os.sync()
+                    
+                    logger.info(f"Rank 0: Results saved successfully on attempt {{attempt + 1}}")
+                    break
+                except Exception as save_error:
+                    logger.error(f"Rank 0: Save attempt {{attempt + 1}} failed: {{save_error}}")
+                    if attempt == max_save_attempts - 1:
+                        raise
+                    time.sleep(1)
         
-        # Collect from workers
-        for worker_rank in range(1, size):
-            try:
-                logger.info(f"Rank 0: Waiting for results from rank {{worker_rank}}")
-                worker_results = comm.recv(source=worker_rank, tag=2)
-                logger.info(f"Rank 0: Received {{len(worker_results)}} results from rank {{worker_rank}}")
-                
-                # 🎯 DEBUG: Log first result from worker
-                if worker_results:
-                    first_result = worker_results[0]
-                    logger.info(f"🎯 RANK 0 RECEIVED FROM {{worker_rank}}:")
-                    logger.info(f"🎯   score: {{first_result.get('score')}}")
-                    logger.info(f"🎯   objectives: {{first_result.get('objectives')}}")
-                    logger.info(f"🎯   error: {{first_result.get('error')}}")
-                    logger.info(f"🎯   all keys: {{list(first_result.keys())}}")
-                
-                all_results.extend(worker_results)
-                
-            except Exception as e:
-                logger.error(f"Error receiving from worker {{worker_rank}}: {{e}}")
-        
-        # 🎯 DEBUG: Log final results before saving
-        logger.info(f"🎯 RANK 0 FINAL RESULTS: {{len(all_results)}} total")
-        if all_results:
-            first_final = all_results[0]
-            logger.info(f"🎯 FINAL RESULT 0:")
-            logger.info(f"🎯   score: {{first_final.get('score')}}")
-            logger.info(f"🎯   objectives: {{first_final.get('objectives')}}")
-            logger.info(f"🎯   error: {{first_final.get('error')}}")
-        
-        # Save results
-        logger.info(f"Rank 0: Saving {{len(all_results)}} results to {{results_file}}")
-        with open(results_file, 'wb') as f:
-            pickle.dump(all_results, f)
-        logger.info(f"Rank 0: Results saved successfully")
+        except Exception as e:
+            logger.error(f"Rank 0: Critical error: {{e}}")
+            sys.exit(1)
     
     else:
         # Worker process
@@ -2429,28 +2474,13 @@ def main():
             my_tasks = comm.recv(source=0, tag=1)
             logger.info(f"Rank {{rank}}: Received {{len(my_tasks)}} tasks")
             
-            # 🎯 DEBUG: Check first received task
-            if my_tasks:
-                first_task = my_tasks[0]
-                logger.info(f"🎯 RANK {{rank}} RECEIVED TASK - multiobjective: {{first_task.get('multiobjective')}}")
-                logger.info(f"🎯 RANK {{rank}} RECEIVED TASK - target_metric: {{first_task.get('target_metric')}}")
-            
             my_results = []
             
             for i, task in enumerate(my_tasks):
                 logger.info(f"Rank {{rank}}: Processing task {{i+1}}/{{len(my_tasks)}}")
-                logger.info(f"🎯 RANK {{rank}} TASK {{i}} - multiobjective: {{task.get('multiobjective')}}")
                 
                 try:
                     worker_result = _evaluate_parameters_worker_safe(task)
-                    
-                    # 🎯 DEBUG: Log what the worker returned
-                    logger.info(f"🎯 RANK {{rank}} WORKER RESULT {{i}}:")
-                    logger.info(f"🎯   score: {{worker_result.get('score')}}")
-                    logger.info(f"🎯   objectives: {{worker_result.get('objectives')}}")
-                    logger.info(f"🎯   error: {{worker_result.get('error')}}")
-                    
-                    # 🎯 PRESERVE ALL FIELDS - DO NOT FILTER
                     my_results.append(worker_result)
                     
                 except Exception as e:
@@ -2465,15 +2495,6 @@ def main():
                     my_results.append(error_result)
             
             logger.info(f"Rank {{rank}}: Sending {{len(my_results)}} results back to rank 0")
-            
-            # 🎯 DEBUG: Log what we're sending back
-            if my_results:
-                first_result = my_results[0]
-                logger.info(f"🎯 RANK {{rank}} SENDING BACK:")
-                logger.info(f"🎯   score: {{first_result.get('score')}}")
-                logger.info(f"🎯   objectives: {{first_result.get('objectives')}}")
-                logger.info(f"🎯   error: {{first_result.get('error')}}")
-            
             comm.send(my_results, dest=0, tag=2)
             logger.info(f"Rank {{rank}}: Results sent successfully")
             
@@ -2487,6 +2508,12 @@ if __name__ == "__main__":
         with open(script_path, 'w') as f:
             f.write(script_content)
         
+        # Ensure file is synced
+        import os
+        os.fsync(f.fileno())
+        os.sync()
+        
+        # Make executable
         os.chmod(script_path, 0o755)
 
 
