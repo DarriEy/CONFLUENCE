@@ -2222,9 +2222,16 @@ class BaseOptimizer(ABC):
                 }
                 for task in evaluation_tasks
             ]
-
+        
     def _execute_batch_mpi(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
         """Spawn MPI processes internally for parallel execution with HPC-friendly file handling"""
+        import os
+        import time
+        import subprocess
+        import pickle
+        import sys
+        import shutil
+        
         try:
             # Determine number of processes to use
             num_processes = min(max_workers, self.num_processes, len(batch_tasks))
@@ -2237,7 +2244,6 @@ class BaseOptimizer(ABC):
             temp_base_dir.mkdir(parents=True, exist_ok=True)
             
             # Create unique directory name with timestamp and process ID
-            import time
             timestamp = int(time.time() * 1000)  # milliseconds
             temp_dir_name = f'mpi_batch_{timestamp}_{os.getpid()}'
             temp_dir = temp_base_dir / temp_dir_name
@@ -2248,10 +2254,9 @@ class BaseOptimizer(ABC):
                 tasks_file = temp_dir / 'tasks.pkl'
                 with open(tasks_file, 'wb') as f:
                     pickle.dump(batch_tasks, f)
-                
-                # Ensure file is written and synced
-                import os
-                os.fsync(f.fileno())
+                    # Ensure file is written and synced
+                    f.flush()
+                    os.fsync(f.fileno())
                 
                 # Create worker script
                 worker_script = temp_dir / 'mpi_worker.py'
@@ -2322,7 +2327,6 @@ class BaseOptimizer(ABC):
                 # Cleanup temporary directory
                 try:
                     if temp_dir.exists():
-                        import shutil
                         shutil.rmtree(temp_dir)
                         self.logger.debug(f"Cleaned up temporary directory: {temp_dir}")
                 except Exception as cleanup_error:
@@ -2343,6 +2347,8 @@ class BaseOptimizer(ABC):
 
     def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
         """MPI worker script with better error handling for HPC environments"""
+        import os
+        
         script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
@@ -2450,9 +2456,11 @@ def main():
                 try:
                     with open(results_file, 'wb') as f:
                         pickle.dump(all_results, f)
+                        # Force file sync
+                        f.flush()
+                        os.fsync(f.fileno())
                     
-                    # Force file sync
-                    os.fsync(f.fileno())
+                    # Additional sync for filesystem
                     os.sync()
                     
                     logger.info(f"Rank 0: Results saved successfully on attempt {{attempt + 1}}")
@@ -2508,9 +2516,11 @@ if __name__ == "__main__":
         with open(script_path, 'w') as f:
             f.write(script_content)
         
-        # Ensure file is synced
-        import os
+        # Ensure file is synced and flushed
+        f.flush()
         os.fsync(f.fileno())
+        
+        # Force filesystem sync
         os.sync()
         
         # Make executable
