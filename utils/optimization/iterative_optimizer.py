@@ -44,6 +44,7 @@ import random
 import traceback
 import yaml
 import pickle 
+import re
 import tempfile
 
 # ============= ABSTRACT BASE CLASSES =============
@@ -2614,6 +2615,71 @@ if __name__ == "__main__":
         
         self.logger.info("=" * 60)
 
+
+    def _update_model_decisions_for_final_run(self) -> None:
+        """Update modelDecisions.txt to use direct solver for final evaluation"""
+        model_decisions_path = self.optimization_settings_dir / 'modelDecisions.txt'
+        
+        if not model_decisions_path.exists():
+            self.logger.warning(f"modelDecisions.txt not found: {model_decisions_path}")
+            return
+        
+        try:
+            # Read current file
+            with open(model_decisions_path, 'r') as f:
+                lines = f.readlines()
+            
+            # Update numerical method
+            updated_lines = []
+            for line in lines:
+                if line.strip().startswith('num_method') and not line.strip().startswith('!'):
+                    # Change from itertive to ida for final evaluation
+                    updated_line = re.sub(r'(num_method\s+)\w+(\s+.*)', r'\1ida\2', line)
+                    updated_lines.append(updated_line)
+                    self.logger.info(f"Updated numerical method: {line.strip()} -> {updated_line.strip()}")
+                else:
+                    updated_lines.append(line)
+            
+            # Write updated file
+            with open(model_decisions_path, 'w') as f:
+                f.writelines(updated_lines)
+            
+            self.logger.info("Updated modelDecisions.txt for final evaluation: num_method = ide")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating modelDecisions.txt: {str(e)}")
+
+    def _restore_model_decisions_for_optimization(self) -> None:
+        """Restore modelDecisions.txt to use iterative solver for optimization"""
+        model_decisions_path = self.optimization_settings_dir / 'modelDecisions.txt'
+        
+        if not model_decisions_path.exists():
+            return
+        
+        try:
+            # Read current file
+            with open(model_decisions_path, 'r') as f:
+                lines = f.readlines()
+            
+            # Update numerical method back to iterative
+            updated_lines = []
+            for line in lines:
+                if line.strip().startswith('num_method') and not line.strip().startswith('!'):
+                    # Change back to itertive for optimization
+                    updated_line = re.sub(r'(num_method\s+)\w+(\s+.*)', r'\1itertive\2', line)
+                    updated_lines.append(updated_line)
+                else:
+                    updated_lines.append(line)
+            
+            # Write updated file
+            with open(model_decisions_path, 'w') as f:
+                f.writelines(updated_lines)
+            
+            self.logger.debug("Restored modelDecisions.txt for optimization: num_method = itertive")
+            
+        except Exception as e:
+            self.logger.error(f"Error restoring modelDecisions.txt: {str(e)}")
+
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
         """Run final evaluation with best parameters over full period"""
         self.logger.info("Running final evaluation with best parameters")
@@ -2621,6 +2687,9 @@ if __name__ == "__main__":
         try:
             # Update file manager for full period
             self._update_file_manager_for_final_run()
+            
+            # Update modelDecisions.txt to use direct solver for final evaluation
+            self._update_model_decisions_for_final_run()
             
             # Apply best parameters
             self._fix_file_permissions_for_final_run()
@@ -2630,7 +2699,7 @@ if __name__ == "__main__":
             
             self.logger.info("Parameter application successful")
             
-            # Run models
+            # Run models with direct solver
             if not self.model_executor.run_models(
                 self.summa_sim_dir,
                 self.mizuroute_sim_dir,
@@ -2657,7 +2726,8 @@ if __name__ == "__main__":
                     'summa_success': True,
                     'mizuroute_success': self.calibration_target.needs_routing(),
                     'calibration_metrics': self._extract_period_metrics(metrics, 'Calib'),
-                    'evaluation_metrics': self._extract_period_metrics(metrics, 'Eval')
+                    'evaluation_metrics': self._extract_period_metrics(metrics, 'Eval'),
+                    'numerical_method_final': 'ide'  # Record that we used direct solver
                 }
             else:
                 return {'summa_success': False, 'mizuroute_success': False}
@@ -2668,6 +2738,8 @@ if __name__ == "__main__":
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return None
         finally:
+            # Always restore optimization settings
+            self._restore_model_decisions_for_optimization()
             # Reset file manager back to optimization mode
             self._update_summa_file_manager(self.optimization_settings_dir / 'fileManager.txt')
 

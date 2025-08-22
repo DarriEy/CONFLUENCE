@@ -22,7 +22,8 @@ CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                          # Name of experimental domain
-EXPERIMENT_ID: run_1                                           # Name of experiment
+EXPERIMENT_ID: run_1
+                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
@@ -185,6 +186,7 @@ SETTINGS_SUMMA_FILEMANAGER: fileManager.txt                    # Name of SUMMA f
 SETTINGS_SUMMA_FORCING_LIST: forcingFileList.txt               # Name of SUMMA forcing file list
 SETTINGS_SUMMA_COLDSTATE: coldState.nc                         # Name of SUMMA initial conditions file
 SETTINGS_SUMMA_TRIALPARAMS: trialParams.nc                     # Name of SUMMA trial parameters file
+SETTINGS_SUMMA_DECISIONS: modelDecisions.txt                   # Name of SUMMA model decision file
 SETTINGS_SUMMA_ATTRIBUTES: attributes.nc                       # Name of SUMMA attributes file
 SETTINGS_SUMMA_OUTPUT: outputControl.txt                       # Name of SUMMA output control file
 SETTINGS_SUMMA_BASIN_PARAMS_FILE: basinParamInfo.txt           # Name of SUMMA basin parameters file
@@ -290,9 +292,9 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: ASYNC-DDS                       # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II
+ITERATIVE_OPTIMIZATION_ALGORITHM: POP-DDS                      # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 20                                            # Population size for genetic algorithms
+POPULATION_SIZE: 10                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
  
   # -- DDS specific settings
