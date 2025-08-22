@@ -611,31 +611,59 @@ class ParameterManager:
         
         return params
     
-    def apply_parameters(self, params: Dict[str, np.ndarray]) -> bool:
-        """Apply parameters to model files"""
+    def _apply_parameters(self, best_params: Dict) -> bool:
+        """Apply parameters with detailed debugging"""
         try:
+            self.logger.info("DEBUG: Entering parameter application")
+            
             # Update soil depths if depth calibration enabled
-            if self.depth_params and 'total_mult' in params and 'shape_factor' in params:
-                if not self._update_soil_depths(params):
+            if (hasattr(self.parameter_manager, 'depth_params') and 
+                self.parameter_manager.depth_params and 
+                'total_mult' in best_params and 'shape_factor' in best_params):
+                
+                self.logger.info("DEBUG: Updating soil depths...")
+                if not self.parameter_manager._update_soil_depths(best_params):
+                    self.logger.error("DEBUG: Soil depth update failed")
                     return False
+                self.logger.info("DEBUG: Soil depth update successful")
             
             # Update mizuRoute parameters if enabled
-            if self.mizuroute_params:
-                if not self._update_mizuroute_parameters(params):
+            if (hasattr(self.parameter_manager, 'mizuroute_params') and 
+                self.parameter_manager.mizuroute_params):
+                
+                self.logger.info("DEBUG: Updating mizuRoute parameters...")
+                if not self.parameter_manager._update_mizuroute_parameters(best_params):
+                    self.logger.error("DEBUG: mizuRoute parameter update failed")
                     return False
+                self.logger.info("DEBUG: mizuRoute parameter update successful")
             
             # Generate trial parameters file (excluding depth and mizuRoute parameters)
-            hydraulic_params = {k: v for k, v in params.items() 
-                              if k not in self.depth_params + self.mizuroute_params}
+            exclusion_params = []
+            if hasattr(self.parameter_manager, 'depth_params'):
+                exclusion_params.extend(self.parameter_manager.depth_params)
+            if hasattr(self.parameter_manager, 'mizuroute_params'):
+                exclusion_params.extend(self.parameter_manager.mizuroute_params)
+            
+            hydraulic_params = {k: v for k, v in best_params.items() 
+                            if k not in exclusion_params}
             
             if hydraulic_params:
-                if not self._generate_trial_params_file(hydraulic_params):
+                self.logger.info(f"DEBUG: Generating trial params file with {len(hydraulic_params)} hydraulic parameters...")
+                self.logger.info(f"DEBUG: Hydraulic params: {list(hydraulic_params.keys())}")
+                
+                if not self.parameter_manager._generate_trial_params_file(hydraulic_params):
+                    self.logger.error("DEBUG: Trial parameters file generation failed")
                     return False
+                self.logger.info("DEBUG: Trial parameters file generation successful")
+            else:
+                self.logger.info("DEBUG: No hydraulic parameters to apply")
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Error applying parameters: {str(e)}")
+            self.logger.error(f"DEBUG: Exception in parameter application: {str(e)}")
+            import traceback
+            self.logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
             return False
     
     def _parse_all_bounds(self) -> Dict[str, Dict[str, float]]:
@@ -1826,9 +1854,231 @@ class BaseOptimizer(ABC):
         
         # Fallback to first available metric
         return next(iter(metrics.values())) if metrics else None
-    
+
+    def get_runtime_analysis(self) -> Dict[str, Any]:
+        """
+        Analyze parallel evaluation runtime performance
+        
+        Returns detailed statistics about individual evaluation runtimes,
+        component breakdowns, and trends over generations.
+        """
+        if not hasattr(self, 'runtime_history') or not self.runtime_history:
+            return {'error': 'No runtime data available'}
+        
+        analysis = {
+            'summary': {},
+            'generations': [],
+            'trends': {},
+            'component_analysis': {}
+        }
+        
+        # Overall summary across all generations
+        all_runtimes = []
+        all_summa_times = []
+        all_mizuroute_times = []
+        all_metrics_times = []
+        total_evaluations = 0
+        total_successful = 0
+        
+        for gen_data in self.runtime_history:
+            runtimes = gen_data.get('individual_runtimes', [])
+            all_runtimes.extend(runtimes)
+            total_evaluations += gen_data.get('batch_size', 0)
+            total_successful += gen_data.get('successful_count', 0)
+            
+            # Collect component times
+            breakdowns = gen_data.get('runtime_breakdowns', {})
+            all_summa_times.extend(breakdowns.get('summa', []))
+            all_mizuroute_times.extend(breakdowns.get('mizuroute', []))
+            all_metrics_times.extend(breakdowns.get('metrics', []))
+        
+        if all_runtimes:
+            sorted_runtimes = sorted(all_runtimes)
+            n = len(sorted_runtimes)
+            
+            analysis['summary'] = {
+                'total_evaluations': total_evaluations,
+                'successful_evaluations': total_successful,
+                'success_rate': total_successful / total_evaluations if total_evaluations > 0 else 0,
+                'total_runtime_samples': len(all_runtimes),
+                'min_runtime': min(all_runtimes),
+                'max_runtime': max(all_runtimes),
+                'mean_runtime': sum(all_runtimes) / len(all_runtimes),
+                'median_runtime': sorted_runtimes[n//2],
+                'p95_runtime': sorted_runtimes[int(0.95*n)] if n > 0 else 0,
+                'p99_runtime': sorted_runtimes[int(0.99*n)] if n > 0 else 0,
+                'std_runtime': np.std(all_runtimes) if len(all_runtimes) > 1 else 0
+            }
+        
+        # Per-generation analysis
+        for i, gen_data in enumerate(self.runtime_history):
+            runtimes = gen_data.get('individual_runtimes', [])
+            
+            if runtimes:
+                gen_analysis = {
+                    'generation': i,
+                    'batch_size': gen_data.get('batch_size', 0),
+                    'successful_count': gen_data.get('successful_count', 0),
+                    'total_elapsed': gen_data.get('total_elapsed', 0),
+                    'min_runtime': min(runtimes),
+                    'max_runtime': max(runtimes),
+                    'mean_runtime': sum(runtimes) / len(runtimes),
+                    'runtime_std': np.std(runtimes) if len(runtimes) > 1 else 0,
+                    'efficiency': len(runtimes) / gen_data.get('total_elapsed', 1)  # evaluations per second
+                }
+                analysis['generations'].append(gen_analysis)
+        
+        # Trend analysis
+        if len(analysis['generations']) > 1:
+            mean_runtimes = [g['mean_runtime'] for g in analysis['generations']]
+            efficiencies = [g['efficiency'] for g in analysis['generations']]
+            
+            analysis['trends'] = {
+                'runtime_trend': 'increasing' if mean_runtimes[-1] > mean_runtimes[0] else 'decreasing',
+                'runtime_change': mean_runtimes[-1] - mean_runtimes[0],
+                'efficiency_trend': 'increasing' if efficiencies[-1] > efficiencies[0] else 'decreasing',
+                'efficiency_change': efficiencies[-1] - efficiencies[0],
+                'most_efficient_generation': max(range(len(efficiencies)), key=lambda i: efficiencies[i]),
+                'least_efficient_generation': min(range(len(efficiencies)), key=lambda i: efficiencies[i])
+            }
+        
+        # Component analysis
+        if all_summa_times:
+            analysis['component_analysis']['summa'] = {
+                'mean': sum(all_summa_times) / len(all_summa_times),
+                'min': min(all_summa_times),
+                'max': max(all_summa_times),
+                'std': np.std(all_summa_times),
+                'samples': len(all_summa_times)
+            }
+        
+        if all_mizuroute_times:
+            analysis['component_analysis']['mizuroute'] = {
+                'mean': sum(all_mizuroute_times) / len(all_mizuroute_times),
+                'min': min(all_mizuroute_times),
+                'max': max(all_mizuroute_times),
+                'std': np.std(all_mizuroute_times),
+                'samples': len(all_mizuroute_times)
+            }
+        
+        if all_metrics_times:
+            analysis['component_analysis']['metrics'] = {
+                'mean': sum(all_metrics_times) / len(all_metrics_times),
+                'min': min(all_metrics_times),
+                'max': max(all_metrics_times),
+                'std': np.std(all_metrics_times),
+                'samples': len(all_metrics_times)
+            }
+        
+        return analysis
+
+    def print_runtime_analysis(self) -> None:
+        """Print a detailed runtime analysis report"""
+        analysis = self.get_runtime_analysis()
+        
+        if 'error' in analysis:
+            print(f"Runtime Analysis Error: {analysis['error']}")
+            return
+        
+        print("=" * 60)
+        print("PARALLEL EVALUATION RUNTIME ANALYSIS")
+        print("=" * 60)
+        
+        # Summary
+        summary = analysis['summary']
+        print(f"\nOVERALL SUMMARY:")
+        print(f"  Total evaluations: {summary['total_evaluations']}")
+        print(f"  Successful evaluations: {summary['successful_evaluations']}")
+        print(f"  Success rate: {summary['success_rate']:.1%}")
+        print(f"  Runtime samples: {summary['total_runtime_samples']}")
+        print(f"  Mean runtime: {summary['mean_runtime']:.1f}s")
+        print(f"  Runtime range: {summary['min_runtime']:.1f}s - {summary['max_runtime']:.1f}s")
+        print(f"  P95 runtime: {summary['p95_runtime']:.1f}s")
+        print(f"  Runtime std dev: {summary['std_runtime']:.1f}s")
+        
+        # Component breakdown
+        if analysis['component_analysis']:
+            print(f"\nCOMPONENT BREAKDOWN:")
+            for component, stats in analysis['component_analysis'].items():
+                print(f"  {component.upper()}:")
+                print(f"    Mean: {stats['mean']:.1f}s")
+                print(f"    Range: {stats['min']:.1f}s - {stats['max']:.1f}s")
+                print(f"    Std dev: {stats['std']:.1f}s")
+                print(f"    Samples: {stats['samples']}")
+        
+        # Trends
+        if analysis['trends']:
+            print(f"\nTRENDS OVER GENERATIONS:")
+            trends = analysis['trends']
+            print(f"  Runtime trend: {trends['runtime_trend']} ({trends['runtime_change']:+.1f}s)")
+            print(f"  Efficiency trend: {trends['efficiency_trend']} ({trends['efficiency_change']:+.2f} eval/s)")
+            print(f"  Most efficient generation: {trends['most_efficient_generation']}")
+            print(f"  Least efficient generation: {trends['least_efficient_generation']}")
+        
+        # Per-generation details (last 5 generations)
+        generations = analysis['generations']
+        if generations:
+            print(f"\nRECENT GENERATION PERFORMANCE (last 5):")
+            for gen in generations[-5:]:
+                efficiency = gen['efficiency']
+                print(f"  Gen {gen['generation']:2d}: "
+                    f"mean={gen['mean_runtime']:5.1f}s, "
+                    f"range={gen['min_runtime']:4.1f}-{gen['max_runtime']:4.1f}s, "
+                    f"efficiency={efficiency:.1f} eval/s")
+        
+        print("=" * 60)
+
+    def save_runtime_data(self, filepath: str) -> None:
+        """Save runtime history to file for external analysis"""
+        import json
+        
+        if not hasattr(self, 'runtime_history'):
+            print("No runtime data to save")
+            return
+        
+        analysis = self.get_runtime_analysis()
+        
+        # Prepare data for JSON serialization
+        save_data = {
+            'optimizer': self.get_algorithm_name(),
+            'config': {
+                'population_size': getattr(self, 'population_size', None),
+                'num_processes': self.num_processes,
+                'domain_name': self.domain_name,
+                'target_metric': self.target_metric
+            },
+            'analysis': analysis,
+            'raw_data': self.runtime_history
+        }
+        
+        # Convert numpy arrays to lists for JSON
+        def convert_numpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.float64):
+                return float(obj)
+            elif isinstance(obj, np.int64):
+                return int(obj)
+            return obj
+        
+        # Recursively convert numpy objects
+        def clean_for_json(data):
+            if isinstance(data, dict):
+                return {k: clean_for_json(v) for k, v in data.items()}
+            elif isinstance(data, list):
+                return [clean_for_json(item) for item in data]
+            else:
+                return convert_numpy(data)
+        
+        save_data = clean_for_json(save_data)
+        
+        with open(filepath, 'w') as f:
+            json.dump(save_data, f, indent=2)
+        
+        print(f"Runtime data saved to: {filepath}")
+
     def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
-        """Complete parallel evaluation with stale file handle recovery and fallback"""
+        """Complete parallel evaluation with runtime analysis and stale file handle recovery"""
         
         start_time = time.time()
         num_tasks = len(evaluation_tasks)
@@ -1931,9 +2181,53 @@ class BaseOptimizer(ABC):
             successful_count = sum(1 for r in results if r['score'] is not None)
             success_rate = successful_count / num_tasks if num_tasks > 0 else 0
             
+            # COLLECT AND ANALYZE RUNTIME STATISTICS
+            individual_runtimes = []
+            runtime_breakdowns = {'summa': [], 'mizuroute': [], 'metrics': []}
+            
+            for result in results:
+                runtime = result.get('runtime')
+                if runtime is not None and runtime > 0:  # Valid runtime
+                    individual_runtimes.append(runtime)
+                    
+                    # Collect breakdown if available
+                    breakdown = result.get('runtime_breakdown', {})
+                    for component in ['summa', 'mizuroute', 'metrics']:
+                        if component in breakdown:
+                            runtime_breakdowns[component].append(breakdown[component])
+            
+            # Calculate runtime statistics
+            if individual_runtimes:
+                min_runtime = min(individual_runtimes)
+                max_runtime = max(individual_runtimes)
+                mean_runtime = sum(individual_runtimes) / len(individual_runtimes)
+                
+                # Calculate percentiles
+                sorted_runtimes = sorted(individual_runtimes)
+                n = len(sorted_runtimes)
+                p50_runtime = sorted_runtimes[n//2] if n > 0 else 0
+                p95_runtime = sorted_runtimes[int(0.95*n)] if n > 0 else 0
+                
+                runtime_stats_str = f"Runtime: min={min_runtime:.1f}s, mean={mean_runtime:.1f}s, max={max_runtime:.1f}s, p50={p50_runtime:.1f}s, p95={p95_runtime:.1f}s"
+                
+                # Add component breakdown if available
+                component_stats = []
+                for component, times in runtime_breakdowns.items():
+                    if times:
+                        avg_time = sum(times) / len(times)
+                        component_stats.append(f"{component}={avg_time:.1f}s")
+                
+                if component_stats:
+                    runtime_stats_str += f" | Avg components: {', '.join(component_stats)}"
+            else:
+                runtime_stats_str = "Runtime: no valid data"
+                min_runtime = max_runtime = mean_runtime = 0.0
+            
             elapsed = time.time() - start_time
+            
             self.logger.info(f"Parallel evaluation completed: {successful_count}/{num_tasks} successful "
                         f"({100*success_rate:.1f}%) in {elapsed/60:.1f} minutes")
+            self.logger.info(f"Individual {runtime_stats_str}")
             
             # Update failure counter based on success rate
             if success_rate >= 0.7:  # 70% or better success
@@ -1944,6 +2238,21 @@ class BaseOptimizer(ABC):
             # If success rate is too low, warn about potential sequential fallback
             if success_rate < 0.5:
                 self.logger.warning(f"Low success rate ({100*success_rate:.1f}%). Next failure may trigger sequential fallback.")
+            
+            # Store runtime statistics for analysis
+            if not hasattr(self, 'runtime_history'):
+                self.runtime_history = []
+            
+            self.runtime_history.append({
+                'batch_size': num_tasks,
+                'successful_count': successful_count,
+                'total_elapsed': elapsed,
+                'individual_runtimes': individual_runtimes,
+                'min_runtime': min_runtime if individual_runtimes else None,
+                'max_runtime': max_runtime if individual_runtimes else None,
+                'mean_runtime': mean_runtime if individual_runtimes else None,
+                'runtime_breakdowns': runtime_breakdowns
+            })
             
             return results
             
@@ -1961,7 +2270,8 @@ class BaseOptimizer(ABC):
                     'individual_id': task['individual_id'],
                     'params': task['params'],
                     'score': None,
-                    'error': f'Critical parallel evaluation error: {str(e)}'
+                    'error': f'Critical parallel evaluation error: {str(e)}',
+                    'runtime': None
                 }
                 for task in evaluation_tasks
             ]
@@ -2038,13 +2348,18 @@ class BaseOptimizer(ABC):
             return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
 
     def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
-        """Create a standalone MPI worker script"""
+        """MPI worker script with extensive debugging"""
         script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
 import os
 from pathlib import Path
 from mpi4py import MPI
+import logging
+
+# Setup logging for MPI debugging
+logging.basicConfig(level=logging.INFO, format='[MPI-%(process)d] %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 # Add CONFLUENCE path
 sys.path.append(r"{Path(__file__).parent}")
@@ -2057,18 +2372,29 @@ def main():
     rank = comm.Get_rank()
     size = comm.Get_size()
     
+    logger.info(f"MPI worker rank {{rank}}/{{size}} starting")
+    
     tasks_file = Path(sys.argv[1])
     results_file = Path(sys.argv[2])
     
-    # Load tasks on rank 0
     if rank == 0:
+        # Load tasks
+        logger.info(f"Rank 0: Loading tasks from {{tasks_file}}")
         with open(tasks_file, 'rb') as f:
             all_tasks = pickle.load(f)
+        
+        logger.info(f"Rank 0: Loaded {{len(all_tasks)}} tasks")
+        
+        # 🎯 DEBUG: Check first task
+        if all_tasks:
+            first_task = all_tasks[0]
+            logger.info(f"🎯 RANK 0 - First task multiobjective: {{first_task.get('multiobjective', 'MISSING')}}")
+            logger.info(f"🎯 RANK 0 - First task target_metric: {{first_task.get('target_metric', 'MISSING')}}")
+            logger.info(f"🎯 RANK 0 - First task keys: {{list(first_task.keys())}}")
         
         # Distribute tasks
         tasks_per_rank = len(all_tasks) // size
         extra_tasks = len(all_tasks) % size
-        
         all_results = []
         
         for worker_rank in range(size):
@@ -2077,62 +2403,135 @@ def main():
             
             if worker_rank == 0:
                 my_tasks = all_tasks[start_idx:end_idx]
+                logger.info(f"Rank 0: Processing {{len(my_tasks)}} tasks locally")
             else:
                 worker_tasks = all_tasks[start_idx:end_idx]
+                logger.info(f"Rank 0: Sending {{len(worker_tasks)}} tasks to rank {{worker_rank}}")
                 comm.send(worker_tasks, dest=worker_rank, tag=1)
         
-        # Execute rank 0 tasks
-        my_results = []
-        for task in my_tasks:
+        # Process rank 0 tasks
+        for i, task in enumerate(my_tasks):
+            logger.info(f"Rank 0: Processing task {{i+1}}/{{len(my_tasks)}}")
+            logger.info(f"🎯 RANK 0 TASK {{i}} - multiobjective: {{task.get('multiobjective')}}")
+            logger.info(f"🎯 RANK 0 TASK {{i}} - target_metric: {{task.get('target_metric')}}")
+            
             try:
-                result = _evaluate_parameters_worker_safe(task)
-                my_results.append(result)
+                worker_result = _evaluate_parameters_worker_safe(task)
+                
+                # 🎯 DEBUG: Log what the worker returned
+                logger.info(f"🎯 RANK 0 WORKER RESULT {{i}}:")
+                logger.info(f"🎯   score: {{worker_result.get('score')}}")
+                logger.info(f"🎯   objectives: {{worker_result.get('objectives')}}")
+                logger.info(f"🎯   error: {{worker_result.get('error')}}")
+                logger.info(f"🎯   all keys: {{list(worker_result.keys())}}")
+                
+                # 🎯 PRESERVE ALL FIELDS - DO NOT FILTER
+                all_results.append(worker_result)
+                
             except Exception as e:
+                logger.error(f"Rank 0: Task {{i}} failed: {{e}}")
                 error_result = {{
                     'individual_id': task.get('individual_id', -1),
                     'params': task.get('params', {{}}),
                     'score': None,
+                    'objectives': None,
                     'error': f'Rank 0 error: {{str(e)}}'
                 }}
-                my_results.append(error_result)
-        
-        all_results.extend(my_results)
+                all_results.append(error_result)
         
         # Collect from workers
         for worker_rank in range(1, size):
             try:
+                logger.info(f"Rank 0: Waiting for results from rank {{worker_rank}}")
                 worker_results = comm.recv(source=worker_rank, tag=2)
+                logger.info(f"Rank 0: Received {{len(worker_results)}} results from rank {{worker_rank}}")
+                
+                # 🎯 DEBUG: Log first result from worker
+                if worker_results:
+                    first_result = worker_results[0]
+                    logger.info(f"🎯 RANK 0 RECEIVED FROM {{worker_rank}}:")
+                    logger.info(f"🎯   score: {{first_result.get('score')}}")
+                    logger.info(f"🎯   objectives: {{first_result.get('objectives')}}")
+                    logger.info(f"🎯   error: {{first_result.get('error')}}")
+                    logger.info(f"🎯   all keys: {{list(first_result.keys())}}")
+                
                 all_results.extend(worker_results)
+                
             except Exception as e:
-                print(f"Error receiving from worker {{worker_rank}}: {{e}}")
+                logger.error(f"Error receiving from worker {{worker_rank}}: {{e}}")
+        
+        # 🎯 DEBUG: Log final results before saving
+        logger.info(f"🎯 RANK 0 FINAL RESULTS: {{len(all_results)}} total")
+        if all_results:
+            first_final = all_results[0]
+            logger.info(f"🎯 FINAL RESULT 0:")
+            logger.info(f"🎯   score: {{first_final.get('score')}}")
+            logger.info(f"🎯   objectives: {{first_final.get('objectives')}}")
+            logger.info(f"🎯   error: {{first_final.get('error')}}")
         
         # Save results
+        logger.info(f"Rank 0: Saving {{len(all_results)}} results to {{results_file}}")
         with open(results_file, 'wb') as f:
             pickle.dump(all_results, f)
+        logger.info(f"Rank 0: Results saved successfully")
     
     else:
         # Worker process
+        logger.info(f"Rank {{rank}}: Waiting for tasks from rank 0")
         try:
             my_tasks = comm.recv(source=0, tag=1)
+            logger.info(f"Rank {{rank}}: Received {{len(my_tasks)}} tasks")
+            
+            # 🎯 DEBUG: Check first received task
+            if my_tasks:
+                first_task = my_tasks[0]
+                logger.info(f"🎯 RANK {{rank}} RECEIVED TASK - multiobjective: {{first_task.get('multiobjective')}}")
+                logger.info(f"🎯 RANK {{rank}} RECEIVED TASK - target_metric: {{first_task.get('target_metric')}}")
+            
             my_results = []
             
-            for task in my_tasks:
+            for i, task in enumerate(my_tasks):
+                logger.info(f"Rank {{rank}}: Processing task {{i+1}}/{{len(my_tasks)}}")
+                logger.info(f"🎯 RANK {{rank}} TASK {{i}} - multiobjective: {{task.get('multiobjective')}}")
+                
                 try:
-                    result = _evaluate_parameters_worker_safe(task)
-                    my_results.append(result)
+                    worker_result = _evaluate_parameters_worker_safe(task)
+                    
+                    # 🎯 DEBUG: Log what the worker returned
+                    logger.info(f"🎯 RANK {{rank}} WORKER RESULT {{i}}:")
+                    logger.info(f"🎯   score: {{worker_result.get('score')}}")
+                    logger.info(f"🎯   objectives: {{worker_result.get('objectives')}}")
+                    logger.info(f"🎯   error: {{worker_result.get('error')}}")
+                    
+                    # 🎯 PRESERVE ALL FIELDS - DO NOT FILTER
+                    my_results.append(worker_result)
+                    
                 except Exception as e:
+                    logger.error(f"Rank {{rank}}: Task {{i}} failed: {{e}}")
                     error_result = {{
                         'individual_id': task.get('individual_id', -1),
                         'params': task.get('params', {{}}),
                         'score': None,
+                        'objectives': None,
                         'error': f'Rank {{rank}} error: {{str(e)}}'
                     }}
                     my_results.append(error_result)
             
+            logger.info(f"Rank {{rank}}: Sending {{len(my_results)}} results back to rank 0")
+            
+            # 🎯 DEBUG: Log what we're sending back
+            if my_results:
+                first_result = my_results[0]
+                logger.info(f"🎯 RANK {{rank}} SENDING BACK:")
+                logger.info(f"🎯   score: {{first_result.get('score')}}")
+                logger.info(f"🎯   objectives: {{first_result.get('objectives')}}")
+                logger.info(f"🎯   error: {{first_result.get('error')}}")
+            
             comm.send(my_results, dest=0, tag=2)
+            logger.info(f"Rank {{rank}}: Results sent successfully")
             
         except Exception as e:
-            print(f"Worker {{rank}} failed: {{e}}")
+            logger.error(f"Worker {{rank}} failed: {{e}}")
 
 if __name__ == "__main__":
     main()
@@ -2141,8 +2540,8 @@ if __name__ == "__main__":
         with open(script_path, 'w') as f:
             f.write(script_content)
         
-        # Make executable
         os.chmod(script_path, 0o755)
+
 
     def _create_error_results(self, batch_tasks: List[Dict], error_msg: str) -> List[Dict]:
         """Create error results for all tasks"""
@@ -2193,7 +2592,38 @@ if __name__ == "__main__":
             self._consecutive_parallel_failures = max(0, self._consecutive_parallel_failures - 1)
         
         return results
-    
+
+    def _fix_file_permissions_for_final_run(self):
+        """Fix file permissions before final evaluation"""
+        try:
+            import stat
+            
+            # Files that need write permissions
+            files_to_fix = [
+                self.optimization_settings_dir / 'trialParams.nc',
+                self.optimization_settings_dir / 'coldState.nc',
+                self.optimization_settings_dir / 'fileManager.txt'
+            ]
+            
+            # mizuRoute files if applicable
+            mizu_settings_dir = self.optimization_dir / "settings" / "mizuRoute"
+            if mizu_settings_dir.exists():
+                files_to_fix.append(mizu_settings_dir / 'param.nml.default')
+            
+            for file_path in files_to_fix:
+                if file_path.exists():
+                    try:
+                        # Make file writable
+                        current_permissions = file_path.stat().st_mode
+                        new_permissions = current_permissions | stat.S_IWUSR | stat.S_IWGRP
+                        file_path.chmod(new_permissions)
+                        self.logger.debug(f"Fixed permissions for: {file_path}")
+                    except Exception as e:
+                        self.logger.warning(f"Could not fix permissions for {file_path}: {str(e)}")
+        
+        except Exception as e:
+            self.logger.warning(f"Error fixing file permissions: {str(e)}")
+
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
         """Run final evaluation with best parameters over full period"""
         self.logger.info("Running final evaluation with best parameters")
@@ -2202,10 +2632,44 @@ if __name__ == "__main__":
             # Update file manager for full period
             self._update_file_manager_for_final_run()
             
-            # Apply best parameters
-            if not self.parameter_manager.apply_parameters(best_params):
+            # DEBUG: Log best parameters format and content
+            self.logger.info(f"DEBUG: Best params keys: {list(best_params.keys())}")
+            self.logger.info(f"DEBUG: Best params types: {[(k, type(v)) for k, v in best_params.items()]}")
+            
+            # Check if required files exist
+            critical_files = [
+                self.optimization_settings_dir / 'attributes.nc',
+                self.optimization_settings_dir / 'coldState.nc',
+                self.optimization_settings_dir / 'fileManager.txt'
+            ]
+            
+            for file_path in critical_files:
+                if not file_path.exists():
+                    self.logger.error(f"DEBUG: Missing critical file: {file_path}")
+                    return None
+                else:
+                    self.logger.info(f"DEBUG: Found file: {file_path}")
+            
+            # Try parameter application with detailed error reporting
+            self.logger.info("DEBUG: Starting parameter application...")
+            
+            # Check if this is a depth calibration
+            if hasattr(self.parameter_manager, 'depth_params') and self.parameter_manager.depth_params:
+                depth_params_present = all(p in best_params for p in ['total_mult', 'shape_factor'])
+                self.logger.info(f"DEBUG: Depth calibration enabled, depth params present: {depth_params_present}")
+            
+            # Check if this is mizuRoute calibration
+            if hasattr(self.parameter_manager, 'mizuroute_params') and self.parameter_manager.mizuroute_params:
+                mizuroute_params_present = any(p in best_params for p in self.parameter_manager.mizuroute_params)
+                self.logger.info(f"DEBUG: mizuRoute calibration enabled, mizu params present: {mizuroute_params_present}")
+
+            # Apply best parameters with enhanced error handling
+            self._fix_file_permissions_for_final_run()
+            if not self._apply_parameters(best_params):
                 self.logger.error("Failed to apply best parameters for final run")
                 return None
+            
+            self.logger.info("DEBUG: Parameter application successful")
             
             # Run models
             if not self.model_executor.run_models(
@@ -2231,6 +2695,8 @@ if __name__ == "__main__":
                 
         except Exception as e:
             self.logger.error(f"Error in final evaluation: {str(e)}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return None
         finally:
             # Reset file manager back to optimization mode
@@ -3113,42 +3579,59 @@ class PSOOptimizer(BaseOptimizer):
     
     def _run_pso_algorithm(self) -> Tuple[Dict, float, List]:
         """Core PSO algorithm implementation"""
+        schedule = str(self.config.get("INERTIA_SCHEDULE", "MULTIPLICATIVE")).upper()
+        w_max = float(self.config.get("INERTIA_W_MAX", 0.9))
+        w_min = float(self.config.get("INERTIA_W_MIN", 0.4))
+        decay = float(self.config.get("INERTIA_DECAY_RATE", 0.99))
+        denom = max(1, self.max_iterations - 1)  # for linear schedule
+
         for iteration in range(1, self.max_iterations + 1):
             iteration_start_time = datetime.now()
-            
-            # Update inertia weight (linearly decreasing)
-            self.current_inertia *= self.w_reduction_rate
-            
+
+            # --- Inertia update (configurable) ---
+            if schedule == "LINEAR":
+                # w(iter=1) = w_max ... w(final) = w_min
+                tau = (iteration - 1) / denom
+                self.current_inertia = w_max - (w_max - w_min) * tau
+            elif schedule == "MULTIPLICATIVE":
+                # Exponential decay: w = w * decay
+                self.current_inertia *= decay
+            else:
+                raise ValueError(f"Unknown INERTIA_SCHEDULE: {schedule}")
+
             # Update particle velocities and positions
             self._update_velocities()
             self._update_positions()
-            
+
             # Evaluate swarm at new positions
             self._evaluate_swarm()
-            
+
             # Update personal bests and global best
             improvements = self._update_personal_bests()
             global_improved = self._update_global_best()
-            
+
             if global_improved:
                 self.logger.info(f"Iter {iteration:3d}: NEW GLOBAL BEST! {self.target_metric}={self.global_best_score:.6f}")
-            
+
             # Record iteration statistics
             self._record_generation(iteration)
-            
+
             # Log progress
             iteration_duration = datetime.now() - iteration_start_time
             avg_score = np.nanmean(self.swarm_scores)
-            self.logger.info(f"Iter {iteration:3d}/{self.max_iterations}: "
-                           f"Global={self.global_best_score:.6f}, Avg={avg_score:.6f}, "
-                           f"PB_improvements={improvements}, w={self.current_inertia:.4f} "
-                           f"[{iteration_duration.total_seconds():.1f}s]")
-        
+            self.logger.info(
+                f"Iter {iteration:3d}/{self.max_iterations}: "
+                f"Global={self.global_best_score:.6f}, Avg={avg_score:.6f}, "
+                f"PB_improvements={improvements}, w={self.current_inertia:.4f} "
+                f"[{iteration_duration.total_seconds():.1f}s]"
+            )
+
         # Convert global best back to parameter dictionary
         self.best_score = self.global_best_score
         self.best_params = self.parameter_manager.denormalize_parameters(self.global_best_position)
-        
+
         return self.best_params, self.best_score, self.iteration_history
+
     
     def _update_velocities(self) -> None:
         """Update particle velocities using PSO equation"""
@@ -3373,13 +3856,57 @@ class NSGA2Optimizer(BaseOptimizer):
         
         # Run NSGA-II generations
         return self._run_nsga2_algorithm()
-    
+
+    def test_worker_directly(self):
+        """Test worker function directly without MPI"""
+        self.logger.info("🎯 Testing worker function directly...")
+        
+        initial_params = self.parameter_manager.get_initial_parameters()
+        if not initial_params:
+            return
+        
+        # Create test task exactly like MPI tasks
+        proc_dirs = self.parallel_dirs[0] if self.parallel_dirs else {
+            'summa_dir': self.summa_sim_dir,
+            'mizuroute_dir': self.mizuroute_sim_dir,
+            'summa_settings_dir': self.optimization_settings_dir,
+            'mizuroute_settings_dir': self.optimization_dir / "settings" / "mizuRoute"
+        }
+        
+        test_task = {
+            'individual_id': 999,
+            'params': initial_params,
+            'multiobjective': True,  # 🎯 THE CRITICAL FLAG
+            'target_metric': self.target_metric,
+            'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
+            'config': self.config,
+            'domain_name': self.domain_name,
+            'project_dir': str(self.project_dir),
+            'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
+            'summa_exe': str(self._get_summa_exe_path()),
+            'file_manager': str(proc_dirs['summa_settings_dir'] / 'fileManager.txt'),
+            'summa_dir': str(proc_dirs['summa_dir']),
+            'mizuroute_dir': str(proc_dirs['mizuroute_dir']),
+            'summa_settings_dir': str(proc_dirs['summa_settings_dir']),
+            'mizuroute_settings_dir': str(proc_dirs['mizuroute_settings_dir']),
+            'proc_id': 0
+        }
+        
+        # Test the worker function directly
+        result = _evaluate_parameters_worker_safe(test_task)
+        
+        self.logger.info(f"🎯 Direct test result:")
+        self.logger.info(f"🎯   objectives: {result.get('objectives')}")
+        self.logger.info(f"🎯   error: {result.get('error')}")
+        
+        return result
+
     def _initialize_population(self, initial_params: Dict[str, np.ndarray]) -> None:
         """Initialize NSGA-II population"""
         self.logger.info("Initializing NSGA-II population")
         
         param_count = len(self.parameter_manager.all_param_names)
-        
+        #self.test_worker_directly()
         # Initialize random population in normalized space [0,1]
         self.population = np.random.random((self.population_size, param_count))
         self.population_objectives = np.full((self.population_size, self.num_objectives), np.nan)
@@ -3472,33 +3999,6 @@ class NSGA2Optimizer(BaseOptimizer):
                 objectives = self._evaluate_individual_multiobjective(self.population[i])
                 self.population_objectives[i] = objectives
     
-    def _evaluate_population_parallel_multiobjective(self) -> None:
-        """Evaluate population in parallel for multiple objectives"""
-        evaluation_tasks = []
-        
-        for i in range(self.population_size):
-            if np.any(np.isnan(self.population_objectives[i])):
-                params = self.parameter_manager.denormalize_parameters(self.population[i])
-                task = {
-                    'individual_id': i,
-                    'params': params,
-                    'proc_id': i % self.num_processes,
-                    'evaluation_id': f"nsga2_pop_{i:03d}"
-                }
-                evaluation_tasks.append(task)
-        
-        if evaluation_tasks:
-            results = self._run_parallel_evaluations_multiobjective(evaluation_tasks)
-            
-            for result in results:
-                individual_id = result['individual_id']
-                objectives = result.get('objectives')
-                if objectives is not None:
-                    self.population_objectives[individual_id] = objectives
-                else:
-                    # Fill with worst possible values if evaluation failed
-                    self.population_objectives[individual_id] = [-1.0, -1.0]  # Bad NSE and KGE
-    
     def _evaluate_individual_multiobjective(self, normalized_params: np.ndarray) -> np.ndarray:
         """Evaluate individual for multiple objectives (NSE and KGE)"""
         try:
@@ -3555,56 +4055,165 @@ class NSGA2Optimizer(BaseOptimizer):
                 return value
         
         return None
-    
+
+    def _evaluate_population_parallel_multiobjective_with_debug(self, evaluation_tasks: List[Dict]) -> None:
+        """Debug version to see exactly what's happening"""
+        
+        # 🎯 DEBUG: Log what we're sending
+        self.logger.info(f"🎯 MAIN PROCESS: Sending {len(evaluation_tasks)} tasks")
+        if evaluation_tasks:
+            first_task = evaluation_tasks[0]
+            self.logger.info(f"🎯 MAIN PROCESS SENDING:")
+            self.logger.info(f"🎯   multiobjective: {first_task.get('multiobjective')}")
+            self.logger.info(f"🎯   target_metric: {first_task.get('target_metric')}")
+            self.logger.info(f"🎯   individual_id: {first_task.get('individual_id')}")
+            self.logger.info(f"🎯   all task keys: {list(first_task.keys())}")
+        
+        # Use existing parallel evaluation framework
+        results = self._run_parallel_evaluations(evaluation_tasks)
+        
+        # 🎯 DEBUG: Log what we got back
+        self.logger.info(f"🎯 MAIN PROCESS: Received {len(results)} results")
+        if results:
+            first_result = results[0]
+            self.logger.info(f"🎯 MAIN PROCESS RECEIVED:")
+            self.logger.info(f"🎯   score: {first_result.get('score')}")
+            self.logger.info(f"🎯   objectives: {first_result.get('objectives')}")
+            self.logger.info(f"🎯   error: {first_result.get('error')}")
+            self.logger.info(f"🎯   all result keys: {list(first_result.keys())}")
+        
+        # Process results normally
+        for result in results:
+            individual_id = result['individual_id']
+            objectives = result.get('objectives')
+            error = result.get('error')
+            
+            if objectives is not None and error is None:
+                self.population_objectives[individual_id] = np.array(objectives)
+                self.logger.debug(f"Individual {individual_id}: NSE={objectives[0]:.4f}, KGE={objectives[1]:.4f}")
+            else:
+                # Evaluation failed - use bad values
+                self.population_objectives[individual_id] = np.array([-1.0, -1.0])
+                self.logger.warning(f"Individual {individual_id} failed: {error}") 
+
     def _evaluate_population_parallel_multiobjective(self) -> None:
-        """Evaluate population in parallel for multiple objectives using proper MPI framework"""
+        """Evaluate population in parallel for multiple objectives using enhanced worker"""
         evaluation_tasks = []
         
         for i in range(self.population_size):
             if np.any(np.isnan(self.population_objectives[i])):
                 params = self.parameter_manager.denormalize_parameters(self.population[i])
+                
+                # Get parallel directory info for this process
+                proc_dirs = self.parallel_dirs[i % len(self.parallel_dirs)]
+                
                 task = {
                     'individual_id': i,
                     'params': params,
                     'proc_id': i % self.num_processes,
-                    'evaluation_id': f"nsga2_pop_{i:03d}"
+                    'evaluation_id': f"nsga2_pop_{i:03d}",
+                    
+                    # 🎯 MULTI-OBJECTIVE FLAG - THIS WAS MISSING!
+                    'multiobjective': True,
+                    
+                    # Required fields for worker
+                    'target_metric': self.target_metric,
+                    'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
+                    'config': self.config,
+                    'domain_name': self.domain_name,
+                    'project_dir': str(self.project_dir),
+                    'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
+                    
+                    # Paths for worker
+                    'summa_exe': str(self._get_summa_exe_path()),
+                    'file_manager': str(proc_dirs['summa_settings_dir'] / 'fileManager.txt'),
+                    'summa_dir': str(proc_dirs['summa_dir']),
+                    'mizuroute_dir': str(proc_dirs['mizuroute_dir']),
+                    'summa_settings_dir': str(proc_dirs['summa_settings_dir']),
+                    'mizuroute_settings_dir': str(proc_dirs['mizuroute_settings_dir'])
                 }
                 evaluation_tasks.append(task)
         
         if evaluation_tasks:
-            # Use the base class MPI parallel evaluation framework
-            results = self._run_parallel_evaluations(evaluation_tasks)
+            # Add debug logging to verify the flag is being passed
+            first_task = evaluation_tasks[0]
+            #self.logger.info(f"🎯 DEBUG: First task multiobjective flag: {first_task.get('multiobjective', 'MISSING!')}")
             
+            # Use the existing parallel evaluation framework
+            results = self._run_parallel_evaluations(evaluation_tasks)
+
             # Process results for multi-objective
             for result in results:
                 individual_id = result['individual_id']
-                score = result.get('score')  # This is the target_metric (KGE by default)
+                objectives = result.get('objectives')  # [NSE, KGE]
+                error = result.get('error')
                 
-                if score is not None:
-                    # We got the target metric from parallel evaluation
-                    # For NSGA-II, we need both NSE and KGE
-                    # Since the parallel worker already ran the model and calculated metrics,
-                    # we'll do a lightweight re-evaluation to get the other objective
-                    
-                    # Get the parameters that were just evaluated
-                    params = result['params']
-                    
-                    # If target_metric is KGE, we have KGE and need NSE
-                    # If target_metric is NSE, we have NSE and need KGE
-                    if self.target_metric == 'KGE':
-                        kge_score = score
-                        # Do a quick local evaluation to get NSE
-                        nse_score = self._get_alternative_metric(params, 'NSE')
-                        objectives = np.array([nse_score, kge_score])
-                    else:  # target_metric is NSE or other
-                        nse_score = score if self.target_metric == 'NSE' else self._get_alternative_metric(params, 'NSE')
-                        kge_score = self._get_alternative_metric(params, 'KGE')
-                        objectives = np.array([nse_score, kge_score])
-                    
-                    self.population_objectives[individual_id] = objectives
+                # Add debug logging
+                #self.logger.info(f"🎯 DEBUG: Individual {individual_id} objectives: {objectives}")
+                
+                if objectives is not None and error is None:
+                    self.population_objectives[individual_id] = np.array(objectives)
+                    self.logger.debug(f"Individual {individual_id}: NSE={objectives[0]:.4f}, KGE={objectives[1]:.4f}")
                 else:
                     # Evaluation failed - use bad values
                     self.population_objectives[individual_id] = np.array([-1.0, -1.0])
+                    self.logger.warning(f"Individual {individual_id} failed: {error}")
+
+    def _evaluate_offspring(self, offspring: np.ndarray) -> np.ndarray:
+        """Evaluate offspring population with multi-objective support"""
+        offspring_objectives = np.full((len(offspring), self.num_objectives), np.nan)
+        
+        if self.use_parallel:
+            # Parallel evaluation of offspring
+            evaluation_tasks = []
+            for i in range(len(offspring)):
+                params = self.parameter_manager.denormalize_parameters(offspring[i])
+                
+                # Get parallel directory info for this process
+                proc_dirs = self.parallel_dirs[i % len(self.parallel_dirs)]
+                
+                task = {
+                    'individual_id': i,
+                    'params': params,
+                    'proc_id': i % self.num_processes,
+                    'evaluation_id': f"nsga2_off_{len(self.iteration_history):03d}_{i:03d}",
+                    
+                    # 🎯 MULTI-OBJECTIVE FLAG - THIS WAS MISSING!
+                    'multiobjective': True,
+                    
+                    # Required fields for worker
+                    'target_metric': self.target_metric,
+                    'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
+                    'config': self.config,
+                    'domain_name': self.domain_name,
+                    'project_dir': str(self.project_dir),
+                    'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
+                    
+                    # Paths for worker
+                    'summa_exe': str(self._get_summa_exe_path()),
+                    'file_manager': str(proc_dirs['summa_settings_dir'] / 'fileManager.txt'),
+                    'summa_dir': str(proc_dirs['summa_dir']),
+                    'mizuroute_dir': str(proc_dirs['mizuroute_dir']),
+                    'summa_settings_dir': str(proc_dirs['summa_settings_dir']),
+                    'mizuroute_settings_dir': str(proc_dirs['mizuroute_settings_dir'])
+                }
+                evaluation_tasks.append(task)
+            
+            results = self._run_parallel_evaluations(evaluation_tasks)
+            
+            for result in results:
+                individual_id = result['individual_id']
+                objectives = result.get('objectives')
+                if objectives is not None:
+                    offspring_objectives[individual_id] = np.array(objectives)
+                else:
+                    offspring_objectives[individual_id] = np.array([-1.0, -1.0])
+        else:
+            # Sequential evaluation
+            for i in range(len(offspring)):
+                offspring_objectives[i] = self._evaluate_individual_multiobjective(offspring[i])
+        
+        return offspring_objectives
 
     def _get_alternative_metric(self, params: Dict, metric_name: str) -> float:
         """
@@ -3634,6 +4243,85 @@ class NSGA2Optimizer(BaseOptimizer):
         except Exception as e:
             self.logger.debug(f"Error getting alternative metric {metric_name}: {str(e)}")
             return -1.0
+
+    def _run_parallel_evaluations(self, evaluation_tasks: List[Dict]) -> List[Dict]:
+        """Override base class method to preserve multi-objective results"""
+        
+        start_time = time.time()
+        num_tasks = len(evaluation_tasks)
+        
+        self.logger.info(f"NSGA-II: Starting multi-objective parallel evaluation of {num_tasks} tasks")
+        
+        # Check for consecutive failures (from base class)
+        if not hasattr(self, '_consecutive_parallel_failures'):
+            self._consecutive_parallel_failures = 0
+        
+        # Use base class MPI execution but preserve ALL result fields
+        results = []
+        max_workers = min(len(evaluation_tasks), self.num_processes)
+        
+        try:
+            # Use existing MPI batch execution framework
+            mpi_results = self._execute_batch_mpi(evaluation_tasks, max_workers)
+            
+            # Process results while preserving multi-objective fields
+            for result in mpi_results:
+                individual_id = result.get('individual_id', -1)
+                params = result.get('params', {})
+                score = result.get('score')
+                objectives = result.get('objectives') 
+                error = result.get('error')
+                
+                # Create result preserving ALL fields
+                processed_result = {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': score,
+                    'objectives': objectives,  
+                    'error': error
+                }
+                
+                # Add any additional fields from the original result
+                for key, value in result.items():
+                    if key not in processed_result:
+                        processed_result[key] = value
+                
+                results.append(processed_result)
+                
+                # Debug logging
+                self.logger.debug(f"🎯 Processed individual {individual_id}: objectives={objectives}")
+            
+            # Calculate success rate
+            successful_count = sum(1 for r in results if r.get('objectives') is not None)
+            success_rate = successful_count / num_tasks if num_tasks > 0 else 0
+            
+            elapsed = time.time() - start_time
+            self.logger.info(f"NSGA-II parallel evaluation completed: {successful_count}/{num_tasks} successful "
+                        f"({100*success_rate:.1f}%) in {elapsed/60:.1f} minutes")
+            
+            # Update failure counter
+            if success_rate >= 0.7:
+                self._consecutive_parallel_failures = 0
+            else:
+                self._consecutive_parallel_failures += 1
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"NSGA-II parallel evaluation failed: {str(e)}")
+            self._consecutive_parallel_failures += 1
+            
+            # Return failed results for all tasks
+            return [
+                {
+                    'individual_id': task['individual_id'],
+                    'params': task['params'],
+                    'score': None,
+                    'objectives': None,
+                    'error': f'Multi-objective parallel evaluation error: {str(e)}'
+                }
+                for task in evaluation_tasks
+            ]
 
     def _run_parallel_evaluations_multiobjective(self, evaluation_tasks: List[Dict]) -> List[Dict]:
         """Run parallel evaluations for offspring using proper MPI framework"""
@@ -3759,39 +4447,6 @@ class NSGA2Optimizer(BaseOptimizer):
         # Ensure bounds [0, 1]
         return np.clip(mutated, 0, 1)
     
-    def _evaluate_offspring(self, offspring: np.ndarray) -> np.ndarray:
-        """Evaluate offspring population"""
-        offspring_objectives = np.full((len(offspring), self.num_objectives), np.nan)
-        
-        if self.use_parallel:
-            # Parallel evaluation of offspring
-            evaluation_tasks = []
-            for i in range(len(offspring)):
-                params = self.parameter_manager.denormalize_parameters(offspring[i])
-                task = {
-                    'individual_id': i,
-                    'params': params,
-                    'proc_id': i % self.num_processes,
-                    'evaluation_id': f"nsga2_off_{len(self.iteration_history):03d}_{i:03d}"
-                }
-                evaluation_tasks.append(task)
-            
-            results = self._run_parallel_evaluations_multiobjective(evaluation_tasks)
-            
-            for result in results:
-                individual_id = result['individual_id']
-                objectives = result.get('objectives')
-                if objectives is not None:
-                    offspring_objectives[individual_id] = objectives
-                else:
-                    offspring_objectives[individual_id] = [-1.0, -1.0]
-        else:
-            # Sequential evaluation
-            for i in range(len(offspring)):
-                offspring_objectives[i] = self._evaluate_individual_multiobjective(offspring[i])
-        
-        return offspring_objectives
-    
     def _environmental_selection(self, combined_population: np.ndarray, 
                                combined_objectives: np.ndarray) -> np.ndarray:
         """NSGA-II environmental selection"""
@@ -3877,35 +4532,63 @@ class NSGA2Optimizer(BaseOptimizer):
         """Check if obj1 dominates obj2 (for maximization of both NSE and KGE)"""
         # For NSE and KGE, higher is better
         return np.all(obj1 >= obj2) and np.any(obj1 > obj2)
-    
-    def _calculate_crowding_distance(self, front_objectives: np.ndarray) -> np.ndarray:
-        """Calculate crowding distance for a front"""
-        n = len(front_objectives)
-        if n <= 2:
-            return np.full(n, float('inf'))
         
-        distances = np.zeros(n)
-        
-        for obj_idx in range(self.num_objectives):
-            # Sort by objective
-            sorted_indices = np.argsort(front_objectives[:, obj_idx])
-            
-            # Boundary points get infinite distance
-            distances[sorted_indices[0]] = float('inf')
-            distances[sorted_indices[-1]] = float('inf')
-            
-            # Calculate range
-            obj_range = front_objectives[sorted_indices[-1], obj_idx] - front_objectives[sorted_indices[0], obj_idx]
-            
-            if obj_range > 0:
-                for i in range(1, n - 1):
-                    distances[sorted_indices[i]] += (
-                        front_objectives[sorted_indices[i + 1], obj_idx] - 
-                        front_objectives[sorted_indices[i - 1], obj_idx]
-                    ) / obj_range
-        
+    def _calculate_crowding_distance(self, front_fvals: np.ndarray) -> np.ndarray:
+        """
+        Compute NSGA-II crowding distance for a single front.
+
+        Parameters
+        ----------
+        front_fvals : (N, M) np.ndarray
+            Objective values for N individuals and M objectives.
+
+        Returns
+        -------
+        distances : (N,) np.ndarray
+            Crowding distance per individual (np.inf at the boundaries per objective).
+        """
+        if front_fvals is None or len(front_fvals) == 0:
+            return np.array([])
+
+        N, M = front_fvals.shape
+        distances = np.zeros(N, dtype=float)
+
+        # If 1 or 2 individuals, set to infinity
+        if N <= 2:
+            distances[:] = np.inf
+            return distances
+
+        for j in range(M):
+            vals = front_fvals[:, j].astype(float)
+
+            # Handle NaNs robustly
+            nan_mask = np.isnan(vals)
+            if nan_mask.any():
+                median_val = np.nanmedian(vals) if np.isfinite(np.nanmedian(vals)) else 0.0
+                vals = vals.copy()
+                vals[nan_mask] = median_val
+
+            order = np.argsort(vals)  # ascending
+            sorted_vals = vals[order]
+
+            # Boundary points get inf
+            distances[order[0]] = np.inf
+            distances[order[-1]] = np.inf
+
+            obj_range = sorted_vals[-1] - sorted_vals[0]
+            if obj_range == 0 or not np.isfinite(obj_range):
+                continue
+
+            prev = sorted_vals[:-2]
+            nxt = sorted_vals[2:]
+            contrib = (nxt - prev) / obj_range  # normalized gap
+
+            interior_idx = order[1:-1]
+            finite_mask = ~np.isinf(distances[interior_idx])
+            distances[interior_idx[finite_mask]] += contrib[finite_mask]
+
         return distances
-    
+
     def _update_representative_solution(self) -> None:
         """Update representative solution for compatibility with base class"""
         # Find best solution in first front based on a composite metric
@@ -3992,6 +4675,1185 @@ class NSGA2Optimizer(BaseOptimizer):
             return {'solutions': [], 'objectives': [], 'parameters': [], 'nse_values': [], 'kge_values': []}
 
 
+
+
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Asynchronous Parallel DDS Optimizer using existing MPI batch framework
+
+This implementation adapts the asynchronous parallel DDS methodology to work
+with the existing MPI batch evaluation system. Instead of continuous workers,
+it uses batches where each batch member selects from a shared solution pool.
+"""
+
+import os
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import logging
+from datetime import datetime
+from typing import Dict, Any, List, Tuple, Optional
+import time
+import random
+
+
+class AsyncDDSOptimizer(BaseOptimizer):
+    """
+    Asynchronous Parallel DDS using existing MPI batch framework
+    
+    Key adaptations:
+    - Uses existing MPI batch evaluation system
+    - Maintains shared solution pool in main process
+    - Each batch generates trials by selecting from pool + DDS perturbation
+    - Pool updated after each batch with any improvements
+    - No synchronization barriers - each batch can be different sizes
+    """
+    
+    def __init__(self, config: Dict[str, Any], logger: logging.Logger):
+        super().__init__(config, logger)
+        
+        # Async DDS specific parameters
+        self.dds_r = config.get('DDS_R', 0.2)
+        self.pool_size = config.get('ASYNC_DDS_POOL_SIZE', min(20, self.num_processes * 2))
+        self.batch_size = config.get('ASYNC_DDS_BATCH_SIZE', self.num_processes)
+        self.max_stagnation_batches = config.get('MAX_STAGNATION_BATCHES', 10)
+        self.convergence_check_interval = config.get('CONVERGENCE_CHECK_INTERVAL', 5)  # batches
+        
+        # Calculate target evaluations in batches
+        self.total_target_evaluations = self.max_iterations * self.num_processes
+        self.target_batches = max(10, self.total_target_evaluations // self.batch_size)
+        
+        # Solution pool and tracking
+        self.solution_pool = []  # List of (solution, score, generation, source) tuples
+        self.pool_scores = []    # Track just scores for quick access
+        self.batch_history = []  # Track batch-level statistics
+        
+        # Convergence tracking
+        self.total_evaluations = 0
+        self.last_improvement_batch = 0
+        self.stagnation_counter = 0
+        
+        self.logger.info(f"Async DDS MPI configuration:")
+        self.logger.info(f"  Pool size: {self.pool_size}")
+        self.logger.info(f"  Batch size: {self.batch_size}")
+        self.logger.info(f"  Target batches: {self.target_batches}")
+        self.logger.info(f"  Target evaluations: {self.total_target_evaluations}")
+        self.logger.info(f"  MPI processes: {self.num_processes}")
+    
+    def get_algorithm_name(self) -> str:
+        return "AsyncDDS_MPI"
+    
+    def _run_algorithm(self) -> Tuple[Dict, float, List]:
+        """Run asynchronous parallel DDS using MPI batches"""
+        self.logger.info("Starting Asynchronous Parallel DDS with MPI batches")
+        
+        # Initialize solution pool
+        self._initialize_solution_pool()
+        
+        # Main batch loop
+        batch_num = 0
+        start_time = time.time()
+        
+        while batch_num < self.target_batches and not self._check_convergence(batch_num):
+            batch_start_time = time.time()
+            
+            # Generate batch of trial solutions from pool
+            trial_tasks = self._generate_batch_from_pool(batch_num)
+            
+            if not trial_tasks:
+                self.logger.warning(f"No trial tasks generated for batch {batch_num}, terminating early")
+                break
+            
+            # Evaluate batch using existing MPI framework
+            batch_results = self._run_parallel_evaluations(trial_tasks)
+            
+            # Update solution pool with results
+            improvements = self._update_pool_with_batch_results(batch_results, batch_num)
+            
+            # Track batch statistics
+            batch_duration = time.time() - batch_start_time
+            self._record_batch_statistics(batch_num, batch_results, improvements, batch_duration)
+            
+            # Log progress
+            self._log_batch_progress(batch_num, improvements, batch_duration)
+            
+            batch_num += 1
+            
+            # Brief pause to prevent system overload
+            time.sleep(0.1)
+        
+        # Extract final results
+        return self._extract_final_results(batch_num, time.time() - start_time)
+    
+    def _initialize_solution_pool(self) -> None:
+        """Initialize solution pool with diverse solutions"""
+        self.logger.info("Initializing solution pool")
+        
+        param_count = len(self.parameter_manager.all_param_names)
+        initial_params = self.parameter_manager.get_initial_parameters()
+        
+        # Create initial diverse solutions
+        initial_solutions = []
+        
+        # Add initial solution if available
+        if initial_params:
+            initial_normalized = self.parameter_manager.normalize_parameters(initial_params)
+            initial_solutions.append(np.clip(initial_normalized, 0, 1))
+        
+        # Add diverse solutions to fill pool
+        solutions_needed = self.pool_size - len(initial_solutions)
+        
+        for i in range(solutions_needed):
+            if i % 4 == 0:
+                # Random solution
+                solution = np.random.random(param_count)
+            elif i % 4 == 1:
+                # Latin hypercube style
+                solution = np.array([(j + np.random.random()) / solutions_needed 
+                                   for j in range(param_count)])
+                np.random.shuffle(solution)
+                solution = np.clip(solution, 0, 1)
+            elif i % 4 == 2 and initial_params:
+                # Perturbed initial solution
+                noise = np.random.normal(0, 0.15, param_count)
+                solution = np.clip(initial_normalized + noise, 0, 1)
+            else:
+                # Sobol-like sequence
+                solution = np.array([(i * 0.618034 + j * 0.414214) % 1.0 
+                                   for j in range(param_count)])
+            
+            initial_solutions.append(solution)
+        
+        # Evaluate initial solutions using MPI batch
+        initial_tasks = []
+        for i, solution in enumerate(initial_solutions):
+            params = self.parameter_manager.denormalize_parameters(solution)
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"init_{i:03d}"
+            }
+            initial_tasks.append(task)
+        
+        # Evaluate initial batch
+        self.logger.info(f"Evaluating {len(initial_tasks)} initial solutions")
+        initial_results = self._run_parallel_evaluations(initial_tasks)
+        
+        self.logger.debug(f"Initial evaluation completed: {len(initial_results)} results returned")
+        
+        # Check results quality
+        valid_results = [r for r in initial_results if r.get('score') is not None and r.get('score') != float('-inf')]
+        self.logger.info(f"Initial evaluation: {len(valid_results)}/{len(initial_results)} valid solutions")
+        
+        # Populate solution pool
+        for result in initial_results:
+            params = result.get('params')
+            score = result.get('score')
+            individual_id = result.get('individual_id', 0)
+            
+            if score is None or score == float('-inf') or not params:
+                self.logger.debug(f"Skipping invalid initial result {individual_id}: score={score}, has_params={params is not None}")
+                continue
+            
+            # Reconstruct normalized solution from denormalized parameters
+            try:
+                solution = self.parameter_manager.normalize_parameters(params)
+                solution = np.clip(solution, 0, 1)
+                
+                self.solution_pool.append((solution, score, 0, 'init'))
+                self.pool_scores.append(score)
+                self.logger.debug(f"Added initial solution {individual_id}: score={score:.6f}")
+                
+            except Exception as e:
+                self.logger.warning(f"Error reconstructing initial solution {individual_id} from params: {str(e)}")
+                continue
+        
+        # Sort pool by score (best first)
+        self._sort_solution_pool()
+        
+        # Update best solution
+        if self.solution_pool:
+            best_solution, best_score, _, _ = self.solution_pool[0]
+            self.best_score = best_score
+            self.best_params = self.parameter_manager.denormalize_parameters(best_solution)
+            self.total_evaluations = len(self.solution_pool)
+        else:
+            # No valid solutions found, use fallback
+            self.best_score = float('-inf')
+            self.best_params = self.parameter_manager.get_initial_parameters()
+            if not self.best_params:
+                # Create minimal fallback parameters
+                self.best_params = {}
+                for param_name in self.parameter_manager.all_param_names:
+                    if param_name in self.parameter_manager.param_bounds:
+                        bounds = self.parameter_manager.param_bounds[param_name]
+                        default_val = (bounds['min'] + bounds['max']) / 2
+                        self.best_params[param_name] = np.array([default_val])
+            self.total_evaluations = 0
+        
+        self.logger.info(f"Initialized pool with {len(self.solution_pool)} valid solutions")
+        if self.solution_pool:
+            self.logger.info(f"Best initial score: {self.best_score:.6f}")
+        else:
+            self.logger.error("No valid solutions found in initialization - all evaluations failed")
+            return self._extract_final_results(0, 0.0)
+    
+    def _generate_batch_from_pool(self, batch_num: int) -> List[Dict]:
+        """Generate batch of trial solutions by selecting from pool and applying DDS"""
+        if not self.solution_pool:
+            self.logger.error("Solution pool is empty")
+            return []
+        
+        trial_tasks = []
+        
+        for i in range(self.batch_size):
+            try:
+                # Select parent solution from pool (tournament selection)
+                parent_solution = self._select_parent_from_pool()
+                
+                if parent_solution is None:
+                    continue
+                
+                # Generate trial solution using DDS perturbation
+                trial_solution = self._generate_dds_trial(parent_solution, batch_num, i)
+                
+                # Create evaluation task
+                params = self.parameter_manager.denormalize_parameters(trial_solution)
+                task = {
+                    'individual_id': i,
+                    'params': params,
+                    'proc_id': i % self.num_processes,
+                    'evaluation_id': f"batch_{batch_num:03d}_{i:03d}"
+                }
+                trial_tasks.append(task)
+                
+            except Exception as e:
+                self.logger.warning(f"Error generating trial {i} in batch {batch_num}: {str(e)}")
+                continue
+        
+        self.logger.debug(f"Generated {len(trial_tasks)} trial tasks for batch {batch_num}")
+        return trial_tasks
+    
+    def _select_parent_from_pool(self) -> Optional[np.ndarray]:
+        """Select parent solution from pool using tournament selection"""
+        if not self.solution_pool:
+            return None
+        
+        pool_size = len(self.solution_pool)
+        tournament_size = min(3, pool_size)
+        
+        # Tournament selection favoring better solutions
+        candidates = random.sample(range(pool_size), tournament_size)
+        
+        best_idx = candidates[0]
+        best_score = self.solution_pool[candidates[0]][1]
+        
+        for idx in candidates[1:]:
+            if self.solution_pool[idx][1] > best_score:
+                best_idx = idx
+                best_score = self.solution_pool[idx][1]
+        
+        return self.solution_pool[best_idx][0].copy()
+    
+    def _generate_dds_trial(self, parent_solution: np.ndarray, batch_num: int, trial_num: int) -> np.ndarray:
+        """Generate trial solution using DDS perturbation"""
+        param_count = len(self.parameter_manager.all_param_names)
+        
+        # Calculate selection probability (DDS adaptive mechanism)
+        total_evaluations = self.total_evaluations + trial_num + 1
+        max_evals = self.total_target_evaluations
+        
+        if max_evals > 1:
+            prob_select = 1.0 - np.log(total_evaluations) / np.log(max_evals)
+        else:
+            prob_select = 0.5
+        
+        prob_select = max(prob_select, 1.0 / param_count)
+        
+        # Create trial solution
+        trial_solution = parent_solution.copy()
+        
+        # Select variables to perturb
+        variables_to_perturb = np.random.random(param_count) < prob_select
+        if not np.any(variables_to_perturb):
+            # Ensure at least one variable is perturbed
+            random_idx = np.random.randint(0, param_count)
+            variables_to_perturb[random_idx] = True
+        
+        # Apply DDS perturbations
+        for i in range(param_count):
+            if variables_to_perturb[i]:
+                perturbation = np.random.normal(0, self.dds_r)
+                trial_solution[i] = parent_solution[i] + perturbation
+                
+                # Reflect at bounds [0,1]
+                if trial_solution[i] < 0:
+                    trial_solution[i] = -trial_solution[i]
+                elif trial_solution[i] > 1:
+                    trial_solution[i] = 2.0 - trial_solution[i]
+                
+                trial_solution[i] = np.clip(trial_solution[i], 0, 1)
+        
+        return trial_solution
+    
+    def _update_pool_with_batch_results(self, batch_results: List[Dict], batch_num: int) -> int:
+        """Update solution pool with batch evaluation results"""
+        improvements = 0
+        new_solutions = []
+        
+        for result in batch_results:
+            params = result.get('params')
+            score = result.get('score')
+            individual_id = result.get('individual_id', -1)
+            
+            if score is None or score == float('-inf') or not params:
+                self.logger.debug(f"Skipping invalid batch result {individual_id}: score={score}, has_params={params is not None}")
+                continue
+            
+            # Reconstruct normalized solution from denormalized parameters
+            try:
+                solution = self.parameter_manager.normalize_parameters(params)
+                solution = np.clip(solution, 0, 1)
+                
+                # Always track the solution
+                new_solutions.append((solution, score, batch_num, f"batch_{batch_num}"))
+                self.total_evaluations += 1
+                
+                # Check if this is an improvement over worst in pool
+                if len(self.solution_pool) < self.pool_size:
+                    # Pool not full, add solution
+                    improvements += 1
+                else:
+                    # Check against worst solution in pool
+                    worst_score = min(self.pool_scores) if self.pool_scores else float('-inf')
+                    if score > worst_score:
+                        improvements += 1
+                        
+            except Exception as e:
+                self.logger.warning(f"Error reconstructing batch solution {individual_id} from params: {str(e)}")
+                continue
+        
+        # Add new solutions to pool
+        for solution, score, generation, source in new_solutions:
+            self.solution_pool.append((solution, score, generation, source))
+            self.pool_scores.append(score)
+        
+        # Trim pool to size and sort
+        if len(self.solution_pool) > self.pool_size:
+            # Sort by score (best first) and keep top solutions
+            combined = list(zip(self.solution_pool, self.pool_scores))
+            combined.sort(key=lambda x: x[1], reverse=True)
+            
+            self.solution_pool = [item[0] for item in combined[:self.pool_size]]
+            self.pool_scores = [item[1] for item in combined[:self.pool_size]]
+        else:
+            self._sort_solution_pool()
+        
+        # Update global best
+        if self.solution_pool:
+            best_solution, best_score, _, _ = self.solution_pool[0]
+            if best_score > self.best_score:
+                self.best_score = best_score
+                self.best_params = self.parameter_manager.denormalize_parameters(best_solution)
+                self.last_improvement_batch = batch_num
+                self.stagnation_counter = 0
+                self.logger.info(f"Batch {batch_num}: NEW BEST! {self.target_metric}={self.best_score:.6f}")
+            else:
+                self.stagnation_counter += 1
+        
+        return improvements
+    
+    def _sort_solution_pool(self) -> None:
+        """Sort solution pool by score (best first)"""
+        if not self.solution_pool:
+            return
+        
+        combined = list(zip(self.solution_pool, self.pool_scores))
+        combined.sort(key=lambda x: x[1], reverse=True)
+        
+        self.solution_pool = [item[0] for item in combined]
+        self.pool_scores = [item[1] for item in combined]
+    
+    def _record_batch_statistics(self, batch_num: int, batch_results: List[Dict], 
+                                improvements: int, batch_duration: float) -> None:
+        """Record batch-level statistics for analysis"""
+        valid_scores = [r['score'] for r in batch_results 
+                       if r.get('score') is not None and r['score'] != float('-inf')]
+        
+        batch_stats = {
+            'batch': batch_num,
+            'algorithm': 'AsyncDDS_MPI',
+            'best_score': self.best_score if self.best_score != float('-inf') else None,
+            'best_params': self.best_params.copy() if self.best_params else None,
+            'batch_size': len(batch_results),
+            'valid_evaluations': len(valid_scores),
+            'improvements': improvements,
+            'batch_duration': batch_duration,
+            'total_evaluations': self.total_evaluations,
+            'pool_size': len(self.solution_pool),
+            'stagnation_counter': self.stagnation_counter,
+            'mean_batch_score': np.mean(valid_scores) if valid_scores else None,
+            'best_batch_score': np.max(valid_scores) if valid_scores else None,
+            'worst_batch_score': np.min(valid_scores) if valid_scores else None,
+            'pool_diversity': self._calculate_pool_diversity(),
+            
+            # Compatibility with base class expectations
+            'generation': batch_num,
+            'mean_score': np.mean(valid_scores) if valid_scores else None,
+            'std_score': np.std(valid_scores) if valid_scores else None,
+            'worst_score': np.min(valid_scores) if valid_scores else None,
+            'valid_individuals': len(valid_scores),
+            'population_scores': np.array(valid_scores) if valid_scores else np.array([])
+        }
+        
+        self.batch_history.append(batch_stats)
+    
+    def _calculate_pool_diversity(self) -> float:
+        """Calculate diversity of solution pool as average pairwise distance"""
+        if len(self.solution_pool) < 2:
+            return 0.0
+        
+        try:
+            distances = []
+            for i in range(len(self.solution_pool)):
+                for j in range(i + 1, len(self.solution_pool)):
+                    sol1 = self.solution_pool[i][0]
+                    sol2 = self.solution_pool[j][0]
+                    distance = np.linalg.norm(sol1 - sol2)
+                    distances.append(distance)
+            
+            return np.mean(distances) if distances else 0.0
+        except Exception:
+            return 0.0
+    
+    def _log_batch_progress(self, batch_num: int, improvements: int, batch_duration: float) -> None:
+        """Log progress information for current batch"""
+        progress_pct = 100 * batch_num / self.target_batches
+        eval_progress_pct = 100 * self.total_evaluations / self.total_target_evaluations
+        
+        # Calculate rates
+        eval_rate = len(self.batch_history[-1]['population_scores']) / batch_duration if batch_duration > 0 else 0
+        
+        # Pool statistics
+        pool_best = max(self.pool_scores) if self.pool_scores else float('-inf')
+        pool_worst = min(self.pool_scores) if self.pool_scores else float('-inf')
+        pool_diversity = self.batch_history[-1]['pool_diversity']
+        
+        self.logger.info(f"Batch {batch_num:3d}/{self.target_batches} ({progress_pct:.1f}%): "
+                        f"Best={self.best_score:.6f}, Improvements={improvements}, "
+                        f"Pool=[{pool_worst:.3f}, {pool_best:.3f}], Diversity={pool_diversity:.3f}, "
+                        f"Stagnation={self.stagnation_counter}, Rate={eval_rate:.1f}/s, "
+                        f"Evals={self.total_evaluations}/{self.total_target_evaluations} ({eval_progress_pct:.1f}%)")
+    
+    def _check_convergence(self, batch_num: int) -> bool:
+        """Check convergence criteria"""
+        # Check maximum evaluations
+        if self.total_evaluations >= self.total_target_evaluations:
+            self.logger.info(f"Maximum evaluations reached: {self.total_evaluations}")
+            return True
+        
+        # Check stagnation
+        if self.stagnation_counter >= self.max_stagnation_batches:
+            self.logger.info(f"Stagnation detected: {self.stagnation_counter} batches without improvement")
+            return True
+        
+        # Check pool health
+        if not self.solution_pool:
+            self.logger.warning("Solution pool is empty")
+            return True
+        
+        return False
+    
+    def _extract_final_results(self, final_batch: int, total_runtime: float) -> Tuple[Dict, float, List]:
+        """Extract final results in format expected by base class"""
+        try:
+            # Convert batch history to iteration history for compatibility
+            iteration_history = []
+            
+            for batch_stats in self.batch_history:
+                # Convert batch stats to generation stats format
+                gen_stats = {
+                    'generation': batch_stats['batch'],
+                    'algorithm': 'AsyncDDS_MPI',
+                    'best_score': batch_stats['best_score'],
+                    'best_params': batch_stats['best_params'],
+                    'mean_score': batch_stats['mean_score'],
+                    'std_score': batch_stats['std_score'], 
+                    'worst_score': batch_stats['worst_score'],
+                    'valid_individuals': batch_stats['valid_individuals'],
+                    'population_scores': batch_stats['population_scores'],
+                    
+                    # AsyncDDS specific info
+                    'batch_improvements': batch_stats['improvements'],
+                    'pool_size': batch_stats['pool_size'],
+                    'pool_diversity': batch_stats['pool_diversity'],
+                    'stagnation_counter': batch_stats['stagnation_counter'],
+                    'batch_duration': batch_stats['batch_duration'],
+                    'total_evaluations': batch_stats['total_evaluations']
+                }
+                iteration_history.append(gen_stats)
+            
+            # Ensure we have valid best_params
+            if not self.best_params:
+                self.best_params = self.parameter_manager.get_initial_parameters()
+                if not self.best_params:
+                    # Create minimal fallback parameters
+                    self.best_params = {}
+                    for param_name in self.parameter_manager.all_param_names:
+                        if param_name in self.parameter_manager.param_bounds:
+                            bounds = self.parameter_manager.param_bounds[param_name]
+                            default_val = (bounds['min'] + bounds['max']) / 2
+                            self.best_params[param_name] = np.array([default_val])
+            
+            # Add final summary
+            total_improvements = sum(stats['improvements'] for stats in self.batch_history) if self.batch_history else 0
+            avg_batch_duration = np.mean([stats['batch_duration'] for stats in self.batch_history]) if self.batch_history else 0.0
+            
+            final_summary = {
+                'generation': final_batch,
+                'algorithm': 'AsyncDDS_MPI',
+                'best_score': self.best_score if self.best_score != float('-inf') else None,
+                'best_params': self.best_params,
+                'total_batches': final_batch,
+                'total_evaluations': self.total_evaluations,
+                'total_improvements': total_improvements,
+                'total_runtime': total_runtime,
+                'avg_batch_duration': avg_batch_duration,
+                'final_pool_size': len(self.solution_pool),
+                'final_pool_diversity': self._calculate_pool_diversity(),
+                'convergence_reason': 'max_evaluations' if self.total_evaluations >= self.total_target_evaluations else 'stagnation',
+                
+                # Base class compatibility
+                'mean_score': self.best_score if self.best_score != float('-inf') else None,
+                'std_score': 0.0,
+                'valid_individuals': 1 if self.best_score != float('-inf') else 0,
+                'population_scores': np.array([self.best_score]) if self.best_score != float('-inf') else np.array([])
+            }
+            iteration_history.append(final_summary)
+            
+            # Update instance variables
+            self.iteration_history = iteration_history
+            
+            self.logger.info("=" * 60)
+            self.logger.info("ASYNC DDS MPI SUMMARY")
+            self.logger.info("=" * 60)
+            self.logger.info(f"Total batches: {final_batch}")
+            self.logger.info(f"Total evaluations: {self.total_evaluations}")
+            self.logger.info(f"Total improvements: {total_improvements}")
+            self.logger.info(f"Best score: {self.best_score:.6f}")
+            self.logger.info(f"Final pool size: {len(self.solution_pool)}")
+            self.logger.info(f"Runtime: {total_runtime/60:.1f} minutes")
+            self.logger.info(f"Average batch time: {avg_batch_duration:.1f}s")
+            self.logger.info("=" * 60)
+            
+            return self.best_params, self.best_score, iteration_history
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting final results: {str(e)}")
+            
+            # Fallback
+            fallback_params = self.parameter_manager.get_initial_parameters() or {}
+            return fallback_params, self.best_score or float('-inf'), self.batch_history or []
+    
+    def get_solution_pool(self) -> List[Tuple[np.ndarray, float, int, str]]:
+        """Get current solution pool for analysis"""
+        return self.solution_pool.copy()
+    
+    def get_batch_history(self) -> List[Dict]:
+        """Get batch-level history for detailed analysis"""
+        return self.batch_history.copy()
+
+
+class PopulationDDSOptimizer(BaseOptimizer):
+    """
+    Population-based Parallel DDS Optimizer
+    
+    Maintains an evolving population of solutions where:
+    - Each generation creates trials for population members
+    - DDS perturbation is applied to generate trials
+    - Population evolves through selection pressure
+    - Parallel evaluation of all trials per generation
+    - Diversity management to prevent premature convergence
+    """
+    
+    def __init__(self, config: Dict[str, Any], logger: logging.Logger):
+        super().__init__(config, logger)
+        
+        # Population DDS specific parameters
+        self.dds_r = config.get('DDS_R', 0.2)
+        self.population_size = self._determine_population_size()
+        self.selection_pressure = config.get('POP_DDS_SELECTION_PRESSURE', 0.7)  # Fraction of pop for tournament
+        self.diversity_threshold = config.get('POP_DDS_DIVERSITY_THRESHOLD', 0.01)  # Min diversity before restart
+        self.elite_fraction = config.get('POP_DDS_ELITE_FRACTION', 0.2)  # Fraction of elite to preserve
+        self.restart_generations = config.get('POP_DDS_RESTART_GENERATIONS', 20)  # Gens before diversity restart
+        
+        # Population state
+        self.population = None          # Population solutions (normalized)
+        self.population_scores = None   # Population fitness scores
+        self.population_ages = None     # Age of each solution (generations since creation)
+        self.generation_history = []    # Track generation-level statistics
+        
+        # Convergence tracking
+        self.current_generation = 0
+        self.last_improvement_generation = 0
+        self.stagnation_counter = 0
+        self.max_stagnation_generations = config.get('MAX_STAGNATION_GENERATIONS', 15)
+        
+        # Diversity management
+        self.diversity_history = []
+        self.last_restart_generation = 0
+        
+        self.logger.info(f"Population DDS configuration:")
+        self.logger.info(f"  Population size: {self.population_size}")
+        self.logger.info(f"  Selection pressure: {self.selection_pressure}")
+        self.logger.info(f"  Elite fraction: {self.elite_fraction}")
+        self.logger.info(f"  Diversity threshold: {self.diversity_threshold}")
+        self.logger.info(f"  Max generations: {self.max_iterations}")
+    
+    def get_algorithm_name(self) -> str:
+        return "PopulationDDS"
+    
+    def _determine_population_size(self) -> int:
+        """Determine population size based on configuration and parameter count"""
+        config_pop_size = self.config.get('POPULATION_SIZE')
+        if config_pop_size:
+            return max(10, config_pop_size)
+        
+        # Base on parameter count and available processes
+        param_count = len(self.parameter_manager.all_param_names)
+        
+        # Population DDS typically uses smaller populations than DE
+        # Rule of thumb: 2-4 times parameter count, but bounded by practical limits
+        suggested_size = max(10, min(3 * param_count, 50))
+        
+        # Align with number of processes for efficient parallel evaluation
+        if self.use_parallel:
+            # Round to multiple of processes for even distribution
+            suggested_size = ((suggested_size + self.num_processes - 1) // self.num_processes) * self.num_processes
+        
+        return suggested_size
+    
+    def _run_algorithm(self) -> Tuple[Dict, float, List]:
+        """Run population-based parallel DDS algorithm"""
+        self.logger.info("Starting Population-based Parallel DDS")
+        
+        # Initialize population
+        self._initialize_population()
+        
+        # Main evolution loop
+        while self.current_generation < self.max_iterations and not self._check_convergence():
+            generation_start_time = time.time()
+            
+            # Generate trial solutions for entire population
+            trial_tasks = self._generate_population_trials()
+            
+            # Evaluate trials in parallel
+            trial_results = self._run_parallel_evaluations(trial_tasks)
+            
+            # Update population with trial results
+            improvements = self._update_population_with_trials(trial_results)
+            
+            # Check and manage population diversity
+            self._manage_population_diversity()
+            
+            # Record generation statistics
+            generation_duration = time.time() - generation_start_time
+            self._record_generation_statistics(improvements, generation_duration)
+            
+            # Log progress
+            self._log_generation_progress(improvements, generation_duration)
+            
+            self.current_generation += 1
+        
+        # Extract final results
+        return self._extract_final_results()
+    
+    def _initialize_population(self) -> None:
+        """Initialize population with diverse solutions"""
+        self.logger.info(f"Initializing population with {self.population_size} individuals")
+        
+        param_count = len(self.parameter_manager.all_param_names)
+        initial_params = self.parameter_manager.get_initial_parameters()
+        
+        # Create diverse population
+        population_solutions = []
+        
+        # Add initial solution if available
+        if initial_params:
+            initial_normalized = self.parameter_manager.normalize_parameters(initial_params)
+            population_solutions.append(np.clip(initial_normalized, 0, 1))
+        
+        # Fill remaining population with diverse solutions
+        remaining_size = self.population_size - len(population_solutions)
+        
+        for i in range(remaining_size):
+            if i % 5 == 0:
+                # Random solution
+                solution = np.random.random(param_count)
+            elif i % 5 == 1:
+                # Latin hypercube sampling
+                solution = np.array([(j + np.random.random()) / remaining_size 
+                                   for j in range(param_count)])
+                np.random.shuffle(solution)
+            elif i % 5 == 2:
+                # Sobol-like low-discrepancy sequence
+                solution = np.array([(i * 0.618034 + j * 0.414214) % 1.0 
+                                   for j in range(param_count)])
+            elif i % 5 == 3 and initial_params:
+                # Perturbed initial solution
+                noise_scale = 0.1 + 0.2 * (i / remaining_size)  # Increasing perturbation
+                noise = np.random.normal(0, noise_scale, param_count)
+                solution = np.clip(initial_normalized + noise, 0, 1)
+            else:
+                # Random uniform with different ranges
+                ranges = np.random.random(param_count)
+                solution = ranges * np.random.random(param_count)
+            
+            population_solutions.append(np.clip(solution, 0, 1))
+        
+        # Convert to numpy array
+        self.population = np.array(population_solutions)
+        self.population_scores = np.full(self.population_size, np.nan)
+        self.population_ages = np.zeros(self.population_size, dtype=int)
+        
+        # Evaluate initial population
+        self.logger.info("Evaluating initial population")
+        initial_tasks = []
+        
+        for i in range(self.population_size):
+            params = self.parameter_manager.denormalize_parameters(self.population[i])
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"init_pop_{i:03d}"
+            }
+            initial_tasks.append(task)
+        
+        # Evaluate initial population
+        initial_results = self._run_parallel_evaluations(initial_tasks)
+        
+        # Process initial results
+        valid_count = 0
+        for result in initial_results:
+            individual_id = result.get('individual_id', -1)
+            score = result.get('score')
+            
+            if score is not None and score != float('-inf') and 0 <= individual_id < self.population_size:
+                self.population_scores[individual_id] = score
+                valid_count += 1
+            else:
+                # Assign very poor score to failed evaluations
+                if 0 <= individual_id < self.population_size:
+                    self.population_scores[individual_id] = float('-inf')
+        
+        # Sort population by fitness (best first)
+        self._sort_population()
+        
+        # Update best solution
+        valid_scores = self.population_scores[~np.isnan(self.population_scores)]
+        if len(valid_scores) > 0:
+            best_idx = np.nanargmax(self.population_scores)
+            self.best_score = self.population_scores[best_idx]
+            self.best_params = self.parameter_manager.denormalize_parameters(self.population[best_idx])
+        else:
+            self.best_score = float('-inf')
+            self.best_params = initial_params or {}
+        
+        self.logger.info(f"Population initialized: {valid_count}/{self.population_size} valid solutions")
+        self.logger.info(f"Best initial score: {self.best_score:.6f}")
+        self.logger.info(f"Population diversity: {self._calculate_population_diversity():.4f}")
+    
+    def _generate_population_trials(self) -> List[Dict]:
+        """Generate trial solutions for each population member"""
+        trial_tasks = []
+        
+        for i in range(self.population_size):
+            # Select parent for this trial (can be self or tournament selection)
+            if np.random.random() < 0.7:  # 70% chance to use tournament selection
+                parent_idx = self._tournament_selection()
+            else:
+                parent_idx = i  # 30% chance to use self
+            
+            parent_solution = self.population[parent_idx]
+            
+            # Generate trial using DDS perturbation
+            trial_solution = self._generate_dds_trial(parent_solution, i)
+            
+            # Create evaluation task
+            params = self.parameter_manager.denormalize_parameters(trial_solution)
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"gen_{self.current_generation:03d}_{i:03d}",
+                'parent_idx': parent_idx
+            }
+            trial_tasks.append(task)
+        
+        self.logger.debug(f"Generated {len(trial_tasks)} trial solutions for generation {self.current_generation}")
+        return trial_tasks
+    
+    def _tournament_selection(self) -> int:
+        """Tournament selection for parent"""
+        tournament_size = max(2, int(self.population_size * self.selection_pressure))
+        tournament_size = min(tournament_size, self.population_size)
+        
+        # Select random candidates
+        candidates = np.random.choice(self.population_size, tournament_size, replace=False)
+        
+        # Find best candidate
+        best_idx = candidates[0]
+        best_score = self.population_scores[candidates[0]]
+        
+        for idx in candidates[1:]:
+            if not np.isnan(self.population_scores[idx]) and self.population_scores[idx] > best_score:
+                best_idx = idx
+                best_score = self.population_scores[idx]
+        
+        return best_idx
+    
+    def _generate_dds_trial(self, parent_solution: np.ndarray, individual_idx: int) -> np.ndarray:
+        """Generate trial solution using DDS perturbation"""
+        param_count = len(self.parameter_manager.all_param_names)
+        
+        # Calculate DDS selection probability (adaptive)
+        total_evaluations = self.current_generation * self.population_size + individual_idx + 1
+        max_evaluations = self.max_iterations * self.population_size
+        
+        if max_evaluations > 1:
+            prob_select = 1.0 - np.log(total_evaluations) / np.log(max_evaluations)
+        else:
+            prob_select = 0.5
+        
+        prob_select = max(prob_select, 1.0 / param_count)
+        
+        # Create trial solution
+        trial_solution = parent_solution.copy()
+        
+        # Select variables to perturb
+        variables_to_perturb = np.random.random(param_count) < prob_select
+        if not np.any(variables_to_perturb):
+            # Ensure at least one variable is perturbed
+            random_idx = np.random.randint(0, param_count)
+            variables_to_perturb[random_idx] = True
+        
+        # Apply DDS perturbations
+        for j in range(param_count):
+            if variables_to_perturb[j]:
+                perturbation = np.random.normal(0, self.dds_r)
+                trial_solution[j] = parent_solution[j] + perturbation
+                
+                # Reflect at bounds [0,1]
+                if trial_solution[j] < 0:
+                    trial_solution[j] = -trial_solution[j]
+                elif trial_solution[j] > 1:
+                    trial_solution[j] = 2.0 - trial_solution[j]
+                
+                trial_solution[j] = np.clip(trial_solution[j], 0, 1)
+        
+        return trial_solution
+    
+    def _update_population_with_trials(self, trial_results: List[Dict]) -> int:
+        """Update population with trial results using selection"""
+        improvements = 0
+        
+        # Create array to store trial solutions and scores
+        trial_solutions = np.zeros_like(self.population)
+        trial_scores = np.full(self.population_size, np.nan)
+        
+        # Process trial results
+        for result in trial_results:
+            individual_id = result.get('individual_id', -1)
+            params = result.get('params')
+            score = result.get('score')
+            
+            if 0 <= individual_id < self.population_size and params and score is not None:
+                # Reconstruct trial solution from parameters
+                try:
+                    trial_solution = self.parameter_manager.normalize_parameters(params)
+                    trial_solutions[individual_id] = np.clip(trial_solution, 0, 1)
+                    trial_scores[individual_id] = score if score != float('-inf') else np.nan
+                except Exception as e:
+                    self.logger.warning(f"Error reconstructing trial {individual_id}: {str(e)}")
+                    trial_scores[individual_id] = np.nan
+        
+        # Selection: replace population members with better trials
+        for i in range(self.population_size):
+            if not np.isnan(trial_scores[i]):
+                current_score = self.population_scores[i]
+                trial_score = trial_scores[i]
+                
+                # Replace if trial is better (or if current is invalid)
+                if np.isnan(current_score) or trial_score > current_score:
+                    self.population[i] = trial_solutions[i].copy()
+                    self.population_scores[i] = trial_score
+                    self.population_ages[i] = 0  # Reset age
+                    improvements += 1
+                    
+                    # Update global best
+                    if trial_score > self.best_score:
+                        self.best_score = trial_score
+                        self.best_params = self.parameter_manager.denormalize_parameters(trial_solutions[i])
+                        self.last_improvement_generation = self.current_generation
+                        self.stagnation_counter = 0
+                        self.logger.info(f"Gen {self.current_generation}: NEW BEST! {self.target_metric}={self.best_score:.6f}")
+                else:
+                    # Age the individual if not replaced
+                    self.population_ages[i] += 1
+        
+        # Update stagnation counter
+        if improvements == 0:
+            self.stagnation_counter += 1
+        
+        # Sort population by fitness
+        self._sort_population()
+        
+        return improvements
+    
+    def _sort_population(self) -> None:
+        """Sort population by fitness (best first)"""
+        # Handle NaN scores by putting them at the end
+        valid_mask = ~np.isnan(self.population_scores)
+        invalid_mask = np.isnan(self.population_scores)
+        
+        if np.any(valid_mask):
+            valid_indices = np.where(valid_mask)[0]
+            invalid_indices = np.where(invalid_mask)[0]
+            
+            # Sort valid individuals by score (descending)
+            valid_sorted = valid_indices[np.argsort(self.population_scores[valid_indices])[::-1]]
+            
+            # Combine sorted valid + invalid
+            sorted_indices = np.concatenate([valid_sorted, invalid_indices])
+        else:
+            # All scores are NaN, maintain current order
+            sorted_indices = np.arange(self.population_size)
+        
+        self.population = self.population[sorted_indices]
+        self.population_scores = self.population_scores[sorted_indices]
+        self.population_ages = self.population_ages[sorted_indices]
+    
+    def _manage_population_diversity(self) -> None:
+        """Manage population diversity to prevent premature convergence"""
+        diversity = self._calculate_population_diversity()
+        self.diversity_history.append(diversity)
+        
+        # Check if diversity restart is needed
+        should_restart = False
+        
+        # Restart if diversity is too low
+        if diversity < self.diversity_threshold:
+            should_restart = True
+            restart_reason = f"low diversity ({diversity:.4f})"
+        
+        # Restart if too many generations since last restart
+        elif (self.current_generation - self.last_restart_generation) >= self.restart_generations:
+            should_restart = True
+            restart_reason = f"scheduled restart (every {self.restart_generations} gens)"
+        
+        if should_restart and self.current_generation > 5:  # Don't restart too early
+            self._restart_population_diversity(restart_reason)
+    
+    def _restart_population_diversity(self, reason: str) -> None:
+        """Restart population diversity while preserving elite"""
+        self.logger.info(f"Restarting population diversity: {reason}")
+        
+        # Determine elite size
+        elite_size = max(1, int(self.population_size * self.elite_fraction))
+        elite_size = min(elite_size, self.population_size // 2)
+        
+        # Keep elite solutions (already sorted, so first elite_size are best)
+        elite_solutions = self.population[:elite_size].copy()
+        elite_scores = self.population_scores[:elite_size].copy()
+        elite_ages = self.population_ages[:elite_size].copy()
+        
+        # Generate new diverse solutions for remaining population
+        param_count = len(self.parameter_manager.all_param_names)
+        
+        for i in range(elite_size, self.population_size):
+            if i % 3 == 0:
+                # Random solution
+                new_solution = np.random.random(param_count)
+            elif i % 3 == 1:
+                # Perturbed elite solution
+                elite_idx = np.random.randint(0, elite_size)
+                noise = np.random.normal(0, 0.3, param_count)
+                new_solution = np.clip(elite_solutions[elite_idx] + noise, 0, 1)
+            else:
+                # Latin hypercube style
+                new_solution = np.array([(j + np.random.random()) / param_count 
+                                       for j in range(param_count)])
+                np.random.shuffle(new_solution)
+            
+            self.population[i] = np.clip(new_solution, 0, 1)
+            self.population_scores[i] = np.nan  # Will be evaluated next generation
+            self.population_ages[i] = 0
+        
+        self.last_restart_generation = self.current_generation
+        
+        new_diversity = self._calculate_population_diversity()
+        self.logger.info(f"Diversity restart completed: {elite_size} elite preserved, "
+                        f"diversity {self.diversity_history[-1]:.4f} → {new_diversity:.4f}")
+    
+    def _calculate_population_diversity(self) -> float:
+        """Calculate population diversity as average pairwise distance"""
+        if self.population_size < 2:
+            return 0.0
+        
+        try:
+            distances = []
+            for i in range(self.population_size):
+                for j in range(i + 1, self.population_size):
+                    distance = np.linalg.norm(self.population[i] - self.population[j])
+                    distances.append(distance)
+            
+            return np.mean(distances) if distances else 0.0
+        except Exception:
+            return 0.0
+    
+    def _record_generation_statistics(self, improvements: int, generation_duration: float) -> None:
+        """Record generation-level statistics"""
+        valid_scores = self.population_scores[~np.isnan(self.population_scores)]
+        
+        generation_stats = {
+            'generation': self.current_generation,
+            'algorithm': 'PopulationDDS',
+            'best_score': self.best_score if self.best_score != float('-inf') else None,
+            'best_params': self.best_params.copy() if self.best_params else None,
+            'population_size': self.population_size,
+            'improvements': improvements,
+            'generation_duration': generation_duration,
+            'stagnation_counter': self.stagnation_counter,
+            'diversity': self._calculate_population_diversity(),
+            'average_age': np.mean(self.population_ages),
+            'max_age': np.max(self.population_ages),
+            'valid_individuals': len(valid_scores),
+            
+            # Population statistics
+            'mean_score': np.mean(valid_scores) if len(valid_scores) > 0 else None,
+            'std_score': np.std(valid_scores) if len(valid_scores) > 0 else None,
+            'worst_score': np.min(valid_scores) if len(valid_scores) > 0 else None,
+            'median_score': np.median(valid_scores) if len(valid_scores) > 0 else None,
+            
+            # Base class compatibility
+            'population_scores': self.population_scores.copy()
+        }
+        
+        self.generation_history.append(generation_stats)
+    
+    def _log_generation_progress(self, improvements: int, generation_duration: float) -> None:
+        """Log generation progress"""
+        progress_pct = 100 * self.current_generation / self.max_iterations
+        
+        valid_scores = self.population_scores[~np.isnan(self.population_scores)]
+        diversity = self.generation_history[-1]['diversity']
+        avg_age = self.generation_history[-1]['average_age']
+        
+        if len(valid_scores) > 0:
+            mean_score = np.mean(valid_scores)
+            worst_score = np.min(valid_scores)
+        else:
+            mean_score = float('-inf')
+            worst_score = float('-inf')
+        
+        self.logger.info(f"Gen {self.current_generation:3d}/{self.max_iterations} ({progress_pct:.1f}%): "
+                        f"Best={self.best_score:.6f}, Mean={mean_score:.4f}, Worst={worst_score:.4f}, "
+                        f"Improvements={improvements}/{self.population_size}, "
+                        f"Diversity={diversity:.4f}, AvgAge={avg_age:.1f}, "
+                        f"Stagnation={self.stagnation_counter} [{generation_duration:.1f}s]")
+    
+    def _check_convergence(self) -> bool:
+        """Check convergence criteria"""
+        # Check stagnation
+        if self.stagnation_counter >= self.max_stagnation_generations:
+            self.logger.info(f"Convergence: {self.stagnation_counter} generations without improvement")
+            return True
+        
+        # Check if all population members are identical (convergence)
+        diversity = self._calculate_population_diversity()
+        if diversity < 1e-10:
+            self.logger.info(f"Convergence: population diversity near zero ({diversity:.2e})")
+            return True
+        
+        return False
+    
+    def _extract_final_results(self) -> Tuple[Dict, float, List]:
+        """Extract final results in format expected by base class"""
+        try:
+            # Convert generation history to iteration history for compatibility
+            iteration_history = []
+            
+            for gen_stats in self.generation_history:
+                # Already in the right format, just ensure compatibility
+                iteration_history.append(gen_stats.copy())
+            
+            # Add final summary
+            total_evaluations = self.current_generation * self.population_size
+            total_improvements = sum(stats['improvements'] for stats in self.generation_history)
+            avg_generation_duration = np.mean([stats['generation_duration'] for stats in self.generation_history])
+            final_diversity = self._calculate_population_diversity()
+            
+            final_summary = {
+                'generation': self.current_generation,
+                'algorithm': 'PopulationDDS',
+                'best_score': self.best_score if self.best_score != float('-inf') else None,
+                'best_params': self.best_params,
+                'total_generations': self.current_generation,
+                'total_evaluations': total_evaluations,
+                'total_improvements': total_improvements,
+                'avg_generation_duration': avg_generation_duration,
+                'final_diversity': final_diversity,
+                'convergence_reason': 'stagnation' if self.stagnation_counter >= self.max_stagnation_generations else 'max_iterations',
+                
+                # Base class compatibility
+                'mean_score': self.best_score if self.best_score != float('-inf') else None,
+                'std_score': 0.0,
+                'valid_individuals': 1 if self.best_score != float('-inf') else 0,
+                'population_scores': self.population_scores.copy()
+            }
+            iteration_history.append(final_summary)
+            
+            # Update instance variables
+            self.iteration_history = iteration_history
+            
+            self.logger.info("=" * 60)
+            self.logger.info("POPULATION DDS SUMMARY")
+            self.logger.info("=" * 60)
+            self.logger.info(f"Total generations: {self.current_generation}")
+            self.logger.info(f"Total evaluations: {total_evaluations}")
+            self.logger.info(f"Total improvements: {total_improvements}")
+            self.logger.info(f"Best score: {self.best_score:.6f}")
+            self.logger.info(f"Final diversity: {final_diversity:.6f}")
+            self.logger.info(f"Average generation time: {avg_generation_duration:.1f}s")
+            self.logger.info("=" * 60)
+            
+            return self.best_params, self.best_score, iteration_history
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting final results: {str(e)}")
+            
+            # Fallback
+            fallback_params = self.parameter_manager.get_initial_parameters() or {}
+            return fallback_params, self.best_score or float('-inf'), self.generation_history or []
+    
+    def get_population_state(self) -> Dict[str, Any]:
+        """Get current population state for analysis"""
+        return {
+            'population': self.population.copy() if self.population is not None else None,
+            'scores': self.population_scores.copy() if self.population_scores is not None else None,
+            'ages': self.population_ages.copy() if self.population_ages is not None else None,
+            'diversity': self._calculate_population_diversity(),
+            'generation': self.current_generation,
+            'stagnation_counter': self.stagnation_counter
+        }
+    
+    def get_diversity_history(self) -> List[float]:
+        """Get diversity history for analysis"""
+        return self.diversity_history.copy()
 
 class SCEUAOptimizer(BaseOptimizer):
     """
@@ -4096,22 +5958,45 @@ class SCEUAOptimizer(BaseOptimizer):
         self._record_generation(0)
         
         self.logger.info(f"Initial population evaluated. Best score: {self.best_score:.6f}")
-    
+        
     def _run_sceua_algorithm(self) -> Tuple[Dict, float, List]:
-        """Core SCE-UA algorithm implementation"""
+        """Core SCE-UA algorithm implementation with PARALLEL batch evaluation"""
         for iteration in range(1, self.max_iterations + 1):
             iteration_start_time = datetime.now()
             
-            # Evolve each complex
-            total_improvements = 0
-            for complex_id in range(self.num_complexes):
-                improvements = self._evolve_complex(complex_id)
-                total_improvements += improvements
+            # STEP 1: Collect ALL trial solutions from ALL complexes (don't evaluate yet)
+            all_trial_solutions = []
+            complex_trial_info = []  # Track which trials belong to which complex/subcomplex
             
-            # Shuffle complexes (redistribute points among complexes)
+            for complex_id in range(self.num_complexes):
+                complex_trials = self._generate_complex_trials(complex_id)
+                
+                for trial_info in complex_trials:
+                    # Add global trial ID
+                    trial_info['global_trial_id'] = len(all_trial_solutions)
+                    all_trial_solutions.append(trial_info['trial_solution'])
+                    complex_trial_info.append(trial_info)
+            
+            # STEP 2: Batch evaluate ALL trial solutions in parallel
+            if self.use_parallel and all_trial_solutions:
+                trial_scores = self._evaluate_trial_solutions_parallel(all_trial_solutions)
+            else:
+                trial_scores = self._evaluate_trial_solutions_sequential(all_trial_solutions)
+            
+            # STEP 3: Apply results back to complexes
+            total_improvements = 0
+            for trial_info in complex_trial_info:
+                global_trial_id = trial_info['global_trial_id']
+                trial_score = trial_scores[global_trial_id]
+                
+                # Apply improvement to complex if score is better
+                if self._apply_trial_to_complex(trial_info, trial_score):
+                    total_improvements += 1
+            
+            # STEP 4: Shuffle complexes (redistribute points among complexes)
             self._shuffle_complexes()
             
-            # Sort entire population
+            # STEP 5: Sort entire population
             self._sort_population()
             
             # Update global best
@@ -4132,10 +6017,10 @@ class SCEUAOptimizer(BaseOptimizer):
             worst_score = np.nanmin(self.population_scores[~np.isnan(self.population_scores)])
             
             self.logger.info(f"Iter {iteration:3d}/{self.max_iterations}: "
-                           f"Best={self.best_score:.6f}, Avg={avg_score:.6f}, "
-                           f"Worst={worst_score:.6f}, Improvements={total_improvements}, "
-                           f"Stagnation={self.stagnation_counter}/{self.evolution_stagnation} "
-                           f"[{iteration_duration.total_seconds():.1f}s]")
+                        f"Best={self.best_score:.6f}, Avg={avg_score:.6f}, "
+                        f"Worst={worst_score:.6f}, Improvements={total_improvements}, "
+                        f"Trials_evaluated={len(all_trial_solutions)} "
+                        f"[{iteration_duration.total_seconds():.1f}s]")
             
             # Early termination if converged
             if converged:
@@ -4144,6 +6029,135 @@ class SCEUAOptimizer(BaseOptimizer):
                 break
         
         return self.best_params, self.best_score, self.iteration_history
+
+    def _generate_complex_trials(self, complex_id: int) -> List[Dict]:
+        """Generate trial solutions for a complex WITHOUT evaluating them"""
+        complex_indices = self.complexes[complex_id]
+        complex_trials = []
+        
+        # Extract complex population and scores
+        complex_population = self.population[complex_indices]
+        complex_scores = self.population_scores[complex_indices]
+        
+        # Sort complex by fitness (best first)
+        sorted_idx = np.argsort(complex_scores)[::-1]
+        complex_population = complex_population[sorted_idx]
+        complex_scores = complex_scores[sorted_idx]
+        
+        # Determine number of subcomplexes
+        num_subcomplexes = self.points_per_complex // self.points_per_subcomplex
+        
+        # Generate trials for each subcomplex
+        for subcomplex_id in range(num_subcomplexes):
+            # Partition into subcomplex
+            subcomplex_indices = self._partition_subcomplex(subcomplex_id, num_subcomplexes)
+            
+            # Generate trial solution for this subcomplex
+            trial_solution = self._generate_subcomplex_trial(
+                complex_population[subcomplex_indices], 
+                complex_scores[subcomplex_indices]
+            )
+            
+            # Store trial info (don't evaluate yet)
+            trial_info = {
+                'complex_id': complex_id,
+                'subcomplex_id': subcomplex_id,
+                'subcomplex_indices': subcomplex_indices,
+                'trial_solution': trial_solution,
+                'worst_idx_in_subcomplex': subcomplex_indices[-1],  # For replacement later
+                'original_complex_indices': complex_indices,
+                'sorted_idx': sorted_idx
+            }
+            
+            complex_trials.append(trial_info)
+        
+        return complex_trials
+
+    def _generate_subcomplex_trial(self, subcomplex_population: np.ndarray, 
+                                subcomplex_scores: np.ndarray) -> np.ndarray:
+        """Generate trial solution for subcomplex using CCE (NO evaluation)"""
+        param_count = len(self.parameter_manager.all_param_names)
+        
+        # Sort subcomplex (best first)
+        sorted_idx = np.argsort(subcomplex_scores)[::-1]
+        sorted_population = subcomplex_population[sorted_idx]
+        
+        best_point = sorted_population[0]
+        worst_point = sorted_population[-1]
+        
+        # Calculate centroid of all points except worst
+        centroid = np.mean(sorted_population[:-1], axis=0)
+        
+        # Generate new point using reflection
+        alpha = 1.0  # Reflection coefficient
+        trial_solution = centroid + alpha * (centroid - worst_point)
+        
+        # Ensure bounds [0,1]
+        trial_solution = np.clip(trial_solution, 0, 1)
+        
+        return trial_solution
+
+    def _evaluate_trial_solutions_parallel(self, trial_solutions: List[np.ndarray]) -> List[float]:
+        """Evaluate all trial solutions in parallel using MPI batch framework"""
+        evaluation_tasks = []
+        
+        for i, trial_solution in enumerate(trial_solutions):
+            params = self.parameter_manager.denormalize_parameters(trial_solution)
+            task = {
+                'individual_id': i,
+                'params': params,
+                'proc_id': i % self.num_processes,
+                'evaluation_id': f"sceua_trial_{len(self.iteration_history):03d}_{i:03d}"
+            }
+            evaluation_tasks.append(task)
+        
+        # Use the existing parallel evaluation framework
+        results = self._run_parallel_evaluations(evaluation_tasks)
+        
+        # Extract scores in correct order
+        trial_scores = [None] * len(trial_solutions)
+        for result in results:
+            individual_id = result['individual_id']
+            score = result['score']
+            trial_scores[individual_id] = score if score is not None else float('-inf')
+        
+        return trial_scores
+
+    def _evaluate_trial_solutions_sequential(self, trial_solutions: List[np.ndarray]) -> List[float]:
+        """Evaluate trial solutions sequentially (fallback)"""
+        trial_scores = []
+        for trial_solution in trial_solutions:
+            score = self._evaluate_individual(trial_solution)
+            trial_scores.append(score)
+        return trial_scores
+
+    def _apply_trial_to_complex(self, trial_info: Dict, trial_score: float) -> bool:
+        """Apply trial result back to the complex if it's an improvement"""
+        if trial_score == float('-inf') or np.isnan(trial_score):
+            return False
+        
+        complex_id = trial_info['complex_id']
+        subcomplex_indices = trial_info['subcomplex_indices']
+        worst_idx_in_subcomplex = trial_info['worst_idx_in_subcomplex']
+        original_complex_indices = trial_info['original_complex_indices']
+        sorted_idx = trial_info['sorted_idx']
+        trial_solution = trial_info['trial_solution']
+        
+        # Get the current worst score in this subcomplex
+        complex_indices = self.complexes[complex_id]
+        complex_scores = self.population_scores[complex_indices]
+        sorted_scores = complex_scores[sorted_idx]
+        worst_score = sorted_scores[worst_idx_in_subcomplex]
+        
+        # Replace worst point in subcomplex if improvement
+        if trial_score > worst_score:
+            # Update the population directly
+            orig_idx = original_complex_indices[sorted_idx[worst_idx_in_subcomplex]]
+            self.population[orig_idx] = trial_solution
+            self.population_scores[orig_idx] = trial_score
+            return True
+        
+        return False
     
     def _initialize_complexes(self) -> None:
         """Initialize complexes by systematic sampling"""
@@ -4544,6 +6558,12 @@ def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
         gc.collect()
 
 def _evaluate_parameters_worker(task_data: Dict) -> Dict:
+    """Enhanced worker with inline metrics calculation and runtime tracking"""
+    import time
+    
+    # Start timing the core evaluation
+    eval_start_time = time.time()
+    
     debug_info = {
         'stage': 'initialization',
         'files_checked': [],
@@ -4560,10 +6580,10 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         debug_info['individual_id'] = individual_id
         debug_info['proc_id'] = proc_id
         
-        # Setup process logger with more detail
+        # Setup process logger
         logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
         if not logger.handlers:
-            logger.setLevel(logging.DEBUG)  # More verbose logging
+            logger.setLevel(logging.DEBUG)
             handler = logging.StreamHandler()
             formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
             handler.setFormatter(formatter)
@@ -4571,31 +6591,20 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         
         logger.info(f"Starting evaluation of individual {individual_id}")
         
-        # Convert all paths to absolute Path objects early
-        debug_info['stage'] = 'path_setup'
+        # Check multi-objective flag
+        is_multiobjective = task_data.get('multiobjective', False)
+        logger.info(f"🎯 Multi-objective evaluation: {is_multiobjective}")
         
+        # Convert paths
+        debug_info['stage'] = 'path_setup'
         summa_exe = Path(task_data['summa_exe']).resolve()
         file_manager = Path(task_data['file_manager']).resolve()
         summa_dir = Path(task_data['summa_dir']).resolve()
         mizuroute_dir = Path(task_data['mizuroute_dir']).resolve()
         summa_settings_dir = Path(task_data['summa_settings_dir']).resolve()
         
-        # Log paths for debugging
-        logger.debug(f"SUMMA exe: {summa_exe}")
-        logger.debug(f"File manager: {file_manager}")
-        logger.debug(f"SUMMA dir: {summa_dir}")
-        logger.debug(f"Settings dir: {summa_settings_dir}")
-        
-        debug_info['paths'] = {
-            'summa_exe': str(summa_exe),
-            'file_manager': str(file_manager),
-            'summa_dir': str(summa_dir),
-            'summa_settings_dir': str(summa_settings_dir)
-        }
-        
-        # Verify critical paths exist
+        # Verify paths
         debug_info['stage'] = 'path_verification'
-        
         critical_paths = {
             'SUMMA executable': summa_exe,
             'File manager': file_manager,
@@ -4608,119 +6617,605 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             if not path.exists():
                 error_msg = f'{name} not found: {path}'
                 logger.error(error_msg)
-                debug_info['errors'].append(error_msg)
+                eval_runtime = time.time() - eval_start_time
                 return {
                     'individual_id': individual_id,
                     'params': params,
                     'score': None,
+                    'objectives': None if is_multiobjective else None,
                     'error': error_msg,
-                    'debug_info': debug_info
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime
                 }
         
-        logger.info("All critical paths verified")
-        
-        # Apply parameters to files using CONSISTENT method
+        # Apply parameters
         debug_info['stage'] = 'parameter_application'
-        logger.info("Applying parameters to model files (consistent method)")
-        
+        logger.info("Applying parameters")
         if not _apply_parameters_worker(params, task_data, summa_settings_dir, logger, debug_info):
             error_msg = 'Failed to apply parameters'
             logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
+            eval_runtime = time.time() - eval_start_time
             return {
                 'individual_id': individual_id,
                 'params': params,
                 'score': None,
+                'objectives': None if is_multiobjective else None,
                 'error': error_msg,
-                'debug_info': debug_info
+                'debug_info': debug_info,
+                'runtime': eval_runtime
             }
         
-        logger.info("Parameters applied successfully")
-        
-        # Run SUMMA with enhanced debugging
+        # Run SUMMA
         debug_info['stage'] = 'summa_execution'
-        logger.info("Starting SUMMA execution")
-        
+        logger.info("Running SUMMA")
+        summa_start = time.time()
         if not _run_summa_worker(summa_exe, file_manager, summa_dir, logger, debug_info):
             error_msg = 'SUMMA simulation failed'
             logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
+            eval_runtime = time.time() - eval_start_time
             return {
                 'individual_id': individual_id,
                 'params': params,
                 'score': None,
+                'objectives': None if is_multiobjective else None,
                 'error': error_msg,
-                'debug_info': debug_info
+                'debug_info': debug_info,
+                'runtime': eval_runtime
             }
-        
-        logger.info("SUMMA execution completed successfully")
+        summa_runtime = time.time() - summa_start
         
         # Run mizuRoute if needed
         debug_info['stage'] = 'mizuroute_check'
         calibration_var = task_data.get('calibration_variable', 'streamflow')
+        needs_routing = False
+        mizuroute_runtime = 0.0
+        
         if calibration_var == 'streamflow':
             config = task_data['config']
-            needs_routing = _needs_mizuroute_routing_worker(config)
+            domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
             
-            if needs_routing:
-                debug_info['stage'] = 'mizuroute_execution'
-                logger.info("Starting mizuRoute execution")
+            if domain_method not in ['point', 'lumped'] or (domain_method == 'lumped' and routing_delineation == 'river_network'):
+                needs_routing = True
+        
+        if needs_routing:
+            debug_info['stage'] = 'mizuroute_execution'
+            logger.info("Running mizuRoute")
+            mizu_start = time.time()
+            if not _run_mizuroute_worker(task_data, mizuroute_dir, logger, debug_info):
+                error_msg = 'mizuRoute simulation failed'
+                logger.error(error_msg)
+                eval_runtime = time.time() - eval_start_time
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': None,
+                    'objectives': None if is_multiobjective else None,
+                    'error': error_msg,
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime
+                }
+            mizuroute_runtime = time.time() - mizu_start
+        
+        # Calculate metrics using INLINE method to avoid import issues
+        debug_info['stage'] = 'metrics_calculation'
+        metrics_start = time.time()
+        
+        if is_multiobjective:
+            logger.info("🎯 Starting INLINE multi-objective metrics calculation")
+            
+            try:
+                # Use inline metrics calculation
+                metrics = _calculate_metrics_inline_worker(
+                    summa_dir, 
+                    mizuroute_dir if needs_routing else None, 
+                    task_data['config'], 
+                    logger
+                )
                 
-                if not _run_mizuroute_worker(task_data, mizuroute_dir, logger, debug_info):
-                    error_msg = 'mizuRoute simulation failed'
+                if not metrics:
+                    error_msg = '🎯 Inline metrics calculation failed'
                     logger.error(error_msg)
-                    debug_info['errors'].append(error_msg)
+                    eval_runtime = time.time() - eval_start_time
+                    return {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': None,
+                        'objectives': None,
+                        'error': error_msg,
+                        'debug_info': debug_info,
+                        'runtime': eval_runtime
+                    }
+                
+                logger.info(f"🎯 Inline metrics calculated: {list(metrics.keys())}")
+                
+                # Extract NSE and KGE
+                nse_score = metrics.get('NSE') or metrics.get('Calib_NSE')
+                kge_score = metrics.get('KGE') or metrics.get('Calib_KGE')
+                
+                logger.info(f"🎯 Extracted NSE: {nse_score}, KGE: {kge_score}")
+                
+                # Handle None/NaN values
+                if nse_score is None or (isinstance(nse_score, float) and np.isnan(nse_score)):
+                    logger.warning("🎯 NSE is None/NaN, setting to -1.0")
+                    nse_score = -1.0
+                
+                if kge_score is None or (isinstance(kge_score, float) and np.isnan(kge_score)):
+                    logger.warning("🎯 KGE is None/NaN, setting to -1.0")
+                    kge_score = -1.0
+                
+                # Create objectives array
+                objectives = [float(nse_score), float(kge_score)]
+                logger.info(f"🎯 Final objectives: {objectives}")
+                
+                # Set score based on target metric
+                target_metric = task_data.get('target_metric', 'NSE')
+                if target_metric == 'NSE':
+                    score = float(nse_score)
+                elif target_metric == 'KGE':
+                    score = float(kge_score)
+                else:
+                    score = float(kge_score)  # Default to KGE
+                
+                metrics_runtime = time.time() - metrics_start
+                eval_runtime = time.time() - eval_start_time
+                
+                logger.info(f"🎯 Multi-objective completed. NSE: {nse_score:.6f}, KGE: {kge_score:.6f}, Score: {score:.6f}")
+                logger.info(f"🎯 Runtime breakdown: Total={eval_runtime:.1f}s, SUMMA={summa_runtime:.1f}s, mizuRoute={mizuroute_runtime:.1f}s, Metrics={metrics_runtime:.1f}s")
+                
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': score,
+                    'objectives': objectives,
+                    'error': None,
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime,
+                    'runtime_breakdown': {
+                        'total': eval_runtime,
+                        'summa': summa_runtime,
+                        'mizuroute': mizuroute_runtime,
+                        'metrics': metrics_runtime
+                    }
+                }
+                
+            except Exception as e:
+                import traceback
+                error_msg = f"🎯 Exception in inline multi-objective calculation: {str(e)}"
+                logger.error(error_msg)
+                logger.error(f"🎯 Traceback: {traceback.format_exc()}")
+                eval_runtime = time.time() - eval_start_time
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': None,
+                    'objectives': None,
+                    'error': error_msg,
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime
+                }
+        
+        else:
+            # Single-objective evaluation
+            logger.info("Single-objective evaluation using inline calculation")
+            
+            try:
+                metrics = _calculate_metrics_inline_worker(
+                    summa_dir, 
+                    mizuroute_dir if needs_routing else None, 
+                    task_data['config'], 
+                    logger
+                )
+                
+                if not metrics:
+                    error_msg = 'Inline metrics calculation failed'
+                    logger.error(error_msg)
+                    eval_runtime = time.time() - eval_start_time
                     return {
                         'individual_id': individual_id,
                         'params': params,
                         'score': None,
                         'error': error_msg,
-                        'debug_info': debug_info
+                        'debug_info': debug_info,
+                        'runtime': eval_runtime
                     }
                 
-                logger.info("mizuRoute execution completed successfully")
-        
-        # Calculate metrics using CONSISTENT method
-        debug_info['stage'] = 'metrics_calculation'
-        logger.info("Calculating performance metrics (consistent with sequential)")
-        
-        score = _calculate_metrics_worker(task_data, summa_dir, mizuroute_dir, logger)
-        
-        if score is None:
-            error_msg = 'Failed to calculate metrics (consistent method)'
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return {
-                'individual_id': individual_id,
-                'params': params,
-                'score': None,
-                'error': error_msg,
-                'debug_info': debug_info
-            }
-        
-        logger.info(f"Evaluation completed successfully. Score: {score:.6f} (consistent)")
-        
-        return {
-            'individual_id': individual_id,
-            'params': params,
-            'score': score,
-            'error': None,
-            'debug_info': debug_info
-        }
-        
+                # Extract target metric
+                target_metric = task_data['target_metric']
+                score = metrics.get(target_metric) or metrics.get(f'Calib_{target_metric}')
+                
+                if score is None:
+                    # Try to find any metric with the target name
+                    for key, value in metrics.items():
+                        if target_metric in key:
+                            score = value
+                            break
+                
+                if score is None:
+                    logger.error(f"Could not extract {target_metric} from metrics: {list(metrics.keys())}")
+                    eval_runtime = time.time() - eval_start_time
+                    return {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': None,
+                        'error': f'Could not extract {target_metric}',
+                        'debug_info': debug_info,
+                        'runtime': eval_runtime
+                    }
+                
+                # Apply negation for minimize metrics
+                if target_metric.upper() in ['RMSE', 'MAE', 'PBIAS']:
+                    score = -score
+                
+                metrics_runtime = time.time() - metrics_start
+                eval_runtime = time.time() - eval_start_time
+                
+                logger.info(f"Single-objective completed. {target_metric}: {score:.6f}")
+                logger.info(f"Runtime breakdown: Total={eval_runtime:.1f}s, SUMMA={summa_runtime:.1f}s, mizuRoute={mizuroute_runtime:.1f}s, Metrics={metrics_runtime:.1f}s")
+                
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': score,
+                    'error': None,
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime,
+                    'runtime_breakdown': {
+                        'total': eval_runtime,
+                        'summa': summa_runtime,
+                        'mizuroute': mizuroute_runtime,
+                        'metrics': metrics_runtime
+                    }
+                }
+                
+            except Exception as e:
+                import traceback
+                error_msg = f"Exception in single-objective calculation: {str(e)}"
+                logger.error(error_msg)
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                eval_runtime = time.time() - eval_start_time
+                return {
+                    'individual_id': individual_id,
+                    'params': params,
+                    'score': None,
+                    'error': error_msg,
+                    'debug_info': debug_info,
+                    'runtime': eval_runtime
+                }
+
     except Exception as e:
         error_trace = traceback.format_exc()
         error_msg = f'Worker exception at stage {debug_info.get("stage", "unknown")}: {str(e)}'
         debug_info['errors'].append(f"{error_msg}\nTraceback:\n{error_trace}")
         
+        is_multiobjective = task_data.get('multiobjective', False)
+        eval_runtime = time.time() - eval_start_time
+        
         return {
             'individual_id': task_data.get('individual_id', -1),
             'params': task_data.get('params', {}),
             'score': None,
+            'objectives': None if is_multiobjective else None,
             'error': error_msg,
             'debug_info': debug_info,
-            'full_traceback': error_trace
+            'full_traceback': error_trace,
+            'runtime': eval_runtime
         }
+
+def _get_catchment_area_worker(config: Dict, logger) -> float:
+    """Get actual catchment area for unit conversion (worker version)"""
+    try:
+        domain_name = config.get('DOMAIN_NAME')
+        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+        
+        # Try basin shapefile first
+        basin_path = project_dir / "shapefiles" / "river_basins"
+        basin_files = list(basin_path.glob("*.shp"))
+        
+        if basin_files:
+            try:
+                import geopandas as gpd
+                gdf = gpd.read_file(basin_files[0])
+                area_col = config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+                
+                logger.debug(f"🎯 Found basin shapefile: {basin_files[0]}")
+                logger.debug(f"🎯 Looking for area column: {area_col}")
+                logger.debug(f"🎯 Available columns: {list(gdf.columns)}")
+                
+                if area_col in gdf.columns:
+                    total_area = gdf[area_col].sum()
+                    logger.debug(f"🎯 Total area from column: {total_area}")
+                    
+                    if 0 < total_area < 1e12:  # Reasonable area check
+                        logger.info(f"🎯 Using catchment area from shapefile: {total_area:.0f} m²")
+                        return total_area
+                
+                # Fallback: calculate from geometry
+                if gdf.crs and gdf.crs.is_geographic:
+                    # Reproject to UTM for area calculation
+                    centroid = gdf.dissolve().centroid.iloc[0]
+                    utm_zone = int(((centroid.x + 180) / 6) % 60) + 1
+                    utm_crs = f"+proj=utm +zone={utm_zone} +north +datum=WGS84 +units=m +no_defs"
+                    gdf = gdf.to_crs(utm_crs)
+                
+                geom_area = gdf.geometry.area.sum()
+                logger.info(f"🎯 Using catchment area from geometry: {geom_area:.0f} m²")
+                return geom_area
+                
+            except ImportError:
+                logger.warning("🎯 geopandas not available for area calculation")
+            except Exception as e:
+                logger.warning(f"🎯 Error reading basin shapefile: {str(e)}")
+        
+        # Alternative: try catchment shapefile
+        catchment_path = project_dir / "shapefiles" / "catchment"
+        catchment_files = list(catchment_path.glob("*.shp"))
+        
+        if catchment_files:
+            try:
+                import geopandas as gpd
+                gdf = gpd.read_file(catchment_files[0])
+                area_col = config.get('CATCHMENT_SHP_AREA', 'HRU_area')
+                
+                if area_col in gdf.columns:
+                    total_area = gdf[area_col].sum()
+                    if 0 < total_area < 1e12:
+                        logger.info(f"🎯 Using catchment area from catchment shapefile: {total_area:.0f} m²")
+                        return total_area
+                        
+            except Exception as e:
+                logger.warning(f"🎯 Error reading catchment shapefile: {str(e)}")
+        
+    except Exception as e:
+        logger.warning(f"🎯 Could not calculate catchment area: {str(e)}")
+    
+
+def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
+    """Calculate metrics inline without using CalibrationTarget classes"""
+    try:
+        import xarray as xr
+        import pandas as pd
+        import numpy as np
+        
+        logger.debug(f"🎯 Starting inline metrics calculation")
+        
+        # Get the ACTUAL catchment area
+        catchment_area = _get_catchment_area_worker(config, logger)
+        
+        # Find simulation files
+        if mizuroute_dir and mizuroute_dir.exists() and list(mizuroute_dir.glob("*.nc")):
+            sim_files = list(mizuroute_dir.glob("*.nc"))
+            use_mizuroute = True
+            logger.debug(f"🎯 Using mizuRoute files: {len(sim_files)} files")
+        else:
+            sim_files = list(summa_dir.glob("*timestep.nc"))
+            use_mizuroute = False
+            logger.debug(f"🎯 Using SUMMA files: {len(sim_files)} files")
+        
+        if not sim_files:
+            logger.error("🎯 No simulation files found")
+            return None
+        
+        sim_file = sim_files[0]
+        logger.debug(f"🎯 Using simulation file: {sim_file}")
+        
+        # Extract simulated streamflow
+        with xr.open_dataset(sim_file) as ds:
+            logger.debug(f"🎯 Dataset variables: {list(ds.variables.keys())}")
+            
+            if use_mizuroute:
+                # mizuRoute output - already in m³/s
+                reach_id = int(config.get('SIM_REACH_ID', 1))
+                logger.debug(f"🎯 Looking for reach ID: {reach_id}")
+                
+                if 'reachID' not in ds.variables:
+                    logger.error("🎯 reachID not found in mizuRoute output")
+                    return None
+                
+                reach_indices = np.where(ds['reachID'].values == reach_id)[0]
+                if len(reach_indices) == 0:
+                    logger.error(f"🎯 Reach ID {reach_id} not found in dataset")
+                    return None
+                
+                reach_index = reach_indices[0]
+                
+                # Find routing variable
+                routing_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
+                sim_data = None
+                
+                for var_name in routing_vars:
+                    if var_name in ds.variables:
+                        logger.debug(f"🎯 Found routing variable: {var_name}")
+                        var = ds[var_name]
+                        
+                        if 'seg' in var.dims:
+                            sim_data = var.isel(seg=reach_index).to_pandas()
+                        elif 'reachID' in var.dims:
+                            sim_data = var.isel(reachID=reach_index).to_pandas()
+                        else:
+                            logger.warning(f"🎯 Unexpected dimensions for {var_name}: {var.dims}")
+                            continue
+                        
+                        logger.debug(f"🎯 Extracted {var_name} with {len(sim_data)} timesteps (mizuRoute - no scaling)")
+                        break
+                
+                if sim_data is None:
+                    logger.error(f"🎯 No routing variable found")
+                    return None
+                    
+            else:
+                # SUMMA output - convert from m/s to m³/s using ACTUAL area
+                summa_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']
+                sim_data = None
+                
+                for var_name in summa_vars:
+                    if var_name in ds.variables:
+                        logger.debug(f"🎯 Found SUMMA variable: {var_name}")
+                        var = ds[var_name]
+                        
+                        if len(var.shape) > 1:
+                            if 'hru' in var.dims:
+                                sim_data = var.isel(hru=0).to_pandas()
+                            elif 'gru' in var.dims:
+                                sim_data = var.isel(gru=0).to_pandas()
+                            else:
+                                # Take first spatial index
+                                non_time_dims = [dim for dim in var.dims if dim != 'time']
+                                if non_time_dims:
+                                    sim_data = var.isel({non_time_dims[0]: 0}).to_pandas()
+                                else:
+                                    sim_data = var.to_pandas()
+                        else:
+                            sim_data = var.to_pandas()
+                        
+                        # Convert units for SUMMA (m/s to m³/s) using ACTUAL catchment area
+                        logger.info(f"🎯 Converting SUMMA units: {var_name} * {catchment_area:.0f} m²")
+                        sim_data = sim_data * catchment_area
+                        
+                        logger.debug(f"🎯 Extracted {var_name} with {len(sim_data)} timesteps, applied area scaling")
+                        break
+                
+                if sim_data is None:
+                    logger.error(f"🎯 No SUMMA variable found")
+                    return None
+        
+        # Load observed data
+        domain_name = config.get('DOMAIN_NAME')
+        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+        obs_path = project_dir / "observations" / "streamflow" / "preprocessed" / f"{domain_name}_streamflow_processed.csv"
+        
+        logger.debug(f"🎯 Looking for observed data: {obs_path}")
+        
+        if not obs_path.exists():
+            logger.error(f"🎯 Observed data not found: {obs_path}")
+            return None
+        
+        obs_df = pd.read_csv(obs_path)
+        logger.debug(f"🎯 Loaded observed data with columns: {list(obs_df.columns)}")
+        
+        # Find date and flow columns
+        date_col = None
+        for col in obs_df.columns:
+            if any(term in col.lower() for term in ['date', 'time', 'datetime']):
+                date_col = col
+                break
+        
+        flow_col = None
+        for col in obs_df.columns:
+            if any(term in col.lower() for term in ['flow', 'discharge', 'q_', 'streamflow']):
+                flow_col = col
+                break
+        
+        if not date_col or not flow_col:
+            logger.error(f"🎯 Could not identify date/flow columns. Date: {date_col}, Flow: {flow_col}")
+            return None
+        
+        logger.debug(f"🎯 Using date column: {date_col}, flow column: {flow_col}")
+        
+        obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+        obs_df.set_index('DateTime', inplace=True)
+        obs_data = obs_df[flow_col]
+        
+        logger.debug(f"🎯 Observed data period: {obs_data.index.min()} to {obs_data.index.max()}")
+        logger.debug(f"🎯 Simulated data period: {sim_data.index.min()} to {sim_data.index.max()}")
+        
+        # Filter to calibration period
+        cal_period = config.get('CALIBRATION_PERIOD', '')
+        if cal_period:
+            dates = [d.strip() for d in cal_period.split(',')]
+            if len(dates) >= 2:
+                start_date = pd.Timestamp(dates[0])
+                end_date = pd.Timestamp(dates[1])
+                
+                logger.debug(f"🎯 Filtering to calibration period: {start_date} to {end_date}")
+                
+                obs_mask = (obs_data.index >= start_date) & (obs_data.index <= end_date)
+                obs_period = obs_data[obs_mask]
+                
+                sim_data.index = sim_data.index.round('h')
+                sim_mask = (sim_data.index >= start_date) & (sim_data.index <= end_date)
+                sim_period = sim_data[sim_mask]
+                
+                logger.debug(f"🎯 Filtered obs points: {len(obs_period)}")
+                logger.debug(f"🎯 Filtered sim points: {len(sim_period)}")
+            else:
+                logger.warning("🎯 Invalid calibration period format, using full data")
+                obs_period = obs_data
+                sim_period = sim_data
+                sim_period.index = sim_period.index.round('h')
+        else:
+            logger.debug("🎯 No calibration period specified, using full data")
+            obs_period = obs_data
+            sim_period = sim_data
+            sim_period.index = sim_period.index.round('h')
+        
+        # Align time series
+        common_idx = obs_period.index.intersection(sim_period.index)
+        logger.debug(f"🎯 Common time indices: {len(common_idx)}")
+        
+        if len(common_idx) == 0:
+            logger.error("🎯 No common time indices between observed and simulated data")
+            logger.error(f"🎯 Obs range: {obs_period.index.min()} to {obs_period.index.max()}")
+            logger.error(f"🎯 Sim range: {sim_period.index.min()} to {sim_period.index.max()}")
+            return None
+        
+        obs_common = pd.to_numeric(obs_period.loc[common_idx], errors='coerce')
+        sim_common = pd.to_numeric(sim_period.loc[common_idx], errors='coerce')
+        
+        # Remove invalid data
+        valid = ~(obs_common.isna() | sim_common.isna() | (obs_common <= 0) | (sim_common <= 0))
+        obs_valid = obs_common[valid]
+        sim_valid = sim_common[valid]
+        
+        logger.debug(f"🎯 Valid data points after cleaning: {len(obs_valid)}")
+        logger.debug(f"🎯 Obs range: {obs_valid.min():.3f} to {obs_valid.max():.3f}")
+        logger.debug(f"🎯 Sim range: {sim_valid.min():.3f} to {sim_valid.max():.3f}")
+        
+        if len(obs_valid) < 10:
+            logger.error(f"🎯 Insufficient valid data points: {len(obs_valid)}")
+            return None
+        
+        # Calculate NSE
+        mean_obs = obs_valid.mean()
+        nse_num = ((obs_valid - sim_valid) ** 2).sum()
+        nse_den = ((obs_valid - mean_obs) ** 2).sum()
+        nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
+        
+        # Calculate KGE
+        r = obs_valid.corr(sim_valid)
+        alpha = sim_valid.std() / obs_valid.std() if obs_valid.std() != 0 else np.nan
+        beta = sim_valid.mean() / mean_obs if mean_obs != 0 else np.nan
+        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+        
+        # Calculate additional metrics
+        rmse = np.sqrt(((obs_valid - sim_valid) ** 2).mean())
+        mae = (obs_valid - sim_valid).abs().mean()
+        pbias = 100 * (sim_valid.sum() - obs_valid.sum()) / obs_valid.sum() if obs_valid.sum() != 0 else np.nan
+        
+        logger.info(f"🎯 Calculated metrics - NSE: {nse:.6f}, KGE: {kge:.6f}, RMSE: {rmse:.6f}")
+        logger.info(f"🎯 Additional metrics - r: {r:.6f}, alpha: {alpha:.6f}, beta: {beta:.6f}")
+        
+        return {
+            'Calib_NSE': nse,
+            'Calib_KGE': kge,
+            'Calib_RMSE': rmse,
+            'Calib_MAE': mae,
+            'Calib_PBIAS': pbias,
+            'Calib_r': r,
+            'Calib_alpha': alpha,
+            'Calib_beta': beta,
+            'NSE': nse,
+            'KGE': kge,
+            'RMSE': rmse,
+            'MAE': mae,
+            'PBIAS': pbias
+        }
+        
+    except Exception as e:
+        logger.error(f"🎯 Error in inline metrics calculation: {str(e)}")
+        import traceback
+        logger.error(f"🎯 Traceback: {traceback.format_exc()}")
+        return None
 
 def _apply_parameters_worker(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
     """Apply parameters consistently with sequential approach"""

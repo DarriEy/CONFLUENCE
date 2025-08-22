@@ -4,7 +4,7 @@
 # of the hydrological modelling exercise. CONFLUENCE is comprised of the following modules:
 # 
 # 1. Global settings: Underlying configuration of each CONFLUENCE initation which are used throughout the workflow, e.g. root path etc. 
-# 2. Geopsatial settings: Configurations required to define the geospatial domain of the project and prepare geospatial input files
+# 2. Geospatial settings: Configurations required to define the geospatial domain of the project and prepare geospatial input files
 # 3. Model Agnostic settings: Configurations required for running the model agnostic data preprocessings
 # 4. Model Specific settings: Configurations required for running model specific data preprocessing and input file generation 
 # 5. Evaluation settings: Configurations required to evaluate the model output
@@ -173,6 +173,7 @@ DECISION_OPTIONS:                                              # Select which SU
     - melr1977 
     - jrdn1991 
     - smnv2000 
+
 # Soil depth calibration settings
 CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
 DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
@@ -289,14 +290,17 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: PSO                          # Options DDS, SCE-UA, PSO, DE or NSGA-II
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 20                                            # Population size for genetic algorithms
-OPTIMIZATION_METRIC: NSE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+ITERATIVE_OPTIMIZATION_ALGORITHM: ASYNC-DDS                          # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II
+NUMBER_OF_ITERATIONS: 3                                      # Number of iterations for calibration 
+POPULATION_SIZE: 10                                            # Population size for genetic algorithms
+OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
  
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
- 
+ASYNC_DDS_POOL_SIZE: 20                                        # Size of shared solution pool
+ASYNC_DDS_BATCH_SIZE: 10                                       # Evaluations per batch  
+MAX_STAGNATION_BATCHES: 10                                     # Stop after N batches without improvement
+
   # -- SCE-UA specific settings
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
 POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
@@ -310,6 +314,7 @@ PSO_COGNITIVE_PARAM: 1.5                                       # Personal best i
 PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
 PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
 PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
+INERTIA_SCHEDULE: LINEAR                                       # MULTIPLICATIVE or LINEAR
 
   # -- DE specific settings
 DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
@@ -317,6 +322,6 @@ DE_CROSSOVER_RATE: 0.9                                         # CR parameter (c
 
   # -- NSGA-II specific settings
 NSGA2_CROSSOVER_RATE: 0.9                                      # Crossover probability
-NSGA2_MUTATION_RATE: 0.1         # Mutation probability  
-NSGA2_ETA_C: 20                  # Crossover distribution index
-NSGA2_ETA_M: 20                  # Mutation distribution index
+NSGA2_MUTATION_RATE: 0.1                                       # Mutation probability  
+NSGA2_ETA_C: 20                                                # Crossover distribution index
+NSGA2_ETA_M: 20                                                # Mutation distribution index

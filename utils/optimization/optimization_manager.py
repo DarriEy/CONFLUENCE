@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
-from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
+from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, AsyncDDSOptimizer, PopulationDDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
 from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
 
 
@@ -87,15 +87,19 @@ class OptimizationManager:
         # Define optimizer mapping
         self.optimizers = {
             'DDS': DDSOptimizer,
+            'ASYNC-DDS': AsyncDDSOptimizer,
+            'POP-DDS': PopulationDDSOptimizer,
             'DE' : DEOptimizer,
             'PSO': PSOOptimizer,
             'NSGA-II': NSGA2Optimizer,
-            'SCE-UA': SCEUAOptimizer
+            'SCE-UA': SCEUAOptimizer,
         }
         
         # Define optimizer run method names
         self.optimizer_methods = {
             'DDS': 'run_optimization',
+            'ASYNC-DDS': 'run_optimization',
+            'POP-DDS': 'run_optimization',
             'DE': 'run_optimization',
             'PSO': 'run_optimization',
             'NSGA-II': 'run_optimization',
