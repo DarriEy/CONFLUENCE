@@ -611,60 +611,6 @@ class ParameterManager:
         
         return params
     
-    def _apply_parameters(self, best_params: Dict) -> bool:
-        """Apply parameters with detailed debugging"""
-        try:
-            self.logger.info("DEBUG: Entering parameter application")
-            
-            # Update soil depths if depth calibration enabled
-            if (hasattr(self.parameter_manager, 'depth_params') and 
-                self.parameter_manager.depth_params and 
-                'total_mult' in best_params and 'shape_factor' in best_params):
-                
-                self.logger.info("DEBUG: Updating soil depths...")
-                if not self.parameter_manager._update_soil_depths(best_params):
-                    self.logger.error("DEBUG: Soil depth update failed")
-                    return False
-                self.logger.info("DEBUG: Soil depth update successful")
-            
-            # Update mizuRoute parameters if enabled
-            if (hasattr(self.parameter_manager, 'mizuroute_params') and 
-                self.parameter_manager.mizuroute_params):
-                
-                self.logger.info("DEBUG: Updating mizuRoute parameters...")
-                if not self.parameter_manager._update_mizuroute_parameters(best_params):
-                    self.logger.error("DEBUG: mizuRoute parameter update failed")
-                    return False
-                self.logger.info("DEBUG: mizuRoute parameter update successful")
-            
-            # Generate trial parameters file (excluding depth and mizuRoute parameters)
-            exclusion_params = []
-            if hasattr(self.parameter_manager, 'depth_params'):
-                exclusion_params.extend(self.parameter_manager.depth_params)
-            if hasattr(self.parameter_manager, 'mizuroute_params'):
-                exclusion_params.extend(self.parameter_manager.mizuroute_params)
-            
-            hydraulic_params = {k: v for k, v in best_params.items() 
-                            if k not in exclusion_params}
-            
-            if hydraulic_params:
-                self.logger.info(f"DEBUG: Generating trial params file with {len(hydraulic_params)} hydraulic parameters...")
-                self.logger.info(f"DEBUG: Hydraulic params: {list(hydraulic_params.keys())}")
-                
-                if not self.parameter_manager._generate_trial_params_file(hydraulic_params):
-                    self.logger.error("DEBUG: Trial parameters file generation failed")
-                    return False
-                self.logger.info("DEBUG: Trial parameters file generation successful")
-            else:
-                self.logger.info("DEBUG: No hydraulic parameters to apply")
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"DEBUG: Exception in parameter application: {str(e)}")
-            import traceback
-            self.logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
-            return False
     
     def _parse_all_bounds(self) -> Dict[str, Dict[str, float]]:
         """Parse parameter bounds from all parameter info files"""
@@ -2624,6 +2570,50 @@ if __name__ == "__main__":
         except Exception as e:
             self.logger.warning(f"Error fixing file permissions: {str(e)}")
 
+    def _extract_period_metrics(self, all_metrics: Dict, period_prefix: str) -> Dict:
+        """Extract metrics for a specific period (Calib or Eval)"""
+        period_metrics = {}
+        
+        for key, value in all_metrics.items():
+            if key.startswith(f"{period_prefix}_"):
+                # Remove prefix for cleaner reporting
+                clean_key = key.replace(f"{period_prefix}_", "")
+                period_metrics[clean_key] = value
+            elif period_prefix == 'Calib' and not any(key.startswith(prefix) for prefix in ['Calib_', 'Eval_']):
+                # Include unprefixed metrics in calibration (for backwards compatibility)
+                period_metrics[key] = value
+        
+        return period_metrics
+
+    def _log_detailed_final_metrics(self, metrics: Dict) -> None:
+        """Log detailed final evaluation metrics for both periods"""
+        
+        # Extract calibration metrics
+        calib_metrics = self._extract_period_metrics(metrics, 'Calib')
+        eval_metrics = self._extract_period_metrics(metrics, 'Eval')
+        
+        self.logger.info("=" * 60)
+        self.logger.info("FINAL EVALUATION RESULTS")
+        self.logger.info("=" * 60)
+        
+        # Log calibration period results
+        if calib_metrics:
+            self.logger.info("📊 CALIBRATION PERIOD PERFORMANCE:")
+            for metric, value in calib_metrics.items():
+                if value is not None and not np.isnan(value):
+                    self.logger.info(f"   {metric}: {value:.6f}")
+        
+        # Log evaluation period results
+        if eval_metrics:
+            self.logger.info("📈 EVALUATION PERIOD PERFORMANCE:")
+            for metric, value in eval_metrics.items():
+                if value is not None and not np.isnan(value):
+                    self.logger.info(f"   {metric}: {value:.6f}")
+        else:
+            self.logger.info("📈 EVALUATION PERIOD: No evaluation period configured or no data available")
+        
+        self.logger.info("=" * 60)
+
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
         """Run final evaluation with best parameters over full period"""
         self.logger.info("Running final evaluation with best parameters")
@@ -2632,44 +2622,13 @@ if __name__ == "__main__":
             # Update file manager for full period
             self._update_file_manager_for_final_run()
             
-            # DEBUG: Log best parameters format and content
-            self.logger.info(f"DEBUG: Best params keys: {list(best_params.keys())}")
-            self.logger.info(f"DEBUG: Best params types: {[(k, type(v)) for k, v in best_params.items()]}")
-            
-            # Check if required files exist
-            critical_files = [
-                self.optimization_settings_dir / 'attributes.nc',
-                self.optimization_settings_dir / 'coldState.nc',
-                self.optimization_settings_dir / 'fileManager.txt'
-            ]
-            
-            for file_path in critical_files:
-                if not file_path.exists():
-                    self.logger.error(f"DEBUG: Missing critical file: {file_path}")
-                    return None
-                else:
-                    self.logger.info(f"DEBUG: Found file: {file_path}")
-            
-            # Try parameter application with detailed error reporting
-            self.logger.info("DEBUG: Starting parameter application...")
-            
-            # Check if this is a depth calibration
-            if hasattr(self.parameter_manager, 'depth_params') and self.parameter_manager.depth_params:
-                depth_params_present = all(p in best_params for p in ['total_mult', 'shape_factor'])
-                self.logger.info(f"DEBUG: Depth calibration enabled, depth params present: {depth_params_present}")
-            
-            # Check if this is mizuRoute calibration
-            if hasattr(self.parameter_manager, 'mizuroute_params') and self.parameter_manager.mizuroute_params:
-                mizuroute_params_present = any(p in best_params for p in self.parameter_manager.mizuroute_params)
-                self.logger.info(f"DEBUG: mizuRoute calibration enabled, mizu params present: {mizuroute_params_present}")
-
-            # Apply best parameters with enhanced error handling
+            # Apply best parameters
             self._fix_file_permissions_for_final_run()
             if not self._apply_parameters(best_params):
                 self.logger.error("Failed to apply best parameters for final run")
                 return None
             
-            self.logger.info("DEBUG: Parameter application successful")
+            self.logger.info("Parameter application successful")
             
             # Run models
             if not self.model_executor.run_models(
@@ -2680,15 +2639,25 @@ if __name__ == "__main__":
                 self.logger.error("Final model run failed")
                 return None
             
-            # Calculate metrics for full period
-            metrics = self.calibration_target.calculate_metrics(self.summa_sim_dir, self.mizuroute_sim_dir, calibration_only=False)
+            # Calculate metrics for BOTH calibration and evaluation periods
+            metrics = self.calibration_target.calculate_metrics(
+                self.summa_sim_dir, 
+                self.mizuroute_sim_dir, 
+                calibration_only=False  # This ensures both periods are calculated
+            )
             
             if metrics:
                 self.logger.info("Final evaluation completed successfully")
+                
+                # Extract and log detailed metrics for both periods
+                self._log_detailed_final_metrics(metrics)
+                
                 return {
                     'final_metrics': metrics,
                     'summa_success': True,
-                    'mizuroute_success': self.calibration_target.needs_routing()
+                    'mizuroute_success': self.calibration_target.needs_routing(),
+                    'calibration_metrics': self._extract_period_metrics(metrics, 'Calib'),
+                    'evaluation_metrics': self._extract_period_metrics(metrics, 'Eval')
                 }
             else:
                 return {'summa_success': False, 'mizuroute_success': False}
@@ -2701,7 +2670,110 @@ if __name__ == "__main__":
         finally:
             # Reset file manager back to optimization mode
             self._update_summa_file_manager(self.optimization_settings_dir / 'fileManager.txt')
-    
+
+    def _log_final_optimization_summary(self, algorithm_name: str, best_score: float, 
+                                    final_result: Optional[Dict], duration) -> None:
+        """Log comprehensive final optimization summary"""
+        
+        self.logger.info("=" * 60)
+        self.logger.info(f"{algorithm_name} OPTIMIZATION COMPLETED")
+        self.logger.info("=" * 60)
+        
+        if final_result and final_result.get('final_metrics'):
+            metrics = final_result['final_metrics']
+            calib_metrics = final_result.get('calibration_metrics', {})
+            eval_metrics = final_result.get('evaluation_metrics', {})
+            
+            self.logger.info("🎯 OPTIMIZATION TARGET PERFORMANCE:")
+            self.logger.info(f"   During optimization: {self.target_metric} = {best_score:.6f}")
+            
+            if calib_metrics:
+                calib_target = calib_metrics.get(self.target_metric)
+                if calib_target is not None:
+                    self.logger.info(f"   Final calibration: {self.target_metric} = {calib_target:.6f}")
+            
+            if eval_metrics:
+                eval_target = eval_metrics.get(self.target_metric)
+                if eval_target is not None:
+                    self.logger.info(f"   Final evaluation: {self.target_metric} = {eval_target:.6f}")
+            
+            # Log comprehensive metrics
+            self.logger.info("\n📊 COMPREHENSIVE PERFORMANCE METRICS:")
+            
+            if calib_metrics:
+                self.logger.info("   Calibration Period:")
+                for metric, value in calib_metrics.items():
+                    if value is not None and not np.isnan(value):
+                        self.logger.info(f"     {metric}: {value:.6f}")
+            
+            if eval_metrics:
+                self.logger.info("   Evaluation Period:")
+                for metric, value in eval_metrics.items():
+                    if value is not None and not np.isnan(value):
+                        self.logger.info(f"     {metric}: {value:.6f}")
+            
+        else:
+            self.logger.warning("⚠️  Final evaluation failed or incomplete")
+            self.logger.info(f"🏆 Best optimization score: {self.target_metric} = {best_score:.6f}")
+        
+        self.logger.info(f"⏱️ Total time: {duration}")
+        self.logger.info("=" * 60)
+
+    def _apply_parameters(self, best_params: Dict) -> bool:
+        """Apply parameters with detailed debugging"""
+        try:
+            self.logger.info("DEBUG: Entering parameter application")
+            
+            # Update soil depths if depth calibration enabled
+            if (hasattr(self.parameter_manager, 'depth_params') and 
+                self.parameter_manager.depth_params and 
+                'total_mult' in best_params and 'shape_factor' in best_params):
+                
+                self.logger.info("DEBUG: Updating soil depths...")
+                if not self.parameter_manager._update_soil_depths(best_params):
+                    self.logger.error("DEBUG: Soil depth update failed")
+                    return False
+                self.logger.info("DEBUG: Soil depth update successful")
+            
+            # Update mizuRoute parameters if enabled
+            if (hasattr(self.parameter_manager, 'mizuroute_params') and 
+                self.parameter_manager.mizuroute_params):
+                
+                self.logger.info("DEBUG: Updating mizuRoute parameters...")
+                if not self.parameter_manager._update_mizuroute_parameters(best_params):
+                    self.logger.error("DEBUG: mizuRoute parameter update failed")
+                    return False
+                self.logger.info("DEBUG: mizuRoute parameter update successful")
+            
+            # Generate trial parameters file (excluding depth and mizuRoute parameters)
+            exclusion_params = []
+            if hasattr(self.parameter_manager, 'depth_params'):
+                exclusion_params.extend(self.parameter_manager.depth_params)
+            if hasattr(self.parameter_manager, 'mizuroute_params'):
+                exclusion_params.extend(self.parameter_manager.mizuroute_params)
+            
+            hydrological_params = {k: v for k, v in best_params.items() 
+                            if k not in exclusion_params}
+            
+            if hydrological_params:
+                self.logger.info(f"DEBUG: Generating trial params file with {len(hydrological_params)} hydrological parameters...")
+                self.logger.info(f"DEBUG: Hydraulic params: {list(hydrological_params.keys())}")
+                
+                if not self.parameter_manager._generate_trial_params_file(hydrological_params):
+                    self.logger.error("DEBUG: Trial parameters file generation failed")
+                    return False
+                self.logger.info("DEBUG: Trial parameters file generation successful")
+            else:
+                self.logger.info("DEBUG: No hydrological parameters to apply")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"DEBUG: Exception in parameter application: {str(e)}")
+            import traceback
+            self.logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
+            return False
+
     def _update_file_manager_for_final_run(self) -> None:
         """Update file manager to use full experiment period"""
         file_manager_path = self.optimization_settings_dir / 'fileManager.txt'
@@ -2743,11 +2815,11 @@ if __name__ == "__main__":
             # Backup existing files
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Save hydraulic parameters to trialParams.nc
-            hydraulic_params = {k: v for k, v in best_params.items() 
+            # Save hydrological parameters to trialParams.nc
+            hydrological_params = {k: v for k, v in best_params.items() 
                               if k not in ['total_mult', 'shape_factor']}
             
-            if hydraulic_params:
+            if hydrological_params:
                 trial_params_path = default_settings_dir / "trialParams.nc"
                 if trial_params_path.exists():
                     backup_path = default_settings_dir / f"trialParams_backup_{timestamp}.nc"
@@ -2755,10 +2827,10 @@ if __name__ == "__main__":
                 
                 # Generate new trialParams.nc
                 param_manager = ParameterManager(self.config, self.logger, default_settings_dir)
-                if param_manager._generate_trial_params_file(hydraulic_params):
-                    self.logger.info("✅ Saved optimized hydraulic parameters")
+                if param_manager._generate_trial_params_file(hydrological_params):
+                    self.logger.info("✅ Saved optimized hydrological parameters")
                 else:
-                    self.logger.error("Failed to save hydraulic parameters")
+                    self.logger.error("Failed to save hydrological parameters")
                     return False
             
             # Save soil depths to coldState.nc
@@ -2802,10 +2874,10 @@ if __name__ == "__main__":
             summa_path = Path(summa_path)
         
         return summa_path / self.config.get('SUMMA_EXE')
-    
+        
     def run_optimization(self) -> Dict[str, Any]:
         """
-        Main optimization method that delegates to algorithm-specific implementation
+        Main optimization method with enhanced final reporting
         """
         algorithm_name = self.get_algorithm_name()
         
@@ -2830,7 +2902,7 @@ if __name__ == "__main__":
             # Run algorithm-specific implementation
             best_params, best_score, history = self._run_algorithm()
             
-            # Run final evaluation
+            # Run final evaluation with enhanced reporting
             final_result = self._run_final_evaluation(best_params)
             
             # Save results
@@ -2842,11 +2914,8 @@ if __name__ == "__main__":
             end_time = datetime.now()
             duration = end_time - start_time
             
-            self.logger.info("=" * 60)
-            self.logger.info(f"{algorithm_name} OPTIMIZATION COMPLETED")
-            self.logger.info(f"🏆 Best {self.target_metric}: {best_score:.6f}")
-            self.logger.info(f"⏱️ Total time: {duration}")
-            self.logger.info("=" * 60)
+            # Enhanced final summary logging
+            self._log_final_optimization_summary(algorithm_name, best_score, final_result, duration)
             
             return {
                 'best_parameters': best_params,
@@ -7247,12 +7316,12 @@ def _apply_parameters_worker(params: Dict, task_data: Dict, settings_dir: Path, 
                 return False
         
         # 3. Generate trial parameters file (same exclusion logic as ParameterManager)
-        hydraulic_params = {k: v for k, v in params.items() 
+        hydrological_params = {k: v for k, v in params.items() 
                           if k not in depth_params + mizuroute_params}
         
-        if hydraulic_params:
-            logger.debug(f"Generating trial parameters file with: {list(hydraulic_params.keys())} (consistent)")
-            if not _generate_trial_params_worker(hydraulic_params, settings_dir, logger, debug_info):
+        if hydrological_params:
+            logger.debug(f"Generating trial parameters file with: {list(hydrological_params.keys())} (consistent)")
+            if not _generate_trial_params_worker(hydrological_params, settings_dir, logger, debug_info):
                 return False
         
         logger.debug("Parameter application completed successfully (consistent)")
@@ -7457,7 +7526,7 @@ def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger, debu
     
     try:
         if not params:
-            logger.debug("No hydraulic parameters to write")
+            logger.debug("No hydrological parameters to write")
             return True
         
         trial_params_path = settings_dir / 'trialParams.nc'
@@ -7966,6 +8035,72 @@ def _denormalize_params_worker(normalized_solution: np.ndarray, worker_data: Dic
     return params
 
 
+def print_final_results(results: Dict[str, Any]) -> None:
+    """Print comprehensive final results"""
+    
+    print("\n" + "=" * 70)
+    print("OPTIMIZATION RESULTS SUMMARY")
+    print("=" * 70)
+    
+    algorithm = results.get('algorithm', 'Unknown')
+    target_metric = results.get('optimization_metric', 'Unknown')
+    duration = results.get('duration', 'Unknown')
+    
+    print(f"Algorithm: {algorithm}")
+    print(f"Target Metric: {target_metric}")
+    print(f"Duration: {duration}")
+    print(f"Output Directory: {results.get('output_dir', 'Unknown')}")
+    
+    final_result = results.get('final_result')
+    
+    if final_result and final_result.get('final_metrics'):
+        calib_metrics = final_result.get('calibration_metrics', {})
+        eval_metrics = final_result.get('evaluation_metrics', {})
+        
+        print(f"\n🎯 TARGET METRIC PERFORMANCE ({target_metric}):")
+        
+        # Optimization score
+        best_score = results.get('best_score')
+        if best_score is not None:
+            print(f"   During optimization: {best_score:.6f}")
+        
+        # Final calibration performance
+        if calib_metrics and target_metric in calib_metrics:
+            calib_score = calib_metrics[target_metric]
+            print(f"   Final calibration:   {calib_score:.6f}")
+        
+        # Final evaluation performance
+        if eval_metrics and target_metric in eval_metrics:
+            eval_score = eval_metrics[target_metric]
+            print(f"   Final evaluation:    {eval_score:.6f}")
+        
+        print(f"\n📊 COMPREHENSIVE METRICS:")
+        
+        # Calibration metrics
+        if calib_metrics:
+            print(f"   Calibration Period:")
+            for metric, value in calib_metrics.items():
+                if value is not None and not np.isnan(value):
+                    print(f"     {metric:>8}: {value:8.6f}")
+        
+        # Evaluation metrics
+        if eval_metrics:
+            print(f"   Evaluation Period:")
+            for metric, value in eval_metrics.items():
+                if value is not None and not np.isnan(value):
+                    print(f"     {metric:>8}: {value:8.6f}")
+        else:
+            print(f"   Evaluation Period: Not available")
+    
+    else:
+        print(f"\n⚠️  Final evaluation incomplete")
+        best_score = results.get('best_score')
+        if best_score is not None:
+            print(f"🏆 Best optimization score: {target_metric} = {best_score:.6f}")
+    
+    print("=" * 70)
+
+
 # ============= MAIN EXECUTION =============
 
 if __name__ == "__main__":
@@ -7983,8 +8118,16 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     
     # Run optimization
-    optimizer = DEOptimizer(config, logger)
-    results = optimizer.run_optimization()
+    try:
+        # Choose your optimizer
+        optimizer = DEOptimizer(config, logger)  # or DDSOptimizer, PSO, etc.
+        results = optimizer.run_optimization()
+        
+        # Print comprehensive final results
+        print_final_results(results)
+        
+    except Exception as e:
+        logger.error(f"Optimization failed: {str(e)}")
+        print(f"\n❌ Optimization failed: {str(e)}")
     
-    print(f"Optimization completed. Best {results['optimization_metric']}: {results['best_score']:.6f}")
-    print(f"Results saved to: {results['output_dir']}")
+    print(f"\nResults and logs saved to: {results.get('output_dir', 'Unknown')}")
