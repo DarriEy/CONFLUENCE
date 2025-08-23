@@ -2231,21 +2231,36 @@ class BaseOptimizer(ABC):
             
             self.logger.info(f"Spawning {num_processes} MPI processes for batch execution")
             
-            # Create temporary files for communication
-            with tempfile.TemporaryDirectory(prefix='confluence_mpi_') as temp_dir:
-                temp_dir = Path(temp_dir)
+            # Use current working directory instead of temp directory
+            import uuid
+            work_dir = Path.cwd()
+            unique_id = uuid.uuid4().hex[:8]
+            
+            # Create files in current directory with unique names
+            tasks_file = work_dir / f'mpi_tasks_{unique_id}.pkl'
+            results_file = work_dir / f'mpi_results_{unique_id}.pkl'
+            worker_script = work_dir / f'mpi_worker_{unique_id}.py'
+            
+            try:
+                self.logger.info(f"Using working directory: {work_dir}")
                 
                 # Save tasks to file
-                tasks_file = temp_dir / 'tasks.pkl'
                 with open(tasks_file, 'wb') as f:
                     pickle.dump(batch_tasks, f)
                 
                 # Create worker script
-                worker_script = temp_dir / 'mpi_worker.py'
-                self._create_mpi_worker_script(worker_script, tasks_file, temp_dir)
+                self._create_mpi_worker_script(worker_script, tasks_file, work_dir)
+                
+                # Make script executable
+                os.chmod(worker_script, 0o755)
+                
+                # Verify files were created
+                if not tasks_file.exists() or not worker_script.exists():
+                    raise RuntimeError("Failed to create MPI files")
+                    
+                self.logger.info(f"Created MPI files: {tasks_file.name}, {worker_script.name}")
                 
                 # Run MPI command
-                results_file = temp_dir / 'results.pkl'
                 mpi_cmd = [
                     'mpirun', '-n', str(num_processes),
                     sys.executable, str(worker_script),
@@ -2281,14 +2296,19 @@ class BaseOptimizer(ABC):
                     return results
                 else:
                     raise RuntimeError("MPI results file not created")
+                    
+            finally:
+                # Clean up files
+                for file_path in [tasks_file, results_file, worker_script]:
+                    try:
+                        if file_path.exists():
+                            file_path.unlink()
+                    except Exception as e:
+                        self.logger.warning(f"Could not remove {file_path}: {e}")
         
         except subprocess.TimeoutExpired:
             self.logger.error("MPI execution timed out")
             return self._create_error_results(batch_tasks, "MPI execution timeout")
-        
-        except FileNotFoundError:
-            self.logger.warning("mpirun not found")
-            return self._create_error_results(batch_tasks, "mpirun not found")
         
         except Exception as e:
             self.logger.error(f"MPI spawn execution failed: {str(e)}")
@@ -2633,8 +2653,8 @@ if __name__ == "__main__":
             updated_lines = []
             for line in lines:
                 if line.strip().startswith('num_method') and not line.strip().startswith('!'):
-                    # Change from itertive to ide for final evaluation
-                    updated_line = re.sub(r'(num_method\s+)\w+(\s+.*)', r'\1ide\2', line)
+                    # Change from itertive to ida for final evaluation
+                    updated_line = re.sub(r'(num_method\s+)\w+(\s+.*)', r'\1ida\2', line)
                     updated_lines.append(updated_line)
                     self.logger.info(f"Updated numerical method: {line.strip()} -> {updated_line.strip()}")
                 else:
@@ -2689,7 +2709,7 @@ if __name__ == "__main__":
             self._update_file_manager_for_final_run()
             
             # Update modelDecisions.txt to use direct solver for final evaluation
-            #self._update_model_decisions_for_final_run()
+            self._update_model_decisions_for_final_run()
             
             # Apply best parameters
             self._fix_file_permissions_for_final_run()
