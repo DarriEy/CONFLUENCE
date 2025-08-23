@@ -2709,7 +2709,7 @@ if __name__ == "__main__":
             self._update_file_manager_for_final_run()
             
             # Update modelDecisions.txt to use direct solver for final evaluation
-            #self._update_model_decisions_for_final_run()
+            self._update_model_decisions_for_final_run()
             
             # Apply best parameters
             self._fix_file_permissions_for_final_run()
@@ -7792,7 +7792,7 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 check=True,
-                timeout=1800,  # 30 minute timeout
+                timeout=7200,  # 120 minute timeout
                 env=env,
                 cwd=str(summa_dir)  # Explicit working directory
             )
