@@ -7741,13 +7741,8 @@ def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger, debu
 
 
 def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Enhanced SUMMA execution with better error handling and debugging"""
+    """SUMMA execution without log files to save disk space"""
     try:
-        # Create log directory
-        log_dir = summa_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"summa_worker_{os.getpid()}.log"
-        
         # Set environment for single-threaded execution
         env = os.environ.copy()
         env.update({
@@ -7765,10 +7760,8 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
         
         logger.info(f"Executing SUMMA command: {cmd}")
         logger.debug(f"Working directory: {summa_dir}")
-        logger.debug(f"Log file: {log_file}")
         
         debug_info['commands_run'].append(f"SUMMA: {cmd}")
-        debug_info['summa_log'] = str(log_file)
         
         # Verify executable permissions
         if not os.access(summa_exe, os.X_OK):
@@ -7777,25 +7770,17 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
             debug_info['errors'].append(error_msg)
             return False
         
-        # Run SUMMA with explicit working directory
-        with open(log_file, 'w') as f:
-            f.write(f"SUMMA Execution Log\n")
-            f.write(f"Command: {cmd}\n")
-            f.write(f"Working Directory: {summa_dir}\n")
-            f.write(f"Environment: OMP_NUM_THREADS={env.get('OMP_NUM_THREADS', 'unset')}\n")
-            f.write("=" * 50 + "\n")
-            f.flush()
-            
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                check=True,
-                timeout=7200,  # 120 minute timeout
-                env=env,
-                cwd=str(summa_dir)  # Explicit working directory
-            )
+        # Run SUMMA 
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=7200,  # 120 minute timeout
+            env=env,
+            cwd=str(summa_dir)
+        )
         
         # Check if output files were created
         timestep_files = list(summa_dir.glob("*timestep.nc"))
@@ -7806,13 +7791,6 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
                 error_msg = f"No SUMMA output files found in {summa_dir}"
                 logger.error(error_msg)
                 debug_info['errors'].append(error_msg)
-                
-                # Read log file for more details
-                if log_file.exists():
-                    with open(log_file, 'r') as f:
-                        log_content = f.read()
-                        debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
-                
                 return False
         
         logger.info(f"SUMMA execution completed successfully. Output files: {len(timestep_files)} timestep files")
@@ -7824,20 +7802,10 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
         error_msg = f"SUMMA simulation failed with exit code {e.returncode}"
         logger.error(error_msg)
         debug_info['errors'].append(error_msg)
-        
-        # Read log file for error details
-        if 'log_file' in locals() and log_file.exists():
-            try:
-                with open(log_file, 'r') as f:
-                    log_content = f.read()
-                    debug_info['summa_log_content'] = log_content[-2000:]  # Last 2000 chars
-            except:
-                pass
-                
         return False
         
     except subprocess.TimeoutExpired:
-        error_msg = "SUMMA simulation timed out (30 minutes)"
+        error_msg = "SUMMA simulation timed out (120 minutes)"
         logger.error(error_msg)
         debug_info['errors'].append(error_msg)
         return False
