@@ -3729,7 +3729,7 @@ class PSOOptimizer(BaseOptimizer):
     def _initialize_swarm(self, initial_params: Dict[str, np.ndarray]) -> None:
         """Initialize PSO swarm with positions, velocities, and personal bests"""
         self.logger.info("Initializing PSO swarm")
-        
+        self._ensure_reproducible_initialization()
         param_count = len(self.parameter_manager.all_param_names)
         
         # Initialize swarm positions randomly in normalized space [0,1]
@@ -4090,7 +4090,7 @@ class NSGA2Optimizer(BaseOptimizer):
     def _initialize_population(self, initial_params: Dict[str, np.ndarray]) -> None:
         """Initialize NSGA-II population"""
         self.logger.info("Initializing NSGA-II population")
-        
+        self._ensure_reproducible_initialization()
         param_count = len(self.parameter_manager.all_param_names)
         #self.test_worker_directly()
         # Initialize random population in normalized space [0,1]
@@ -4976,7 +4976,7 @@ class AsyncDDSOptimizer(BaseOptimizer):
     def _initialize_solution_pool(self) -> None:
         """Initialize solution pool with diverse solutions"""
         self.logger.info("Initializing solution pool")
-        
+        self._ensure_reproducible_initialization()
         param_count = len(self.parameter_manager.all_param_names)
         initial_params = self.parameter_manager.get_initial_parameters()
         
@@ -5525,7 +5525,7 @@ class PopulationDDSOptimizer(BaseOptimizer):
     def _run_algorithm(self) -> Tuple[Dict, float, List]:
         """Run population-based parallel DDS algorithm"""
         self.logger.info("Starting Population-based Parallel DDS")
-        
+        self._ensure_reproducible_initialization()
         # Initialize population
         self._initialize_population()
         
@@ -6102,7 +6102,7 @@ class SCEUAOptimizer(BaseOptimizer):
     def _run_algorithm(self) -> Tuple[Dict, float, List]:
         """Run SCE-UA algorithm"""
         self.logger.info("Running SCE-UA algorithm")
-        
+        self._ensure_reproducible_initialization()
         # Initialize population and complexes
         initial_params = self.parameter_manager.get_initial_parameters()
         self._initialize_population(initial_params)
