@@ -1455,6 +1455,12 @@ class BaseOptimizer(ABC):
         self.best_score = float('-inf')
         self.iteration_history = []
         
+        # Set random seed for reproducibility
+        self.random_seed = config.get('RANDOM_SEED', None)
+        if self.random_seed is not None:
+            self._set_random_seeds(self.random_seed)
+            self.logger.info(f"Random seed set to: {self.random_seed}")
+
         # Parallel processing setup
         self.use_parallel = config.get('MPI_PROCESSES', 1) > 1
         self.num_processes = max(1, config.get('MPI_PROCESSES', 1))
@@ -1474,6 +1480,12 @@ class BaseOptimizer(ABC):
         """Run the specific optimization algorithm"""
         pass
     
+    def _set_random_seeds(self, seed: int) -> None:
+        """Set all random seeds for reproducibility"""
+        import random
+        random.seed(seed)
+        np.random.seed(seed)
+    
     def _setup_optimization_directories(self) -> None:
         """Setup directory structure for optimization"""
         # Create all directories
@@ -1490,6 +1502,12 @@ class BaseOptimizer(ABC):
         
         # Update file managers for optimization
         self._update_optimization_file_managers()
+    
+    def _ensure_reproducible_initialization(self):
+        """Reset random seeds right before population initialization"""
+        if self.random_seed is not None:
+            self._set_random_seeds(self.random_seed)
+            self.logger.debug(f"Random state reset for population initialization")
     
     def _copy_settings_files(self) -> None:
         """Copy necessary settings files to optimization directory"""
@@ -2094,9 +2112,13 @@ class BaseOptimizer(ABC):
                 'project_dir': str(self.project_dir),
                 'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
             }
+            # Add deterministic seed for this worker
+            if self.random_seed is not None:
+                task_data['random_seed'] = self.random_seed + task['individual_id'] + 1000
             
             worker_tasks.append(task_data)
-        
+            
+            
         results = []
         completed_count = 0
         
@@ -3474,11 +3496,14 @@ class DEOptimizer(BaseOptimizer):
     
     def _initialize_population(self, initial_params: Dict[str, np.ndarray]) -> None:
         """Initialize DE population"""
+        # Ensure reproducible population initialization
+        self._ensure_reproducible_initialization()
+        
         self.logger.info("Initializing DE population")
         
         param_count = len(self.parameter_manager.all_param_names)
         
-        # Initialize random population in normalized space [0,1]
+        # Now this will be reproducible
         self.population = np.random.random((self.population_size, param_count))
         self.population_scores = np.full(self.population_size, np.nan)
         
@@ -6320,6 +6345,8 @@ class SCEUAOptimizer(BaseOptimizer):
         
         return False
     
+
+
     def _initialize_complexes(self) -> None:
         """Initialize complexes by systematic sampling"""
         self.complexes = []
@@ -6624,7 +6651,12 @@ class SCEUAOptimizer(BaseOptimizer):
 
 
 def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
-    
+    worker_seed = task_data.get('random_seed')
+    if worker_seed is not None:
+        import random
+        random.seed(worker_seed)
+        np.random.seed(worker_seed)
+
     # Set up signal handler for clean termination
     def signal_handler(signum, frame):
         sys.exit(1)
