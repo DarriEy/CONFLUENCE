@@ -1061,7 +1061,7 @@ class ModelExecutor:
             
             with open(log_file, 'w') as f:
                 result = subprocess.run(cmd, shell=True, stdout=f, stderr=subprocess.STDOUT, 
-                                      check=True, timeout=1800)
+                                      check=True, timeout=10800)
             
             return True
             
@@ -1508,7 +1508,7 @@ class BaseOptimizer(ABC):
         if self.random_seed is not None:
             self._set_random_seeds(self.random_seed)
             self.logger.debug(f"Random state reset for population initialization")
-    
+        
     def _copy_settings_files(self) -> None:
         """Copy necessary settings files to optimization directory"""
         source_settings_dir = self.project_dir / "settings" / "SUMMA"
@@ -1516,20 +1516,61 @@ class BaseOptimizer(ABC):
         if not source_settings_dir.exists():
             raise FileNotFoundError(f"Source settings directory not found: {source_settings_dir}")
         
-        # SUMMA settings files to copy
-        settings_files = [
+        # Define required vs optional files
+        required_files = [
             'fileManager.txt', 'modelDecisions.txt', 'outputControl.txt',
             'localParamInfo.txt', 'basinParamInfo.txt',
-            'TBL_GENPARM.TBL', 'TBL_MPTABLE.TBL', 'TBL_SOILPARM.TBL', 'TBL_VEGPARM.TBL',
-            'attributes.nc', 'coldState.nc', 'trialParams.nc', 'forcingFileList.txt'
+            'attributes.nc'  # This is always required
         ]
         
-        for file_name in settings_files:
+        optional_files = [
+            'TBL_GENPARM.TBL', 'TBL_MPTABLE.TBL', 'TBL_SOILPARM.TBL', 'TBL_VEGPARM.TBL',
+            'trialParams.nc', 'forcingFileList.txt'
+        ]
+        
+        # coldState.nc is conditionally required
+        conditional_files = {
+            'coldState.nc': self.config.get('CALIBRATE_DEPTH', False)  # Only required for depth calibration
+        }
+        
+        # Copy required files (fail if missing)
+        for file_name in required_files:
             source_path = source_settings_dir / file_name
             dest_path = self.optimization_settings_dir / file_name
             
             if source_path.exists():
                 shutil.copy2(source_path, dest_path)
+                self.logger.debug(f"Copied required file: {file_name}")
+            else:
+                raise FileNotFoundError(f"Required SUMMA settings file not found: {source_path}")
+        
+        # Copy optional files (warn if missing)
+        for file_name in optional_files:
+            source_path = source_settings_dir / file_name
+            dest_path = self.optimization_settings_dir / file_name
+            
+            if source_path.exists():
+                shutil.copy2(source_path, dest_path)
+                self.logger.debug(f"Copied optional file: {file_name}")
+            else:
+                self.logger.warning(f"Optional SUMMA settings file not found: {source_path}")
+        
+        # Handle conditional files
+        for file_name, is_required in conditional_files.items():
+            source_path = source_settings_dir / file_name
+            dest_path = self.optimization_settings_dir / file_name
+            
+            if source_path.exists():
+                shutil.copy2(source_path, dest_path)
+                self.logger.debug(f"Copied conditional file: {file_name}")
+            elif is_required:
+                # Try to find it in alternative locations or create a minimal one
+                if file_name == 'coldState.nc':
+                    self.logger.warning(f"coldState.nc not found in settings, attempting to create minimal version")
+                    if not self._create_minimal_coldstate():
+                        raise FileNotFoundError(f"Required file {file_name} not found and could not be created: {source_path}")
+            else:
+                self.logger.debug(f"Conditional file not required: {file_name}")
         
         # Copy mizuRoute settings if they exist
         source_mizu_dir = self.project_dir / "settings" / "mizuRoute"
@@ -1540,6 +1581,72 @@ class BaseOptimizer(ABC):
             for mizu_file in source_mizu_dir.glob("*"):
                 if mizu_file.is_file():
                     shutil.copy2(mizu_file, dest_mizu_dir / mizu_file.name)
+            self.logger.debug("Copied mizuRoute settings")
+
+    def _create_minimal_coldstate(self) -> bool:
+        """Create a minimal coldState.nc file if one doesn't exist"""
+        try:
+            import netCDF4 as nc
+            import numpy as np
+            
+            # Get attributes to determine dimensions
+            attr_file_path = self.optimization_settings_dir / 'attributes.nc'
+            if not attr_file_path.exists():
+                self.logger.error("Cannot create coldState.nc: attributes.nc not found")
+                return False
+            
+            # Read dimensions from attributes file
+            with nc.Dataset(attr_file_path, 'r') as attr_ds:
+                if 'hru' not in attr_ds.dimensions:
+                    self.logger.error("Cannot create coldState.nc: hru dimension not found in attributes.nc")
+                    return False
+                    
+                num_hrus = attr_ds.dimensions['hru'].size
+                
+                # Get proper hruId values from attributes file
+                if 'hruId' in attr_ds.variables:
+                    hru_ids = attr_ds.variables['hruId'][:].copy()
+                else:
+                    # Create sequential HRU IDs (NOT domain ID)
+                    hru_ids = np.arange(1, num_hrus + 1)
+                    self.logger.warning(f"hruId not found in attributes.nc, using sequential IDs 1 to {num_hrus}")
+            
+            # Create minimal coldState.nc
+            coldstate_path = self.optimization_settings_dir / 'coldState.nc'
+            
+            with nc.Dataset(coldstate_path, 'w', format='NETCDF4') as ds:
+                # Create dimensions
+                ds.createDimension('hru', num_hrus)
+                ds.createDimension('midSoil', 8)  # Default soil layers
+                ds.createDimension('ifcSoil', 9)  # Interfaces = layers + 1
+                
+                # Create coordinate variables
+                hru_var = ds.createVariable('hruId', 'i4', ('hru',))
+                hru_var[:] = hru_ids  # Use proper HRU IDs, NOT domain ID
+                
+                # Create minimal soil depth variables with default values
+                mlayer_var = ds.createVariable('mLayerDepth', 'f8', ('midSoil', 'hru'))
+                ilayer_var = ds.createVariable('iLayerHeight', 'f8', ('ifcSoil', 'hru'))
+                
+                # Default soil layer depths (in meters)
+                default_depths = np.array([0.025, 0.075, 0.15, 0.25, 0.35, 0.45, 0.8, 1.5])
+                default_heights = np.cumsum(np.concatenate([[0], default_depths]))
+                
+                # Apply to all HRUs
+                for h in range(num_hrus):
+                    mlayer_var[:, h] = default_depths
+                    ilayer_var[:, h] = default_heights
+                
+                # Add attributes
+                ds.setncattr('title', 'Minimal coldState file created by CONFLUENCE optimization')
+                ds.setncattr('created_by', 'CONFLUENCE BaseOptimizer._create_minimal_coldstate()')
+                
+            self.logger.info(f"Created minimal coldState.nc with {num_hrus} HRUs")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create minimal coldState.nc: {str(e)}")
+            return False
     
     def _update_optimization_file_managers(self) -> None:
         """Update file managers for optimization runs"""
@@ -2297,7 +2404,7 @@ class BaseOptimizer(ABC):
                     mpi_cmd,
                     capture_output=True,
                     text=True,
-                    timeout=7200,  # 2 hour timeout
+                    #timeout=7200,  # 2 hour timeout
                     env=os.environ.copy()
                 )
                 
@@ -7809,7 +7916,7 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
-            timeout=7200,  # 120 minute timeout
+            #timeout=7200,  # 120 minute timeout
             env=env,
             cwd=str(summa_dir)
         )
@@ -7907,7 +8014,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 check=True,
-                timeout=1800,  # 30 minute timeout
+                #timeout=1800,  # 30 minute timeout
                 cwd=str(control_file.parent)
             )
         

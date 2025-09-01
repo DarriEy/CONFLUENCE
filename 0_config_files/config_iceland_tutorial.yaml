@@ -83,6 +83,7 @@ SUPPLEMENT_FORCING: true
 EM_EARTH_PRCP_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica
 EM_EARTH_TMEAN_DIR: /anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica
 EM_PRCP: prcp_corrected
+EM_EARTH_REGION: NorthAmerica
 INTERSECT_SOIL_PATH: default
 INTERSECT_SOIL_NAME: catchment_with_soilclass.shp
 INTERSECT_ROUTING_PATH: default

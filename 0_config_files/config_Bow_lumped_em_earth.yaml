@@ -21,9 +21,8 @@ CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
 CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
-DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                          # Name of experimental domain
-EXPERIMENT_ID: run_1
-                                           # Name of experiment
+DOMAIN_NAME: Bow_at_Banff_lumped_em_earth                      # Name of experimental domain
+EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 CALIBRATION_PERIOD: 1981-01-01, 1990-12-31                     # start_date, end_date in format YYYY-MM-DD
@@ -36,7 +35,7 @@ FORCE_RUN_ALL_STEPS: False                                      # Run all steps 
 RANDOM_SEED: 42
 
 
-### ============================================= 2. Geopsatial settings: =================================================================
+### ============================================= 2. Geospatial settings: =================================================================
 # Coordinate settings
 POUR_POINT_COORDS: 51.1722/-115.5717                          # Pour point coordinates lat/lon, if default use user provided shapefile. 
 BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5               # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
@@ -56,13 +55,12 @@ MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distanc
 MIN_GRU_SIZE: 0                                                # Minimum HRU size in km^2
 
 # Domain discretization settings
-DOMAIN_DISCRETIZATION: GRUs                                  # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
-COMBINED_DISCRETIZATION_METHODS:                               # Combined methods to discretize modelling domains 
+DOMAIN_DISCRETIZATION: GRUs                                    # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, aspect,GRU
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
-ASPECT_CLASS_NUMBER: 8                                    # Number of aspect classes for discretisation (4, 8, or custom number)
-ASPECT_PATH: default                                      # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
+ASPECT_CLASS_NUMBER: 8                                         # Number of aspect classes for discretisation (4, 8, or custom number)
+ASPECT_PATH: default                                           # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_PATH: default                                        # Path to domain catchment shapefile. If default, uses self.data_dir / shapefiles / catchment / 
