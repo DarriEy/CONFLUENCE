@@ -46,7 +46,7 @@ class MizuRoutePreProcessor:
         river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
 
         if river_network_name == 'default':
-            river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_delineate.shp"
+            river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_{self.config.get('DOMAIN_DEFINITION_METHOD','delineate')}.shp"
         
         if river_network_path == 'default':
             river_network_path = self.project_dir / 'shapefiles/river_network'

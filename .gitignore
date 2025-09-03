@@ -65,6 +65,8 @@ Icon
 
 # Model outputs and temporary files
 *.log
+*.err
+*.pkl
 temp/
 logs/
 

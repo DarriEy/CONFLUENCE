@@ -175,7 +175,7 @@ class ModelManager:
                 
                 # Enhanced routing logic for SUMMA
                 if model == 'SUMMA':
-                    routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+                    routing_delineation = self.config.get('ROUTING_DELINEATION', 'river_network')
                     domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
                     
                     # Determine if we need mizuRoute
