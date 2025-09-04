@@ -7884,6 +7884,10 @@ def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger, debu
 def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logger, debug_info: Dict) -> bool:
     """SUMMA execution without log files to save disk space"""
     try:
+        # Create log directory
+        log_dir = summa_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"summa_worker_{os.getpid()}.log"
         # Set environment for single-threaded execution
         env = os.environ.copy()
         env.update({
@@ -7912,17 +7916,25 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
             return False
         
         # Run SUMMA 
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-            #timeout=7200,  # 120 minute timeout
-            env=env,
-            cwd=str(summa_dir)
-        )
-        
+        with open(log_file, 'w') as f:
+            f.write(f"SUMMA Execution Log\n")
+            f.write(f"Command: {cmd}\n")
+            f.write(f"Working Directory: {summa_dir}\n")
+            f.write(f"Environment: OMP_NUM_THREADS={env.get('OMP_NUM_THREADS', 'unset')}\n")
+            f.write("=" * 50 + "\n")
+            f.flush()
+
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                #timeout=7200,  # 120 minute timeout
+                env=env,
+                cwd=str(summa_dir)
+            )
+            
         # Check if output files were created
         timestep_files = list(summa_dir.glob("*timestep.nc"))
         if not timestep_files:
