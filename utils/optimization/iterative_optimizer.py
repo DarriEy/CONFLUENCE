@@ -44,7 +44,6 @@ import random
 import traceback
 import yaml
 import pickle 
-import re
 import tempfile
 
 # ============= ABSTRACT BASE CLASSES =============
@@ -1718,31 +1717,80 @@ class BaseOptimizer(ABC):
         with open(file_manager_path, 'w') as f:
             f.writelines(updated_lines)
     
+
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """Minimally update <input_dir> and <output_dir> lines; preserve formatting/comments."""
+        """
+        Minimal, regex-free update of <input_dir> and <output_dir> lines.
+        - Keeps original indentation and spaces
+        - Keeps existing trailing ' ! ...' comments exactly as-is
+        - Adds a minimal '    !' if a comment was missing
+        - Ensures path is POSIX with exactly one trailing '/'
+        """
+        def _normalize_dir(p: Path) -> str:
+            return str(p).replace("\\", "/").rstrip("/") + "/"
+
+        def _update_line(line: str, token: str, new_path_str: str) -> str:
+            # Fast path: only handle lines that (after left trim) start with the token
+            stripped = line.lstrip()
+            if not stripped.startswith(token):
+                return line
+
+            nl = "\n" if line.endswith("\n") else ""
+            body = line[:-1] if nl else line
+
+            # Split off trailing comment (keep spaces before '!' with the left part)
+            if "!" in body:
+                left, right = body.split("!", 1)
+                comment = "!" + right   # keep the '!' and the rest
+            else:
+                left, comment = body, "    !"  # add a minimal comment
+
+            # left = <prefix><token><spaces><value><spaces_before_comment>
+            # Keep prefix & token as-is
+            prefix_len = len(left) - len(left.lstrip())
+            prefix = left[:prefix_len]
+            rest = left[prefix_len:]
+
+            # Sanity: ensure we see the token right here
+            if not rest.startswith(token):
+                return line  # unexpected formatting; leave untouched
+
+            after_tok = rest[len(token):]
+
+            # Preserve the exact whitespace after token
+            i = 0
+            while i < len(after_tok) and after_tok[i].isspace():
+                i += 1
+            spaces_after_token = after_tok[:i]
+            remainder = after_tok[i:]  # old value + spaces to comment
+
+            # Preserve spaces before the comment
+            trailing_spaces_len = len(remainder) - len(remainder.rstrip())
+            spaces_before_comment = remainder[-trailing_spaces_len:] if trailing_spaces_len > 0 else ""
+
+            # New value
+            new_val = new_path_str
+
+            # Rebuild
+            new_left = prefix + token + spaces_after_token + new_val + spaces_before_comment
+            return new_left + comment + nl
+
+        # --- read, update, write ---
         text = control_path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines(keepends=True)
 
-        def _set_dir_line(s: str, token: str, new_path: Path) -> str:
-            # Match: <token> <spaces> <value> <tail (spaces/comment/etc)>
-            pattern = rf"^({re.escape(token)}\s*)(\S+)(.*)$"
+        new_input = _normalize_dir(self.summa_sim_dir)
+        new_output = _normalize_dir(self.mizuroute_sim_dir)
 
-            # Normalize new path to POSIX and ensure one trailing slash
-            val = str(new_path).replace("\\", "/").rstrip("/") + "/"
+        for idx, line in enumerate(lines):
+            # Update <input_dir>
+            updated = _update_line(line, "<input_dir>", new_input)
+            # Update <output_dir> (run on the possibly-updated line)
+            updated = _update_line(updated, "<output_dir>", new_output)
+            lines[idx] = updated
 
-            def repl(m: re.Match) -> str:
-                head, _old_val, tail = m.groups()
-                # If no trailing comment field, add a minimal one
-                if "!" not in tail:
-                    tail = (tail.rstrip() + "    !")
-                return f"{head}{val}{tail}"
+        control_path.write_text("".join(lines), encoding="ascii", newline="\n")
 
-            return re.sub(pattern, repl, s, flags=re.MULTILINE)
-
-        # Only touch these two; everything else stays exactly as in the original file
-        text = _set_dir_line(text, "<input_dir>", self.summa_sim_dir)
-        text = _set_dir_line(text, "<output_dir>", self.mizuroute_sim_dir)
-
-        control_path.write_text(text, encoding="ascii", newline="\n")
 
     
     def _create_calibration_target(self) -> CalibrationTarget:
