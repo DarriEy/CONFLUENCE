@@ -44,6 +44,7 @@ import random
 import traceback
 import yaml
 import pickle 
+import re
 import tempfile
 
 # ============= ABSTRACT BASE CLASSES =============
@@ -1717,35 +1718,29 @@ class BaseOptimizer(ABC):
         with open(file_manager_path, 'w') as f:
             f.writelines(updated_lines)
     
-
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-            """Update mizuRoute control file preserving original formatting"""
-            with open(control_path, 'r') as f:
-                content = f.read()
-            
-            # Use regex to replace just the path part, preserving spacing
-            import re
-            
-            # Replace input_dir path
-            input_path = str(self.summa_sim_dir).replace('\\', '/')
-            content = re.sub(
-                r'(<input_dir>\s+)([^\s\n]+)',
-                rf'\g<1>{input_path}/',
-                content
-            )
-            
-            # Replace output_dir path  
-            output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
-            content = re.sub(
-                r'(<output_dir>\s+)([^\s\n]+)',
-                rf'\g<1>{output_path}/',
-                content
-            )
-            
-            with open(control_path, 'w') as f:
-                f.write(content)
-
-
+        """Update mizuRoute control file preserving original formatting"""
+        with open(control_path, 'r') as f:
+            content = f.read()
+        
+        # Replace input_dir path
+        input_path = str(self.summa_sim_dir).replace('\\', '/')
+        content = re.sub(
+            r'(<input_dir>\s+)([^\s\n]+)',
+            rf'\g<1>{input_path}/',
+            content
+        )
+        
+        # Replace output_dir path  
+        output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
+        content = re.sub(
+            r'(<output_dir>\s+)([^\s\n]+)',
+            rf'\g<1>{output_path}/',
+            content
+        )
+        
+        with open(control_path, 'w') as f:
+            f.write(content)
     
     def _create_calibration_target(self) -> CalibrationTarget:
         """Factory method to create appropriate calibration target"""
