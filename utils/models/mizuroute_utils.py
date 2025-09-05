@@ -393,6 +393,10 @@ class MizuRouteRunner:
                 # Round time to nearest hour
                 ds['time'] = ds.time.dt.round('H')
                 
+                # Remove existing units attribute if it exists
+                if 'units' in ds.time.attrs:
+                    del ds.time.attrs['units']
+                
                 # Fix time encoding to remove timezone info
                 ds.time.attrs['units'] = 'hours since 1981-01-01 00:00:00'
                 ds.time.attrs['calendar'] = 'standard'
