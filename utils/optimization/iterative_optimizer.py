@@ -7401,41 +7401,134 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
 def fix_summa_time_precision(input_file, output_file=None):
     """
     Round SUMMA time dimension to nearest hour to fix mizuRoute compatibility
+    Fixed to handle attribute overwriting issues
     """
+    import xarray as xr
+    import numpy as np
+    import os
+    import tempfile
+    import shutil
+    
     print(f"Opening {input_file}")
-    ds = xr.open_dataset(input_file)
     
-    print(f"Original time range: {ds.time.min().values} to {ds.time.max().values}")
-    
-    # Round time to nearest hour
-    ds['time'] = ds.time.dt.round('H')
-    
-    # Fix time encoding to remove timezone info
-    # Fix time encoding AND attributes to remove timezone info
-    ds.time.attrs['units'] = 'hours since 1981-01-01 00:00:00'
-    ds.time.attrs['calendar'] = 'standard'
-    ds.time.attrs['long_name'] = 'time'
-    ds.time.encoding['units'] = 'hours since 1981-01-01 00:00:00'
-    ds.time.encoding['calendar'] = 'standard'
-    if 'dtype' in ds.time.encoding:
-        del ds.time.encoding['dtype']
-    
-    print(f"Rounded time range: {ds.time.min().values} to {ds.time.max().values}")
-    
-    # Save to output file (or overwrite if not specified)
-    output_path = output_file if output_file else input_file
-    print(f"Saving to {output_path}")
-    
-    # Load data into memory and close file to handle permission issues
-    ds.load()
-    ds.close()
-    
-    # Make file writable if we're overwriting the original
-    if output_file is None:
-        os.chmod(input_file, 0o664)
-    
-    ds.to_netcdf(output_path)
-    print("Done!")
+    try:
+        # Open without decoding times to avoid conflicts
+        ds = xr.open_dataset(input_file, decode_times=False)
+        
+        print(f"Original time range: {ds.time.min().values} to {ds.time.max().values}")
+        
+        # Convert to datetime, round, then convert back
+        time_vals = ds.time.values
+        
+        # Convert to pandas timestamps for rounding
+        import pandas as pd
+        
+        # First convert the time values to actual timestamps
+        if 'units' in ds.time.attrs:
+            time_units = ds.time.attrs['units']
+            print(f"Original time units: {time_units}")
+            
+            # Parse the reference time
+            if 'since' in time_units:
+                ref_time_str = time_units.split('since')[1].strip()
+                ref_time = pd.Timestamp(ref_time_str)
+                
+                # Get the time unit (hours, days, seconds, etc.)
+                unit = time_units.split()[0].lower()
+                
+                # Convert to timedelta and add to reference
+                if unit.startswith('hour'):
+                    timestamps = ref_time + pd.to_timedelta(time_vals, unit='H')
+                elif unit.startswith('day'):
+                    timestamps = ref_time + pd.to_timedelta(time_vals, unit='D')
+                elif unit.startswith('second'):
+                    timestamps = ref_time + pd.to_timedelta(time_vals, unit='S')
+                elif unit.startswith('minute'):
+                    timestamps = ref_time + pd.to_timedelta(time_vals, unit='min')
+                else:
+                    # Default to hours
+                    timestamps = ref_time + pd.to_timedelta(time_vals, unit='H')
+            else:
+                # Fallback: assume hourly from a standard reference
+                ref_time = pd.Timestamp('1990-01-01')
+                timestamps = ref_time + pd.to_timedelta(time_vals, unit='H')
+        else:
+            # No units attribute, try to interpret as hours since 1990
+            ref_time = pd.Timestamp('1990-01-01')
+            timestamps = ref_time + pd.to_timedelta(time_vals, unit='H')
+        
+        # Round to nearest hour
+        rounded_timestamps = timestamps.round('H')
+        
+        print(f"Rounded time range: {rounded_timestamps.min()} to {rounded_timestamps.max()}")
+        
+        # Convert back to hours since reference time
+        ref_time = pd.Timestamp('1990-01-01')
+        rounded_hours = (rounded_timestamps - ref_time).total_seconds() / 3600.0
+        
+        # Create new time coordinate with cleared attributes
+        new_time = xr.DataArray(
+            rounded_hours,
+            dims=('time',),
+            attrs={}  # Start with empty attributes
+        )
+        
+        # Set clean attributes
+        new_time.attrs['units'] = 'hours since 1990-01-01 00:00:00'
+        new_time.attrs['calendar'] = 'standard'
+        new_time.attrs['long_name'] = 'time'
+        
+        # Replace time coordinate
+        ds = ds.assign_coords(time=new_time)
+        
+        # Clean up encoding to avoid conflicts
+        if 'time' in ds.encoding:
+            del ds.encoding['time']
+        
+        # Load data into memory and close original
+        ds.load()
+        original_ds = ds
+        ds = ds.copy()  # Create a clean copy
+        original_ds.close()
+        
+        # Determine output path
+        output_path = output_file if output_file else input_file
+        print(f"Saving to {output_path}")
+        
+        # Write to temporary file first, then move to final location
+        temp_file = None
+        try:
+            # Create temporary file in same directory
+            temp_dir = os.path.dirname(output_path)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.nc', dir=temp_dir) as tmp:
+                temp_file = tmp.name
+            
+            # Save to temporary file with clean encoding
+            ds.to_netcdf(temp_file, format='NETCDF4')
+            ds.close()
+            
+            # Make output file writable if overwriting
+            if output_file is None and os.path.exists(input_file):
+                os.chmod(input_file, 0o664)
+            
+            # Atomically move to final location
+            shutil.move(temp_file, output_path)
+            temp_file = None  # Successfully moved
+            
+            print("Done!")
+            
+        except Exception as e:
+            # Clean up temp file if it exists
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+            raise e
+            
+    except Exception as e:
+        print(f"Error fixing time precision: {e}")
+        raise
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
@@ -7588,7 +7681,7 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
         logger.error(f"Conversion failed: {str(e)}")
         debug_info['errors'].append(f"Lumped-to-distributed conversion error: {str(e)}")
         return False
-        
+
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
     """Calculate metrics inline without using CalibrationTarget classes - Enhanced with corrected mizuRoute vs SUMMA logic"""
     try:
@@ -8517,6 +8610,7 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
 
 
 def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_info: Dict) -> bool:
+    """Updated mizuRoute worker with fixed time precision handling"""
     try:
         # Verify SUMMA output exists first
         summa_dir = Path(task_data['summa_dir'])
@@ -8527,9 +8621,17 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
             logger.error(error_msg)
             debug_info['errors'].append(error_msg)
             return False
- 
-        fix_summa_time_precision(expected_files[0])
- 
+
+        # Fix SUMMA time precision with better error handling
+        try:
+            logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
+            fix_summa_time_precision(expected_files[0])
+            logger.info("SUMMA time precision fixed successfully")
+        except Exception as e:
+            error_msg = f"Failed to fix SUMMA time precision: {str(e)}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
  
         logger.info(f"Found {len(expected_files)} SUMMA output files for mizuRoute")
         config = task_data['config']
