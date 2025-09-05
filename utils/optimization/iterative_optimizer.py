@@ -7315,7 +7315,7 @@ def _get_catchment_area_worker(config: Dict, logger) -> float:
     
 
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
-    """Calculate metrics inline without using CalibrationTarget classes - Enhanced with debugging"""
+    """Calculate metrics inline without using CalibrationTarget classes - Enhanced with corrected mizuRoute vs SUMMA logic"""
     try:
         import xarray as xr
         import pandas as pd
@@ -7327,42 +7327,45 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
         logger.info(f"DEBUG: SUMMA dir exists: {summa_dir.exists()}")
         logger.info(f"DEBUG: mizuRoute dir exists: {mizuroute_dir.exists() if mizuroute_dir else 'None'}")
         
-        # Get the ACTUAL catchment area
-        try:
-            catchment_area = _get_catchment_area_worker(config, logger)
-            logger.info(f"DEBUG: Catchment area: {catchment_area:.0f} m²")
-        except Exception as e:
-            logger.error(f"DEBUG: Error getting catchment area: {str(e)}")
-            catchment_area = 1e6  # Default fallback
-            logger.info(f"DEBUG: Using fallback catchment area: {catchment_area:.0f} m²")
-        
-        # Find simulation files
-        logger.info("DEBUG: Looking for simulation files...")
+        # Priority 1: Look for mizuRoute output files first (already in m³/s)
+        sim_files = []
+        use_mizuroute = False
+        catchment_area = None
         
         if mizuroute_dir and mizuroute_dir.exists():
             mizu_files = list(mizuroute_dir.glob("*.nc"))
             logger.info(f"DEBUG: Found {len(mizu_files)} mizuRoute .nc files")
             for f in mizu_files[:3]:  # Show first 3
                 logger.info(f"DEBUG: mizuRoute file: {f.name}")
-        else:
-            mizu_files = []
-            logger.info("DEBUG: No mizuRoute directory or no files found")
+            
+            if mizu_files:
+                sim_files = mizu_files
+                use_mizuroute = True
+                logger.info("DEBUG: Using mizuRoute files (already in m³/s)")
         
-        summa_files = list(summa_dir.glob("*timestep.nc"))
-        logger.info(f"DEBUG: Found {len(summa_files)} SUMMA timestep files")
-        for f in summa_files[:3]:  # Show first 3
-            logger.info(f"DEBUG: SUMMA file: {f.name}")
+        # Priority 2: If no mizuRoute files, look for SUMMA files (need m/s to m³/s conversion)
+        if not sim_files:
+            summa_files = list(summa_dir.glob("*timestep.nc"))
+            logger.info(f"DEBUG: Found {len(summa_files)} SUMMA timestep files")
+            for f in summa_files[:3]:  # Show first 3
+                logger.info(f"DEBUG: SUMMA file: {f.name}")
+            
+            if summa_files:
+                sim_files = summa_files
+                use_mizuroute = False
+                logger.info("DEBUG: Using SUMMA files (need m/s to m³/s conversion)")
+                
+                # Get the ACTUAL catchment area for unit conversion
+                try:
+                    catchment_area = _get_catchment_area_worker(config, logger)
+                    logger.info(f"DEBUG: Catchment area for conversion: {catchment_area:.0f} m²")
+                except Exception as e:
+                    logger.error(f"DEBUG: Error getting catchment area: {str(e)}")
+                    catchment_area = 1e6  # Default fallback
+                    logger.info(f"DEBUG: Using fallback catchment area: {catchment_area:.0f} m²")
         
-        # Decide which files to use
-        if mizu_files:
-            sim_files = mizu_files
-            use_mizuroute = True
-            logger.info("DEBUG: Using mizuRoute files")
-        elif summa_files:
-            sim_files = summa_files
-            use_mizuroute = False
-            logger.info("DEBUG: Using SUMMA files")
-        else:
+        # Check if we found any simulation files
+        if not sim_files:
             logger.error("DEBUG: No simulation files found")
             logger.error(f"DEBUG: SUMMA dir contents: {list(summa_dir.glob('*')) if summa_dir.exists() else 'DIR_NOT_EXISTS'}")
             if mizuroute_dir and mizuroute_dir.exists():
@@ -7373,7 +7376,7 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
         logger.info(f"DEBUG: Using simulation file: {sim_file}")
         
         # Extract simulated streamflow
-        logger.info("DEBUG: Extracting simulated streamflow...")
+        logger.info(f"DEBUG: Extracting simulated streamflow (use_mizuroute={use_mizuroute})...")
         
         try:
             with xr.open_dataset(sim_file) as ds:
@@ -7381,56 +7384,57 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
                 logger.info(f"DEBUG: Dataset dimensions: {dict(ds.sizes)}")
                 
                 if use_mizuroute:
-                    # mizuRoute output - already in m³/s
-                    reach_id = int(config.get('SIM_REACH_ID', 1))
-                    logger.info(f"DEBUG: Looking for reach ID: {reach_id}")
+                    # mizuRoute output - select segment with highest average runoff (outlet)
+                    logger.info("DEBUG: Selecting segment with highest average runoff (outlet)")
                     
-                    if 'reachID' not in ds.variables:
-                        logger.error("DEBUG: reachID not found in mizuRoute output")
-                        logger.error(f"DEBUG: Available variables: {list(ds.variables.keys())}")
-                        return None
-                    
-                    reach_ids = ds['reachID'].values
-                    logger.info(f"DEBUG: Available reach IDs: {reach_ids[:10]}...")  # Show first 10
-                    
-                    reach_indices = np.where(reach_ids == reach_id)[0]
-                    if len(reach_indices) == 0:
-                        logger.error(f"DEBUG: Reach ID {reach_id} not found in dataset")
-                        logger.error(f"DEBUG: Available reach IDs range: {reach_ids.min()} to {reach_ids.max()}")
-                        return None
-                    
-                    reach_index = reach_indices[0]
-                    logger.info(f"DEBUG: Using reach index: {reach_index}")
-                    
-                    # Find routing variable
+                    # Find routing variable to use for selection
                     routing_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
-                    sim_data = None
+                    routing_var = None
                     
                     for var_name in routing_vars:
                         if var_name in ds.variables:
-                            logger.info(f"DEBUG: Found routing variable: {var_name}")
-                            var = ds[var_name]
-                            logger.info(f"DEBUG: Variable dimensions: {var.dims}")
-                            logger.info(f"DEBUG: Variable shape: {var.shape}")
-                            
-                            try:
-                                if 'seg' in var.dims:
-                                    sim_data = var.isel(seg=reach_index).to_pandas()
-                                elif 'reachID' in var.dims:
-                                    sim_data = var.isel(reachID=reach_index).to_pandas()
-                                else:
-                                    logger.warning(f"DEBUG: Unexpected dimensions for {var_name}: {var.dims}")
-                                    continue
-                                
-                                logger.info(f"DEBUG: Extracted {var_name} with {len(sim_data)} timesteps (mizuRoute - no scaling)")
-                                logger.info(f"DEBUG: Sim data range: {sim_data.min():.3f} to {sim_data.max():.3f}")
-                                break
-                            except Exception as e:
-                                logger.error(f"DEBUG: Error extracting {var_name}: {str(e)}")
-                                continue
+                            routing_var = var_name
+                            logger.info(f"DEBUG: Found routing variable: {routing_var}")
+                            break
                     
-                    if sim_data is None:
-                        logger.error(f"DEBUG: No routing variable found or extracted successfully")
+                    if routing_var is None:
+                        logger.error("DEBUG: No routing variable found in mizuRoute output")
+                        logger.error(f"DEBUG: Available variables: {list(ds.variables.keys())}")
+                        return None
+                    
+                    var = ds[routing_var]
+                    logger.info(f"DEBUG: Variable dimensions: {var.dims}")
+                    logger.info(f"DEBUG: Variable shape: {var.shape}")
+                    
+                    try:
+                        # Calculate average runoff for each segment to find outlet
+                        if 'seg' in var.dims:
+                            # Calculate mean runoff across time for each segment
+                            segment_means = var.mean(dim='time').values
+                            outlet_seg_idx = np.argmax(segment_means)
+                            logger.info(f"DEBUG: Found outlet at segment index {outlet_seg_idx} with mean runoff {segment_means[outlet_seg_idx]:.3f} m³/s")
+                            
+                            # Extract time series for outlet segment
+                            sim_data = var.isel(seg=outlet_seg_idx).to_pandas()
+                            
+                        elif 'reachID' in var.dims:
+                            # Calculate mean runoff across time for each reach
+                            reach_means = var.mean(dim='time').values
+                            outlet_reach_idx = np.argmax(reach_means)
+                            logger.info(f"DEBUG: Found outlet at reach index {outlet_reach_idx} with mean runoff {reach_means[outlet_reach_idx]:.3f} m³/s")
+                            
+                            # Extract time series for outlet reach
+                            sim_data = var.isel(reachID=outlet_reach_idx).to_pandas()
+                            
+                        else:
+                            logger.error(f"DEBUG: Unexpected dimensions for {routing_var}: {var.dims}")
+                            return None
+                        
+                        logger.info(f"DEBUG: Extracted {routing_var} from outlet segment with {len(sim_data)} timesteps (mizuRoute - no unit conversion)")
+                        logger.info(f"DEBUG: Sim data range: {sim_data.min():.3f} to {sim_data.max():.3f} m³/s")
+                        
+                    except Exception as e:
+                        logger.error(f"DEBUG: Error extracting outlet segment from {routing_var}: {str(e)}")
                         return None
                         
                 else:
@@ -7463,9 +7467,9 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
                                 
                                 # Convert units for SUMMA (m/s to m³/s) using ACTUAL catchment area
                                 logger.info(f"DEBUG: Converting SUMMA units: {var_name} * {catchment_area:.0f} m²")
-                                logger.info(f"DEBUG: Pre-scaling range: {sim_data.min():.6f} to {sim_data.max():.6f}")
+                                logger.info(f"DEBUG: Pre-scaling range: {sim_data.min():.6f} to {sim_data.max():.6f} m/s")
                                 sim_data = sim_data * catchment_area
-                                logger.info(f"DEBUG: Post-scaling range: {sim_data.min():.3f} to {sim_data.max():.3f}")
+                                logger.info(f"DEBUG: Post-scaling range: {sim_data.min():.3f} to {sim_data.max():.3f} m³/s")
                                 
                                 logger.info(f"DEBUG: Extracted {var_name} with {len(sim_data)} timesteps, applied area scaling")
                                 break
