@@ -41,6 +41,64 @@ class MizuRoutePreProcessor:
             copyfile(base_settings_path / file, self.mizuroute_setup_dir / file)
         self.logger.info("mizuRoute base settings copied")
 
+    def create_area_weighted_remap_file(self):
+        """Create remapping file with area-based weights from delineated catchments"""
+        self.logger.info("Creating area-weighted remapping file")
+        
+        # Load topology to get HRU information
+        topology_file = self.mizuroute_setup_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY')
+        with xr.open_dataset(topology_file) as topo:
+            hru_ids = topo['hruId'].values
+        
+        n_hrus = len(hru_ids)
+        
+        # Use the weights stored during topology creation
+        if hasattr(self, 'subcatchment_weights') and hasattr(self, 'subcatchment_gru_ids'):
+            weights = self.subcatchment_weights
+            gru_ids = self.subcatchment_gru_ids
+        else:
+            # Fallback: load from delineated catchments shapefile
+            catchment_path = self.project_dir / 'shapefiles' / 'catchment' / f"{self.config['DOMAIN_NAME']}_catchment_delineated.shp"
+            shp_catchments = gpd.read_file(catchment_path)
+            weights = shp_catchments['avg_subbas'].values
+            gru_ids = shp_catchments['GRU_ID'].values.astype(int)
+        
+        remap_name = self.config.get('SETTINGS_MIZU_REMAP')
+        
+        with nc4.Dataset(self.mizuroute_setup_dir / remap_name, 'w', format='NETCDF4') as ncid:
+            # Set attributes
+            ncid.setncattr('Author', "Created by SUMMA workflow scripts")
+            ncid.setncattr('Purpose', 'Area-weighted remapping for lumped to distributed routing')
+            
+            # Create dimensions
+            ncid.createDimension('hru', n_hrus)  # One entry per HRU
+            ncid.createDimension('data', n_hrus)  # One data entry per HRU
+            
+            # Create variables
+            # RN_hruId: The routing HRU IDs (from delineated catchments)
+            rn_hru = ncid.createVariable('RN_hruId', 'i4', ('hru',))
+            rn_hru[:] = gru_ids
+            rn_hru.long_name = 'River network HRU ID'
+            
+            # nOverlaps: Each HRU gets input from 1 SUMMA GRU
+            noverlaps = ncid.createVariable('nOverlaps', 'i4', ('hru',))
+            noverlaps[:] = [1] * n_hrus  # Each HRU has 1 overlap (with SUMMA GRU 1)
+            noverlaps.long_name = 'Number of overlapping HM_HRUs for each RN_HRU'
+            
+            # HM_hruId: The SUMMA GRU ID (1) for each entry
+            hm_hru = ncid.createVariable('HM_hruId', 'i4', ('data',))
+            hm_hru[:] = [1] * n_hrus  # All entries point to SUMMA GRU 1
+            hm_hru.long_name = 'ID of overlapping HM_HRUs'
+            
+            # weight: Area-based weights from delineated catchments
+            weight_var = ncid.createVariable('weight', 'f8', ('data',))
+            weight_var[:] = weights
+            weight_var.long_name = 'Areal weights based on delineated subcatchment areas'
+        
+        self.logger.info(f"Area-weighted remapping file created with {n_hrus} HRUs")
+        self.logger.info(f"Weight range: {weights.min():.4f} to {weights.max():.4f}")
+        self.logger.info(f"Weight sum: {weights.sum():.4f}")
+
     def create_network_topology_file(self):
         self.logger.info("Creating network topology file")
         
@@ -79,22 +137,34 @@ class MizuRoutePreProcessor:
         )
         
         if is_lumped_to_distributed:
-            self.logger.info("Creating multiple HRUs for lumped-to-distributed routing")
-            # Create one HRU for each segment to enable equal drainage
+            self.logger.info("Using delineated catchments for lumped-to-distributed routing")
+            
+            # Load the delineated catchments shapefile
+            catchment_path = self.project_dir / 'shapefiles' / 'catchment' / f"{self.config['DOMAIN_NAME']}_catchment_delineated.shp"
+            if not catchment_path.exists():
+                raise FileNotFoundError(f"Delineated catchment shapefile not found: {catchment_path}")
+            
+            shp_catchments = gpd.read_file(catchment_path)
+            self.logger.info(f"Loaded {len(shp_catchments)} delineated subcatchments")
+            
+            # Use the delineated catchments as HRUs
             num_seg = len(shp_river)
+            num_hru = len(shp_catchments)
             
-            # Create HRU data - one HRU per segment
-            hru_ids = list(range(1, num_seg + 1))
-            hru_to_seg_ids = shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int)
+            # Extract HRU data from delineated catchments
+            hru_ids = shp_catchments['GRU_ID'].values.astype(int)
+            hru_to_seg_ids = shp_catchments['GRU_ID'].values.astype(int)  # Each GRU drains to segment with same ID
             
-            # Calculate equal area for each HRU (total basin area / number of segments)
+            # Convert fractional areas to actual areas (multiply by total basin area)
             total_basin_area = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].sum()
-            equal_area = total_basin_area / num_seg
-            hru_areas = [equal_area] * num_seg
+            hru_areas = shp_catchments['avg_subbas'].values * total_basin_area
             
-            num_hru = num_seg
+            # Store fractional areas for remapping
+            self.subcatchment_weights = shp_catchments['avg_subbas'].values
+            self.subcatchment_gru_ids = hru_ids
             
-            self.logger.info(f"Created {num_hru} HRUs, each draining to one segment with equal area {equal_area:.1f} m²")
+            self.logger.info(f"Created {num_hru} HRUs from delineated catchments")
+            self.logger.info(f"Weight range: {self.subcatchment_weights.min():.4f} to {self.subcatchment_weights.max():.4f}")
             
         else:
             # Original logic for non-lumped cases
@@ -261,8 +331,8 @@ class MizuRoutePreProcessor:
     def remap_summa_catchments_to_routing(self):
         self.logger.info("Remapping SUMMA catchments to routing catchments")
         if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and self.config.get('ROUTING_DELINEATION') == 'river_network':
-            self.logger.info("Equal area weighting for SUMMA catchments to routing catchments")
-            self.create_equal_weight_remap_file()
+            self.logger.info("Area-weighted mapping for SUMMA catchments to routing catchments")
+            self.create_area_weighted_remap_file()  # Changed from create_equal_weight_remap_file
             return
 
         hm_catchment_path = Path(self.config.get('CATCHMENT_PATH'))
