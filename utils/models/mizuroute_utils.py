@@ -371,6 +371,7 @@ class MizuRouteRunner:
         # Get the specific runoff file
         runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
         runoff_filepath = experiment_output_summa / runoff_filename
+        fixed_filepath = experiment_output_summa / f"{self.config.get('EXPERIMENT_ID')}_timestep_fixed.nc"
         
         if not runoff_filepath.exists():
             self.logger.error(f"SUMMA output file not found: {runoff_filepath}")
@@ -387,19 +388,22 @@ class MizuRouteRunner:
             rounded_time = pd.Timestamp(first_time).round('H')
             
             if pd.Timestamp(first_time) != rounded_time:
-                self.logger.info("Time precision issue detected, rounding to nearest hour")
+                self.logger.info("Time precision issue detected, creating fixed copy")
                 
                 # Round time to nearest hour
                 ds['time'] = ds.time.dt.round('H')
                 
-                # Save back to the same file
-                ds.to_netcdf(runoff_filepath)
-                self.logger.info("SUMMA time precision fixed")
+                # Save to new file
+                ds.to_netcdf(fixed_filepath)
+                ds.close()
+                
+                # Update control file to use fixed file
+                self._update_control_file_for_fixed_summa()
+                self.logger.info("SUMMA time precision fixed - using corrected file")
             else:
                 self.logger.info("SUMMA time precision is already correct")
+                ds.close()
                 
-            ds.close()
-            
         except Exception as e:
             self.logger.error(f"Error fixing SUMMA time precision: {e}")
             raise
