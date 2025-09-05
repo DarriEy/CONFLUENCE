@@ -299,9 +299,8 @@ class ModelManager:
         """
         Convert lumped SUMMA output to distributed mizuRoute forcing.
         
-        This method replicates the functionality from the manual script,
-        broadcasting the single lumped runoff to all routing segments.
-        Creates mizuRoute-compatible files with proper naming and variables.
+        This method creates a single lumped GRU that mizuRoute can map to 
+        the distributed routing network. The GRU ID matches the topology HRU ID.
         Only processes the timestep file for mizuRoute routing.
         """
         self.logger.info("Converting lumped SUMMA output for distributed routing")
@@ -327,30 +326,27 @@ class ModelManager:
             if not summa_timestep_file.exists():
                 raise FileNotFoundError(f"SUMMA timestep output file not found: {summa_timestep_file}")
             
-            # Load mizuRoute topology to get segment information
+            # Load mizuRoute topology to get HRU information
             topology_file = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
             
             if not topology_file.exists():
                 raise FileNotFoundError(f"mizuRoute topology file not found: {topology_file}")
             
             with xr.open_dataset(topology_file) as mizuTopology:
-                # Use SEGMENT IDs from topology (these are the routing elements we broadcast to)
-                # This matches the original manual script approach
+                # Get the single HRU ID from topology (not segment IDs)
+                hru_id = mizuTopology['hruId'].values[0]  # Should be 1
                 seg_ids = mizuTopology['segId'].values
                 n_segments = len(seg_ids)
-                
-                # Also get HRU info for context
-                hru_ids = mizuTopology['hruId'].values if 'hruId' in mizuTopology else []
-                n_hrus = len(hru_ids)
+                n_hrus = len(mizuTopology['hruId'].values)
             
-            self.logger.info(f"Broadcasting to {n_segments} routing segments ({n_hrus} HRUs in topology)")
+            self.logger.info(f"Creating single lumped GRU (ID={hru_id}) for {n_segments} routing segments ({n_hrus} HRUs in topology)")
             
             # Check if we actually have a distributed routing network
             if n_segments <= 1:
                 self.logger.warning(f"Only {n_segments} routing segment(s) found in topology. Distributed routing may not be beneficial.")
                 self.logger.warning("Consider using ROUTING_DELINEATION: lumped instead")
             
-            # Get the routing variable name from config (updated defaults for new SUMMA versions)
+            # Get the routing variable name from config
             routing_var = self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
             
             self.logger.info(f"Processing {summa_timestep_file.name}")
@@ -381,17 +377,16 @@ class ModelManager:
                 
                 self.logger.info(f"Preserved original time coordinate: {mizuForcing['time'].attrs.get('units', 'no units')}")
                 
-                # Create GRU dimension using SEGMENT IDs (this is the key fix!)
-                # This matches the original script: mizuTopology['segId'].values.flatten()
+                # Create single GRU using HRU ID from topology (NOT segment IDs)
                 mizuForcing['gru'] = xr.DataArray(
-                    seg_ids, 
+                    [hru_id],  # Single HRU, not multiple segment IDs
                     dims=('gru',),
                     attrs={'long_name': 'Index of GRU', 'units': '-'}
                 )
                 
-                # GRU ID variable (use segment IDs as GRU IDs for routing)
+                # GRU ID variable (use HRU ID from topology)
                 mizuForcing['gruId'] = xr.DataArray(
-                    seg_ids, 
+                    [hru_id],  # Single HRU ID
                     dims=('gru',),
                     attrs={'long_name': 'ID of grouped response unit', 'units': '-'}
                 )
@@ -399,7 +394,7 @@ class ModelManager:
                 # Copy global attributes from SUMMA output
                 mizuForcing.attrs.update(summa_output.attrs)
                 
-                # Find the best variable to broadcast (updated for new SUMMA variable names)
+                # Find the best variable to broadcast
                 source_var = None
                 available_vars = list(summa_output.variables.keys())
                 
@@ -408,7 +403,7 @@ class ModelManager:
                     source_var = routing_var
                     self.logger.info(f"Using configured routing variable: {routing_var}")
                 else:
-                    # Try fallback variables in order of preference (updated for new naming)
+                    # Try fallback variables in order of preference
                     fallback_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'averageRoutedRunoff_mean', 'basin__TotalRunoff_mean']
                     for var in fallback_vars:
                         if var in summa_output:
@@ -442,21 +437,21 @@ class ModelManager:
                 else:
                     raise ValueError(f"Unexpected runoff data shape: {lumped_runoff.shape}")
                 
-                # Tile to all SEGMENTS: (time,) -> (time, n_segments)
-                # This is the key fix - broadcast to segments, not HRUs
-                tiled_data = np.tile(lumped_runoff[:, np.newaxis], (1, n_segments))
+                # Keep as single GRU: (time,) -> (time, 1)
+                # Don't tile to multiple segments - mizuRoute will handle the routing
+                tiled_data = lumped_runoff[:, np.newaxis]  # Shape: (time, 1)
                 
                 # Create the routing variable with the expected name
                 mizuForcing[routing_var] = xr.DataArray(
                     tiled_data,
                     dims=('time', 'gru'),
                     attrs={
-                        'long_name': 'Broadcast runoff for distributed routing',
+                        'long_name': 'Lumped runoff for distributed routing',
                         'units': 'm/s'
                     }
                 )
                 
-                self.logger.info(f"Broadcast {source_var} -> {routing_var} to {n_segments} segments")
+                self.logger.info(f"Created single lumped GRU (ID={hru_id}) with {routing_var} data")
                 
                 # Close the original dataset to release the file
                 summa_output.close()
