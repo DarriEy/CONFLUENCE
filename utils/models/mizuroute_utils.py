@@ -394,6 +394,9 @@ class MizuRouteRunner:
                 ds['time'] = ds.time.dt.round('H')
                 
                 # Fix time encoding to remove timezone info
+                ds.time.attrs['units'] = 'hours since 1981-01-01 00:00:00'
+                ds.time.attrs['calendar'] = 'standard'
+                ds.time.attrs['long_name'] = 'time'
                 ds.time.encoding['units'] = 'hours since 1981-01-01 00:00:00'
                 ds.time.encoding['calendar'] = 'standard'
                 if 'dtype' in ds.time.encoding:
