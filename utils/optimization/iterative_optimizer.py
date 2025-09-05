@@ -1719,42 +1719,29 @@ class BaseOptimizer(ABC):
             f.writelines(updated_lines)
     
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """
-        Normalize mizuRoute control file for fixed-field parser:
-        - Ensure trailing slash and comment on <ancil_dir>, <input_dir>, <output_dir>
-        - Ensure every key line has a trailing comment (at least ' !')
-        - Keep clean LF endings
-        """
+        """Minimally update <input_dir> and <output_dir> lines; preserve formatting/comments."""
         text = control_path.read_text(encoding="utf-8", errors="replace")
 
-        def set_dir_line(key_token: str, path: Path, comment: str) -> str:
-            # POSIX path + trailing slash required by this build
-            val = str(path).replace("\\", "/").rstrip("/") + "/"
-            # Replace entire line: <key><spaces><value>/<spaces>! comment
-            # We ignore whatever was on the line after the key, and standardize it.
-            pattern = rf"^({re.escape(key_token)})\s+.*$"
-            replacement = rf"\1             {val}    ! {comment}"
-            return re.sub(pattern, replacement, text, flags=re.MULTILINE)
+        def _set_dir_line(s: str, token: str, new_path: Path) -> str:
+            # Match: <token> <spaces> <value> <tail (spaces/comment/etc)>
+            pattern = rf"^({re.escape(token)}\s*)(\S+)(.*)$"
 
-        # Update the three directory lines with canonical comments
-        text = set_dir_line("<ancil_dir>",  self.mizuroute_settings_dir, "Folder that contains ancillary data (river network, remapping netCDF)")
-        text = set_dir_line("<input_dir>",  self.summa_sim_dir,          "Folder that contains runoff data from SUMMA")
-        text = set_dir_line("<output_dir>", self.mizuroute_sim_dir,      "Folder that will contain mizuRoute simulations")
+            # Normalize new path to POSIX and ensure one trailing slash
+            val = str(new_path).replace("\\", "/").rstrip("/") + "/"
 
-        # Ensure EVERY other key line ends with a comment field.
-        # If a line has no '!' after the value, append a minimal one.
-        def ensure_comment_field(s: str) -> str:
-            def add_comment(m):
-                line = m.group(0)
-                # if already has '!' after the value, leave it
-                return line if "!" in line.split("\n", 1)[0] else (line.rstrip() + "    !\n")
-            # Match lines that look like "<token>  value..." (start with '<', contain '>')
-            return re.sub(r"^<[^>]+>.*(?:\n|$)", add_comment, s, flags=re.MULTILINE)
-        text = ensure_comment_field(text)
+            def repl(m: re.Match) -> str:
+                head, _old_val, tail = m.groups()
+                # If no trailing comment field, add a minimal one
+                if "!" not in tail:
+                    tail = (tail.rstrip() + "    !")
+                return f"{head}{val}{tail}"
 
-        # Finalize
-        if not text.endswith("\n"):
-            text += "\n"
+            return re.sub(pattern, repl, s, flags=re.MULTILINE)
+
+        # Only touch these two; everything else stays exactly as in the original file
+        text = _set_dir_line(text, "<input_dir>", self.summa_sim_dir)
+        text = _set_dir_line(text, "<output_dir>", self.mizuroute_sim_dir)
+
         control_path.write_text(text, encoding="ascii", newline="\n")
 
     
