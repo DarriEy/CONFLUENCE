@@ -432,7 +432,7 @@ class MizuRoutePreProcessor:
 
     def _write_control_file_remapping(self, cf):
         cf.write("!\n! --- DEFINE RUNOFF MAPPING FILE \n")
-        remap_flag = self.config.get('SETTINGS_MIZU_NEEDS_REMAP', '').lower() == 'yes'
+        remap_flag = self.config.get('SETTINGS_MIZU_NEEDS_REMAP', '') == 'yes'
         cf.write(f"<is_remap>              {'T' if remap_flag else 'F'}    ! Logical to indicate runoff needs to be remapped to RN_HRU. T or F \n")
         
         if remap_flag:
