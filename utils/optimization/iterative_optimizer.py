@@ -7384,7 +7384,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         }
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Convert lumped SUMMA output for distributed routing (worker version)"""
+    """Convert lumped SUMMA output for distributed routing (enhanced version)"""
     try:
         import xarray as xr
         import numpy as np
@@ -7413,68 +7413,76 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
         
         # Load and convert SUMMA output
         with xr.open_dataset(summa_file, decode_times=False) as summa_ds:
-            # Find routing variable
+            # Enhanced variable selection with diagnostics
             routing_var = task_data['config'].get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+            available_vars = list(summa_ds.variables.keys())
+            logger.info(f"Available variables: {available_vars}")
+            
             if routing_var not in summa_ds:
                 routing_var = 'basin__TotalRunoff'
+                logger.info(f"Using fallback variable: {routing_var}")
             
             if routing_var not in summa_ds:
-                logger.error(f"No routing variable found in SUMMA output: {list(summa_ds.variables.keys())}")
+                logger.error(f"No suitable routing variable found")
                 return False
             
-            logger.info(f"Using routing variable: {routing_var}")
+            var_data = summa_ds[routing_var]
+            logger.info(f"Selected {routing_var}: shape={var_data.shape}")
+            logger.info(f"Data range: {var_data.values.min():.6e} to {var_data.values.max():.6e}")
+            logger.info(f"Data mean: {var_data.values.mean():.6e}")
             
             # Create mizuRoute forcing dataset
             mizuForcing = xr.Dataset()
-            
-            # Copy time coordinate
             mizuForcing['time'] = summa_ds['time']
-            
-            # Create GRU dimension and variables
             mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
             mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
-            
-            # Create HRU dimension and variables (equal to GRU)
             mizuForcing['hru'] = xr.DataArray(seg_ids, dims=('hru',))
             mizuForcing['hruId'] = xr.DataArray(seg_ids, dims=('hru',))
             
-            # Get and broadcast runoff data
-            runoff_data = summa_ds[routing_var].values
+            # Enhanced runoff data extraction
+            runoff_data = var_data.values
             if len(runoff_data.shape) == 2:
-                runoff_data = runoff_data[:, 0] if runoff_data.shape[1] > 0 else runoff_data.flatten()
+                # Use mean across spatial dimension for better representation
+                if runoff_data.shape[1] > 1:
+                    runoff_data = runoff_data.mean(axis=1)
+                    logger.info(f"Used mean across {var_data.shape[1]} spatial elements")
+                else:
+                    runoff_data = runoff_data[:, 0]
+                    logger.info("Used single spatial element")
+            else:
+                runoff_data = runoff_data.flatten()
             
-            # Broadcast to all segments for both GRU and HRU dimensions
+            logger.info(f"Final runoff data range: {runoff_data.min():.6e} to {runoff_data.max():.6e}")
+            
+            # Check for extremely low values that might indicate issues
+            if runoff_data.max() < 1e-10:
+                logger.warning(f"Very low runoff values detected - this may indicate parameter issues")
+            
+            # Broadcast to all segments
             tiled_data = np.tile(runoff_data[:, np.newaxis], (1, n_segments))
             
-            # Create runoff variable with GRU dimension (for mizuRoute)
+            # Create runoff variables
             mizuForcing['averageRoutedRunoff'] = xr.DataArray(
                 tiled_data, dims=('time', 'gru'),
                 attrs={'long_name': 'Broadcast runoff for distributed routing', 'units': 'm/s'}
             )
             
-            # Also create runoff variable with HRU dimension if needed
-            # This ensures compatibility with different routing configurations
             mizuForcing['basin__TotalRunoff'] = xr.DataArray(
                 tiled_data, dims=('time', 'hru'),
                 attrs={'long_name': 'Broadcast runoff for distributed routing (HRU dimension)', 'units': 'm/s'}
             )
             
-            # Copy global attributes
             mizuForcing.attrs.update(summa_ds.attrs)
         
-        # Save converted file (overwrite original)
+        # Save converted file
         mizuForcing.to_netcdf(summa_file, format='NETCDF4')
         mizuForcing.close()
         
-        logger.info(f"Successfully converted lumped output to {n_segments} segments with both GRU and HRU dimensions")
-        debug_info['conversion_segments'] = n_segments
-        debug_info['has_hru_dimension'] = True
+        logger.info(f"Conversion completed: {n_segments} segments")
         return True
         
     except Exception as e:
-        error_msg = f"Error in lumped-to-distributed conversion: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
+        logger.error(f"Conversion failed: {str(e)}")
         return False
 
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
