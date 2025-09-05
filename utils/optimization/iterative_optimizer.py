@@ -1482,7 +1482,6 @@ class BaseOptimizer(ABC):
     
     def _set_random_seeds(self, seed: int) -> None:
         """Set all random seeds for reproducibility"""
-        import random
         random.seed(seed)
         np.random.seed(seed)
     
@@ -1720,31 +1719,30 @@ class BaseOptimizer(ABC):
             f.writelines(updated_lines)
     
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """Update mizuRoute control file preserving original formatting"""
-        with open(control_path, 'r') as f:
+        """Update mizuRoute control file cleanly (no trailing slash, strip comments)."""
+        with open(control_path, "r") as f:
             content = f.read()
-        
-        # Use regex to replace just the path part, preserving spacing
-        import re
-        
-        # Replace input_dir path
-        input_path = str(self.summa_sim_dir).replace('\\', '/')
-        content = re.sub(
-            r'(<input_dir>\s+)([^\s\n]+)',
-            rf'\g<1>{input_path}/',
-            content
-        )
-        
-        # Replace output_dir path  
-        output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
-        content = re.sub(
-            r'(<output_dir>\s+)([^\s\n]+)',
-            rf'\g<1>{output_path}/',
-            content
-        )
-        
-        with open(control_path, 'w') as f:
+
+        def _replace_path(pattern, new_path, text):
+            # normalize: remove trailing slash
+            new_path = str(new_path).replace("\\", "/").rstrip("/")
+            # substitute: key + spaces + value (ignore rest of line)
+            return re.sub(
+                pattern,
+                rf"\1{new_path}",
+                text,
+                flags=re.MULTILINE,
+            )
+
+        # Replace input_dir
+        content = _replace_path(r"(<input_dir>\s+)(\S+).*", self.summa_sim_dir, content)
+
+        # Replace output_dir
+        content = _replace_path(r"(<output_dir>\s+)(\S+).*", self.mizuroute_sim_dir, content)
+
+        with open(control_path, "w", encoding="ascii", newline="\n") as f:
             f.write(content)
+
     
     def _create_calibration_target(self) -> CalibrationTarget:
         """Factory method to create appropriate calibration target"""
@@ -4997,7 +4995,6 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
 import time
-import random
 
 
 class AsyncDDSOptimizer(BaseOptimizer):
@@ -7759,7 +7756,6 @@ def _update_mizuroute_params_worker(params: Dict, task_data: Dict, logger, debug
 def _generate_trial_params_worker(params: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
     """Enhanced trial parameters generation with better error handling and file locking"""
     import time
-    import random
     import os
     
     try:
