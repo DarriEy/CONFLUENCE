@@ -2480,9 +2480,9 @@ class BaseOptimizer(ABC):
             self.logger.error(f"MPI spawn execution failed: {str(e)}")
             return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
 
-    def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
-        """MPI worker script with extensive debugging"""
-        script_content = f'''#!/usr/bin/env python3
+def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
+    """MPI worker script with extensive debugging"""
+    script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
 import os
@@ -2490,8 +2490,15 @@ from pathlib import Path
 from mpi4py import MPI
 import logging
 
-# Setup logging for MPI debugging
-logging.basicConfig(level=logging.INFO, format='[MPI-%(process)d] %(levelname)s: %(message)s')
+# Setup logging for MPI debugging - CAPTURE ALL DEBUG MESSAGES
+logging.basicConfig(
+    level=logging.DEBUG,  # Changed to DEBUG
+    format='[MPI-%(process)d] %(levelname)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # Ensure output goes to stdout
+        logging.FileHandler(f'/tmp/mpi_worker_debug_{{os.getpid()}}.log')  # Also log to file
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Add CONFLUENCE path
