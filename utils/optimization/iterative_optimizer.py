@@ -1843,8 +1843,8 @@ class BaseOptimizer(ABC):
             
             with open(file_manager, 'w') as f:
                 f.writelines(updated_lines)
-        
-        # Update mizuRoute control file
+            
+    # Update mizuRoute control file
         control_file = mizu_settings_dir / 'mizuroute.control'
         if control_file.exists():
             with open(control_file, 'r') as f:
@@ -1854,10 +1854,22 @@ class BaseOptimizer(ABC):
             for line in lines:
                 if '<input_dir>' in line:
                     input_path = str(summa_dir).replace('\\', '/')
-                    updated_lines.append(f"<input_dir>             {input_path}/\n")
+                    if '!' in line:
+                        # Preserve existing comment
+                        comment = '!' + '!'.join(line.split('!')[1:])
+                        updated_lines.append(f"<input_dir>             {input_path}/    {comment}")
+                    else:
+                        # Add missing comment
+                        updated_lines.append(f"<input_dir>             {input_path}/    ! Folder that contains runoff data from SUMMA\n")
                 elif '<output_dir>' in line:
                     output_path = str(mizuroute_dir).replace('\\', '/')
-                    updated_lines.append(f"<output_dir>            {output_path}/\n")
+                    if '!' in line:
+                        # Preserve existing comment
+                        comment = '!' + '!'.join(line.split('!')[1:])
+                        updated_lines.append(f"<output_dir>            {output_path}/    {comment}")
+                    else:
+                        # Add missing comment
+                        updated_lines.append(f"<output_dir>            {output_path}/    ! Folder that will contain mizuRoute simulations\n")
                 elif '<case_name>' in line:
                     updated_lines.append(f"<case_name>             proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}\n")
                 elif '<fname_qsim>' in line:
