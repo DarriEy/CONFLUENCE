@@ -7308,250 +7308,376 @@ def _get_catchment_area_worker(config: Dict, logger) -> float:
     
 
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
-    """Calculate metrics inline without using CalibrationTarget classes"""
+    """Calculate metrics inline without using CalibrationTarget classes - Enhanced with debugging"""
     try:
         import xarray as xr
         import pandas as pd
         import numpy as np
         
-        logger.debug(f"🎯 Starting inline metrics calculation")
+        logger.info("DEBUG: Starting inline metrics calculation")
+        logger.info(f"DEBUG: SUMMA dir: {summa_dir}")
+        logger.info(f"DEBUG: mizuRoute dir: {mizuroute_dir}")
+        logger.info(f"DEBUG: SUMMA dir exists: {summa_dir.exists()}")
+        logger.info(f"DEBUG: mizuRoute dir exists: {mizuroute_dir.exists() if mizuroute_dir else 'None'}")
         
         # Get the ACTUAL catchment area
-        catchment_area = _get_catchment_area_worker(config, logger)
+        try:
+            catchment_area = _get_catchment_area_worker(config, logger)
+            logger.info(f"DEBUG: Catchment area: {catchment_area:.0f} m²")
+        except Exception as e:
+            logger.error(f"DEBUG: Error getting catchment area: {str(e)}")
+            catchment_area = 1e6  # Default fallback
+            logger.info(f"DEBUG: Using fallback catchment area: {catchment_area:.0f} m²")
         
         # Find simulation files
-        if mizuroute_dir and mizuroute_dir.exists() and list(mizuroute_dir.glob("*.nc")):
-            sim_files = list(mizuroute_dir.glob("*.nc"))
-            use_mizuroute = True
-            logger.debug(f"🎯 Using mizuRoute files: {len(sim_files)} files")
-        else:
-            sim_files = list(summa_dir.glob("*timestep.nc"))
-            use_mizuroute = False
-            logger.debug(f"🎯 Using SUMMA files: {len(sim_files)} files")
+        logger.info("DEBUG: Looking for simulation files...")
         
-        if not sim_files:
-            logger.error("🎯 No simulation files found")
+        if mizuroute_dir and mizuroute_dir.exists():
+            mizu_files = list(mizuroute_dir.glob("*.nc"))
+            logger.info(f"DEBUG: Found {len(mizu_files)} mizuRoute .nc files")
+            for f in mizu_files[:3]:  # Show first 3
+                logger.info(f"DEBUG: mizuRoute file: {f.name}")
+        else:
+            mizu_files = []
+            logger.info("DEBUG: No mizuRoute directory or no files found")
+        
+        summa_files = list(summa_dir.glob("*timestep.nc"))
+        logger.info(f"DEBUG: Found {len(summa_files)} SUMMA timestep files")
+        for f in summa_files[:3]:  # Show first 3
+            logger.info(f"DEBUG: SUMMA file: {f.name}")
+        
+        # Decide which files to use
+        if mizu_files:
+            sim_files = mizu_files
+            use_mizuroute = True
+            logger.info("DEBUG: Using mizuRoute files")
+        elif summa_files:
+            sim_files = summa_files
+            use_mizuroute = False
+            logger.info("DEBUG: Using SUMMA files")
+        else:
+            logger.error("DEBUG: No simulation files found")
+            logger.error(f"DEBUG: SUMMA dir contents: {list(summa_dir.glob('*')) if summa_dir.exists() else 'DIR_NOT_EXISTS'}")
+            if mizuroute_dir and mizuroute_dir.exists():
+                logger.error(f"DEBUG: mizuRoute dir contents: {list(mizuroute_dir.glob('*'))}")
             return None
         
         sim_file = sim_files[0]
-        logger.debug(f"🎯 Using simulation file: {sim_file}")
+        logger.info(f"DEBUG: Using simulation file: {sim_file}")
         
         # Extract simulated streamflow
-        with xr.open_dataset(sim_file) as ds:
-            logger.debug(f"🎯 Dataset variables: {list(ds.variables.keys())}")
-            
-            if use_mizuroute:
-                # mizuRoute output - already in m³/s
-                reach_id = int(config.get('SIM_REACH_ID', 1))
-                logger.debug(f"🎯 Looking for reach ID: {reach_id}")
+        logger.info("DEBUG: Extracting simulated streamflow...")
+        
+        try:
+            with xr.open_dataset(sim_file) as ds:
+                logger.info(f"DEBUG: Dataset variables: {list(ds.variables.keys())}")
+                logger.info(f"DEBUG: Dataset dimensions: {dict(ds.sizes)}")
                 
-                if 'reachID' not in ds.variables:
-                    logger.error("🎯 reachID not found in mizuRoute output")
-                    return None
-                
-                reach_indices = np.where(ds['reachID'].values == reach_id)[0]
-                if len(reach_indices) == 0:
-                    logger.error(f"🎯 Reach ID {reach_id} not found in dataset")
-                    return None
-                
-                reach_index = reach_indices[0]
-                
-                # Find routing variable
-                routing_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
-                sim_data = None
-                
-                for var_name in routing_vars:
-                    if var_name in ds.variables:
-                        logger.debug(f"🎯 Found routing variable: {var_name}")
-                        var = ds[var_name]
-                        
-                        if 'seg' in var.dims:
-                            sim_data = var.isel(seg=reach_index).to_pandas()
-                        elif 'reachID' in var.dims:
-                            sim_data = var.isel(reachID=reach_index).to_pandas()
-                        else:
-                            logger.warning(f"🎯 Unexpected dimensions for {var_name}: {var.dims}")
-                            continue
-                        
-                        logger.debug(f"🎯 Extracted {var_name} with {len(sim_data)} timesteps (mizuRoute - no scaling)")
-                        break
-                
-                if sim_data is None:
-                    logger.error(f"🎯 No routing variable found")
-                    return None
+                if use_mizuroute:
+                    # mizuRoute output - already in m³/s
+                    reach_id = int(config.get('SIM_REACH_ID', 1))
+                    logger.info(f"DEBUG: Looking for reach ID: {reach_id}")
                     
-            else:
-                # SUMMA output - convert from m/s to m³/s using ACTUAL area
-                summa_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']
-                sim_data = None
-                
-                for var_name in summa_vars:
-                    if var_name in ds.variables:
-                        logger.debug(f"🎯 Found SUMMA variable: {var_name}")
-                        var = ds[var_name]
+                    if 'reachID' not in ds.variables:
+                        logger.error("DEBUG: reachID not found in mizuRoute output")
+                        logger.error(f"DEBUG: Available variables: {list(ds.variables.keys())}")
+                        return None
+                    
+                    reach_ids = ds['reachID'].values
+                    logger.info(f"DEBUG: Available reach IDs: {reach_ids[:10]}...")  # Show first 10
+                    
+                    reach_indices = np.where(reach_ids == reach_id)[0]
+                    if len(reach_indices) == 0:
+                        logger.error(f"DEBUG: Reach ID {reach_id} not found in dataset")
+                        logger.error(f"DEBUG: Available reach IDs range: {reach_ids.min()} to {reach_ids.max()}")
+                        return None
+                    
+                    reach_index = reach_indices[0]
+                    logger.info(f"DEBUG: Using reach index: {reach_index}")
+                    
+                    # Find routing variable
+                    routing_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
+                    sim_data = None
+                    
+                    for var_name in routing_vars:
+                        if var_name in ds.variables:
+                            logger.info(f"DEBUG: Found routing variable: {var_name}")
+                            var = ds[var_name]
+                            logger.info(f"DEBUG: Variable dimensions: {var.dims}")
+                            logger.info(f"DEBUG: Variable shape: {var.shape}")
+                            
+                            try:
+                                if 'seg' in var.dims:
+                                    sim_data = var.isel(seg=reach_index).to_pandas()
+                                elif 'reachID' in var.dims:
+                                    sim_data = var.isel(reachID=reach_index).to_pandas()
+                                else:
+                                    logger.warning(f"DEBUG: Unexpected dimensions for {var_name}: {var.dims}")
+                                    continue
+                                
+                                logger.info(f"DEBUG: Extracted {var_name} with {len(sim_data)} timesteps (mizuRoute - no scaling)")
+                                logger.info(f"DEBUG: Sim data range: {sim_data.min():.3f} to {sim_data.max():.3f}")
+                                break
+                            except Exception as e:
+                                logger.error(f"DEBUG: Error extracting {var_name}: {str(e)}")
+                                continue
+                    
+                    if sim_data is None:
+                        logger.error(f"DEBUG: No routing variable found or extracted successfully")
+                        return None
                         
-                        if len(var.shape) > 1:
-                            if 'hru' in var.dims:
-                                sim_data = var.isel(hru=0).to_pandas()
-                            elif 'gru' in var.dims:
-                                sim_data = var.isel(gru=0).to_pandas()
-                            else:
-                                # Take first spatial index
-                                non_time_dims = [dim for dim in var.dims if dim != 'time']
-                                if non_time_dims:
-                                    sim_data = var.isel({non_time_dims[0]: 0}).to_pandas()
+                else:
+                    # SUMMA output - convert from m/s to m³/s using ACTUAL area
+                    summa_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']
+                    sim_data = None
+                    
+                    for var_name in summa_vars:
+                        if var_name in ds.variables:
+                            logger.info(f"DEBUG: Found SUMMA variable: {var_name}")
+                            var = ds[var_name]
+                            logger.info(f"DEBUG: Variable dimensions: {var.dims}")
+                            logger.info(f"DEBUG: Variable shape: {var.shape}")
+                            
+                            try:
+                                if len(var.shape) > 1:
+                                    if 'hru' in var.dims:
+                                        sim_data = var.isel(hru=0).to_pandas()
+                                    elif 'gru' in var.dims:
+                                        sim_data = var.isel(gru=0).to_pandas()
+                                    else:
+                                        # Take first spatial index
+                                        non_time_dims = [dim for dim in var.dims if dim != 'time']
+                                        if non_time_dims:
+                                            sim_data = var.isel({non_time_dims[0]: 0}).to_pandas()
+                                        else:
+                                            sim_data = var.to_pandas()
                                 else:
                                     sim_data = var.to_pandas()
-                        else:
-                            sim_data = var.to_pandas()
-                        
-                        # Convert units for SUMMA (m/s to m³/s) using ACTUAL catchment area
-                        logger.info(f"🎯 Converting SUMMA units: {var_name} * {catchment_area:.0f} m²")
-                        sim_data = sim_data * catchment_area
-                        
-                        logger.debug(f"🎯 Extracted {var_name} with {len(sim_data)} timesteps, applied area scaling")
-                        break
-                
-                if sim_data is None:
-                    logger.error(f"🎯 No SUMMA variable found")
-                    return None
+                                
+                                # Convert units for SUMMA (m/s to m³/s) using ACTUAL catchment area
+                                logger.info(f"DEBUG: Converting SUMMA units: {var_name} * {catchment_area:.0f} m²")
+                                logger.info(f"DEBUG: Pre-scaling range: {sim_data.min():.6f} to {sim_data.max():.6f}")
+                                sim_data = sim_data * catchment_area
+                                logger.info(f"DEBUG: Post-scaling range: {sim_data.min():.3f} to {sim_data.max():.3f}")
+                                
+                                logger.info(f"DEBUG: Extracted {var_name} with {len(sim_data)} timesteps, applied area scaling")
+                                break
+                            except Exception as e:
+                                logger.error(f"DEBUG: Error extracting {var_name}: {str(e)}")
+                                continue
+                    
+                    if sim_data is None:
+                        logger.error(f"DEBUG: No SUMMA variable found or extracted successfully")
+                        return None
+        
+        except Exception as e:
+            logger.error(f"DEBUG: Error reading simulation file {sim_file}: {str(e)}")
+            return None
         
         # Load observed data
-        domain_name = config.get('DOMAIN_NAME')
-        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
-        obs_path = project_dir / "observations" / "streamflow" / "preprocessed" / f"{domain_name}_streamflow_processed.csv"
+        logger.info("DEBUG: Loading observed data...")
         
-        logger.debug(f"🎯 Looking for observed data: {obs_path}")
-        
-        if not obs_path.exists():
-            logger.error(f"🎯 Observed data not found: {obs_path}")
+        try:
+            domain_name = config.get('DOMAIN_NAME')
+            project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+            obs_path = project_dir / "observations" / "streamflow" / "preprocessed" / f"{domain_name}_streamflow_processed.csv"
+            
+            logger.info(f"DEBUG: Domain name: {domain_name}")
+            logger.info(f"DEBUG: Project dir: {project_dir}")
+            logger.info(f"DEBUG: Observed data path: {obs_path}")
+            logger.info(f"DEBUG: Project dir exists: {project_dir.exists()}")
+            logger.info(f"DEBUG: Observed data exists: {obs_path.exists()}")
+            
+            if not obs_path.exists():
+                logger.error(f"DEBUG: Observed data not found: {obs_path}")
+                if project_dir.exists():
+                    logger.error(f"DEBUG: Project dir contents: {list(project_dir.glob('*'))}")
+                    obs_dir = project_dir / "observations"
+                    if obs_dir.exists():
+                        logger.error(f"DEBUG: Observations dir contents: {list(obs_dir.glob('*'))}")
+                        streamflow_dir = obs_dir / "streamflow"
+                        if streamflow_dir.exists():
+                            logger.error(f"DEBUG: Streamflow dir contents: {list(streamflow_dir.glob('*'))}")
+                            preproc_dir = streamflow_dir / "preprocessed"
+                            if preproc_dir.exists():
+                                logger.error(f"DEBUG: Preprocessed dir contents: {list(preproc_dir.glob('*'))}")
+                return None
+            
+            obs_df = pd.read_csv(obs_path)
+            logger.info(f"DEBUG: Loaded observed data with {len(obs_df)} rows and columns: {list(obs_df.columns)}")
+            
+            # Find date and flow columns
+            date_col = None
+            for col in obs_df.columns:
+                if any(term in col.lower() for term in ['date', 'time', 'datetime']):
+                    date_col = col
+                    break
+            
+            flow_col = None
+            for col in obs_df.columns:
+                if any(term in col.lower() for term in ['flow', 'discharge', 'q_', 'streamflow']):
+                    flow_col = col
+                    break
+            
+            logger.info(f"DEBUG: Date column: {date_col}")
+            logger.info(f"DEBUG: Flow column: {flow_col}")
+            
+            if not date_col or not flow_col:
+                logger.error(f"DEBUG: Could not identify date/flow columns. Date: {date_col}, Flow: {flow_col}")
+                return None
+            
+            obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
+            obs_df.set_index('DateTime', inplace=True)
+            obs_data = obs_df[flow_col]
+            
+            logger.info(f"DEBUG: Observed data period: {obs_data.index.min()} to {obs_data.index.max()}")
+            logger.info(f"DEBUG: Observed data range: {obs_data.min():.3f} to {obs_data.max():.3f}")
+            
+        except Exception as e:
+            logger.error(f"DEBUG: Error loading observed data: {str(e)}")
+            import traceback
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
             return None
         
-        obs_df = pd.read_csv(obs_path)
-        logger.debug(f"🎯 Loaded observed data with columns: {list(obs_df.columns)}")
-        
-        # Find date and flow columns
-        date_col = None
-        for col in obs_df.columns:
-            if any(term in col.lower() for term in ['date', 'time', 'datetime']):
-                date_col = col
-                break
-        
-        flow_col = None
-        for col in obs_df.columns:
-            if any(term in col.lower() for term in ['flow', 'discharge', 'q_', 'streamflow']):
-                flow_col = col
-                break
-        
-        if not date_col or not flow_col:
-            logger.error(f"🎯 Could not identify date/flow columns. Date: {date_col}, Flow: {flow_col}")
-            return None
-        
-        logger.debug(f"🎯 Using date column: {date_col}, flow column: {flow_col}")
-        
-        obs_df['DateTime'] = pd.to_datetime(obs_df[date_col])
-        obs_df.set_index('DateTime', inplace=True)
-        obs_data = obs_df[flow_col]
-        
-        logger.debug(f"🎯 Observed data period: {obs_data.index.min()} to {obs_data.index.max()}")
-        logger.debug(f"🎯 Simulated data period: {sim_data.index.min()} to {sim_data.index.max()}")
+        logger.info(f"DEBUG: Simulated data period: {sim_data.index.min()} to {sim_data.index.max()}")
+        logger.info(f"DEBUG: Simulated data range: {sim_data.min():.3f} to {sim_data.max():.3f}")
         
         # Filter to calibration period
+        logger.info("DEBUG: Filtering to calibration period...")
+        
         cal_period = config.get('CALIBRATION_PERIOD', '')
         if cal_period:
-            dates = [d.strip() for d in cal_period.split(',')]
-            if len(dates) >= 2:
-                start_date = pd.Timestamp(dates[0])
-                end_date = pd.Timestamp(dates[1])
-                
-                logger.debug(f"🎯 Filtering to calibration period: {start_date} to {end_date}")
-                
-                obs_mask = (obs_data.index >= start_date) & (obs_data.index <= end_date)
-                obs_period = obs_data[obs_mask]
-                
-                sim_data.index = sim_data.index.round('h')
-                sim_mask = (sim_data.index >= start_date) & (sim_data.index <= end_date)
-                sim_period = sim_data[sim_mask]
-                
-                logger.debug(f"🎯 Filtered obs points: {len(obs_period)}")
-                logger.debug(f"🎯 Filtered sim points: {len(sim_period)}")
-            else:
-                logger.warning("🎯 Invalid calibration period format, using full data")
+            try:
+                dates = [d.strip() for d in cal_period.split(',')]
+                if len(dates) >= 2:
+                    start_date = pd.Timestamp(dates[0])
+                    end_date = pd.Timestamp(dates[1])
+                    
+                    logger.info(f"DEBUG: Filtering to calibration period: {start_date} to {end_date}")
+                    
+                    obs_mask = (obs_data.index >= start_date) & (obs_data.index <= end_date)
+                    obs_period = obs_data[obs_mask]
+                    
+                    sim_data.index = sim_data.index.round('h')
+                    sim_mask = (sim_data.index >= start_date) & (sim_data.index <= end_date)
+                    sim_period = sim_data[sim_mask]
+                    
+                    logger.info(f"DEBUG: Filtered obs points: {len(obs_period)}")
+                    logger.info(f"DEBUG: Filtered sim points: {len(sim_period)}")
+                else:
+                    logger.warning("DEBUG: Invalid calibration period format, using full data")
+                    obs_period = obs_data
+                    sim_period = sim_data
+                    sim_period.index = sim_period.index.round('h')
+            except Exception as e:
+                logger.error(f"DEBUG: Error parsing calibration period: {str(e)}")
                 obs_period = obs_data
                 sim_period = sim_data
                 sim_period.index = sim_period.index.round('h')
         else:
-            logger.debug("🎯 No calibration period specified, using full data")
+            logger.info("DEBUG: No calibration period specified, using full data")
             obs_period = obs_data
             sim_period = sim_data
             sim_period.index = sim_period.index.round('h')
         
         # Align time series
+        logger.info("DEBUG: Aligning time series...")
+        
         common_idx = obs_period.index.intersection(sim_period.index)
-        logger.debug(f"🎯 Common time indices: {len(common_idx)}")
+        logger.info(f"DEBUG: Common time indices: {len(common_idx)}")
         
         if len(common_idx) == 0:
-            logger.error("🎯 No common time indices between observed and simulated data")
-            logger.error(f"🎯 Obs range: {obs_period.index.min()} to {obs_period.index.max()}")
-            logger.error(f"🎯 Sim range: {sim_period.index.min()} to {sim_period.index.max()}")
+            logger.error("DEBUG: No common time indices between observed and simulated data")
+            logger.error(f"DEBUG: Obs range: {obs_period.index.min()} to {obs_period.index.max()}")
+            logger.error(f"DEBUG: Sim range: {sim_period.index.min()} to {sim_period.index.max()}")
+            logger.error(f"DEBUG: Obs sample indices: {obs_period.index[:5].tolist()}")
+            logger.error(f"DEBUG: Sim sample indices: {sim_period.index[:5].tolist()}")
             return None
         
         obs_common = pd.to_numeric(obs_period.loc[common_idx], errors='coerce')
         sim_common = pd.to_numeric(sim_period.loc[common_idx], errors='coerce')
         
         # Remove invalid data
+        logger.info("DEBUG: Cleaning data...")
+        
+        logger.info(f"DEBUG: Before cleaning - obs: {len(obs_common)}, sim: {len(sim_common)}")
+        logger.info(f"DEBUG: Obs NaN count: {obs_common.isna().sum()}")
+        logger.info(f"DEBUG: Sim NaN count: {sim_common.isna().sum()}")
+        logger.info(f"DEBUG: Obs <= 0 count: {(obs_common <= 0).sum()}")
+        logger.info(f"DEBUG: Sim <= 0 count: {(sim_common <= 0).sum()}")
+        
         valid = ~(obs_common.isna() | sim_common.isna() | (obs_common <= 0) | (sim_common <= 0))
         obs_valid = obs_common[valid]
         sim_valid = sim_common[valid]
         
-        logger.debug(f"🎯 Valid data points after cleaning: {len(obs_valid)}")
-        logger.debug(f"🎯 Obs range: {obs_valid.min():.3f} to {obs_valid.max():.3f}")
-        logger.debug(f"🎯 Sim range: {sim_valid.min():.3f} to {sim_valid.max():.3f}")
+        logger.info(f"DEBUG: Valid data points after cleaning: {len(obs_valid)}")
         
         if len(obs_valid) < 10:
-            logger.error(f"🎯 Insufficient valid data points: {len(obs_valid)}")
+            logger.error(f"DEBUG: Insufficient valid data points: {len(obs_valid)}")
             return None
         
-        # Calculate NSE
-        mean_obs = obs_valid.mean()
-        nse_num = ((obs_valid - sim_valid) ** 2).sum()
-        nse_den = ((obs_valid - mean_obs) ** 2).sum()
-        nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
+        logger.info(f"DEBUG: Final obs range: {obs_valid.min():.3f} to {obs_valid.max():.3f}")
+        logger.info(f"DEBUG: Final sim range: {sim_valid.min():.3f} to {sim_valid.max():.3f}")
         
-        # Calculate KGE
-        r = obs_valid.corr(sim_valid)
-        alpha = sim_valid.std() / obs_valid.std() if obs_valid.std() != 0 else np.nan
-        beta = sim_valid.mean() / mean_obs if mean_obs != 0 else np.nan
-        kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+        # Calculate metrics
+        logger.info("DEBUG: Calculating metrics...")
         
-        # Calculate additional metrics
-        rmse = np.sqrt(((obs_valid - sim_valid) ** 2).mean())
-        mae = (obs_valid - sim_valid).abs().mean()
-        pbias = 100 * (sim_valid.sum() - obs_valid.sum()) / obs_valid.sum() if obs_valid.sum() != 0 else np.nan
+        try:
+            # Calculate NSE
+            mean_obs = obs_valid.mean()
+            nse_num = ((obs_valid - sim_valid) ** 2).sum()
+            nse_den = ((obs_valid - mean_obs) ** 2).sum()
+            nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
+            
+            # Calculate KGE
+            r = obs_valid.corr(sim_valid)
+            alpha = sim_valid.std() / obs_valid.std() if obs_valid.std() != 0 else np.nan
+            beta = sim_valid.mean() / mean_obs if mean_obs != 0 else np.nan
+            kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)
+            
+            # Calculate additional metrics
+            rmse = np.sqrt(((obs_valid - sim_valid) ** 2).mean())
+            mae = (obs_valid - sim_valid).abs().mean()
+            pbias = 100 * (sim_valid.sum() - obs_valid.sum()) / obs_valid.sum() if obs_valid.sum() != 0 else np.nan
+            
+            logger.info(f"DEBUG: Calculated metrics - NSE: {nse:.6f}, KGE: {kge:.6f}, RMSE: {rmse:.6f}")
+            logger.info(f"DEBUG: Additional metrics - r: {r:.6f}, alpha: {alpha:.6f}, beta: {beta:.6f}")
+            
+            result = {
+                'Calib_NSE': nse,
+                'Calib_KGE': kge,
+                'Calib_RMSE': rmse,
+                'Calib_MAE': mae,
+                'Calib_PBIAS': pbias,
+                'Calib_r': r,
+                'Calib_alpha': alpha,
+                'Calib_beta': beta,
+                'NSE': nse,
+                'KGE': kge,
+                'RMSE': rmse,
+                'MAE': mae,
+                'PBIAS': pbias
+            }
+            
+            logger.info("DEBUG: Metrics calculation completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"DEBUG: Error in metrics calculation: {str(e)}")
+            import traceback
+            logger.error(f"DEBUG: Metrics traceback: {traceback.format_exc()}")
+            return None
         
-        logger.info(f"🎯 Calculated metrics - NSE: {nse:.6f}, KGE: {kge:.6f}, RMSE: {rmse:.6f}")
-        logger.info(f"🎯 Additional metrics - r: {r:.6f}, alpha: {alpha:.6f}, beta: {beta:.6f}")
-        
-        return {
-            'Calib_NSE': nse,
-            'Calib_KGE': kge,
-            'Calib_RMSE': rmse,
-            'Calib_MAE': mae,
-            'Calib_PBIAS': pbias,
-            'Calib_r': r,
-            'Calib_alpha': alpha,
-            'Calib_beta': beta,
-            'NSE': nse,
-            'KGE': kge,
-            'RMSE': rmse,
-            'MAE': mae,
-            'PBIAS': pbias
-        }
-        
+    except ImportError as e:
+        logger.error(f"DEBUG: Import error: {str(e)}")
+        return None
+    except FileNotFoundError as e:
+        logger.error(f"DEBUG: File not found error: {str(e)}")
+        return None
     except Exception as e:
-        logger.error(f"🎯 Error in inline metrics calculation: {str(e)}")
+        logger.error(f"DEBUG: Error in inline metrics calculation: {str(e)}")
         import traceback
-        logger.error(f"🎯 Traceback: {traceback.format_exc()}")
+        logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
         return None
 
 def _apply_parameters_worker(params: Dict, task_data: Dict, settings_dir: Path, logger, debug_info: Dict) -> bool:
