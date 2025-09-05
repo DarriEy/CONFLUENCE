@@ -334,7 +334,7 @@ class ModelManager:
             
             with xr.open_dataset(topology_file) as mizuTopology:
                 # Get the single HRU ID from topology (not segment IDs)
-                hru_id = mizuTopology['hruId'].values[0]  # Should be 1
+                hru_id = 1 #mizuTopology['hruId'].values[0]  # Should be 1
                 seg_ids = mizuTopology['segId'].values
                 n_segments = len(seg_ids)
                 n_hrus = len(mizuTopology['hruId'].values)

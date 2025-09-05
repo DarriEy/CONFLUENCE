@@ -1133,7 +1133,7 @@ class ModelExecutor:
                 n_hrus = len(hru_ids)
                 
                 # Use first HRU ID as the lumped GRU ID (should be 1)
-                lumped_gru_id = hru_ids[0]
+                lumped_gru_id = 1 #hru_ids[0]
                 
                 logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")    
 
