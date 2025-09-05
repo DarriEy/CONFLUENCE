@@ -7528,112 +7528,7 @@ def fix_summa_time_precision(input_file, output_file=None):
             
     except Exception as e:
         print(f"Error fixing time precision: {e}")
-        raise
-
-
-def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_info: Dict) -> bool:
-    """Updated mizuRoute worker with fixed time precision handling"""
-    try:
-        # Verify SUMMA output exists first
-        summa_dir = Path(task_data['summa_dir'])
-        expected_files = list(summa_dir.glob("*timestep.nc"))
-        
-        if not expected_files:
-            error_msg = f"No SUMMA timestep files found for mizuRoute input: {summa_dir}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-
-        # Fix SUMMA time precision with better error handling
-        try:
-            logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
-            fix_summa_time_precision(expected_files[0])
-            logger.info("SUMMA time precision fixed successfully")
-        except Exception as e:
-            error_msg = f"Failed to fix SUMMA time precision: {str(e)}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
- 
-        logger.info(f"Found {len(expected_files)} SUMMA output files for mizuRoute")
-        config = task_data['config']
-        
-        # Get mizuRoute executable
-        mizu_path = config.get('INSTALL_PATH_MIZUROUTE', 'default')
-        if mizu_path == 'default':
-            mizu_path = Path(config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
-        else:
-            mizu_path = Path(mizu_path)
-        
-        mizu_exe = mizu_path / config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
-        control_file = Path(task_data['mizuroute_settings_dir']) / 'mizuroute.control'
-        
-        # Verify files exist
-        if not mizu_exe.exists():
-            error_msg = f"mizuRoute executable not found: {mizu_exe}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-            
-        if not control_file.exists():
-            error_msg = f"mizuRoute control file not found: {control_file}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        debug_info['files_checked'].extend([
-            f"mizuRoute exe: {mizu_exe}",
-            f"mizuRoute control: {control_file}"
-        ])
-        
-        # Create log directory
-        log_dir = mizuroute_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"mizuroute_worker_{os.getpid()}.log"
-        
-        # Build command
-        cmd = f"{mizu_exe} {control_file}"
-        
-        logger.info(f"Executing mizuRoute command: {cmd}")
-        debug_info['commands_run'].append(f"mizuRoute: {cmd}")
-        debug_info['mizuroute_log'] = str(log_file)
-        
-        # Run mizuRoute
-        with open(log_file, 'w') as f:
-            f.write(f"mizuRoute Execution Log\n")
-            f.write(f"Command: {cmd}\n")
-            f.write(f"Working Directory: {control_file.parent}\n")
-            f.write("=" * 50 + "\n")
-            f.flush()
-            
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                check=True,
-                #timeout=1800,  # 30 minute timeout
-                cwd=str(control_file.parent)
-            )
-        
-        # Check for output files
-        nc_files = list(mizuroute_dir.glob("*.nc"))
-        if not nc_files:
-            error_msg = f"No mizuRoute output files found in {mizuroute_dir}"
-            logger.error(error_msg)
-            debug_info['errors'].append(error_msg)
-            return False
-        
-        logger.info(f"mizuRoute execution completed successfully. Output files: {len(nc_files)}")
-        debug_info['mizuroute_output_files'] = [str(f) for f in nc_files[:3]]
-        
-        return True
-        
-    except Exception as e:
-        error_msg = f"mizuRoute execution failed: {str(e)}"
-        logger.error(error_msg)
-        debug_info['errors'].append(error_msg)
-        return False
+        raise 
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
@@ -8817,7 +8712,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
         logger.error(error_msg)
         debug_info['errors'].append(error_msg)
         return False
-
+        
 def _needs_mizuroute_routing_worker(config: Dict) -> bool:
     """Check if mizuRoute routing is needed"""
     domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
