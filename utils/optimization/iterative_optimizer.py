@@ -7143,7 +7143,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
             routing_delineation = config.get('ROUTING_DELINEATION', 'river_network')
             
-            if domain_method == 'lumped' and routing_delineation == 'river_network':
+            if config.get('ROUTING_DELINEATION', 'river_network') == 'river_network':
                 logger.info("Converting lumped SUMMA output to distributed format")
                 if not _convert_lumped_to_distributed_worker(task_data, summa_dir, logger, debug_info):
                     error_msg = 'Lumped-to-distributed conversion failed'
