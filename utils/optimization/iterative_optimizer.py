@@ -1719,44 +1719,39 @@ class BaseOptimizer(ABC):
             f.writelines(updated_lines)
         
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """Update mizuRoute control file with simple string replacement."""
+        """Update mizuRoute control file and ensure comments are present."""
         
         def _normalize_path(path):
             return str(path).replace("\\", "/").rstrip("/")
         
         with open(control_path, "r") as f:
-            content = f.read()
+            lines = f.readlines()
         
-        # Read line by line and only modify the specific lines we need
-        lines = content.splitlines()
         for i, line in enumerate(lines):
-            # For input_dir lines
             if line.strip().startswith('<input_dir>'):
-                # Split on whitespace, replace the path (second element), keep the rest
-                parts = line.split()
-                if len(parts) >= 2:
-                    # Find where the path starts and ends
-                    key = parts[0]  # <input_dir>
-                    old_path = parts[1]  # the current path
-                    # Everything after the path
-                    rest = line[line.find(old_path) + len(old_path):]
-                    # Reconstruct with new path
-                    new_path = _normalize_path(self.summa_sim_dir)
-                    lines[i] = f"{key}             {new_path}{rest}"
+                new_path = _normalize_path(self.summa_sim_dir)
+                if '!' in line:
+                    # Preserve existing comment
+                    pre_comment = line.split('!')[0].strip()
+                    comment = '!' + '!'.join(line.split('!')[1:])
+                    lines[i] = f"<input_dir>             {new_path}    {comment}"
+                else:
+                    # Add missing comment
+                    lines[i] = f"<input_dir>             {new_path}    ! Folder that contains runoff data from SUMMA\n"
             
-            # For output_dir lines  
             elif line.strip().startswith('<output_dir>'):
-                parts = line.split()
-                if len(parts) >= 2:
-                    key = parts[0]  # <output_dir>
-                    old_path = parts[1]  # the current path
-                    rest = line[line.find(old_path) + len(old_path):]
-                    new_path = _normalize_path(self.mizuroute_sim_dir)
-                    lines[i] = f"{key}            {new_path}{rest}"
+                new_path = _normalize_path(self.mizuroute_sim_dir)
+                if '!' in line:
+                    # Preserve existing comment
+                    pre_comment = line.split('!')[0].strip()
+                    comment = '!' + '!'.join(line.split('!')[1:])
+                    lines[i] = f"<output_dir>            {new_path}    {comment}"
+                else:
+                    # Add missing comment
+                    lines[i] = f"<output_dir>            {new_path}    ! Folder that will contain mizuRoute simulations\n"
         
-        # Write back
         with open(control_path, "w", encoding="ascii", newline="\n") as f:
-            f.write("\n".join(lines) + "\n")
+            f.writelines(lines)
     
     def _create_calibration_target(self) -> CalibrationTarget:
         """Factory method to create appropriate calibration target"""
