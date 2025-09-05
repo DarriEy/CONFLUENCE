@@ -1123,6 +1123,20 @@ class ModelExecutor:
     def _convert_lumped_to_distributed(self, summa_dir: Path, mizuroute_settings_dir: Path) -> bool:
         """Convert lumped SUMMA output for distributed routing"""
         try:
+            # Load topology to get HRU information
+            mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
+            topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+            
+            with xr.open_dataset(topology_file) as topo_ds:
+                # Handle multiple HRUs from delineated catchments
+                hru_ids = topo_ds['hruId'].values
+                n_hrus = len(hru_ids)
+                
+                # Use first HRU ID as the lumped GRU ID (should be 1)
+                lumped_gru_id = hru_ids[0]
+                
+                logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")    
+
             # Find SUMMA timestep file
             timestep_files = list(summa_dir.glob("*timestep.nc"))
             if not timestep_files:
@@ -7425,11 +7439,22 @@ def fix_summa_time_precision(input_file, output_file=None):
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Convert lumped SUMMA output for distributed routing (corrected version)"""
+    """Convert lumped SUMMA output for distributed routing - updated for area-weighted approach"""
     try:
-        import xarray as xr
-        import numpy as np
+        # Load topology to get HRU information
+        mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
+        topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
         
+        with xr.open_dataset(topology_file) as topo_ds:
+            # Handle multiple HRUs from delineated catchments
+            hru_ids = topo_ds['hruId'].values
+            n_hrus = len(hru_ids)
+            
+            # Use first HRU ID as the lumped GRU ID (should be 1)
+            lumped_gru_id = hru_ids[0]
+            
+            logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")
+
         # Find SUMMA timestep file
         timestep_files = list(summa_dir.glob("*timestep.nc"))
         if not timestep_files:
