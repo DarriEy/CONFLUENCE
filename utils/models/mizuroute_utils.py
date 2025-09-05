@@ -170,9 +170,57 @@ class MizuRoutePreProcessor:
                 self.logger.warning(f"Using first segment as fallback: {fallback_seg}")
                 return fallback_seg
 
+    def create_equal_weight_remap_file(self):
+        """Create remapping file with equal weights for all segments"""
+        self.logger.info("Creating equal-weight remapping file")
+        
+        # Load topology to get segment information
+        topology_file = self.mizuroute_setup_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY')
+        with xr.open_dataset(topology_file) as topo:
+            seg_ids = topo['segId'].values
+            hru_id = topo['hruId'].values[0]  # Should be 1
+        
+        n_segments = len(seg_ids)
+        equal_weight = 1.0 / n_segments
+        
+        remap_name = self.config.get('SETTINGS_MIZU_REMAP')
+        
+        with nc4.Dataset(self.mizuroute_setup_dir / remap_name, 'w', format='NETCDF4') as ncid:
+            # Set attributes
+            ncid.setncattr('Author', "Created by SUMMA workflow scripts")
+            ncid.setncattr('Purpose', 'Equal-weight remapping for lumped to distributed routing')
+            
+            # Create dimensions
+            ncid.createDimension('hru', 1)  # Single lumped HRU
+            ncid.createDimension('data', n_segments)  # One entry per segment
+            
+            # Create variables
+            # RN_hruId: The routing HRU (always 1 for lumped)
+            rn_hru = ncid.createVariable('RN_hruId', 'i4', ('hru',))
+            rn_hru[:] = hru_id
+            rn_hru.long_name = 'River network HRU ID'
+            
+            # nOverlaps: Number of overlapping HM_HRUs (11 segments for the single HRU)
+            noverlaps = ncid.createVariable('nOverlaps', 'i4', ('hru',))
+            noverlaps[:] = n_segments
+            noverlaps.long_name = 'Number of overlapping HM_HRUs for each RN_HRU'
+            
+            # HM_hruId: The SUMMA GRU ID (1) repeated for each segment
+            hm_hru = ncid.createVariable('HM_hruId', 'i4', ('data',))
+            hm_hru[:] = [1] * n_segments  # Single SUMMA GRU ID repeated
+            hm_hru.long_name = 'ID of overlapping HM_HRUs'
+            
+            # weight: Equal weights for all segments
+            weights = ncid.createVariable('weight', 'f8', ('data',))
+            weights[:] = [equal_weight] * n_segments
+            weights.long_name = 'Equal areal weights for all segments'
+        
+        self.logger.info(f"Equal-weight remapping file created with {n_segments} segments, weight = {equal_weight:.4f}")
     
 
     def remap_summa_catchments_to_routing(self):
+        self.create_equal_weight_remap_file()
+        return
         self.logger.info("Remapping SUMMA catchments to routing catchments")
 
         hm_catchment_path = Path(self.config.get('CATCHMENT_PATH'))
