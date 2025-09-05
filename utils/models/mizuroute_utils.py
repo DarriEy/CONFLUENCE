@@ -70,6 +70,14 @@ class MizuRoutePreProcessor:
         shp_river = gpd.read_file(river_network_path / river_network_name)
         shp_basin = gpd.read_file(river_basin_path / river_basin_name)
         
+        # NEW: Find the closest river segment to the pour point
+        closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+        
+        # Update the basin shapefile to use the closest segment
+        if len(shp_basin) == 1:  # For lumped case
+            shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
+            self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
+        
         num_seg = len(shp_river)
         num_hru = len(shp_basin)
         
@@ -92,6 +100,75 @@ class MizuRoutePreProcessor:
             self._create_topology_variables(ncid, shp_river, shp_basin)
         
         self.logger.info(f"Network topology file created at {self.mizuroute_setup_dir / topology_name}")
+
+    def _find_closest_segment_to_pour_point(self, shp_river):
+        """
+        Find the river segment closest to the pour point.
+        
+        Args:
+            shp_river: GeoDataFrame of river network
+            
+        Returns:
+            int: Segment ID of closest segment to pour point
+        """
+        from pathlib import Path
+        import numpy as np
+        
+        # Find pour point shapefile
+        pour_point_dir = self.project_dir / 'shapefiles' / 'pour_point'
+        pour_point_files = list(pour_point_dir.glob('*.shp'))
+        
+        if not pour_point_files:
+            self.logger.error(f"No pour point shapefiles found in {pour_point_dir}")
+            # Fallback: use outlet segment (downSegId == 0)
+            outlet_mask = shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')] == 0
+            if outlet_mask.any():
+                outlet_seg = shp_river.loc[outlet_mask, self.config.get('RIVER_NETWORK_SHP_SEGID')].iloc[0]
+                self.logger.warning(f"Using outlet segment as fallback: {outlet_seg}")
+                return outlet_seg
+            else:
+                # Last resort: use first segment
+                fallback_seg = shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].iloc[0]
+                self.logger.warning(f"Using first segment as fallback: {fallback_seg}")
+                return fallback_seg
+        
+        # Load first pour point file
+        pour_point_file = pour_point_files[0]
+        self.logger.info(f"Loading pour point from {pour_point_file}")
+        
+        try:
+            shp_pour_point = gpd.read_file(pour_point_file)
+            
+            # Ensure both are in the same CRS
+            if shp_river.crs != shp_pour_point.crs:
+                shp_pour_point = shp_pour_point.to_crs(shp_river.crs)
+            
+            # Get pour point coordinates (assume first/only point)
+            pour_point_geom = shp_pour_point.geometry.iloc[0]
+            
+            # Calculate distances from pour point to all river segments
+            distances = shp_river.geometry.distance(pour_point_geom)
+            
+            # Find closest segment
+            closest_idx = distances.idxmin()
+            closest_segment_id = shp_river.loc[closest_idx, self.config.get('RIVER_NETWORK_SHP_SEGID')]
+            
+            self.logger.info(f"Closest segment to pour point: {closest_segment_id} (distance: {distances.iloc[closest_idx]:.1f} units)")
+            
+            return closest_segment_id
+            
+        except Exception as e:
+            self.logger.error(f"Error finding closest segment: {str(e)}")
+            # Fallback to outlet segment
+            outlet_mask = shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')] == 0
+            if outlet_mask.any():
+                outlet_seg = shp_river.loc[outlet_mask, self.config.get('RIVER_NETWORK_SHP_SEGID')].iloc[0]
+                self.logger.warning(f"Using outlet segment as fallback: {outlet_seg}")
+                return outlet_seg
+            else:
+                fallback_seg = shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].iloc[0]
+                self.logger.warning(f"Using first segment as fallback: {fallback_seg}")
+                return fallback_seg
 
     def remap_summa_catchments_to_routing(self):
         self.logger.info("Remapping SUMMA catchments to routing catchments")
@@ -353,7 +430,7 @@ class MizuRouteRunner:
         self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
-        
+
     def fix_summa_time_precision(self):
         """
         Fix SUMMA output time precision by rounding to nearest hour.
