@@ -6767,8 +6767,7 @@ class SCEUAOptimizer(BaseOptimizer):
 
 def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
     worker_seed = task_data.get('random_seed')
-    if worker_seed is not None:
-        import random
+    if worker_seed is not None: 
         random.seed(worker_seed)
         np.random.seed(worker_seed)
 
