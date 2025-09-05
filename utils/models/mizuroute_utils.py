@@ -354,6 +354,56 @@ class MizuRouteRunner:
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 
+    def fix_summa_time_precision(self):
+        """
+        Fix SUMMA output time precision by rounding to nearest hour.
+        This fixes compatibility issues with mizuRoute time matching.
+        """
+        self.logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
+        
+        # Get SUMMA output path
+        experiment_output_summa = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
+        if experiment_output_summa == 'default':
+            experiment_output_summa = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
+        else:
+            experiment_output_summa = Path(experiment_output_summa)
+        
+        # Get the specific runoff file
+        runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
+        runoff_filepath = experiment_output_summa / runoff_filename
+        
+        if not runoff_filepath.exists():
+            self.logger.error(f"SUMMA output file not found: {runoff_filepath}")
+            return
+        
+        try:
+            import xarray as xr
+            
+            self.logger.info(f"Processing {runoff_filepath}")
+            ds = xr.open_dataset(runoff_filepath)
+            
+            # Check if time fixing is needed
+            first_time = ds.time.values[0]
+            rounded_time = pd.Timestamp(first_time).round('H')
+            
+            if pd.Timestamp(first_time) != rounded_time:
+                self.logger.info("Time precision issue detected, rounding to nearest hour")
+                
+                # Round time to nearest hour
+                ds['time'] = ds.time.dt.round('H')
+                
+                # Save back to the same file
+                ds.to_netcdf(runoff_filepath)
+                self.logger.info("SUMMA time precision fixed")
+            else:
+                self.logger.info("SUMMA time precision is already correct")
+                
+            ds.close()
+            
+        except Exception as e:
+            self.logger.error(f"Error fixing SUMMA time precision: {e}")
+            raise
+
     def run_mizuroute(self):
         """
         Run the mizuRoute model.
@@ -362,7 +412,7 @@ class MizuRouteRunner:
         and handles any errors that occur during the run.
         """
         self.logger.info("Starting mizuRoute run")
-
+        self.fix_summa_time_precision()
         # Set up paths and filenames
         mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
         

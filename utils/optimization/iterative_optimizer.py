@@ -7383,6 +7383,28 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             'runtime': eval_runtime
         }
 
+def fix_summa_time_precision(input_file, output_file=None):
+    """
+    Round SUMMA time dimension to nearest hour to fix mizuRoute compatibility
+    """
+    print(f"Opening {input_file}")
+    ds = xr.open_dataset(input_file)
+    
+    print(f"Original time range: {ds.time.min().values} to {ds.time.max().values}")
+    
+    # Round time to nearest hour
+    ds['time'] = ds.time.dt.round('H')
+    
+    print(f"Rounded time range: {ds.time.min().values} to {ds.time.max().values}")
+    
+    # Save to output file (or overwrite if not specified)
+    output_path = output_file if output_file else input_file
+    print(f"Saving to {output_path}")
+    
+    ds.to_netcdf(output_path)
+    ds.close()
+    print("Done!")
+
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
     """Convert lumped SUMMA output for distributed routing (enhanced version)"""
     try:
@@ -7417,10 +7439,6 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             routing_var = task_data['config'].get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
             available_vars = list(summa_ds.variables.keys())
             logger.info(f"Available variables: {available_vars}")
-            
-            if routing_var not in summa_ds:
-                routing_var = 'basin__TotalRunoff'
-                logger.info(f"Using fallback variable: {routing_var}")
             
             if routing_var not in summa_ds:
                 logger.error(f"No suitable routing variable found")
@@ -7465,11 +7483,6 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             mizuForcing['averageRoutedRunoff'] = xr.DataArray(
                 tiled_data, dims=('time', 'gru'),
                 attrs={'long_name': 'Broadcast runoff for distributed routing', 'units': 'm/s'}
-            )
-            
-            mizuForcing['basin__TotalRunoff'] = xr.DataArray(
-                tiled_data, dims=('time', 'hru'),
-                attrs={'long_name': 'Broadcast runoff for distributed routing (HRU dimension)', 'units': 'm/s'}
             )
             
             mizuForcing.attrs.update(summa_ds.attrs)
@@ -8423,7 +8436,10 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
             logger.error(error_msg)
             debug_info['errors'].append(error_msg)
             return False
-        
+ 
+        fix_summa_time_precision(expected_files[0])
+ 
+ 
         logger.info(f"Found {len(expected_files)} SUMMA output files for mizuRoute")
         config = task_data['config']
         
