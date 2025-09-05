@@ -353,7 +353,7 @@ class MizuRouteRunner:
         self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
-
+        
     def fix_summa_time_precision(self):
         """
         Fix SUMMA output time precision by rounding to nearest hour.
@@ -385,7 +385,7 @@ class MizuRouteRunner:
             ds = xr.open_dataset(runoff_filepath, decode_times=False)
             
             # Check if time fixing is needed
-            first_time = pd.Timestamp(ds.time.values[0], unit='s', origin='1990-01-01')
+            first_time = pd.to_datetime(ds.time.values[0], unit='s', origin='1990-01-01')
             rounded_time = first_time.round('H')
             
             if first_time != rounded_time:
