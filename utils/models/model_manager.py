@@ -193,6 +193,7 @@ class ModelManager:
                 raise
 
         # Archive basin-averaged forcing data
+        '''
         self.logger.info("Archiving basin-averaged forcing data to save storage space")
         try:
             basin_data_dir = self.project_dir / 'forcing' / 'basin_averaged_data'
@@ -209,7 +210,8 @@ class ModelManager:
                     self.logger.warning("Failed to archive basin-averaged forcing data")
         except Exception as e:
             self.logger.warning(f"Error during basin-averaged data archiving: {str(e)}")
-
+        '''
+        
         self.logger.info("Model-specific preprocessing completed")
 
     def run_models(self):
