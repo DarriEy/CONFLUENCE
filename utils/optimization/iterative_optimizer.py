@@ -7430,21 +7430,33 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             # Copy time coordinate
             mizuForcing['time'] = summa_ds['time']
             
-            # Create GRU dimension
+            # Create GRU dimension and variables
             mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
             mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
+            
+            # Create HRU dimension and variables (equal to GRU)
+            mizuForcing['hru'] = xr.DataArray(seg_ids, dims=('hru',))
+            mizuForcing['hruId'] = xr.DataArray(seg_ids, dims=('hru',))
             
             # Get and broadcast runoff data
             runoff_data = summa_ds[routing_var].values
             if len(runoff_data.shape) == 2:
                 runoff_data = runoff_data[:, 0] if runoff_data.shape[1] > 0 else runoff_data.flatten()
             
-            # Broadcast to all segments
+            # Broadcast to all segments for both GRU and HRU dimensions
             tiled_data = np.tile(runoff_data[:, np.newaxis], (1, n_segments))
             
+            # Create runoff variable with GRU dimension (for mizuRoute)
             mizuForcing['averageRoutedRunoff'] = xr.DataArray(
                 tiled_data, dims=('time', 'gru'),
                 attrs={'long_name': 'Broadcast runoff for distributed routing', 'units': 'm/s'}
+            )
+            
+            # Also create runoff variable with HRU dimension if needed
+            # This ensures compatibility with different routing configurations
+            mizuForcing['basin__TotalRunoff'] = xr.DataArray(
+                tiled_data, dims=('time', 'hru'),
+                attrs={'long_name': 'Broadcast runoff for distributed routing (HRU dimension)', 'units': 'm/s'}
             )
             
             # Copy global attributes
@@ -7454,8 +7466,9 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
         mizuForcing.to_netcdf(summa_file, format='NETCDF4')
         mizuForcing.close()
         
-        logger.info(f"Successfully converted lumped output to {n_segments} segments")
+        logger.info(f"Successfully converted lumped output to {n_segments} segments with both GRU and HRU dimensions")
         debug_info['conversion_segments'] = n_segments
+        debug_info['has_hru_dimension'] = True
         return True
         
     except Exception as e:
