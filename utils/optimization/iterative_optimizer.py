@@ -7383,6 +7383,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             'runtime': eval_runtime
         }
 
+
 def fix_summa_time_precision(input_file, output_file=None):
     """
     Round SUMMA time dimension to nearest hour to fix mizuRoute compatibility
@@ -7394,6 +7395,12 @@ def fix_summa_time_precision(input_file, output_file=None):
     
     # Round time to nearest hour
     ds['time'] = ds.time.dt.round('H')
+    
+    # Fix time encoding to remove timezone info
+    ds.time.encoding['units'] = 'hours since 1981-01-01 00:00:00'
+    ds.time.encoding['calendar'] = 'standard'
+    if 'dtype' in ds.time.encoding:
+        del ds.time.encoding['dtype']
     
     print(f"Rounded time range: {ds.time.min().values} to {ds.time.max().values}")
     
@@ -7411,6 +7418,7 @@ def fix_summa_time_precision(input_file, output_file=None):
     
     ds.to_netcdf(output_path)
     print("Done!")
+
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
     """Convert lumped SUMMA output for distributed routing (enhanced version)"""
