@@ -381,40 +381,40 @@ class MizuRouteRunner:
             import os
             
             self.logger.info(f"Processing {runoff_filepath}")
-            ds = xr.open_dataset(runoff_filepath)
+            # Open without decoding times to avoid conflicts
+            ds = xr.open_dataset(runoff_filepath, decode_times=False)
             
             # Check if time fixing is needed
-            first_time = ds.time.values[0]
-            rounded_time = pd.Timestamp(first_time).round('H')
+            first_time = pd.Timestamp(ds.time.values[0], unit='s', origin='1990-01-01')
+            rounded_time = first_time.round('H')
             
-            if pd.Timestamp(first_time) != rounded_time:
+            if first_time != rounded_time:
                 self.logger.info("Time precision issue detected, rounding to nearest hour")
                 
-                # Round time to nearest hour
-                ds['time'] = ds.time.dt.round('H')
+                # Convert to pandas timestamps, round, then back to seconds
+                time_stamps = pd.to_datetime(ds.time.values, unit='s', origin='1990-01-01')
+                rounded_stamps = time_stamps.round('H')
                 
-                # Remove existing time attributes that might conflict
-                attrs_to_remove = ['units', 'calendar', 'long_name']
-                for attr in attrs_to_remove:
-                    if attr in ds.time.attrs:
-                        del ds.time.attrs[attr]
+                # Convert back to seconds since reference
+                reference = pd.Timestamp('1990-01-01')
+                rounded_seconds = (rounded_stamps - reference).total_seconds().values
                 
-                # Fix time encoding to remove timezone info
-                ds.time.attrs['units'] = 'hours since 1981-01-01 00:00:00'
+                # Create new time coordinate
+                ds = ds.assign_coords(time=rounded_seconds)
+                
+                # Set simple attributes without conflicts
+                ds.time.attrs.clear()  # Clear all existing attributes
+                ds.time.attrs['units'] = 'seconds since 1990-01-01 00:00:00'
                 ds.time.attrs['calendar'] = 'standard'
                 ds.time.attrs['long_name'] = 'time'
-                ds.time.encoding['units'] = 'hours since 1981-01-01 00:00:00'
-                ds.time.encoding['calendar'] = 'standard'
-                if 'dtype' in ds.time.encoding:
-                    del ds.time.encoding['dtype']
                 
-                # Load data into memory and close file
+                # Load and save
                 ds.load()
                 ds.close()
                 
-                # Make file writable and overwrite original
+                # Make file writable and overwrite
                 os.chmod(runoff_filepath, 0o664)
-                ds.to_netcdf(runoff_filepath)
+                ds.to_netcdf(runoff_filepath, format='NETCDF4')
                 self.logger.info("SUMMA time precision fixed")
             else:
                 self.logger.info("SUMMA time precision is already correct")
