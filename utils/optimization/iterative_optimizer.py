@@ -7446,8 +7446,8 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             # Create mizuRoute forcing dataset
             mizuForcing = xr.Dataset()
             mizuForcing['time'] = summa_ds['time']
-            mizuForcing['hru'] = xr.DataArray(seg_ids, dims=('hru',))
-            mizuForcing['hruId'] = xr.DataArray(seg_ids, dims=('hru',))
+            mizuForcing['hru'] = xr.DataArray(seg_ids, dims=('gru',))
+            mizuForcing['hruId'] = xr.DataArray(seg_ids, dims=('gru',))
             mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
             mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
             
