@@ -2388,7 +2388,7 @@ class BaseOptimizer(ABC):
             ]
 
     def _execute_batch_mpi(self, batch_tasks: List[Dict], max_workers: int) -> List[Dict]:
-        """Spawn MPI processes internally for parallel execution"""
+        """Spawn MPI processes internally for parallel execution with visible worker logs"""
         try:
             # Determine number of processes to use
             num_processes = min(max_workers, self.num_processes, len(batch_tasks))
@@ -2404,6 +2404,7 @@ class BaseOptimizer(ABC):
             tasks_file = work_dir / f'mpi_tasks_{unique_id}.pkl'
             results_file = work_dir / f'mpi_results_{unique_id}.pkl'
             worker_script = work_dir / f'mpi_worker_{unique_id}.py'
+            worker_log = work_dir / f'mpi_worker_{unique_id}.log'  # Add log file
             
             try:
                 self.logger.info(f"Using working directory: {work_dir}")
@@ -2424,7 +2425,7 @@ class BaseOptimizer(ABC):
                     
                 self.logger.info(f"Created MPI files: {tasks_file.name}, {worker_script.name}")
                 
-                # Run MPI command
+                # Run MPI command with log capture
                 mpi_cmd = [
                     'mpirun', '-n', str(num_processes),
                     sys.executable, str(worker_script),
@@ -2433,29 +2434,55 @@ class BaseOptimizer(ABC):
                 
                 self.logger.debug(f"Running MPI command: {' '.join(mpi_cmd)}")
                 
-                # Execute MPI process
+                # Execute MPI process with log capture
                 start_time = time.time()
-                result = subprocess.run(
-                    mpi_cmd,
-                    capture_output=True,
-                    text=True,
-                    #timeout=7200,  # 2 hour timeout
-                    env=os.environ.copy()
-                )
+                
+                with open(worker_log, 'w') as log_f:
+                    result = subprocess.run(
+                        mpi_cmd,
+                        stdout=log_f,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        #timeout=7200,  # 2 hour timeout
+                        env=os.environ.copy()
+                    )
                 
                 elapsed = time.time() - start_time
                 
                 if result.returncode != 0:
-                    self.logger.error(f"MPI execution failed: {result.stderr}")
+                    self.logger.error(f"MPI execution failed with return code {result.returncode}")
+                    # Show last 20 lines of worker log for debugging
+                    if worker_log.exists():
+                        with open(worker_log, 'r') as f:
+                            lines = f.readlines()
+                            self.logger.error("Last 20 lines of MPI worker log:")
+                            for line in lines[-20:]:
+                                self.logger.error(f"MPI_LOG: {line.rstrip()}")
                     raise RuntimeError(f"MPI process failed with return code {result.returncode}")
                 
                 # Load results
                 if results_file.exists():
                     with open(results_file, 'rb') as f:
                         results = pickle.load(f)
+                    
+                    # Check for errors and log worker debug info
                     errors = [r.get('error') for r in results if r.get('score') is None]
                     if errors:
                         self.logger.error(f"MPI worker errors (showing up to 3): {errors[:3]}")
+                        
+                        # If we have NaN scores, show some worker debug output
+                        nan_scores = [r for r in results if r.get('score') is not None and np.isnan(r.get('score'))]
+                        if nan_scores:
+                            self.logger.error(f"Found {len(nan_scores)} results with NaN scores")
+                            self.logger.error("Showing worker log for debugging NaN scores:")
+                            if worker_log.exists():
+                                with open(worker_log, 'r') as f:
+                                    lines = f.readlines()
+                                    # Show lines containing DEBUG metrics info
+                                    debug_lines = [line for line in lines if 'DEBUG:' in line and ('metrics' in line.lower() or 'nse' in line.lower() or 'kge' in line.lower())]
+                                    for line in debug_lines[:10]:  # Show first 10 debug lines
+                                        self.logger.error(f"WORKER_DEBUG: {line.rstrip()}")
+                    
                     successful_count = sum(1 for r in results if r.get('score') is not None)
                     self.logger.info(f"MPI batch completed in {elapsed:.1f}s: {successful_count}/{len(results)} successful")
                     
@@ -2464,13 +2491,26 @@ class BaseOptimizer(ABC):
                     raise RuntimeError("MPI results file not created")
                     
             finally:
-                # Clean up files
+                # Clean up files but keep log for debugging if there were issues
                 for file_path in [tasks_file, results_file, worker_script]:
                     try:
                         if file_path.exists():
                             file_path.unlink()
                     except Exception as e:
                         self.logger.warning(f"Could not remove {file_path}: {e}")
+                
+                # Keep worker log if there were NaN scores for debugging
+                if worker_log.exists():
+                    try:
+                        # Check if we had NaN issues
+                        with open(worker_log, 'r') as f:
+                            log_content = f.read()
+                            if 'nan' in log_content.lower() or 'DEBUG:' in log_content:
+                                self.logger.info(f"Worker log saved for debugging: {worker_log}")
+                            else:
+                                worker_log.unlink()  # Remove if no issues
+                    except:
+                        pass
         
         except subprocess.TimeoutExpired:
             self.logger.error("MPI execution timed out")
@@ -7552,6 +7592,9 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
         
         logger.info(f"DEBUG: Simulated data period: {sim_data.index.min()} to {sim_data.index.max()}")
         logger.info(f"DEBUG: Simulated data range: {sim_data.min():.3f} to {sim_data.max():.3f}")
+        logger.info(f"DEBUG: Simulated data frequency: {sim_data.index.freq}")
+        logger.info(f"DEBUG: Simulated data timezone: {sim_data.index.tz}")
+        logger.info(f"DEBUG: First 5 sim timestamps: {sim_data.index[:5].tolist()}")
         
         # Filter to calibration period
         logger.info("DEBUG: Filtering to calibration period...")
@@ -7569,44 +7612,141 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
                     obs_mask = (obs_data.index >= start_date) & (obs_data.index <= end_date)
                     obs_period = obs_data[obs_mask]
                     
-                    sim_data.index = sim_data.index.round('h')
+                    # ENHANCED: Check simulation time format before rounding
+                    logger.info(f"DEBUG: Sim data before rounding - first 5: {sim_data.index[:5].tolist()}")
+                    logger.info(f"DEBUG: Sim data sample times: {sim_data.index[::100][:5].tolist()}")  # Every 100th
+                    
+                    # More careful time rounding - check if we need it
+                    sim_time_diff = sim_data.index[1] - sim_data.index[0] if len(sim_data) > 1 else pd.Timedelta(hours=1)
+                    logger.info(f"DEBUG: Simulation time step: {sim_time_diff}")
+                    
+                    # Only round if time step is roughly hourly
+                    if pd.Timedelta(minutes=45) <= sim_time_diff <= pd.Timedelta(minutes=75):
+                        sim_data.index = sim_data.index.round('h')
+                        logger.info("DEBUG: Rounded simulation times to nearest hour")
+                    else:
+                        logger.info(f"DEBUG: Not rounding - time step is {sim_time_diff}")
+                    
                     sim_mask = (sim_data.index >= start_date) & (sim_data.index <= end_date)
                     sim_period = sim_data[sim_mask]
                     
                     logger.info(f"DEBUG: Filtered obs points: {len(obs_period)}")
                     logger.info(f"DEBUG: Filtered sim points: {len(sim_period)}")
+                    
+                    # ENHANCED: Check time alignment before intersection
+                    logger.info(f"DEBUG: Obs period: {obs_period.index.min()} to {obs_period.index.max()}")
+                    logger.info(f"DEBUG: Sim period: {sim_period.index.min()} to {sim_period.index.max()}")
+                    logger.info(f"DEBUG: Obs timezone: {obs_period.index.tz}")
+                    logger.info(f"DEBUG: Sim timezone: {sim_period.index.tz}")
+                    
                 else:
                     logger.warning("DEBUG: Invalid calibration period format, using full data")
                     obs_period = obs_data
                     sim_period = sim_data
-                    sim_period.index = sim_period.index.round('h')
+                    
+                    # Same careful rounding for full data
+                    sim_time_diff = sim_data.index[1] - sim_data.index[0] if len(sim_data) > 1 else pd.Timedelta(hours=1)
+                    if pd.Timedelta(minutes=45) <= sim_time_diff <= pd.Timedelta(minutes=75):
+                        sim_period.index = sim_period.index.round('h')
+                        
             except Exception as e:
                 logger.error(f"DEBUG: Error parsing calibration period: {str(e)}")
                 obs_period = obs_data
                 sim_period = sim_data
-                sim_period.index = sim_period.index.round('h')
+                
+                # Same careful rounding for error case
+                sim_time_diff = sim_data.index[1] - sim_data.index[0] if len(sim_data) > 1 else pd.Timedelta(hours=1)
+                if pd.Timedelta(minutes=45) <= sim_time_diff <= pd.Timedelta(minutes=75):
+                    sim_period.index = sim_period.index.round('h')
         else:
             logger.info("DEBUG: No calibration period specified, using full data")
             obs_period = obs_data
             sim_period = sim_data
-            sim_period.index = sim_period.index.round('h')
+            
+            # Same careful rounding
+            sim_time_diff = sim_data.index[1] - sim_data.index[0] if len(sim_data) > 1 else pd.Timedelta(hours=1)
+            if pd.Timedelta(minutes=45) <= sim_time_diff <= pd.Timedelta(minutes=75):
+                sim_period.index = sim_period.index.round('h')
         
-        # Align time series
-        logger.info("DEBUG: Aligning time series...")
+        # ENHANCED: Detailed alignment analysis
+        logger.info("DEBUG: Analyzing time alignment...")
         
+        # Check for timezone mismatches and try to fix
+        if obs_period.index.tz is not None and sim_period.index.tz is None:
+            logger.info("DEBUG: Converting sim times to observed timezone")
+            sim_period.index = sim_period.index.tz_localize(obs_period.index.tz)
+        elif obs_period.index.tz is None and sim_period.index.tz is not None:
+            logger.info("DEBUG: Converting obs times to simulation timezone")
+            obs_period.index = obs_period.index.tz_localize(sim_period.index.tz)
+        elif obs_period.index.tz != sim_period.index.tz:
+            logger.info(f"DEBUG: Converting timezones - obs: {obs_period.index.tz}, sim: {sim_period.index.tz}")
+            sim_period.index = sim_period.index.tz_convert(obs_period.index.tz)
+        
+        # Sample timestamps for alignment checking
+        logger.info(f"DEBUG: Obs sample times: {obs_period.index[::max(1,len(obs_period)//5)][:5].tolist()}")
+        logger.info(f"DEBUG: Sim sample times: {sim_period.index[::max(1,len(sim_period)//5)][:5].tolist()}")
+        
+        # Find intersection
         common_idx = obs_period.index.intersection(sim_period.index)
         logger.info(f"DEBUG: Common time indices: {len(common_idx)}")
         
         if len(common_idx) == 0:
-            logger.error("DEBUG: No common time indices between observed and simulated data")
-            logger.error(f"DEBUG: Obs range: {obs_period.index.min()} to {obs_period.index.max()}")
-            logger.error(f"DEBUG: Sim range: {sim_period.index.min()} to {sim_period.index.max()}")
-            logger.error(f"DEBUG: Obs sample indices: {obs_period.index[:5].tolist()}")
-            logger.error(f"DEBUG: Sim sample indices: {sim_period.index[:5].tolist()}")
-            return None
-        
-        obs_common = pd.to_numeric(obs_period.loc[common_idx], errors='coerce')
-        sim_common = pd.to_numeric(sim_period.loc[common_idx], errors='coerce')
+            logger.error("DEBUG: No common time indices - checking for near matches")
+            
+            # Try to find near matches (within 1 hour)
+            obs_times = obs_period.index
+            sim_times = sim_period.index
+            
+            # Find closest matches
+            if len(obs_times) > 0 and len(sim_times) > 0:
+                time_diffs = []
+                for obs_time in obs_times[:10]:  # Check first 10
+                    closest_sim = sim_times[np.argmin(np.abs(sim_times - obs_time))]
+                    diff = abs(closest_sim - obs_time)
+                    time_diffs.append(diff)
+                    logger.error(f"DEBUG: Obs {obs_time} closest to Sim {closest_sim} (diff: {diff})")
+                
+                min_diff = min(time_diffs) if time_diffs else pd.Timedelta(days=1)
+                logger.error(f"DEBUG: Minimum time difference: {min_diff}")
+                
+                # If differences are small, try approximate matching
+                if min_diff <= pd.Timedelta(hours=1):
+                    logger.info("DEBUG: Attempting approximate time matching (±30 min)")
+                    
+                    # Create aligned series by finding nearest neighbors
+                    aligned_obs = []
+                    aligned_sim = []
+                    aligned_times = []
+                    
+                    for obs_time in obs_times:
+                        # Find closest sim time within 30 minutes
+                        time_diffs = np.abs(sim_times - obs_time)
+                        min_diff_idx = np.argmin(time_diffs)
+                        min_diff = time_diffs[min_diff_idx]
+                        
+                        if min_diff <= pd.Timedelta(minutes=30):
+                            aligned_obs.append(obs_period.loc[obs_time])
+                            aligned_sim.append(sim_period.iloc[min_diff_idx])
+                            aligned_times.append(obs_time)
+                    
+                    if len(aligned_obs) > 0:
+                        obs_common = pd.Series(aligned_obs, index=aligned_times)
+                        sim_common = pd.Series(aligned_sim, index=aligned_times)
+                        logger.info(f"DEBUG: Approximate matching found {len(aligned_obs)} pairs")
+                    else:
+                        logger.error("DEBUG: No approximate matches found")
+                        return None
+                else:
+                    logger.error("DEBUG: Time differences too large for alignment")
+                    return None
+            else:
+                logger.error("DEBUG: Empty time series")
+                return None
+        else:
+            # Normal intersection worked
+            obs_common = pd.to_numeric(obs_period.loc[common_idx], errors='coerce')
+            sim_common = pd.to_numeric(sim_period.loc[common_idx], errors='coerce')
+            logger.info(f"DEBUG: Successfully aligned {len(common_idx)} time points")
         
         # Remove invalid data
         logger.info("DEBUG: Cleaning data...")
