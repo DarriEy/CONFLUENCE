@@ -1720,27 +1720,31 @@ class BaseOptimizer(ABC):
             f.writelines(updated_lines)
     
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """Update mizuRoute control file for optimization"""
+        """Update mizuRoute control file preserving original formatting"""
         with open(control_path, 'r') as f:
-            lines = f.readlines()
+            content = f.read()
         
-        updated_lines = []
-        for line in lines:
-            if '<input_dir>' in line:
-                input_path = str(self.summa_sim_dir).replace('\\', '/')
-                updated_lines.append(f"<input_dir>             {input_path}/\n")
-            elif '<output_dir>' in line:
-                output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
-                updated_lines.append(f"<output_dir>            {output_path}/\n")
-            elif '<case_name>' in line:
-                updated_lines.append(f"<case_name>             run_{self.algorithm_name}_opt_{self.experiment_id}\n")
-            elif '<fname_qsim>' in line:
-                updated_lines.append(f"<fname_qsim>            run_{self.algorithm_name}_opt_{self.experiment_id}_timestep.nc\n")
-            else:
-                updated_lines.append(line)
+        # Use regex to replace just the path part, preserving spacing
+        import re
+        
+        # Replace input_dir path
+        input_path = str(self.summa_sim_dir).replace('\\', '/')
+        content = re.sub(
+            r'(<input_dir>\s+)([^\s\n]+)',
+            rf'\g<1>{input_path}/',
+            content
+        )
+        
+        # Replace output_dir path  
+        output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
+        content = re.sub(
+            r'(<output_dir>\s+)([^\s\n]+)',
+            rf'\g<1>{output_path}/',
+            content
+        )
         
         with open(control_path, 'w') as f:
-            f.writelines(updated_lines)
+            f.write(content)
     
     def _create_calibration_target(self) -> CalibrationTarget:
         """Factory method to create appropriate calibration target"""
@@ -2418,7 +2422,9 @@ class BaseOptimizer(ABC):
                 if results_file.exists():
                     with open(results_file, 'rb') as f:
                         results = pickle.load(f)
-                    
+                    errors = [r.get('error') for r in results if r.get('score') is None]
+                    if errors:
+                        self.logger.error(f"MPI worker errors (showing up to 3): {errors[:3]}")
                     successful_count = sum(1 for r in results if r.get('score') is not None)
                     self.logger.info(f"MPI batch completed in {elapsed:.1f}s: {successful_count}/{len(results)} successful")
                     
@@ -7972,6 +7978,17 @@ def _run_summa_worker(summa_exe: Path, file_manager: Path, summa_dir: Path, logg
 
 def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_info: Dict) -> bool:
     try:
+        # Verify SUMMA output exists first
+        summa_dir = Path(task_data['summa_dir'])
+        expected_files = list(summa_dir.glob("*timestep.nc"))
+        
+        if not expected_files:
+            error_msg = f"No SUMMA timestep files found for mizuRoute input: {summa_dir}"
+            logger.error(error_msg)
+            debug_info['errors'].append(error_msg)
+            return False
+        
+        logger.info(f"Found {len(expected_files)} SUMMA output files for mizuRoute")
         config = task_data['config']
         
         # Get mizuRoute executable
