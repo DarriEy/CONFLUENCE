@@ -7439,22 +7439,14 @@ def fix_summa_time_precision(input_file, output_file=None):
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Convert lumped SUMMA output for distributed routing - updated for area-weighted approach"""
+    """Convert lumped SUMMA output for distributed routing with safe file handling"""
     try:
-        # Load topology to get HRU information
-        mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
-        topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+        import xarray as xr
+        import numpy as np
+        import shutil
+        import tempfile
+        import os
         
-        with xr.open_dataset(topology_file) as topo_ds:
-            # Handle multiple HRUs from delineated catchments
-            hru_ids = topo_ds['hruId'].values
-            n_hrus = len(hru_ids)
-            
-            # Use first HRU ID as the lumped GRU ID (should be 1)
-            lumped_gru_id = hru_ids[0]
-            
-            logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")
-
         # Find SUMMA timestep file
         timestep_files = list(summa_dir.glob("*timestep.nc"))
         if not timestep_files:
@@ -7464,7 +7456,7 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
         summa_file = timestep_files[0]
         logger.info(f"Converting SUMMA file: {summa_file}")
         
-        # Load topology to get HRU information (not segment information)
+        # Load topology to get HRU information
         mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
         topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
         
@@ -7473,19 +7465,42 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             return False
         
         with xr.open_dataset(topology_file) as topo_ds:
-            # Get the single HRU ID from topology (not segment IDs)
-            hru_id = topo_ds['hruId'].values[0]  # Should be 1
+            # Handle multiple HRUs from delineated catchments
+            hru_ids = topo_ds['hruId'].values
+            n_hrus = len(hru_ids)
             seg_ids = topo_ds['segId'].values
             n_segments = len(seg_ids)
-            logger.info(f"Creating single lumped GRU (ID={hru_id}) for {n_segments} segments")
+            
+            # Use first HRU ID as the lumped GRU ID (should be 1)
+            lumped_gru_id = hru_ids[0]
+            
+            logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs and {n_segments} segments")
+        
+        # Create backup of original file before modification
+        backup_file = summa_file.with_suffix('.nc.backup')
+        if not backup_file.exists():
+            try:
+                shutil.copy2(summa_file, backup_file)
+                logger.info(f"Created backup: {backup_file.name}")
+            except Exception as e:
+                logger.warning(f"Could not create backup: {str(e)}")
+        
+        # Ensure the original file is writable
+        try:
+            os.chmod(summa_file, 0o664)  # rw-rw-r--
+        except Exception as e:
+            logger.warning(f"Could not change file permissions: {str(e)}")
         
         # Load and convert SUMMA output
-        with xr.open_dataset(summa_file, decode_times=False) as summa_ds:
+        summa_ds = None
+        try:
+            summa_ds = xr.open_dataset(summa_file, decode_times=False)
+            
             routing_var = task_data['config'].get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
             available_vars = list(summa_ds.variables.keys())
             
             if routing_var not in summa_ds:
-                logger.error(f"No suitable routing variable found")
+                logger.error(f"Routing variable {routing_var} not found in {available_vars}")
                 return False
             
             var_data = summa_ds[routing_var]
@@ -7493,11 +7508,13 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             
             # Create mizuRoute forcing dataset with single lumped GRU
             mizuForcing = xr.Dataset()
-            mizuForcing['time'] = summa_ds['time']
             
-            # Create single GRU using HRU ID from topology (NOT segment IDs)
-            mizuForcing['gru'] = xr.DataArray([hru_id], dims=('gru',))
-            mizuForcing['gruId'] = xr.DataArray([hru_id], dims=('gru',))
+            # Copy time coordinate (preserve original format)
+            mizuForcing['time'] = summa_ds['time'].copy()
+            
+            # Create single GRU using HRU ID from topology
+            mizuForcing['gru'] = xr.DataArray([lumped_gru_id], dims=('gru',))
+            mizuForcing['gruId'] = xr.DataArray([lumped_gru_id], dims=('gru',))
             
             # Extract runoff data
             runoff_data = var_data.values
@@ -7511,7 +7528,6 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
                 runoff_data = runoff_data.flatten()
             
             # Keep as single GRU: (time,) -> (time, 1)
-            # Don't tile to multiple segments - mizuRoute will handle the routing
             single_gru_data = runoff_data[:, np.newaxis]  # Shape: (time, 1)
             
             # Create runoff variable
@@ -7520,19 +7536,59 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
                 attrs={'long_name': 'Lumped runoff for distributed routing', 'units': 'm/s'}
             )
             
+            # Copy global attributes
             mizuForcing.attrs.update(summa_ds.attrs)
+            
+            # Load data into memory and close original dataset
+            mizuForcing.load()
+            summa_ds.close()
+            summa_ds = None  # Clear reference
+            
+        except Exception as e:
+            if summa_ds is not None:
+                summa_ds.close()
+            raise e
         
-        # Save converted file
-        mizuForcing.to_netcdf(summa_file, format='NETCDF4')
-        mizuForcing.close()
-        
-        logger.info(f"Conversion completed: single lumped GRU for {n_segments} segments")
-        return True
+        # Write to temporary file first, then atomically move to final location
+        temp_file = None
+        try:
+            # Create temporary file in the same directory
+            with tempfile.NamedTemporaryFile(
+                delete=False, 
+                suffix='.nc', 
+                dir=summa_dir,
+                prefix='temp_mizu_'
+            ) as tmp:
+                temp_file = Path(tmp.name)
+            
+            # Save to temporary file
+            mizuForcing.to_netcdf(temp_file, format='NETCDF4')
+            mizuForcing.close()
+            
+            # Set appropriate permissions on temp file
+            os.chmod(temp_file, 0o664)
+            
+            # Atomically move temporary file to final location
+            shutil.move(str(temp_file), str(summa_file))
+            temp_file = None  # Successfully moved, don't try to clean up
+            
+            logger.info(f"Successfully converted SUMMA file: single lumped GRU for {n_segments} segments")
+            return True
+            
+        except Exception as e:
+            # Clean up temporary file if it exists
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
+            raise e
         
     except Exception as e:
         logger.error(f"Conversion failed: {str(e)}")
+        debug_info['errors'].append(f"Lumped-to-distributed conversion error: {str(e)}")
         return False
-
+        
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
     """Calculate metrics inline without using CalibrationTarget classes - Enhanced with corrected mizuRoute vs SUMMA logic"""
     try:
