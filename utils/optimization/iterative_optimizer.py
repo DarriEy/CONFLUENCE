@@ -1818,7 +1818,7 @@ class BaseOptimizer(ABC):
                 if settings_file.is_file():
                     dest_file = proc_mizu_settings_dir / settings_file.name
                     shutil.copy2(settings_file, dest_file)
-    
+        
     def _update_process_file_managers(self, proc_id: int, summa_dir: Path, mizuroute_dir: Path,
                                     summa_settings_dir: Path, mizu_settings_dir: Path) -> None:
         """Update file managers for a specific process"""
@@ -1843,8 +1843,8 @@ class BaseOptimizer(ABC):
             
             with open(file_manager, 'w') as f:
                 f.writelines(updated_lines)
-            
-    # Update mizuRoute control file
+        
+        # Update mizuRoute control file
         control_file = mizu_settings_dir / 'mizuroute.control'
         if control_file.exists():
             with open(control_file, 'r') as f:
@@ -1871,9 +1871,21 @@ class BaseOptimizer(ABC):
                         # Add missing comment
                         updated_lines.append(f"<output_dir>            {output_path}/    ! Folder that will contain mizuRoute simulations\n")
                 elif '<case_name>' in line:
-                    updated_lines.append(f"<case_name>             proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}\n")
+                    if '!' in line:
+                        # Preserve existing comment
+                        comment = '!' + '!'.join(line.split('!')[1:])
+                        updated_lines.append(f"<case_name>             proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}    {comment}")
+                    else:
+                        # Add missing comment
+                        updated_lines.append(f"<case_name>             proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}    ! Simulation case name\n")
                 elif '<fname_qsim>' in line:
-                    updated_lines.append(f"<fname_qsim>            proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}_timestep.nc\n")
+                    if '!' in line:
+                        # Preserve existing comment
+                        comment = '!' + '!'.join(line.split('!')[1:])
+                        updated_lines.append(f"<fname_qsim>            proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}_timestep.nc    {comment}")
+                    else:
+                        # Add missing comment
+                        updated_lines.append(f"<fname_qsim>            proc_{proc_id:02d}_{self.algorithm_name}_opt_{self.experiment_id}_timestep.nc    ! netCDF name for HM_HRU runoff\n")
                 else:
                     updated_lines.append(line)
             
