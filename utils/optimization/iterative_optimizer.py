@@ -7401,8 +7401,15 @@ def fix_summa_time_precision(input_file, output_file=None):
     output_path = output_file if output_file else input_file
     print(f"Saving to {output_path}")
     
-    ds.to_netcdf(output_path)
+    # Load data into memory and close file to handle permission issues
+    ds.load()
     ds.close()
+    
+    # Make file writable if we're overwriting the original
+    if output_file is None:
+        os.chmod(input_file, 0o664)
+    
+    ds.to_netcdf(output_path)
     print("Done!")
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
