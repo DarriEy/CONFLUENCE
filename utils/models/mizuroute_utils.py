@@ -48,7 +48,7 @@ class MizuRoutePreProcessor:
         river_network_name = self.config.get('RIVER_NETWORK_SHP_NAME')
 
         if river_network_name == 'default':
-            river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_{self.config.get('DOMAIN_DEFINITION_METHOD','delineate')}.shp"
+            river_network_name = f"{self.config['DOMAIN_NAME']}_riverNetwork_{self.config.get('DOMAIN_DEFINITION_METHOD','delineate')}.shv"
         
         if river_network_path == 'default':
             river_network_path = self.project_dir / 'shapefiles/river_network'
@@ -72,16 +72,44 @@ class MizuRoutePreProcessor:
         shp_river = gpd.read_file(river_network_path / river_network_name)
         shp_basin = gpd.read_file(river_basin_path / river_basin_name)
         
-        # NEW: Find the closest river segment to the pour point
-        closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+        # Check if this is lumped domain with distributed routing
+        is_lumped_to_distributed = (
+            self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and 
+            self.config.get('ROUTING_DELINEATION', 'river_network') == 'river_network'
+        )
         
-        # Update the basin shapefile to use the closest segment
-        if len(shp_basin) == 1:  # For lumped case
-            shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
-            self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
-        
-        num_seg = len(shp_river)
-        num_hru = len(shp_basin)
+        if is_lumped_to_distributed:
+            self.logger.info("Creating multiple HRUs for lumped-to-distributed routing")
+            # Create one HRU for each segment to enable equal drainage
+            num_seg = len(shp_river)
+            
+            # Create HRU data - one HRU per segment
+            hru_ids = list(range(1, num_seg + 1))
+            hru_to_seg_ids = shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int)
+            
+            # Calculate equal area for each HRU (total basin area / number of segments)
+            total_basin_area = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].sum()
+            equal_area = total_basin_area / num_seg
+            hru_areas = [equal_area] * num_seg
+            
+            num_hru = num_seg
+            
+            self.logger.info(f"Created {num_hru} HRUs, each draining to one segment with equal area {equal_area:.1f} m²")
+            
+        else:
+            # Original logic for non-lumped cases
+            closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+            
+            if len(shp_basin) == 1:  # For lumped case
+                shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
+                self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
+            
+            num_seg = len(shp_river)
+            num_hru = len(shp_basin)
+            
+            hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
+            hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
+            hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
         
         # Ensure minimum segment length
         shp_river.loc[shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')] == 0, self.config.get('RIVER_NETWORK_SHP_LENGTH')] = 1
@@ -99,7 +127,17 @@ class MizuRoutePreProcessor:
         with nc4.Dataset(self.mizuroute_setup_dir / topology_name, 'w', format='NETCDF4') as ncid:
             self._set_topology_attributes(ncid)
             self._create_topology_dimensions(ncid, num_seg, num_hru)
-            self._create_topology_variables(ncid, shp_river, shp_basin)
+            
+            # Create segment variables (unchanged)
+            self._create_and_fill_nc_var(ncid, 'segId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int), 'Unique ID of each stream segment', '-')
+            self._create_and_fill_nc_var(ncid, 'downSegId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')].values.astype(int), 'ID of the downstream segment', '-')
+            self._create_and_fill_nc_var(ncid, 'slope', 'f8', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SLOPE')].values.astype(float), 'Segment slope', '-')
+            self._create_and_fill_nc_var(ncid, 'length', 'f8', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')].values.astype(float), 'Segment length', 'm')
+            
+            # Create HRU variables (using our computed values)
+            self._create_and_fill_nc_var(ncid, 'hruId', 'int', 'hru', hru_ids, 'Unique hru ID', '-')
+            self._create_and_fill_nc_var(ncid, 'hruToSegId', 'int', 'hru', hru_to_seg_ids, 'ID of the stream segment to which the HRU discharges', '-')
+            self._create_and_fill_nc_var(ncid, 'area', 'f8', 'hru', hru_areas, 'HRU area', 'm^2')
         
         self.logger.info(f"Network topology file created at {self.mizuroute_setup_dir / topology_name}")
 
@@ -180,10 +218,11 @@ class MizuRoutePreProcessor:
         topology_file = self.mizuroute_setup_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY')
         with xr.open_dataset(topology_file) as topo:
             seg_ids = topo['segId'].values
-            hru_id = topo['hruId'].values[0]  # Should be 1
+            hru_ids = topo['hruId'].values  # Now we have multiple HRUs
         
         n_segments = len(seg_ids)
-        equal_weight = 1.0 / n_segments
+        n_hrus = len(hru_ids)
+        equal_weight = 1.0 / n_hrus  # Equal weight for each HRU
         
         remap_name = self.config.get('SETTINGS_MIZU_REMAP')
         
@@ -193,31 +232,31 @@ class MizuRoutePreProcessor:
             ncid.setncattr('Purpose', 'Equal-weight remapping for lumped to distributed routing')
             
             # Create dimensions
-            ncid.createDimension('hru', 1)  # Single lumped HRU
-            ncid.createDimension('data', n_segments)  # One entry per segment
+            ncid.createDimension('hru', n_hrus)  # One entry per HRU
+            ncid.createDimension('data', n_hrus)  # One data entry per HRU
             
             # Create variables
-            # RN_hruId: The routing HRU (always 1 for lumped)
+            # RN_hruId: The routing HRU IDs (1, 2, 3, ..., n_hrus)
             rn_hru = ncid.createVariable('RN_hruId', 'i4', ('hru',))
-            rn_hru[:] = hru_id
+            rn_hru[:] = hru_ids
             rn_hru.long_name = 'River network HRU ID'
             
-            # nOverlaps: Number of overlapping HM_HRUs (11 segments for the single HRU)
+            # nOverlaps: Each HRU gets input from 1 SUMMA GRU
             noverlaps = ncid.createVariable('nOverlaps', 'i4', ('hru',))
-            noverlaps[:] = n_segments
+            noverlaps[:] = [1] * n_hrus  # Each HRU has 1 overlap (with SUMMA GRU 1)
             noverlaps.long_name = 'Number of overlapping HM_HRUs for each RN_HRU'
             
-            # HM_hruId: The SUMMA GRU ID (1) repeated for each segment
+            # HM_hruId: The SUMMA GRU ID (1) for each entry
             hm_hru = ncid.createVariable('HM_hruId', 'i4', ('data',))
-            hm_hru[:] = [1] * n_segments  # Single SUMMA GRU ID repeated
+            hm_hru[:] = [1] * n_hrus  # All entries point to SUMMA GRU 1
             hm_hru.long_name = 'ID of overlapping HM_HRUs'
             
-            # weight: Equal weights for all segments
+            # weight: Equal weights for all HRUs
             weights = ncid.createVariable('weight', 'f8', ('data',))
-            weights[:] = [equal_weight] * n_segments
-            weights.long_name = 'Equal areal weights for all segments'
+            weights[:] = [equal_weight] * n_hrus
+            weights.long_name = f'Equal areal weights ({equal_weight:.4f}) for all HRUs'
         
-        self.logger.info(f"Equal-weight remapping file created with {n_segments} segments, weight = {equal_weight:.4f}")
+        self.logger.info(f"Equal-weight remapping file created with {n_hrus} HRUs, weight = {equal_weight:.4f}")
 
     def remap_summa_catchments_to_routing(self):
         self.logger.info("Remapping SUMMA catchments to routing catchments")
