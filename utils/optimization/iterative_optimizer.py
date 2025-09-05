@@ -2480,9 +2480,9 @@ class BaseOptimizer(ABC):
             self.logger.error(f"MPI spawn execution failed: {str(e)}")
             return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
 
-def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
-    """MPI worker script with extensive debugging"""
-    script_content = f'''#!/usr/bin/env python3
+    def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
+        """MPI worker script with extensive debugging"""
+        script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
 import os
