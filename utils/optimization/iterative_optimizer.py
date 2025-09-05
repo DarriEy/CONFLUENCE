@@ -1719,29 +1719,31 @@ class BaseOptimizer(ABC):
             f.writelines(updated_lines)
     
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """Update mizuRoute control file cleanly (no trailing slash, strip comments)."""
-        with open(control_path, "r") as f:
-            content = f.read()
+        """
+        Update mizuRoute control file cleanly:
+        - replace value for <ancil_dir>, <input_dir>, <output_dir>
+        - strip any inline comments
+        - remove trailing slash
+        - force LF newlines and ASCII (no BOM)
+        """
+        text = control_path.read_text(encoding="utf-8", errors="replace")
 
-        def _replace_path(pattern, new_path, text):
-            # normalize: remove trailing slash
-            new_path = str(new_path).replace("\\", "/").rstrip("/")
-            # substitute: key + spaces + value (ignore rest of line)
-            return re.sub(
-                pattern,
-                rf"\1{new_path}",
-                text,
-                flags=re.MULTILINE,
-            )
+        def _set_dir(key_token: str, new_path: Path, s: str) -> str:
+            # normalize: POSIX style, no trailing slash
+            val = str(new_path).replace("\\", "/").rstrip("/")
+            # replace the entire line value and drop any inline comment
+            #   ^(<key>\s+)\S+.*$  ->  <key> <val>
+            pattern = rf"^({re.escape(key_token)}\s+)\S+.*$"
+            return re.sub(pattern, rf"\1{val}", s, flags=re.MULTILINE)
 
-        # Replace input_dir
-        content = _replace_path(r"(<input_dir>\s+)(\S+).*", self.summa_sim_dir, content)
+        text = _set_dir("<ancil_dir>",   self.mizuroute_settings_dir, text)
+        text = _set_dir("<input_dir>",   self.summa_sim_dir,          text)
+        text = _set_dir("<output_dir>",  self.mizuroute_sim_dir,      text)
 
-        # Replace output_dir
-        content = _replace_path(r"(<output_dir>\s+)(\S+).*", self.mizuroute_sim_dir, content)
-
-        with open(control_path, "w", encoding="ascii", newline="\n") as f:
-            f.write(content)
+        # ensure trailing newline and clean line endings
+        if not text.endswith("\n"):
+            text += "\n"
+        control_path.write_text(text, encoding="ascii", newline="\n")
 
     
     def _create_calibration_target(self) -> CalibrationTarget:
