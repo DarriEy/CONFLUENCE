@@ -26,7 +26,7 @@ class MizuRoutePreProcessor:
         self.copy_base_settings()
         self.create_network_topology_file()
         self.logger.info(f"Should we remap?: {self.config.get('SETTINGS_MIZU_NEEDS_REMAP')}")
-        if self.config.get('SETTINGS_MIZU_NEEDS_REMAP', 'yes') == 'yes' or (self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and self.config.get('ROUTING_DELINEATION') == 'river_network'):
+        if self.config.get('SETTINGS_MIZU_NEEDS_REMAP'):
             self.remap_summa_catchments_to_routing()
         self.create_control_file()
         
@@ -432,7 +432,7 @@ class MizuRoutePreProcessor:
 
     def _write_control_file_remapping(self, cf):
         cf.write("!\n! --- DEFINE RUNOFF MAPPING FILE \n")
-        remap_flag = self.config.get('SETTINGS_MIZU_NEEDS_REMAP', '') == 'yes'
+        remap_flag = self.config.get('SETTINGS_MIZU_NEEDS_REMAP', '') == True
         cf.write(f"<is_remap>              {'T' if remap_flag else 'F'}    ! Logical to indicate runoff needs to be remapped to RN_HRU. T or F \n")
         
         if remap_flag:
