@@ -7141,7 +7141,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             debug_info['stage'] = 'lumped_to_distributed_conversion'
             config = task_data['config']
             domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
-            routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
+            routing_delineation = config.get('ROUTING_DELINEATION', 'river_network')
             
             if domain_method == 'lumped' and routing_delineation == 'river_network':
                 logger.info("Converting lumped SUMMA output to distributed format")
