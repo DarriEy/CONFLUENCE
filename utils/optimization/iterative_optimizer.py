@@ -6941,6 +6941,76 @@ def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
         # Final cleanup
         gc.collect()
 
+
+def _get_catchment_area_worker(config: Dict, logger) -> float:
+    """Get actual catchment area for unit conversion (worker version)"""
+    try:
+        domain_name = config.get('DOMAIN_NAME')
+        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+        
+        # Try basin shapefile first
+        basin_path = project_dir / "shapefiles" / "river_basins"
+        basin_files = list(basin_path.glob("*.shp"))
+        
+        if basin_files:
+            try:
+                import geopandas as gpd
+                gdf = gpd.read_file(basin_files[0])
+                area_col = config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
+                
+                logger.debug(f"🎯 Found basin shapefile: {basin_files[0]}")
+                logger.debug(f"🎯 Looking for area column: {area_col}")
+                logger.debug(f"🎯 Available columns: {list(gdf.columns)}")
+                
+                if area_col in gdf.columns:
+                    total_area = gdf[area_col].sum()
+                    logger.debug(f"🎯 Total area from column: {total_area}")
+                    
+                    if 0 < total_area < 1e12:  # Reasonable area check
+                        logger.info(f"🎯 Using catchment area from shapefile: {total_area:.0f} m²")
+                        return total_area
+                
+                # Fallback: calculate from geometry
+                if gdf.crs and gdf.crs.is_geographic:
+                    # Reproject to UTM for area calculation
+                    centroid = gdf.dissolve().centroid.iloc[0]
+                    utm_zone = int(((centroid.x + 180) / 6) % 60) + 1
+                    utm_crs = f"+proj=utm +zone={utm_zone} +north +datum=WGS84 +units=m +no_defs"
+                    gdf = gdf.to_crs(utm_crs)
+                
+                geom_area = gdf.geometry.area.sum()
+                logger.info(f"🎯 Using catchment area from geometry: {geom_area:.0f} m²")
+                return geom_area
+                
+            except ImportError:
+                logger.warning("🎯 geopandas not available for area calculation")
+            except Exception as e:
+                logger.warning(f"🎯 Error reading basin shapefile: {str(e)}")
+        
+        # Alternative: try catchment shapefile
+        catchment_path = project_dir / "shapefiles" / "catchment"
+        catchment_files = list(catchment_path.glob("*.shp"))
+        
+        if catchment_files:
+            try:
+                import geopandas as gpd
+                gdf = gpd.read_file(catchment_files[0])
+                area_col = config.get('CATCHMENT_SHP_AREA', 'HRU_area')
+                
+                if area_col in gdf.columns:
+                    total_area = gdf[area_col].sum()
+                    if 0 < total_area < 1e12:
+                        logger.info(f"🎯 Using catchment area from catchment shapefile: {total_area:.0f} m²")
+                        return total_area
+                        
+            except Exception as e:
+                logger.warning(f"🎯 Error reading catchment shapefile: {str(e)}")
+        
+    except Exception as e:
+        logger.warning(f"🎯 Could not calculate catchment area: {str(e)}")
+    
+
+
 def _evaluate_parameters_worker(task_data: Dict) -> Dict:
     """Enhanced worker with inline metrics calculation and runtime tracking"""
     import time
@@ -7047,7 +7117,31 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
                 'runtime': eval_runtime
             }
         summa_runtime = time.time() - summa_start
-        
+
+        if needs_routing:
+            debug_info['stage'] = 'lumped_to_distributed_conversion'
+            
+            # Check if we need lumped-to-distributed conversion
+            domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
+            
+            if domain_method == 'lumped' and routing_delineation == 'river_network':
+                logger.info("Converting lumped SUMMA output to distributed format")
+                if not _convert_lumped_to_distributed_worker(task_data, summa_dir, logger, debug_info):
+                    error_msg = 'Lumped-to-distributed conversion failed'
+                    logger.error(error_msg)
+                    eval_runtime = time.time() - eval_start_time
+                    return {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': None,
+                        'error': error_msg,
+                        'debug_info': debug_info,
+                        'runtime': eval_runtime
+                    }
+            
+            debug_info['stage'] = 'mizuroute_execution'        
+
         # Run mizuRoute if needed
         debug_info['stage'] = 'mizuroute_check'
         calibration_var = task_data.get('calibration_variable', 'streamflow')
@@ -7286,73 +7380,86 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
             'runtime': eval_runtime
         }
 
-def _get_catchment_area_worker(config: Dict, logger) -> float:
-    """Get actual catchment area for unit conversion (worker version)"""
+def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
+    """Convert lumped SUMMA output for distributed routing (worker version)"""
     try:
-        domain_name = config.get('DOMAIN_NAME')
-        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+        import xarray as xr
+        import numpy as np
         
-        # Try basin shapefile first
-        basin_path = project_dir / "shapefiles" / "river_basins"
-        basin_files = list(basin_path.glob("*.shp"))
+        # Find SUMMA timestep file
+        timestep_files = list(summa_dir.glob("*timestep.nc"))
+        if not timestep_files:
+            logger.error("No SUMMA timestep files found for conversion")
+            return False
         
-        if basin_files:
-            try:
-                import geopandas as gpd
-                gdf = gpd.read_file(basin_files[0])
-                area_col = config.get('RIVER_BASIN_SHP_AREA', 'GRU_area')
-                
-                logger.debug(f"🎯 Found basin shapefile: {basin_files[0]}")
-                logger.debug(f"🎯 Looking for area column: {area_col}")
-                logger.debug(f"🎯 Available columns: {list(gdf.columns)}")
-                
-                if area_col in gdf.columns:
-                    total_area = gdf[area_col].sum()
-                    logger.debug(f"🎯 Total area from column: {total_area}")
-                    
-                    if 0 < total_area < 1e12:  # Reasonable area check
-                        logger.info(f"🎯 Using catchment area from shapefile: {total_area:.0f} m²")
-                        return total_area
-                
-                # Fallback: calculate from geometry
-                if gdf.crs and gdf.crs.is_geographic:
-                    # Reproject to UTM for area calculation
-                    centroid = gdf.dissolve().centroid.iloc[0]
-                    utm_zone = int(((centroid.x + 180) / 6) % 60) + 1
-                    utm_crs = f"+proj=utm +zone={utm_zone} +north +datum=WGS84 +units=m +no_defs"
-                    gdf = gdf.to_crs(utm_crs)
-                
-                geom_area = gdf.geometry.area.sum()
-                logger.info(f"🎯 Using catchment area from geometry: {geom_area:.0f} m²")
-                return geom_area
-                
-            except ImportError:
-                logger.warning("🎯 geopandas not available for area calculation")
-            except Exception as e:
-                logger.warning(f"🎯 Error reading basin shapefile: {str(e)}")
+        summa_file = timestep_files[0]
+        logger.info(f"Converting SUMMA file: {summa_file}")
         
-        # Alternative: try catchment shapefile
-        catchment_path = project_dir / "shapefiles" / "catchment"
-        catchment_files = list(catchment_path.glob("*.shp"))
+        # Load topology to get segment information
+        mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
+        topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
         
-        if catchment_files:
-            try:
-                import geopandas as gpd
-                gdf = gpd.read_file(catchment_files[0])
-                area_col = config.get('CATCHMENT_SHP_AREA', 'HRU_area')
-                
-                if area_col in gdf.columns:
-                    total_area = gdf[area_col].sum()
-                    if 0 < total_area < 1e12:
-                        logger.info(f"🎯 Using catchment area from catchment shapefile: {total_area:.0f} m²")
-                        return total_area
-                        
-            except Exception as e:
-                logger.warning(f"🎯 Error reading catchment shapefile: {str(e)}")
+        if not topology_file.exists():
+            logger.error(f"Topology file not found: {topology_file}")
+            return False
+        
+        with xr.open_dataset(topology_file) as topo_ds:
+            seg_ids = topo_ds['segId'].values
+            n_segments = len(seg_ids)
+            logger.info(f"Found {n_segments} segments in topology")
+        
+        # Load and convert SUMMA output
+        with xr.open_dataset(summa_file, decode_times=False) as summa_ds:
+            # Find routing variable
+            routing_var = task_data['config'].get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+            if routing_var not in summa_ds:
+                routing_var = 'basin__TotalRunoff'
+            
+            if routing_var not in summa_ds:
+                logger.error(f"No routing variable found in SUMMA output: {list(summa_ds.variables.keys())}")
+                return False
+            
+            logger.info(f"Using routing variable: {routing_var}")
+            
+            # Create mizuRoute forcing dataset
+            mizuForcing = xr.Dataset()
+            
+            # Copy time coordinate
+            mizuForcing['time'] = summa_ds['time']
+            
+            # Create GRU dimension
+            mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
+            mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
+            
+            # Get and broadcast runoff data
+            runoff_data = summa_ds[routing_var].values
+            if len(runoff_data.shape) == 2:
+                runoff_data = runoff_data[:, 0] if runoff_data.shape[1] > 0 else runoff_data.flatten()
+            
+            # Broadcast to all segments
+            tiled_data = np.tile(runoff_data[:, np.newaxis], (1, n_segments))
+            
+            mizuForcing['averageRoutedRunoff'] = xr.DataArray(
+                tiled_data, dims=('time', 'gru'),
+                attrs={'long_name': 'Broadcast runoff for distributed routing', 'units': 'm/s'}
+            )
+            
+            # Copy global attributes
+            mizuForcing.attrs.update(summa_ds.attrs)
+        
+        # Save converted file (overwrite original)
+        mizuForcing.to_netcdf(summa_file, format='NETCDF4')
+        mizuForcing.close()
+        
+        logger.info(f"Successfully converted lumped output to {n_segments} segments")
+        debug_info['conversion_segments'] = n_segments
+        return True
         
     except Exception as e:
-        logger.warning(f"🎯 Could not calculate catchment area: {str(e)}")
-    
+        error_msg = f"Error in lumped-to-distributed conversion: {str(e)}"
+        logger.error(error_msg)
+        debug_info['errors'].append(error_msg)
+        return False
 
 def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, config: Dict, logger) -> Dict:
     """Calculate metrics inline without using CalibrationTarget classes - Enhanced with corrected mizuRoute vs SUMMA logic"""
