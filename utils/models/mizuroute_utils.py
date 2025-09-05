@@ -25,7 +25,8 @@ class MizuRoutePreProcessor:
         
         self.copy_base_settings()
         self.create_network_topology_file()
-        if self.config.get('SETTINGS_MIZU_NEEDS_REMAP', '') == 'yes':
+        self.logger.info(f"Should we remap?: {self.config.get('SETTINGS_MIZU_NEEDS_REMAP')}")
+        if self.config.get('SETTINGS_MIZU_NEEDS_REMAP', 'yes') == 'yes' or (self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and self.config.get('ROUTING_DELINEATION') == 'river_network'):
             self.remap_summa_catchments_to_routing()
         self.create_control_file()
         
