@@ -219,8 +219,11 @@ class MizuRoutePreProcessor:
     
 
     def remap_summa_catchments_to_routing(self):
-        self.create_equal_weight_remap_file()
-        return
+        if self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and self.config.get('ROUTING_DELINEATION') == 'river_network':
+            self.logger.info("Equal area weighting for SUMMA catchments to routing catchments")
+            self.create_equal_weight_remap_file()
+            return
+
         self.logger.info("Remapping SUMMA catchments to routing catchments")
 
         hm_catchment_path = Path(self.config.get('CATCHMENT_PATH'))
