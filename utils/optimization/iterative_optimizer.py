@@ -1719,77 +1719,31 @@ class BaseOptimizer(ABC):
     
 
     def _update_mizuroute_control_file(self, control_path: Path) -> None:
-        """
-        Minimal, regex-free update of <input_dir> and <output_dir> lines.
-        - Keeps original indentation and spaces
-        - Keeps existing trailing ' ! ...' comments exactly as-is
-        - Adds a minimal '    !' if a comment was missing
-        - Ensures path is POSIX with exactly one trailing '/'
-        """
-        def _normalize_dir(p: Path) -> str:
-            return str(p).replace("\\", "/").rstrip("/") + "/"
-
-        def _update_line(line: str, token: str, new_path_str: str) -> str:
-            # Fast path: only handle lines that (after left trim) start with the token
-            stripped = line.lstrip()
-            if not stripped.startswith(token):
-                return line
-
-            nl = "\n" if line.endswith("\n") else ""
-            body = line[:-1] if nl else line
-
-            # Split off trailing comment (keep spaces before '!' with the left part)
-            if "!" in body:
-                left, right = body.split("!", 1)
-                comment = "!" + right   # keep the '!' and the rest
-            else:
-                left, comment = body, "    !"  # add a minimal comment
-
-            # left = <prefix><token><spaces><value><spaces_before_comment>
-            # Keep prefix & token as-is
-            prefix_len = len(left) - len(left.lstrip())
-            prefix = left[:prefix_len]
-            rest = left[prefix_len:]
-
-            # Sanity: ensure we see the token right here
-            if not rest.startswith(token):
-                return line  # unexpected formatting; leave untouched
-
-            after_tok = rest[len(token):]
-
-            # Preserve the exact whitespace after token
-            i = 0
-            while i < len(after_tok) and after_tok[i].isspace():
-                i += 1
-            spaces_after_token = after_tok[:i]
-            remainder = after_tok[i:]  # old value + spaces to comment
-
-            # Preserve spaces before the comment
-            trailing_spaces_len = len(remainder) - len(remainder.rstrip())
-            spaces_before_comment = remainder[-trailing_spaces_len:] if trailing_spaces_len > 0 else ""
-
-            # New value
-            new_val = new_path_str
-
-            # Rebuild
-            new_left = prefix + token + spaces_after_token + new_val + spaces_before_comment
-            return new_left + comment + nl
-
-        # --- read, update, write ---
-        text = control_path.read_text(encoding="utf-8", errors="replace")
-        lines = text.splitlines(keepends=True)
-
-        new_input = _normalize_dir(self.summa_sim_dir)
-        new_output = _normalize_dir(self.mizuroute_sim_dir)
-
-        for idx, line in enumerate(lines):
-            # Update <input_dir>
-            updated = _update_line(line, "<input_dir>", new_input)
-            # Update <output_dir> (run on the possibly-updated line)
-            updated = _update_line(updated, "<output_dir>", new_output)
-            lines[idx] = updated
-
-        control_path.write_text("".join(lines), encoding="ascii", newline="\n")
+            """Update mizuRoute control file preserving original formatting"""
+            with open(control_path, 'r') as f:
+                content = f.read()
+            
+            # Use regex to replace just the path part, preserving spacing
+            import re
+            
+            # Replace input_dir path
+            input_path = str(self.summa_sim_dir).replace('\\', '/')
+            content = re.sub(
+                r'(<input_dir>\s+)([^\s\n]+)',
+                rf'\g<1>{input_path}/',
+                content
+            )
+            
+            # Replace output_dir path  
+            output_path = str(self.mizuroute_sim_dir).replace('\\', '/')
+            content = re.sub(
+                r'(<output_dir>\s+)([^\s\n]+)',
+                rf'\g<1>{output_path}/',
+                content
+            )
+            
+            with open(control_path, 'w') as f:
+                f.write(content)
 
 
     
