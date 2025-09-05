@@ -7014,6 +7014,7 @@ def _get_catchment_area_worker(config: Dict, logger) -> float:
 def _evaluate_parameters_worker(task_data: Dict) -> Dict:
     """Enhanced worker with inline metrics calculation and runtime tracking"""
     import time
+    import traceback  # ADD THIS IMPORT
     
     # Start timing the core evaluation
     eval_start_time = time.time()
@@ -7047,7 +7048,21 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         
         # Check multi-objective flag
         is_multiobjective = task_data.get('multiobjective', False)
-        logger.info(f"🎯 Multi-objective evaluation: {is_multiobjective}")
+        logger.info(f"Multi-objective evaluation: {is_multiobjective}")
+        
+        # DETERMINE ROUTING NEEDS EARLY - MOVE THIS UP
+        calibration_var = task_data.get('calibration_variable', 'streamflow')
+        needs_routing = False
+        
+        if calibration_var == 'streamflow':
+            config = task_data['config']
+            domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+            routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
+            
+            if domain_method not in ['point', 'lumped'] or (domain_method == 'lumped' and routing_delineation == 'river_network'):
+                needs_routing = True
+        
+        logger.info(f"Needs routing: {needs_routing}")
         
         # Convert paths
         debug_info['stage'] = 'path_setup'
@@ -7117,11 +7132,14 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
                 'runtime': eval_runtime
             }
         summa_runtime = time.time() - summa_start
-
+        
+        # Handle mizuRoute routing
+        mizuroute_runtime = 0.0
+        
         if needs_routing:
-            debug_info['stage'] = 'lumped_to_distributed_conversion'
-            
             # Check if we need lumped-to-distributed conversion
+            debug_info['stage'] = 'lumped_to_distributed_conversion'
+            config = task_data['config']
             domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
             routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
             
@@ -7135,28 +7153,12 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
                         'individual_id': individual_id,
                         'params': params,
                         'score': None,
+                        'objectives': None if is_multiobjective else None,
                         'error': error_msg,
                         'debug_info': debug_info,
                         'runtime': eval_runtime
                     }
             
-            debug_info['stage'] = 'mizuroute_execution'        
-
-        # Run mizuRoute if needed
-        debug_info['stage'] = 'mizuroute_check'
-        calibration_var = task_data.get('calibration_variable', 'streamflow')
-        needs_routing = False
-        mizuroute_runtime = 0.0
-        
-        if calibration_var == 'streamflow':
-            config = task_data['config']
-            domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
-            routing_delineation = config.get('ROUTING_DELINEATION', 'lumped')
-            
-            if domain_method not in ['point', 'lumped'] or (domain_method == 'lumped' and routing_delineation == 'river_network'):
-                needs_routing = True
-        
-        if needs_routing:
             debug_info['stage'] = 'mizuroute_execution'
             logger.info("Running mizuRoute")
             mizu_start = time.time()
@@ -7178,6 +7180,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         # Calculate metrics using INLINE method to avoid import issues
         debug_info['stage'] = 'metrics_calculation'
         metrics_start = time.time()
+        
         
         if is_multiobjective:
             logger.info("🎯 Starting INLINE multi-objective metrics calculation")
