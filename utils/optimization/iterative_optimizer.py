@@ -7528,7 +7528,7 @@ def fix_summa_time_precision(input_file, output_file=None):
             
     except Exception as e:
         print(f"Error fixing time precision: {e}")
-        raise 
+        raise
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
@@ -8712,7 +8712,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
         logger.error(error_msg)
         debug_info['errors'].append(error_msg)
         return False
-        
+
 def _needs_mizuroute_routing_worker(config: Dict) -> bool:
     """Check if mizuRoute routing is needed"""
     domain_method = config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
