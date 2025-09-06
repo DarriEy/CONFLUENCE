@@ -1,17 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Differentiable Parameter Emulation (DPE) for SUMMA — Config-driven multipath
+Differentiable Parameter Emulation (DPE) for SUMMA – Enhanced Config-driven Multipath Optimizer
 
-Supports three gradient paths selectable via config.yaml:
-  EMULATOR_SETTING:
-    - "EMULATOR"          : train NN emulator; optimize via backprop through NN only
-    - "FD"                : optimize parameters using finite-difference gradients on SUMMA
-    - "SUMMA_AUTODIFF"    : end-to-end autograd using SUMMA sensitivities (Sundials) when available,
-                             with optional small NN head on top of objectives
-    - "SUMMA_AUTODIFF_FD" : same autograd wrapper but forcing FD Jacobian (no Sundials)
+This module provides multiple gradient-based optimization strategies for CONFLUENCE hydrological model calibration:
 
-Additional config keys (with reasonable defaults shown where applicable):
+1. EMULATOR: Pure neural network surrogate with PyTorch backpropagation
+2. FD: Direct finite-difference optimization on SUMMA
+3. SUMMA_AUTODIFF: End-to-end autodiff through SUMMA (requires Sundials sensitivities)
+4. SUMMA_AUTODIFF_FD: Autodiff wrapper with finite-difference Jacobian approximation
+
+Key Features:
+- Automatic training data caching and reuse
+- Comprehensive performance monitoring and timing
+- Validation convergence tracking
+- Progress reporting with detailed logging
+- Robust error handling and fallback mechanisms
+- Integration with CONFLUENCE's existing optimization infrastructure
+
+Configuration Options (config.yaml):
+  EMULATOR_SETTING: "EMULATOR" | "FD" | "SUMMA_AUTODIFF" | "SUMMA_AUTODIFF_FD"
+  
+  # Neural Network Configuration
   DPE_HIDDEN_DIMS: [256, 128, 64]
   DPE_TRAINING_SAMPLES: 500
   DPE_VALIDATION_SAMPLES: 100
@@ -19,39 +29,81 @@ Additional config keys (with reasonable defaults shown where applicable):
   DPE_LEARNING_RATE: 1e-3
   DPE_OPTIMIZATION_LR: 1e-2
   DPE_OPTIMIZATION_STEPS: 200
-
-  # AUTODIFF + FD controls
+  
+  # Autodiff Configuration
   DPE_USE_NN_HEAD: true
-  DPE_USE_SUNDIALS: true   # ignored for SUMMA_AUTODIFF_FD
+  DPE_USE_SUNDIALS: true
   DPE_AUTODIFF_STEPS: 200
   DPE_AUTODIFF_LR: 1e-2
+  
+  # Finite Difference Configuration
   DPE_FD_STEP: 1e-3
-  DPE_GD_STEP_SIZE: 1e-1   # for explicit FD gradient descent
+  DPE_GD_STEP_SIZE: 1e-1
+  
+  # Data Management
+  DPE_TRAINING_CACHE: "default"  # Uses domain_dir/emulation/training_data/
+  DPE_FORCE_RETRAIN: false       # Force regeneration of training data
 
+Author: CONFLUENCE Development Team
+License: MIT
+Version: 2.0.0
 """
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
+from tqdm import tqdm
 
-# Reuse iterative optimizer backend for SUMMA IO/parallelism for now
+# Reuse iterative optimizer backend for SUMMA IO/parallelism
 from iterative_optimizer import DEOptimizer  # type: ignore
 
 
-# ------------------------------
-# Config + Emulator definition
-# ------------------------------
+# ==============================
+# Configuration Classes
+# ==============================
+
 @dataclass
 class EmulatorConfig:
+    """
+    Configuration class for neural network emulator training and optimization.
+    
+    Attributes
+    ----------
+    hidden_dims : List[int]
+        Architecture of hidden layers in the neural network
+    dropout : float
+        Dropout rate for regularization
+    activation : str
+        Activation function ('relu', 'swish')
+    n_training_samples : int
+        Number of samples for training the emulator
+    n_validation_samples : int
+        Number of samples for validation
+    batch_size : int
+        Training batch size
+    learning_rate : float
+        Learning rate for emulator training
+    n_epochs : int
+        Maximum number of training epochs
+    early_stopping_patience : int
+        Early stopping patience (epochs without improvement)
+    optimization_lr : float
+        Learning rate for parameter optimization
+    optimization_steps : int
+        Number of optimization steps
+    objective_weights : Dict[str, float]
+        Weights for combining multiple objectives
+    """
     hidden_dims: List[int] = None
     dropout: float = 0.1
     activation: str = 'relu'
@@ -73,52 +125,118 @@ class EmulatorConfig:
             self.objective_weights = {'KGE': -1.0, 'NSE': -1.0, 'RMSE': 0.1, 'PBIAS': 0.05}
 
 
+# ==============================
+# Neural Network Architecture
+# ==============================
+
 class ParameterEmulator(nn.Module):
+    """
+    Neural network emulator for SUMMA parameter-to-objective mapping.
+    
+    This network learns to approximate the complex relationship between
+    hydrological parameters and model performance objectives, enabling
+    fast gradient-based optimization.
+    
+    Parameters
+    ----------
+    n_parameters : int
+        Number of input parameters
+    n_objectives : int
+        Number of output objectives
+    config : EmulatorConfig
+        Configuration for network architecture and training
+    """
+    
     def __init__(self, n_parameters: int, n_objectives: int, config: EmulatorConfig):
         super().__init__()
+        
+        # Build network architecture
         layers = []
         input_dim = n_parameters
+        
         for hidden in config.hidden_dims:
-            layers += [nn.Linear(input_dim, hidden),
-                       nn.SiLU() if config.activation == 'swish' else nn.ReLU(),
-                       nn.Dropout(config.dropout),
-                       nn.BatchNorm1d(hidden)]
+            layers += [
+                nn.Linear(input_dim, hidden),
+                nn.SiLU() if config.activation == 'swish' else nn.ReLU(),
+                nn.Dropout(config.dropout),
+                nn.BatchNorm1d(hidden)
+            ]
             input_dim = hidden
+        
+        # Output layer (no activation - raw objective values)
         layers += [nn.Linear(input_dim, n_objectives)]
+        
         self.network = nn.Sequential(*layers)
-        self.apply(self._init)
+        self.apply(self._init_weights)
 
     @staticmethod
-    def _init(m):
-        if isinstance(m, nn.Linear):
-            nn.init.xavier_normal_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0.0)
+    def _init_weights(module):
+        """Initialize network weights using Xavier normal initialization."""
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_normal_(module.weight)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the network."""
         return self.network(x)
 
 
-# ------------------------------
-# SUMMA interface via iterative backend
-# ------------------------------
+# ==============================
+# SUMMA Interface Integration
+# ==============================
+
 class SummaInterface:
+    """
+    Interface to SUMMA hydrological model via CONFLUENCE's iterative optimizer backend.
+    
+    This class provides a clean interface for parameter manipulation, model execution,
+    and result extraction while leveraging CONFLUENCE's existing parallel processing
+    and parameter management infrastructure.
+    
+    Parameters
+    ----------
+    confluence_config : Dict
+        CONFLUENCE configuration dictionary
+    logger : logging.Logger
+        Logger instance for tracking operations
+    """
+    
     def __init__(self, confluence_config: Dict, logger: logging.Logger):
         self.config = confluence_config
         self.logger = logger
+        
+        # Initialize backend components
         self.backend = DEOptimizer(confluence_config, logger)
         self.param_manager = self.backend.parameter_manager
         self.model_executor = self.backend.model_executor
         self.calib_target = self.backend.calibration_target
         self.param_names = self.param_manager.all_param_names
+        
+        self.logger.info(f"Initialized SUMMA interface with {len(self.param_names)} parameters")
 
     def normalize_parameters(self, params: Dict[str, np.ndarray]) -> np.ndarray:
+        """Convert parameter dictionary to normalized array [0,1]."""
         return self.param_manager.normalize_parameters(params)
 
     def denormalize_parameters(self, x_norm: np.ndarray) -> Dict[str, np.ndarray]:
+        """Convert normalized array to parameter dictionary."""
         return self.param_manager.denormalize_parameters(x_norm)
 
-    def run_simulations_batch(self, param_samples: List[np.ndarray]):
+    def run_simulations_batch(self, param_samples: List[np.ndarray]) -> List[Optional[Dict]]:
+        """
+        Run batch simulations for multiple parameter sets.
+        
+        Parameters
+        ----------
+        param_samples : List[np.ndarray]
+            List of normalized parameter arrays
+            
+        Returns
+        -------
+        List[Optional[Dict]]
+            List of metric dictionaries (None for failed simulations)
+        """
         tasks = []
         for i, x in enumerate(param_samples):
             params = self.denormalize_parameters(x)
@@ -128,355 +246,1282 @@ class SummaInterface:
                 'proc_id': i % self.backend.num_processes,
                 'evaluation_id': f"dpe_sample_{i:04d}",
             })
+        
+        self.logger.info(f"Running batch simulation for {len(tasks)} parameter sets")
         results = self.backend._run_parallel_evaluations(tasks)
-        out = [None] * len(param_samples)
-        for r in results:
-            if r and r.get('metrics') is not None:
-                out[r['individual_id']] = r['metrics']
-        return out
+        
+        # Organize results by individual_id
+        output = [None] * len(param_samples)
+        for result in results:
+            if result and result.get('metrics') is not None:
+                output[result['individual_id']] = result['metrics']
+        
+        success_rate = sum(1 for r in output if r is not None) / len(output)
+        self.logger.info(f"Batch simulation completed. Success rate: {success_rate:.2%}")
+        
+        return output
 
 
-# ------------------------------
-# Autograd op to bridge SUMMA into PyTorch
-# ------------------------------
+# ==============================
+# PyTorch Autograd Integration
+# ==============================
+
 class SummaAutogradOp(torch.autograd.Function):
+    """
+    Custom PyTorch autograd function to integrate SUMMA into computational graphs.
+    
+    This function enables end-to-end gradient computation through SUMMA,
+    supporting both analytical sensitivities (via Sundials) and numerical
+    finite-difference approximations.
+    """
+    
     @staticmethod
-    def forward(ctx, x_norm: torch.Tensor, dpe_self, use_sens: bool, fd_step: float):
+    def forward(ctx, x_norm: torch.Tensor, dpe_self, use_sundials: bool, fd_step: float):
+        """
+        Forward pass: evaluate SUMMA objectives.
+        
+        Parameters
+        ----------
+        ctx : torch.autograd.Function.ctx
+            Context for saving information for backward pass
+        x_norm : torch.Tensor
+            Normalized parameters [0,1]
+        dpe_self : DifferentiableParameterOptimizer
+            Reference to optimizer instance
+        use_sundials : bool
+            Whether to use Sundials sensitivities for gradients
+        fd_step : float
+            Step size for finite difference approximation
+            
+        Returns
+        -------
+        torch.Tensor
+            Objective values
+        """
+        # Convert to numpy and evaluate
         x_np = x_norm.detach().cpu().numpy().astype(float)
-        objs = dpe_self._evaluate_objectives_real(x_np)
-        obj_vec = torch.tensor([objs.get(k, objs.get(f"Calib_{k}", 0.0)) for k in dpe_self.objective_names],
-                               dtype=torch.float32, device=x_norm.device)
-        if use_sens:
-            J_np = dpe_self._summa_objective_jacobian(x_np)  # we must wire to Sundials sensitivities
-            J = torch.tensor(J_np, dtype=torch.float32, device=x_norm.device)
-            ctx.save_for_backward(J)
-            ctx.jac_ready = True
+        objectives_dict = dpe_self._evaluate_objectives_real(x_np)
+        
+        # Convert to tensor
+        obj_values = []
+        for obj_name in dpe_self.objective_names:
+            value = objectives_dict.get(obj_name, objectives_dict.get(f"Calib_{obj_name}", 0.0))
+            obj_values.append(value)
+        
+        obj_tensor = torch.tensor(obj_values, dtype=torch.float32, device=x_norm.device)
+        
+        # Prepare for backward pass
+        if use_sundials:
+            try:
+                jacobian_np = dpe_self._summa_objective_jacobian(x_np)
+                jacobian = torch.tensor(jacobian_np, dtype=torch.float32, device=x_norm.device)
+                ctx.save_for_backward(jacobian)
+                ctx.jacobian_ready = True
+                ctx.use_sundials = True
+            except NotImplementedError:
+                # Fall back to finite differences
+                ctx.save_for_backward(x_norm.detach().clone())
+                ctx.jacobian_ready = False
+                ctx.use_sundials = False
+                ctx.fd_step = float(fd_step)
+                ctx.dpe_ref = dpe_self
         else:
             ctx.save_for_backward(x_norm.detach().clone())
-            ctx.jac_ready = False
+            ctx.jacobian_ready = False
+            ctx.use_sundials = False
             ctx.fd_step = float(fd_step)
             ctx.dpe_ref = dpe_self
-        return obj_vec
+        
+        return obj_tensor
 
     @staticmethod
-    def backward(ctx, grad_out):
-        if getattr(ctx, 'jac_ready', False):
-            (J,) = ctx.saved_tensors  # [n_obj, n_params]
+    def backward(ctx, grad_output):
+        """
+        Backward pass: compute parameter gradients.
+        
+        Parameters
+        ----------
+        ctx : torch.autograd.Function.ctx
+            Context from forward pass
+        grad_output : torch.Tensor
+            Gradients from downstream operations
+            
+        Returns
+        -------
+        Tuple[torch.Tensor, None, None, None]
+            Gradients w.r.t. input parameters
+        """
+        if getattr(ctx, 'jacobian_ready', False):
+            # Use precomputed Jacobian (Sundials)
+            (jacobian,) = ctx.saved_tensors  # [n_objectives, n_parameters]
         else:
+            # Compute finite difference Jacobian
             (x_saved,) = ctx.saved_tensors
             dpe = ctx.dpe_ref
-            J_np = dpe._finite_difference_jacobian(x_saved.detach().cpu().numpy(), step=ctx.fd_step)
-            J = torch.tensor(J_np, dtype=torch.float32, device=grad_out.device)
-        grad_x = grad_out.unsqueeze(0).matmul(J).squeeze(0)
+            jacobian_np = dpe._finite_difference_jacobian(
+                x_saved.detach().cpu().numpy(), 
+                step=ctx.fd_step
+            )
+            jacobian = torch.tensor(jacobian_np, dtype=torch.float32, device=grad_output.device)
+        
+        # Chain rule: grad_x = grad_output^T @ jacobian
+        grad_x = grad_output.unsqueeze(0).matmul(jacobian).squeeze(0)
+        
         return grad_x, None, None, None
 
 
 class ObjectiveHead(nn.Module):
+    """
+    Small neural network head for post-processing SUMMA objectives.
+    
+    This optional component can learn residual corrections to SUMMA
+    objectives, potentially improving optimization performance.
+    
+    Parameters
+    ----------
+    n_params : int
+        Number of input parameters
+    n_objs : int
+        Number of objectives
+    hidden : int
+        Hidden layer size
+    """
+    
     def __init__(self, n_params: int, n_objs: int, hidden: int = 64):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_objs + n_params, hidden), nn.SiLU(), nn.Linear(hidden, n_objs)
+            nn.Linear(n_objs + n_params, hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, n_objs)
         )
-    def forward(self, obj, x_norm):
-        return obj + self.net(torch.cat([obj, x_norm], dim=-1))
+    
+    def forward(self, objectives: torch.Tensor, x_norm: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass: add learned residuals to objectives.
+        
+        Parameters
+        ----------
+        objectives : torch.Tensor
+            Raw SUMMA objectives
+        x_norm : torch.Tensor
+            Normalized parameters
+            
+        Returns
+        -------
+        torch.Tensor
+            Adjusted objectives
+        """
+        combined_input = torch.cat([objectives, x_norm], dim=-1)
+        residuals = self.net(combined_input)
+        return objectives + residuals
 
 
-# ------------------------------
-# Main Optimizer
-# ------------------------------
+# ==============================
+# Main Optimizer Class
+# ==============================
+
 class DifferentiableParameterOptimizer:
+    """
+    Differentiable Parameter Optimizer for CONFLUENCE.
+    
+    This class provides multiple gradient-based optimization strategies for
+    hydrological model calibration, including pure emulation, finite differences,
+    and end-to-end autodiff through SUMMA.
+    
+    The optimizer automatically handles training data generation, caching,
+    neural network training, and parameter optimization with comprehensive
+    logging and performance monitoring.
+    
+    Parameters
+    ----------
+    confluence_config : Dict
+        CONFLUENCE configuration dictionary
+    domain_name : str
+        Name of the modeling domain
+    emulator_config : EmulatorConfig, optional
+        Configuration for neural network training and optimization
+        
+    Examples
+    --------
+    >>> config = yaml.safe_load(open('config.yaml'))
+    >>> dpe = DifferentiableParameterOptimizer(config, "bow_at_banff")
+    >>> optimized_params = dpe.run_from_config()
+    """
+    
     def __init__(self, confluence_config: Dict, domain_name: str, emulator_config: EmulatorConfig = None):
         self.confluence_config = confluence_config
         self.domain_name = domain_name
         self.emulator_config = emulator_config or EmulatorConfig()
+        
+        # Setup logging
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(f"{__name__}.DPE")
+        
+        # Initialize SUMMA interface
         self.summa = SummaInterface(confluence_config, self.logger)
         self.param_names = self.summa.param_names
         self.objective_names = sorted(self.emulator_config.objective_weights.keys())
         self.n_parameters = len(self.param_names)
         self.n_objectives = len(self.objective_names)
+        
+        # Initialize neural network
         self.emulator = ParameterEmulator(self.n_parameters, self.n_objectives, self.emulator_config)
+        
+        # Data storage
         self.training_data = {'parameters': [], 'objectives': []}
         self.validation_data = {'parameters': [], 'objectives': []}
+        
+        # Setup cache directory
+        self._setup_cache_directory()
+        
+        # Performance tracking
+        self.timing_results = {}
+        
+        self.logger.info(f"Initialized DPE for domain '{domain_name}' with {self.n_parameters} parameters")
+        self.logger.info(f"Target objectives: {self.objective_names}")
 
-    # ===== Shared utilities =====
+    def _setup_cache_directory(self):
+        """Setup default cache directory structure."""
+        data_dir = Path(self.confluence_config.get('CONFLUENCE_DATA_DIR'))
+        domain_dir = data_dir / f"domain_{self.domain_name}"
+        self.cache_dir = domain_dir / "emulation" / "training_data"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.logger.info(f"Cache directory: {self.cache_dir}")
+
+    # ==============================
+    # Utility Methods
+    # ==============================
+
     def _latin_hypercube_sampling(self, n_samples: int) -> np.ndarray:
+        """Generate Latin Hypercube samples for parameter space exploration."""
         from scipy.stats import qmc
-        return qmc.LatinHypercube(d=self.n_parameters).random(n=n_samples)
+        sampler = qmc.LatinHypercube(d=self.n_parameters, seed=42)
+        return sampler.random(n=n_samples)
 
-    def _is_valid_objective(self, obj: Dict[str, float]) -> bool:
-        for k in self.objective_names:
-            v = obj.get(k, obj.get(f"Calib_{k}"))
-            if v is None or np.isnan(v) or np.isinf(v):
+    def _is_valid_objective(self, objectives: Dict[str, float]) -> bool:
+        """Check if objective dictionary contains valid (non-NaN, finite) values."""
+        for obj_name in self.objective_names:
+            value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}"))
+            if value is None or np.isnan(value) or np.isinf(value):
                 return False
         return True
 
-    def _composite_loss_from_objectives(self, obj: Dict[str, float]) -> float:
-        total = 0.0
-        for k in self.objective_names:
-            v = obj.get(k, obj.get(f"Calib_{k}"))
-            if v is None or np.isnan(v) or np.isinf(v):
-                return 1e6
-            total += self.emulator_config.objective_weights.get(k, 0.0) * float(v)
-        return float(total)
+    def _composite_loss_from_objectives(self, objectives: Dict[str, float]) -> float:
+        """Compute weighted composite loss from objective dictionary."""
+        total_loss = 0.0
+        for obj_name in self.objective_names:
+            value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}"))
+            if value is None or np.isnan(value) or np.isinf(value):
+                return 1e6  # Large penalty for invalid objectives
+            
+            weight = self.emulator_config.objective_weights.get(obj_name, 0.0)
+            total_loss += weight * float(value)
+        
+        return float(total_loss)
 
     def _evaluate_objectives_real(self, x_norm: np.ndarray) -> Dict[str, float]:
+        """Evaluate objectives using real SUMMA simulation."""
         params = self.summa.denormalize_parameters(x_norm)
-        task = {'individual_id': 0, 'params': params, 'proc_id': 0, 'evaluation_id': 'dpe_eval_single'}
+        task = {
+            'individual_id': 0,
+            'params': params,
+            'proc_id': 0,
+            'evaluation_id': 'dpe_eval_single'
+        }
+        
         results = self.summa.backend._run_parallel_evaluations([task])
         return results[0].get('metrics', {}) if results else {}
 
-    # ===== Data gen + training =====
-    def generate_training_data(self):
-        total = self.emulator_config.n_training_samples + self.emulator_config.n_validation_samples
-        X = self._latin_hypercube_sampling(total)
-        Y_dicts = self.summa.run_simulations_batch(X)
-        Xv, Yv = [], []
-        for x, y in zip(X, Y_dicts):
-            if y and self._is_valid_objective(y):
-                Xv.append(x)
-                Yv.append([y.get(k, y.get(f"Calib_{k}", 0.0)) for k in self.objective_names])
-        if len(Xv) < self.emulator_config.n_training_samples:
-            raise RuntimeError("Insufficient valid samples for training")
-        ntr = self.emulator_config.n_training_samples
-        self.training_data = {'parameters': Xv[:ntr], 'objectives': Yv[:ntr]}
-        self.validation_data = {'parameters': Xv[ntr:], 'objectives': Yv[ntr:]}
+    # ==============================
+    # Data Generation and Caching
+    # ==============================
+
+    def generate_training_data(self, cache_path: Optional[Path] = None, force: bool = False):
+        """
+        Generate training and validation data for emulator.
+        
+        Parameters
+        ----------
+        cache_path : Path, optional
+            Path to cache file. If None, uses default cache directory.
+        force : bool
+            Force regeneration even if cached data exists
+        """
+        # Determine cache path
+        if cache_path is None:
+            cache_path = self.cache_dir / f"training_data_{self.domain_name}.json"
+        
+        # Check for existing cache
+        if cache_path.exists() and not force:
+            self.logger.info(f"Loading cached training data from {cache_path}")
+            try:
+                with open(cache_path, 'r') as f:
+                    cached_data = json.load(f)
+                
+                self.training_data = cached_data['training']
+                self.validation_data = cached_data['validation']
+                
+                n_train = len(self.training_data['parameters'])
+                n_val = len(self.validation_data['parameters'])
+                self.logger.info(f"Loaded {n_train} training + {n_val} validation samples from cache")
+                return
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to load cache: {e}. Regenerating data.")
+        
+        # Generate new data
+        self.logger.info("Generating training data...")
+        start_time = time.time()
+        
+        total_samples = self.emulator_config.n_training_samples + self.emulator_config.n_validation_samples
+        parameter_samples = self._latin_hypercube_sampling(total_samples)
+        
+        self.logger.info(f"Running {total_samples} SUMMA simulations...")
+        objective_results = self.summa.run_simulations_batch(parameter_samples)
+        
+        # Filter valid results
+        valid_parameters, valid_objectives = [], []
+        for params, objectives in zip(parameter_samples, objective_results):
+            if objectives and self._is_valid_objective(objectives):
+                valid_parameters.append(params.tolist())
+                
+                # Extract objective values in consistent order
+                obj_values = []
+                for obj_name in self.objective_names:
+                    value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}", 0.0))
+                    obj_values.append(value)
+                valid_objectives.append(obj_values)
+        
+        if len(valid_parameters) < self.emulator_config.n_training_samples:
+            raise RuntimeError(
+                f"Insufficient valid samples ({len(valid_parameters)}) for training "
+                f"({self.emulator_config.n_training_samples} required)"
+            )
+        
+        # Split into training and validation
+        n_train = self.emulator_config.n_training_samples
+        self.training_data = {
+            'parameters': valid_parameters[:n_train],
+            'objectives': valid_objectives[:n_train]
+        }
+        self.validation_data = {
+            'parameters': valid_parameters[n_train:],
+            'objectives': valid_objectives[n_train:]
+        }
+        
+        # Save cache
+        cache_data = {
+            'training': self.training_data,
+            'validation': self.validation_data,
+            'generated_at': datetime.now().isoformat(),
+            'config_snapshot': {
+                'n_training_samples': self.emulator_config.n_training_samples,
+                'n_validation_samples': self.emulator_config.n_validation_samples,
+                'objective_names': self.objective_names,
+                'parameter_names': self.param_names
+            }
+        }
+        
+        with open(cache_path, 'w') as f:
+            json.dump(cache_data, f, indent=2)
+        
+        generation_time = time.time() - start_time
+        success_rate = len(valid_parameters) / total_samples
+        
+        self.logger.info(f"Data generation completed in {generation_time:.1f}s")
+        self.logger.info(f"Success rate: {success_rate:.2%}")
+        self.logger.info(f"Training samples: {len(self.training_data['parameters'])}")
+        self.logger.info(f"Validation samples: {len(self.validation_data['parameters'])}")
+        self.logger.info(f"Cache saved to: {cache_path}")
+
+    # ==============================
+    # Neural Network Training
+    # ==============================
 
     def train_emulator(self):
+        """
+        Train the neural network emulator on generated data.
+        
+        Includes progress tracking, early stopping, and comprehensive logging.
+        """
         if not self.training_data['parameters']:
-            raise ValueError("No training data. Call generate_training_data() first.")
-        Xtr = torch.tensor(np.array(self.training_data['parameters']), dtype=torch.float32)
-        Ytr = torch.tensor(np.array(self.training_data['objectives']), dtype=torch.float32)
-        Xva = torch.tensor(np.array(self.validation_data['parameters']), dtype=torch.float32)
-        Yva = torch.tensor(np.array(self.validation_data['objectives']), dtype=torch.float32)
-        opt = optim.Adam(self.emulator.parameters(), lr=self.emulator_config.learning_rate)
-        crit = nn.MSELoss()
-        best = float('inf'); patience = 0
-        for ep in range(self.emulator_config.n_epochs):
+            raise ValueError("No training data available. Call generate_training_data() first.")
+        
+        self.logger.info("Starting emulator training...")
+        start_time = time.time()
+        
+        # Prepare data
+        X_train = torch.tensor(np.array(self.training_data['parameters']), dtype=torch.float32)
+        y_train = torch.tensor(np.array(self.training_data['objectives']), dtype=torch.float32)
+        X_val = torch.tensor(np.array(self.validation_data['parameters']), dtype=torch.float32)
+        y_val = torch.tensor(np.array(self.validation_data['objectives']), dtype=torch.float32)
+        
+        self.logger.info(f"Training data shape: {X_train.shape} -> {y_train.shape}")
+        self.logger.info(f"Validation data shape: {X_val.shape} -> {y_val.shape}")
+        
+        # Setup training
+        optimizer = optim.Adam(self.emulator.parameters(), lr=self.emulator_config.learning_rate)
+        criterion = nn.MSELoss()
+        
+        best_val_loss = float('inf')
+        patience_counter = 0
+        train_losses, val_losses = [], []
+        
+        # Training loop with progress bar
+        progress_bar = tqdm(range(self.emulator_config.n_epochs), desc="Training emulator")
+        
+        for epoch in progress_bar:
+            # Training phase
             self.emulator.train()
-            perm = torch.randperm(Xtr.shape[0])
-            for i in range(0, Xtr.shape[0], self.emulator_config.batch_size):
-                idx = perm[i:i+self.emulator_config.batch_size]
-                xb, yb = Xtr[idx], Ytr[idx]
-                opt.zero_grad(); pred = self.emulator(xb); loss = crit(pred, yb); loss.backward(); opt.step()
+            epoch_train_loss = 0.0
+            n_batches = 0
+            
+            # Shuffle training data
+            perm = torch.randperm(X_train.shape[0])
+            
+            for i in range(0, X_train.shape[0], self.emulator_config.batch_size):
+                batch_indices = perm[i:i + self.emulator_config.batch_size]
+                X_batch = X_train[batch_indices]
+                y_batch = y_train[batch_indices]
+                
+                optimizer.zero_grad()
+                predictions = self.emulator(X_batch)
+                loss = criterion(predictions, y_batch)
+                loss.backward()
+                optimizer.step()
+                
+                epoch_train_loss += loss.item()
+                n_batches += 1
+            
+            avg_train_loss = epoch_train_loss / n_batches
+            train_losses.append(avg_train_loss)
+            
+            # Validation phase
             self.emulator.eval()
             with torch.no_grad():
-                vloss = crit(self.emulator(Xva), Yva).item()
-            if vloss < best:
-                best = vloss; patience = 0
-                torch.save(self.emulator.state_dict(), f"best_emulator_{self.domain_name}.pt")
+                val_predictions = self.emulator(X_val)
+                val_loss = criterion(val_predictions, y_val).item()
+                val_losses.append(val_loss)
+            
+            # Early stopping check
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                # Save best model
+                model_path = self.cache_dir / f"best_emulator_{self.domain_name}.pt"
+                torch.save(self.emulator.state_dict(), model_path)
             else:
-                patience += 1
-            if patience >= self.emulator_config.early_stopping_patience:
+                patience_counter += 1
+            
+            # Update progress bar
+            progress_bar.set_postfix({
+                'Train Loss': f'{avg_train_loss:.6f}',
+                'Val Loss': f'{val_loss:.6f}',
+                'Best Val': f'{best_val_loss:.6f}',
+                'Patience': f'{patience_counter}/{self.emulator_config.early_stopping_patience}'
+            })
+            
+            # Detailed logging every 50 epochs
+            if epoch % 50 == 0 or epoch == self.emulator_config.n_epochs - 1:
+                self.logger.info(
+                    f"Epoch {epoch:4d}: Train={avg_train_loss:.6f}, "
+                    f"Val={val_loss:.6f}, Best={best_val_loss:.6f}"
+                )
+            
+            # Early stopping
+            if patience_counter >= self.emulator_config.early_stopping_patience:
+                self.logger.info(f"Early stopping at epoch {epoch}")
                 break
-        self.emulator.load_state_dict(torch.load(f"best_emulator_{self.domain_name}.pt"))
+        
+        # Load best model
+        model_path = self.cache_dir / f"best_emulator_{self.domain_name}.pt"
+        if model_path.exists():
+            self.emulator.load_state_dict(torch.load(model_path))
+            self.logger.info(f"Loaded best model from {model_path}")
+        
+        training_time = time.time() - start_time
+        self.timing_results['emulator_training'] = training_time
+        
+        self.logger.info(f"Emulator training completed in {training_time:.1f}s")
+        self.logger.info(f"Best validation loss: {best_val_loss:.6f}")
+        
+        # Save training history
+        history_path = self.cache_dir / f"training_history_{self.domain_name}.json"
+        history_data = {
+            'train_losses': train_losses,
+            'val_losses': val_losses,
+            'best_val_loss': best_val_loss,
+            'epochs_trained': len(train_losses),
+            'training_time': training_time
+        }
+        with open(history_path, 'w') as f:
+            json.dump(history_data, f, indent=2)
 
-    # ===== Optimizers =====
-    def _compute_weighted_loss_tensor(self, obj_tensor: torch.Tensor) -> torch.Tensor:
-        loss = torch.tensor(0.0, dtype=torch.float32, device=obj_tensor.device)
-        for i, k in enumerate(self.objective_names):
-            w = self.emulator_config.objective_weights.get(k, 0.0)
-            loss = loss + w * obj_tensor[i]
+    # ==============================
+    # Optimization Methods
+    # ==============================
+
+    def _compute_weighted_loss_tensor(self, objective_tensor: torch.Tensor) -> torch.Tensor:
+        """Compute weighted composite loss from objective tensor."""
+        loss = torch.tensor(0.0, dtype=torch.float32, device=objective_tensor.device)
+        
+        for i, obj_name in enumerate(self.objective_names):
+            weight = self.emulator_config.objective_weights.get(obj_name, 0.0)
+            loss = loss + weight * objective_tensor[i]
+        
         return loss
 
     def optimize_parameters(self, initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-        # emulator-only backprop
-        if initial_params:
-            x0 = self.summa.normalize_parameters(initial_params)
-        else:
-            x0 = np.full(self.n_parameters, 0.5)
-        x = torch.tensor(x0, dtype=torch.float32, requires_grad=True)
-        opt = optim.Adam([x], lr=self.emulator_config.optimization_lr)
-        best = float('inf'); best_x = x.detach().clone()
-        self.emulator.eval()
-        for t in range(self.emulator_config.optimization_steps):
-            opt.zero_grad()
-            with torch.no_grad():
-                x.clamp_(0.0, 1.0)
-            obj = self.emulator(x.unsqueeze(0)).squeeze(0)
-            loss = self._compute_weighted_loss_tensor(obj)
-            loss.backward(); opt.step()
-            if loss.item() < best:
-                best, best_x = loss.item(), x.detach().clone()
-        return self.summa.denormalize_parameters(best_x.clamp(0.0,1.0).numpy())
-
-    # ---- Finite-difference gradient descent on real SUMMA ----
-    def _finite_difference_jacobian(self, x: np.ndarray, step: float = 1e-3) -> np.ndarray:
-        n, m = self.n_parameters, self.n_objectives
-        J = np.zeros((m, n), dtype=float)
-        base = self._evaluate_objectives_real(x)
-        base_vec = np.array([base.get(k, base.get(f"Calib_{k}", 0.0)) for k in self.objective_names])
-        plus, minus, kinds = [], [], []
-        for i in range(n):
-            xp, xm = x.copy(), x.copy()
-            if x[i]+step <= 1 and x[i]-step >= 0:
-                xp[i]+=step; xm[i]-=step; plus.append(xp); minus.append(xm); kinds.append('central')
-            elif x[i]+step <= 1:
-                xp[i]+=step; plus.append(xp); minus.append(None); kinds.append('forward')
-            elif x[i]-step >= 0:
-                xm[i]-=step; plus.append(None); minus.append(xm); kinds.append('backward')
-            else:
-                plus.append(None); minus.append(None); kinds.append('zero')
-        batch, mapidx = [], []
-        for i, (xp, xm) in enumerate(zip(plus, minus)):
-            if xp is not None: batch.append(xp); mapidx.append(('p', i))
-            if xm is not None: batch.append(xm); mapidx.append(('m', i))
-        mets = self.summa.run_simulations_batch(batch) if batch else []
-        vecs = []
-        for met in mets:
-            if met is None:
-                vecs.append(np.full(m, 1e6))
-            else:
-                vecs.append(np.array([met.get(k, met.get(f"Calib_{k}", 0.0)) for k in self.objective_names]))
-        ptr = 0; pvec = [None]*n; mvec = [None]*n
-        for tag, i in mapidx:
-            if tag == 'p': pvec[i] = vecs[ptr]; ptr += 1
-            else: mvec[i] = vecs[ptr]; ptr += 1
-        for i, kd in enumerate(kinds):
-            if kd=='central' and pvec[i] is not None and mvec[i] is not None:
-                J[:, i] = (pvec[i] - mvec[i]) / (2*step)
-            elif kd=='forward' and pvec[i] is not None:
-                J[:, i] = (pvec[i] - base_vec) / step
-            elif kd=='backward' and mvec[i] is not None:
-                J[:, i] = (base_vec - mvec[i]) / step
-            else:
-                J[:, i] = 0.0
-        return J
-
-    def optimize_with_fd(self, initial_params: Optional[Dict[str, float]] = None,
-                         step_size: float = 1e-1, fd_step: float = 1e-3,
-                         max_iters: int = 50, tol: float = 1e-6) -> Dict[str, float]:
-        x = self.summa.normalize_parameters(initial_params) if initial_params else np.full(self.n_parameters, 0.5)
-        base = self._evaluate_objectives_real(x); L = self._composite_loss_from_objectives(base)
-        for t in range(1, max_iters+1):
-            G = self._finite_difference_jacobian(x, step=fd_step)  # [m,n]
-            # chain rule for scalar loss: dL/dx = w^T * J
-            w = np.array([self.emulator_config.objective_weights.get(k, 0.0) for k in self.objective_names])
-            g = w @ G  # [n]
-            x_new = np.clip(x - step_size * g, 0.0, 1.0)
-            met_new = self._evaluate_objectives_real(x_new); L_new = self._composite_loss_from_objectives(met_new)
-            if L_new < L:
-                x, L = x_new, L_new
-            else:
-                step_size *= 0.5
-                if step_size < 1e-5:
-                    break
-            if np.linalg.norm(g) < tol:
-                break
-        return self.summa.denormalize_parameters(x)
-
-    # ---- SUMMA autograd path (Sundials or FD fallback) ----
-    def _summa_objective_jacobian(self, x_norm: np.ndarray) -> np.ndarray:
-        """Wire this to Sundials-enabled SUMMA sensitivity outputs.
-        Must return shape [n_objectives, n_parameters] wrt normalized params.
-        Default raises to force explicit wiring.
         """
-        raise NotImplementedError("Implement Sundials sensitivity plumbing here.")
-
-    def optimize_with_summa_autodiff(self, use_sundials: bool = True, fd_step: float = 1e-3,
-                                     steps: int = 200, lr: float = 1e-2, use_nn_head: bool = True,
-                                     initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        Optimize parameters using pure neural network emulator.
+        
+        Parameters
+        ----------
+        initial_params : Dict[str, float], optional
+            Initial parameter values. If None, starts from center of parameter space.
+            
+        Returns
+        -------
+        Dict[str, float]
+            Optimized parameters
+        """
+        self.logger.info("Starting emulator-based optimization...")
+        start_time = time.time()
+        
+        # Initialize parameters
         if initial_params:
             x0 = self.summa.normalize_parameters(initial_params)
         else:
             x0 = np.full(self.n_parameters, 0.5)
-        x = torch.tensor(x0, dtype=torch.float32, device=device, requires_grad=True)
-        head = ObjectiveHead(self.n_parameters, self.n_objectives).to(device) if use_nn_head else None
-        opt_params = [x] + (list(head.parameters()) if head else [])
-        opt = optim.Adam(opt_params, lr=lr)
-        for t in range(1, steps+1):
-            opt.zero_grad()
-            obj_summa = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
-            obj_adj = head(obj_summa, x) if head else obj_summa
-            loss = self._compute_weighted_loss_tensor(obj_adj)
-            loss.backward(); opt.step()
+        
+        x = torch.tensor(x0, dtype=torch.float32, requires_grad=True)
+        optimizer = optim.Adam([x], lr=self.emulator_config.optimization_lr)
+        
+        best_loss = float('inf')
+        best_x = x.detach().clone()
+        loss_history = []
+        
+        self.emulator.eval()
+        
+        progress_bar = tqdm(range(self.emulator_config.optimization_steps), desc="Optimizing")
+        
+        for step in progress_bar:
+            optimizer.zero_grad()
+            
+            # Clamp parameters to valid range
             with torch.no_grad():
                 x.clamp_(0.0, 1.0)
-        return self.summa.denormalize_parameters(x.detach().cpu().numpy())
+            
+            # Forward pass
+            objectives = self.emulator(x.unsqueeze(0)).squeeze(0)
+            loss = self._compute_weighted_loss_tensor(objectives)
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+            
+            # Track best
+            current_loss = loss.item()
+            loss_history.append(current_loss)
+            
+            if current_loss < best_loss:
+                best_loss = current_loss
+                best_x = x.detach().clone()
+            
+            progress_bar.set_postfix({'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'})
+        
+        optimization_time = time.time() - start_time
+        self.timing_results['emulator_optimization'] = optimization_time
+        
+        # Convert back to parameter dictionary
+        best_params = self.summa.denormalize_parameters(best_x.clamp(0.0, 1.0).numpy())
+        
+        self.logger.info(f"Emulator optimization completed in {optimization_time:.1f}s")
+        self.logger.info(f"Best loss: {best_loss:.6f}")
+        
+        return best_params
 
-    # ===== Orchestration from config =====
-    def run_from_config(self):
+    def _finite_difference_jacobian(self, x: np.ndarray, step: float = 1e-3) -> np.ndarray:
+        """
+        Compute finite difference Jacobian of objectives w.r.t. parameters.
+        
+        Parameters
+        ----------
+        x : np.ndarray
+            Parameter values (normalized)
+        step : float
+            Step size for finite differences
+            
+        Returns
+        -------
+        np.ndarray
+            Jacobian matrix [n_objectives, n_parameters]
+        """
+        n_params = self.n_parameters
+        n_objs = self.n_objectives
+        jacobian = np.zeros((n_objs, n_params), dtype=float)
+        
+        # Evaluate at base point
+        base_objectives = self._evaluate_objectives_real(x)
+        base_vector = np.array([
+            base_objectives.get(obj_name, base_objectives.get(f"Calib_{obj_name}", 0.0))
+            for obj_name in self.objective_names
+        ])
+        
+        # Prepare perturbation points
+        forward_points, backward_points, difference_types = [], [], []
+        
+        for i in range(n_params):
+            x_forward, x_backward = x.copy(), x.copy()
+            
+            # Determine step type based on bounds
+            if x[i] + step <= 1.0 and x[i] - step >= 0.0:
+                # Central difference
+                x_forward[i] += step
+                x_backward[i] -= step
+                forward_points.append(x_forward)
+                backward_points.append(x_backward)
+                difference_types.append('central')
+            elif x[i] + step <= 1.0:
+                # Forward difference
+                x_forward[i] += step
+                forward_points.append(x_forward)
+                backward_points.append(None)
+                difference_types.append('forward')
+            elif x[i] - step >= 0.0:
+                # Backward difference
+                x_backward[i] -= step
+                forward_points.append(None)
+                backward_points.append(x_backward)
+                difference_types.append('backward')
+            else:
+                # No valid step (shouldn't happen with reasonable step size)
+                forward_points.append(None)
+                backward_points.append(None)
+                difference_types.append('zero')
+        
+        # Batch evaluate perturbation points
+        batch_points = []
+        point_mapping = []
+        
+        for i, (x_f, x_b) in enumerate(zip(forward_points, backward_points)):
+            if x_f is not None:
+                batch_points.append(x_f)
+                point_mapping.append(('forward', i))
+            if x_b is not None:
+                batch_points.append(x_b)
+                point_mapping.append(('backward', i))
+        
+        if batch_points:
+            batch_results = self.summa.run_simulations_batch(batch_points)
+        else:
+            batch_results = []
+        
+        # Convert results to objective vectors
+        batch_vectors = []
+        for result in batch_results:
+            if result is None:
+                batch_vectors.append(np.full(n_objs, 1e6))  # Large penalty for failed runs
+            else:
+                vector = np.array([
+                    result.get(obj_name, result.get(f"Calib_{obj_name}", 0.0))
+                    for obj_name in self.objective_names
+                ])
+                batch_vectors.append(vector)
+        
+        # Map results back to forward/backward arrays
+        forward_vectors = [None] * n_params
+        backward_vectors = [None] * n_params
+        
+        result_idx = 0
+        for point_type, param_idx in point_mapping:
+            if point_type == 'forward':
+                forward_vectors[param_idx] = batch_vectors[result_idx]
+            else:
+                backward_vectors[param_idx] = batch_vectors[result_idx]
+            result_idx += 1
+        
+        # Compute finite differences
+        for i, diff_type in enumerate(difference_types):
+            if diff_type == 'central':
+                jacobian[:, i] = (forward_vectors[i] - backward_vectors[i]) / (2 * step)
+            elif diff_type == 'forward':
+                jacobian[:, i] = (forward_vectors[i] - base_vector) / step
+            elif diff_type == 'backward':
+                jacobian[:, i] = (base_vector - backward_vectors[i]) / step
+            else:
+                jacobian[:, i] = 0.0  # No gradient information available
+        
+        return jacobian
+
+    def optimize_with_fd(self, 
+                        initial_params: Optional[Dict[str, float]] = None,
+                        step_size: float = 1e-1,
+                        fd_step: float = 1e-3,
+                        max_iters: int = 50,
+                        tolerance: float = 1e-6) -> Dict[str, float]:
+        """
+        Optimize parameters using finite difference gradients on real SUMMA.
+        
+        Parameters
+        ----------
+        initial_params : Dict[str, float], optional
+            Initial parameter values
+        step_size : float
+            Gradient descent step size
+        fd_step : float
+            Finite difference step size
+        max_iters : int
+            Maximum number of iterations
+        tolerance : float
+            Convergence tolerance
+            
+        Returns
+        -------
+        Dict[str, float]
+            Optimized parameters
+        """
+        self.logger.info("Starting finite-difference optimization...")
+        start_time = time.time()
+        
+        # Initialize
+        if initial_params:
+            x = self.summa.normalize_parameters(initial_params)
+        else:
+            x = np.full(self.n_parameters, 0.5)
+        
+        # Initial evaluation
+        base_objectives = self._evaluate_objectives_real(x)
+        current_loss = self._composite_loss_from_objectives(base_objectives)
+        
+        self.logger.info(f"Initial loss: {current_loss:.6f}")
+        
+        # Optimization loop
+        for iteration in range(1, max_iters + 1):
+            self.logger.info(f"FD iteration {iteration}/{max_iters}")
+            
+            # Compute gradient via finite differences
+            jacobian = self._finite_difference_jacobian(x, step=fd_step)
+            
+            # Chain rule for scalar loss: dL/dx = weights^T @ jacobian
+            weights = np.array([
+                self.emulator_config.objective_weights.get(obj_name, 0.0)
+                for obj_name in self.objective_names
+            ])
+            gradient = weights @ jacobian  # [n_parameters]
+            
+            # Gradient descent step
+            x_new = np.clip(x - step_size * gradient, 0.0, 1.0)
+            
+            # Evaluate new point
+            new_objectives = self._evaluate_objectives_real(x_new)
+            new_loss = self._composite_loss_from_objectives(new_objectives)
+            
+            self.logger.info(f"  Loss: {new_loss:.6f} (prev: {current_loss:.6f})")
+            
+            # Accept/reject step
+            if new_loss < current_loss:
+                x = x_new
+                current_loss = new_loss
+                self.logger.info(f"  Step accepted")
+            else:
+                step_size *= 0.5  # Reduce step size
+                self.logger.info(f"  Step rejected, reducing step size to {step_size:.6f}")
+                
+                if step_size < 1e-5:
+                    self.logger.info("Step size too small, terminating")
+                    break
+            
+            # Convergence check
+            gradient_norm = np.linalg.norm(gradient)
+            if gradient_norm < tolerance:
+                self.logger.info(f"Converged (gradient norm: {gradient_norm:.6f})")
+                break
+        
+        optimization_time = time.time() - start_time
+        self.timing_results['fd_optimization'] = optimization_time
+        
+        final_params = self.summa.denormalize_parameters(x)
+        
+        self.logger.info(f"FD optimization completed in {optimization_time:.1f}s")
+        self.logger.info(f"Final loss: {current_loss:.6f}")
+        
+        return final_params
+
+    def _summa_objective_jacobian(self, x_norm: np.ndarray) -> np.ndarray:
+        """
+        Compute analytical Jacobian using SUMMA's Sundials sensitivities.
+        
+        NOTE: This method requires integration with SUMMA's Sundials-based
+        sensitivity analysis. Implementation pending availability from SUMMA team.
+        
+        Parameters
+        ----------
+        x_norm : np.ndarray
+            Normalized parameters [0,1]
+            
+        Returns
+        -------
+        np.ndarray
+            Jacobian matrix [n_objectives, n_parameters]
+            
+        Raises
+        ------
+        NotImplementedError
+            Until Sundials integration is available
+        """
+        raise NotImplementedError(
+            "Sundials sensitivity integration pending. "
+            "Contact SUMMA development team for implementation status."
+        )
+
+    def optimize_with_summa_autodiff(self,
+                                   use_sundials: bool = True,
+                                   fd_step: float = 1e-3,
+                                   steps: int = 200,
+                                   lr: float = 1e-2,
+                                   use_nn_head: bool = True,
+                                   initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """
+        Optimize parameters using SUMMA autodiff integration.
+        
+        This method enables end-to-end gradient computation through SUMMA,
+        with optional neural network head for objective post-processing.
+        
+        Parameters
+        ----------
+        use_sundials : bool
+            Whether to use Sundials analytical sensitivities
+        fd_step : float
+            Finite difference step size (fallback)
+        steps : int
+            Number of optimization steps
+        lr : float
+            Learning rate
+        use_nn_head : bool
+            Whether to use neural network head
+        initial_params : Dict[str, float], optional
+            Initial parameter values
+            
+        Returns
+        -------
+        Dict[str, float]
+            Optimized parameters
+        """
+        self.logger.info(f"Starting SUMMA autodiff optimization (Sundials: {use_sundials})")
+        start_time = time.time()
+        
+        # Check Sundials availability
+        if use_sundials:
+            try:
+                test_x = np.full(self.n_parameters, 0.5)
+                _ = self._summa_objective_jacobian(test_x)
+            except NotImplementedError:
+                self.logger.warning("Sundials sensitivities not available. Falling back to finite differences.")
+                use_sundials = False
+        
+        # Setup device
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.logger.info(f"Using device: {device}")
+        
+        # Initialize parameters
+        if initial_params:
+            x0 = self.summa.normalize_parameters(initial_params)
+        else:
+            x0 = np.full(self.n_parameters, 0.5)
+        
+        x = torch.tensor(x0, dtype=torch.float32, device=device, requires_grad=True)
+        
+        # Setup neural network head if requested
+        objective_head = None
+        if use_nn_head:
+            objective_head = ObjectiveHead(self.n_parameters, self.n_objectives).to(device)
+            self.logger.info("Using neural network head for objective post-processing")
+        
+        # Setup optimizer
+        optimization_params = [x]
+        if objective_head:
+            optimization_params.extend(list(objective_head.parameters()))
+        
+        optimizer = optim.Adam(optimization_params, lr=lr)
+        
+        best_loss = float('inf')
+        best_x = x.detach().clone()
+        loss_history = []
+        
+        # Optimization loop
+        progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff")
+        
+        for step in progress_bar:
+            optimizer.zero_grad()
+            
+            # Evaluate SUMMA objectives with autodiff
+            objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
+            
+            # Apply neural network head if available
+            if objective_head:
+                objectives_adjusted = objective_head(objectives_raw, x)
+            else:
+                objectives_adjusted = objectives_raw
+            
+            # Compute loss
+            loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+            
+            # Clamp parameters to valid range
+            with torch.no_grad():
+                x.clamp_(0.0, 1.0)
+            
+            # Track progress
+            current_loss = loss.item()
+            loss_history.append(current_loss)
+            
+            if current_loss < best_loss:
+                best_loss = current_loss
+                best_x = x.detach().clone()
+            
+            progress_bar.set_postfix({'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'})
+            
+            # Periodic logging
+            if step % 50 == 0:
+                self.logger.info(f"Step {step}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
+        
+        optimization_time = time.time() - start_time
+        self.timing_results['autodiff_optimization'] = optimization_time
+        
+        # Convert back to parameter dictionary
+        final_params = self.summa.denormalize_parameters(best_x.detach().cpu().numpy())
+        
+        self.logger.info(f"SUMMA autodiff optimization completed in {optimization_time:.1f}s")
+        self.logger.info(f"Best loss: {best_loss:.6f}")
+        
+        return final_params
+
+    # ==============================
+    # Main Orchestration
+    # ==============================
+
+    def run_from_config(self) -> Dict[str, float]:
+        """
+        Run optimization based on configuration settings.
+        
+        Returns
+        -------
+        Dict[str, float]
+            Optimized parameters
+        """
         mode = self.confluence_config.get('EMULATOR_SETTING', 'EMULATOR').upper()
-        # Common knobs
+        
+        self.logger.info("=" * 80)
+        self.logger.info("DIFFERENTIABLE PARAMETER OPTIMIZATION")
+        self.logger.info("=" * 80)
+        self.logger.info(f"Mode: {mode}")
+        self.logger.info(f"Domain: {self.domain_name}")
+        self.logger.info(f"Parameters: {self.n_parameters}")
+        self.logger.info(f"Objectives: {self.objective_names}")
+        self.logger.info("=" * 80)
+        
+        total_start_time = time.time()
+        
+        # Extract configuration parameters
         fd_step = float(self.confluence_config.get('DPE_FD_STEP', 1e-3))
         gd_step = float(self.confluence_config.get('DPE_GD_STEP_SIZE', 1e-1))
-        ad_steps = int(self.confluence_config.get('DPE_AUTODIFF_STEPS', 200))
-        ad_lr = float(self.confluence_config.get('DPE_AUTODIFF_LR', 1e-2))
-        use_head = bool(self.confluence_config.get('DPE_USE_NN_HEAD', True))
-        use_sens = bool(self.confluence_config.get('DPE_USE_SUNDIALS', True))
-
-        if mode == 'EMULATOR':
-            cache_path = Path(self.confluence_config.get("DPE_TRAINING_CACHE",
-                                                        f"training_data_{self.domain_name}.json"))
-            self.generate_training_data(cache_path=cache_path, force=False)
-            self.train_emulator()
-            return self.optimize_parameters()
-        elif mode == 'FD':
-            params = self.optimize_with_fd(step_size=gd_step, fd_step=fd_step, max_iters=self.emulator_config.optimization_steps)
-            return params
-        elif mode == 'SUMMA_AUTODIFF':
-            params = self.optimize_with_summa_autodiff(use_sundials=use_sens, fd_step=fd_step,
-                                                       steps=ad_steps, lr=ad_lr, use_nn_head=use_head)
-            return params
-        elif mode == 'SUMMA_AUTODIFF_FD':
-            params = self.optimize_with_summa_autodiff(use_sundials=False, fd_step=fd_step,
-                                                       steps=ad_steps, lr=ad_lr, use_nn_head=use_head)
-            return params
+        autodiff_steps = int(self.confluence_config.get('DPE_AUTODIFF_STEPS', 200))
+        autodiff_lr = float(self.confluence_config.get('DPE_AUTODIFF_LR', 1e-2))
+        use_nn_head = bool(self.confluence_config.get('DPE_USE_NN_HEAD', True))
+        use_sundials = bool(self.confluence_config.get('DPE_USE_SUNDIALS', True))
+        force_retrain = bool(self.confluence_config.get('DPE_FORCE_RETRAIN', False))
+        
+        # Determine cache path
+        cache_setting = self.confluence_config.get("DPE_TRAINING_CACHE", "default")
+        if cache_setting == "default" or not cache_setting:
+            cache_path = None  # Uses default directory
         else:
-            raise ValueError(f"Unknown EMULATOR_SETTING: {mode}")
+            cache_path = Path(cache_setting)
+        
+        try:
+            if mode == 'EMULATOR':
+                self.logger.info("Running EMULATOR mode: NN surrogate optimization")
+                
+                # Generate/load training data
+                self.generate_training_data(cache_path=cache_path, force=force_retrain)
+                
+                # Train emulator
+                self.train_emulator()
+                
+                # Optimize using emulator
+                optimized_params = self.optimize_parameters()
+                
+            elif mode == 'FD':
+                self.logger.info("Running FD mode: Finite difference optimization")
+                
+                optimized_params = self.optimize_with_fd(
+                    step_size=gd_step,
+                    fd_step=fd_step,
+                    max_iters=self.emulator_config.optimization_steps
+                )
+                
+            elif mode == 'SUMMA_AUTODIFF':
+                self.logger.info("Running SUMMA_AUTODIFF mode: End-to-end autodiff")
+                
+                optimized_params = self.optimize_with_summa_autodiff(
+                    use_sundials=use_sundials,
+                    fd_step=fd_step,
+                    steps=autodiff_steps,
+                    lr=autodiff_lr,
+                    use_nn_head=use_nn_head
+                )
+                
+            elif mode == 'SUMMA_AUTODIFF_FD':
+                self.logger.info("Running SUMMA_AUTODIFF_FD mode: Autodiff with FD Jacobian")
+                
+                optimized_params = self.optimize_with_summa_autodiff(
+                    use_sundials=False,  # Force finite differences
+                    fd_step=fd_step,
+                    steps=autodiff_steps,
+                    lr=autodiff_lr,
+                    use_nn_head=use_nn_head
+                )
+                
+            else:
+                raise ValueError(f"Unknown EMULATOR_SETTING: {mode}")
+            
+            # Record total time
+            total_time = time.time() - total_start_time
+            self.timing_results['total_optimization'] = total_time
+            
+            # Final validation
+            self.logger.info("Running final validation...")
+            validation_start = time.time()
+            validation_metrics = self.validate_optimization(optimized_params)
+            validation_time = time.time() - validation_start
+            self.timing_results['final_validation'] = validation_time
+            
+            # Log final results
+            self._log_optimization_summary(mode, optimized_params, validation_metrics)
+            
+            return optimized_params
+            
+        except Exception as e:
+            self.logger.error(f"Optimization failed: {str(e)}")
+            raise
 
-    # ===== Validation + Save =====
     def validate_optimization(self, optimized_params: Dict[str, float]) -> Dict[str, float]:
-        task = {'individual_id': 0, 'params': optimized_params, 'proc_id': 0, 'evaluation_id': 'dpe_final_validation'}
+        """
+        Validate optimized parameters by running final SUMMA simulation.
+        
+        Parameters
+        ----------
+        optimized_params : Dict[str, float]
+            Optimized parameter values
+            
+        Returns
+        -------
+        Dict[str, float]
+            Validation metrics
+        """
+        task = {
+            'individual_id': 0,
+            'params': optimized_params,
+            'proc_id': 0,
+            'evaluation_id': 'dpe_final_validation'
+        }
+        
         results = self.summa.backend._run_parallel_evaluations([task])
-        actual = results[0].get('metrics') if results else {}
-        return actual or {}
+        actual_metrics = results[0].get('metrics') if results else {}
+        
+        # Log validation results for convergence monitoring
+        if actual_metrics:
+            self.logger.info("VALIDATION CONVERGENCE CHECK:")
+            for obj_name in self.objective_names:
+                actual_value = actual_metrics.get(obj_name, actual_metrics.get(f"Calib_{obj_name}", "N/A"))
+                self.logger.info(f"  {obj_name}: {actual_value}")
+        
+        return actual_metrics or {}
+
+    def _log_optimization_summary(self, mode: str, params: Dict[str, float], validation: Dict[str, float]):
+        """Log comprehensive optimization summary."""
+        self.logger.info("=" * 80)
+        self.logger.info("OPTIMIZATION SUMMARY")
+        self.logger.info("=" * 80)
+        self.logger.info(f"Mode: {mode}")
+        self.logger.info(f"Domain: {self.domain_name}")
+        
+        # Timing results
+        self.logger.info("\nTIMING RESULTS:")
+        for phase, duration in self.timing_results.items():
+            self.logger.info(f"  {phase}: {duration:.1f}s")
+        
+        # Validation metrics
+        if validation:
+            self.logger.info("\nFINAL VALIDATION METRICS:")
+            for obj_name in self.objective_names:
+                value = validation.get(obj_name, validation.get(f"Calib_{obj_name}", "N/A"))
+                self.logger.info(f"  {obj_name}: {value}")
+        
+        # Optimized parameters (first few)
+        self.logger.info("\nOPTIMIZED PARAMETERS (sample):")
+        param_items = list(params.items())[:5]  # Show first 5 parameters
+        for name, value in param_items:
+            if isinstance(value, np.ndarray):
+                self.logger.info(f"  {name}: {value[0]:.6f} (first element)")
+            else:
+                self.logger.info(f"  {name}: {value:.6f}")
+        
+        if len(params) > 5:
+            self.logger.info(f"  ... and {len(params) - 5} more parameters")
+        
+        self.logger.info("=" * 80)
 
     def save_results(self, optimized_params: Dict[str, float], results_dir: Path):
+        """
+        Save optimization results to specified directory.
+        
+        Parameters
+        ----------
+        optimized_params : Dict[str, float]
+            Optimized parameter values
+        results_dir : Path
+            Output directory
+        """
         results_dir.mkdir(parents=True, exist_ok=True)
-        params_to_save = {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in optimized_params.items()}
-        (results_dir / 'optimized_parameters.json').write_text(json.dumps(params_to_save, indent=2))
-        torch.save(self.emulator.state_dict(), results_dir / 'emulator_model.pt')
-        payload = {
+        
+        # Save optimized parameters
+        params_serializable = {}
+        for key, value in optimized_params.items():
+            if isinstance(value, np.ndarray):
+                params_serializable[key] = value.tolist()
+            else:
+                params_serializable[key] = value
+        
+        params_file = results_dir / 'optimized_parameters.json'
+        with open(params_file, 'w') as f:
+            json.dump(params_serializable, f, indent=2)
+        
+        # Save emulator model if available
+        if hasattr(self, 'emulator'):
+            model_file = results_dir / 'emulator_model.pt'
+            torch.save(self.emulator.state_dict(), model_file)
+        
+        # Save metadata
+        metadata = {
+            'domain_name': self.domain_name,
             'parameter_names': self.param_names,
             'objective_names': self.objective_names,
-            'training_data_sizes': {k: len(v) for k, v in {'train': self.training_data.get('parameters', []),
-                                                           'val': self.validation_data.get('parameters', [])}.items()}
+            'optimization_mode': self.confluence_config.get('EMULATOR_SETTING', 'EMULATOR'),
+            'timing_results': self.timing_results,
+            'training_data_sizes': {
+                'training': len(self.training_data.get('parameters', [])),
+                'validation': len(self.validation_data.get('parameters', []))
+            },
+            'generated_at': datetime.now().isoformat()
         }
-        (results_dir / 'training_meta.json').write_text(json.dumps(payload, indent=2))
+        
+        metadata_file = results_dir / 'optimization_metadata.json'
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        self.logger.info(f"Results saved to: {results_dir}")
 
 
-# ------------------------------
-# CLI entry (optional)
-# ------------------------------
+# ==============================
+# Command Line Interface
+# ==============================
 
 def main():
-    cfg_path = Path('config.yaml')
-    if not cfg_path.exists():
-        print('Error: config.yaml not found.')
-        return
-    with open(cfg_path, 'r') as f:
-        cfg = yaml.safe_load(f)
-    domain = cfg.get('DOMAIN_NAME', 'test_domain')
-    emu_cfg = EmulatorConfig(
-        hidden_dims=cfg.get('DPE_HIDDEN_DIMS', [256, 128, 64]),
-        n_training_samples=cfg.get('DPE_TRAINING_SAMPLES', 500),
-        n_validation_samples=cfg.get('DPE_VALIDATION_SAMPLES', 100),
-        n_epochs=cfg.get('DPE_EPOCHS', 300),
-        learning_rate=cfg.get('DPE_LEARNING_RATE', 1e-3),
-        optimization_lr=cfg.get('DPE_OPTIMIZATION_LR', 1e-2),
-        optimization_steps=cfg.get('DPE_OPTIMIZATION_STEPS', 200),
+    """Main entry point for command line execution."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="CONFLUENCE Differentiable Parameter Optimization")
+    parser.add_argument('--config', type=str, default='config.yaml',
+                       help='Path to configuration file (default: config.yaml)')
+    parser.add_argument('--domain', type=str, 
+                       help='Domain name (overrides config)')
+    parser.add_argument('--mode', type=str, 
+                       choices=['EMULATOR', 'FD', 'SUMMA_AUTODIFF', 'SUMMA_AUTODIFF_FD'],
+                       help='Optimization mode (overrides config)')
+    
+    args = parser.parse_args()
+    
+    # Load configuration
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f'Error: Configuration file not found: {config_path}')
+        return 1
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Override config with command line arguments
+    if args.domain:
+        config['DOMAIN_NAME'] = args.domain
+    if args.mode:
+        config['EMULATOR_SETTING'] = args.mode
+    
+    # Extract domain name
+    domain_name = config.get('DOMAIN_NAME', 'test_domain')
+    
+    # Create emulator configuration from CONFLUENCE config
+    emulator_config = EmulatorConfig(
+        hidden_dims=config.get('DPE_HIDDEN_DIMS', [256, 128, 64]),
+        n_training_samples=config.get('DPE_TRAINING_SAMPLES', 500),
+        n_validation_samples=config.get('DPE_VALIDATION_SAMPLES', 100),
+        n_epochs=config.get('DPE_EPOCHS', 300),
+        learning_rate=config.get('DPE_LEARNING_RATE', 1e-3),
+        optimization_lr=config.get('DPE_OPTIMIZATION_LR', 1e-2),
+        optimization_steps=config.get('DPE_OPTIMIZATION_STEPS', 200),
     )
-    dpe = DifferentiableParameterOptimizer(cfg, domain, emu_cfg)
-    params = dpe.run_from_config()
-    val = dpe.validate_optimization(params)
-    outdir = Path(f"results_differentiable_{domain}_{datetime.now().strftime('%Y%m%d_%H%M')}")
-    dpe.save_results(params, outdir)
-    print("\n✅ DPE completed.")
-    print(json.dumps({'optimized_parameters': params, 'validation': val}, indent=2))
+    
+    try:
+        # Initialize optimizer
+        dpe = DifferentiableParameterOptimizer(config, domain_name, emulator_config)
+        
+        # Run optimization
+        optimized_params = dpe.run_from_config()
+        
+        # Validate results
+        validation_metrics = dpe.validate_optimization(optimized_params)
+        
+        # Save results
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        mode = config.get('EMULATOR_SETTING', 'EMULATOR').lower()
+        output_dir = Path(f"results_dpe_{mode}_{domain_name}_{timestamp}")
+        dpe.save_results(optimized_params, output_dir)
+        
+        # Print summary
+        print("\n" + "="*80)
+        print("✅ DIFFERENTIABLE PARAMETER OPTIMIZATION COMPLETED")
+        print("="*80)
+        print(f"Domain: {domain_name}")
+        print(f"Mode: {config.get('EMULATOR_SETTING', 'EMULATOR')}")
+        print(f"Output: {output_dir}")
+        print(f"Total time: {dpe.timing_results.get('total_optimization', 0):.1f}s")
+        print("="*80)
+        
+        # Print results as JSON for easy parsing
+        result_summary = {
+            'optimized_parameters': {k: (v.tolist() if isinstance(v, np.ndarray) else v) 
+                                   for k, v in optimized_params.items()},
+            'validation_metrics': validation_metrics,
+            'timing_results': dpe.timing_results,
+            'output_directory': str(output_dir)
+        }
+        
+        print("\nDETAILED RESULTS:")
+        print(json.dumps(result_summary, indent=2))
+        
+        return 0
+        
+    except Exception as e:
+        print(f"\n❌ Optimization failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    exit(main())

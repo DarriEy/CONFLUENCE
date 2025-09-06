@@ -2961,6 +2961,9 @@ if __name__ == "__main__":
             self.logger.warning(f"mizuRoute control file not found: {mizu_control_path}")
             return
         
+        def _normalize_path(path):
+            return str(path).replace("\\", "/").rstrip("/") + "/"  # Always add trailing slash
+        
         # Get the final evaluation prefix (matching what SUMMA will output)
         final_prefix = f'run_{self.algorithm_name}_final_{self.experiment_id}'
         final_timestep_filename = f'{final_prefix}_timestep.nc'
@@ -2973,7 +2976,21 @@ if __name__ == "__main__":
         
         updated_lines = []
         for line in lines:
-            if line.strip().startswith('<fname_qsim>'):
+            if line.strip().startswith('<input_dir>'):
+                new_path = _normalize_path(self.summa_sim_dir)
+                if '!' in line:
+                    comment = '!' + '!'.join(line.split('!')[1:])
+                    updated_lines.append(f"<input_dir>             {new_path}    {comment}")
+                else:
+                    updated_lines.append(f"<input_dir>             {new_path}    ! Folder that contains runoff data from SUMMA\n")
+            elif line.strip().startswith('<output_dir>'):
+                new_path = _normalize_path(self.mizuroute_sim_dir)
+                if '!' in line:
+                    comment = '!' + '!'.join(line.split('!')[1:])
+                    updated_lines.append(f"<output_dir>            {new_path}    {comment}")
+                else:
+                    updated_lines.append(f"<output_dir>            {new_path}    ! Folder that will contain mizuRoute simulations\n")
+            elif line.strip().startswith('<fname_qsim>'):
                 if '!' in line:
                     comment = '!' + '!'.join(line.split('!')[1:])
                     updated_lines.append(f"<fname_qsim>            {final_timestep_filename}    {comment}")
@@ -2992,6 +3009,7 @@ if __name__ == "__main__":
             f.writelines(updated_lines)
         
         self.logger.info(f"Updated mizuRoute control file: case_name={final_prefix}, fname_qsim={final_timestep_filename}")
+        self.logger.info(f"Input directory set to: {_normalize_path(self.summa_sim_dir)}")
 
 
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:

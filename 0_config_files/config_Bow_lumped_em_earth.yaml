@@ -284,7 +284,7 @@ OPTIMISATION_METHODS: [differentiable_parameter_emulation]                   # M
 
 
 # DPE hyperparameters
-DPE_TRAINING_CACHE: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Bow_at_Banff_lumped_em_earth/emulation/training_data_bowriver.json
+DPE_TRAINING_CACHE: default
 DPE_HIDDEN_DIMS: [256, 128, 64]
 DPE_TRAINING_SAMPLES: 500
 DPE_VALIDATION_SAMPLES: 100
@@ -292,6 +292,7 @@ DPE_EPOCHS: 300
 DPE_LEARNING_RATE: 0.001
 DPE_OPTIMIZATION_LR: 0.01
 DPE_OPTIMIZATION_STEPS: 200
+DPE_FORCE_RETRAIN: false
 
 # Autodiff/FD controls
 DPE_USE_NN_HEAD: true
