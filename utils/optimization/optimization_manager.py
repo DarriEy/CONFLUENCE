@@ -111,6 +111,165 @@ class OptimizationManager:
             'SCE-UA': 'run_optimization' 
 
         }
+
+    def run_optimization_workflow(self) -> Dict[str, Any]:
+        """
+        Main entry point for all optimization and emulation workflows.
+        
+        This method checks the OPTIMISATION_METHODS configuration and runs
+        the appropriate workflows in the correct order.
+        
+        Returns:
+            Dict[str, Any]: Results from all completed workflows
+        """
+        results = {}
+        optimization_methods = self.config.get('OPTIMISATION_METHODS', [])
+        
+        self.logger.info(f"Running optimization workflows: {optimization_methods}")
+        
+        # Run iterative optimization (calibration)
+        if 'iteration' in optimization_methods:
+            calibration_results = self.calibrate_model()
+            if calibration_results:
+                results['calibration'] = str(calibration_results)
+        
+        # Run single-site emulation
+        if 'emulation' in optimization_methods:
+            sse_results = self.run_sse_emulation()
+            if sse_results:
+                results['single_site_emulation'] = sse_results
+        
+        # Run differentiable parameter emulation
+        if 'differentiable_parameter_emulation' in optimization_methods:
+            dpe_results = self.run_emulation()
+            if dpe_results:
+                results['differentiable_parameter_emulation'] = dpe_results
+        
+        # Run large domain emulation
+        if 'large_domain_emulator' in optimization_methods:
+            lde_results = self.run_large_domain_emulation()
+            if lde_results:
+                results['large_domain_emulation'] = lde_results
+        
+        return results
+    
+    def run_large_domain_emulation(self) -> Optional[Dict]:
+        """Run large domain emulation workflow."""
+        if not 'large_domain_emulator' in self.config.get('OPTIMISATION_METHODS', []):
+            self.logger.info("Large domain emulation is disabled in configuration")
+            return None
+        
+        self.logger.info("Starting large domain emulation workflow")
+        
+        try:
+            # Import here to avoid circular imports
+            from utils.optimization.large_domain_emulator import LargeDomainEmulator
+            
+            # Initialize large domain emulator
+            self.large_domain_emulator = LargeDomainEmulator(self.config, self.logger)
+            
+            # Run the distributed emulation workflow
+            results = self.large_domain_emulator.run_distributed_emulation()  # FIXED METHOD NAME
+            
+            if results:
+                self.logger.info("Large domain emulation completed successfully")
+                
+                # Save results using the results manager
+                self._save_large_domain_results(results)
+                
+                return results
+            else:
+                self.logger.warning("Large domain emulation did not produce results")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error during large domain emulation: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+    
+    def _save_large_domain_results(self, results: Dict[str, Any]):
+        """Save large domain emulation results to standard CONFLUENCE location."""
+        try:
+            # Create large domain results directory
+            lde_results_dir = self.project_dir / "optimisation" / "large_domain_emulation"
+            lde_results_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save comprehensive results
+            results_file = lde_results_dir / f"{self.experiment_id}_large_domain_results.json"
+            with open(results_file, 'w') as f:
+                json.dump(results, f, indent=2, default=str)
+            
+            self.logger.info(f"Saved large domain emulation results to {results_file}")
+            
+            # Save best parameters in CONFLUENCE format if available
+            optimization_results = results.get('optimization', {})
+            best_params = optimization_results.get('best_parameters')
+            
+            if best_params and isinstance(best_params, dict):
+                # Convert to DataFrame format compatible with other CONFLUENCE optimizers
+                params_data = {'iteration': [0]}
+                
+                # Add optimization mode and loss
+                mode = optimization_results.get('mode', 'unknown')
+                best_loss = optimization_results.get('best_loss', float('inf'))
+                params_data['optimization_mode'] = [mode]
+                params_data['composite_loss'] = [best_loss]
+                
+                # Add parameter values
+                for param_name, value in best_params.items():
+                    if isinstance(value, (list, np.ndarray)):
+                        params_data[param_name] = [float(np.mean(value))]
+                    else:
+                        params_data[param_name] = [float(value)]
+                
+                # Save as CSV for compatibility
+                params_df = pd.DataFrame(params_data)
+                params_file = lde_results_dir / f"{self.experiment_id}_large_domain_parameters.csv"
+                params_df.to_csv(params_file, index=False)
+                
+                self.logger.info(f"Saved large domain parameters to {params_file}")
+                
+        except Exception as e:
+            self.logger.error(f"Error saving large domain results: {str(e)}")
+    
+    def get_optimization_status(self) -> Dict[str, Any]:
+        """
+        Get status of optimization operations.
+        
+        Enhanced to include large domain emulation status.
+        """
+        status = {
+            'iterative_optimization_enabled': 'iteration' in self.config.get('OPTIMISATION_METHODS', []),
+            'optimization_algorithm': self.config.get('ITERATIVE_OPTIMIZATION_ALGORITHM', 'PSO'),
+            'optimization_metric': self.config.get('OPTIMIZATION_METRIC', 'KGE'),
+            'optimization_dir': str(self.project_dir / "optimisation"),
+            'results_exist': False,
+            'emulation_enabled': 'emulation' in self.config.get('OPTIMISATION_METHODS', []),
+            'rf_emulation_enabled': 'emulation' in self.config.get('OPTIMISATION_METHODS', []),
+            'differentiable_emulation_enabled': 'differentiable_parameter_emulation' in self.config.get('OPTIMISATION_METHODS', []),
+            'large_domain_emulation_enabled': 'large_domain_emulator' in self.config.get('OPTIMISATION_METHODS', [])
+        }
+        
+        # Check for optimization results
+        results_file = self.project_dir / "optimisation" / f"{self.experiment_id}_parallel_iteration_results.csv"
+        status['results_exist'] = results_file.exists()
+        
+        # Check for emulation outputs
+        emulation_dir = self.project_dir / "emulation" / self.experiment_id
+        if emulation_dir.exists():
+            status['emulation_parameter_sets'] = (emulation_dir / "parameter_sets.nc").exists()
+            status['ensemble_runs_exist'] = (emulation_dir / "ensemble_runs").exists()
+            status['performance_metrics_exist'] = (emulation_dir / "ensemble_analysis" / "performance_metrics.csv").exists()
+            status['rf_emulation_complete'] = (emulation_dir / "rf_emulation" / "optimized_parameters.csv").exists()
+        
+        # Check for large domain emulation outputs
+        lde_dir = self.project_dir / "optimisation" / "large_domain_emulation"
+        if lde_dir.exists():
+            status['large_domain_results_exist'] = (lde_dir / f"{self.experiment_id}_large_domain_results.json").exists()
+            status['large_domain_parameters_exist'] = (lde_dir / f"{self.experiment_id}_large_domain_parameters.csv").exists()
+        
+        return status
     
     def calibrate_model(self) -> Optional[Path]:
         """
@@ -216,14 +375,6 @@ class OptimizationManager:
             self.logger.info("Differentiable Parameter Emulation is disabled in configuration.")
             return None
 
-
-    def run_large_domain_emulation(self) -> Optional[Dict]:
-        """Run large domain emulation workflow."""
-        if not 'large_domain_emulation' in self.config.get('OPTIMISATION_METHODS', []):
-            return None
-        
-        self.large_domain_emulator = LargeDomainEmulator(self.config, self.logger)
-        return self.large_domain_emulator.run_emulation_workflow()
 
     def _calibrate_summa(self, algorithm: str) -> Optional[Path]:
         """
