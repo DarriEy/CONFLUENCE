@@ -1151,8 +1151,8 @@ class ModelExecutor:
         """Convert lumped SUMMA output for distributed routing"""
         try:
             # Load topology to get HRU information
-            mizuroute_settings_dir = Path(task_data['mizuroute_settings_dir'])
-            topology_file = mizuroute_settings_dir / task_data['config'].get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+            # mizuroute_settings_dir is already the correct Path object from the parameter
+            topology_file = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
             
             with xr.open_dataset(topology_file) as topo_ds:
                 # Handle multiple HRUs from delineated catchments
@@ -1162,7 +1162,7 @@ class ModelExecutor:
                 # Use first HRU ID as the lumped GRU ID (should be 1)
                 lumped_gru_id = 1 #hru_ids[0]
                 
-                logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")    
+                self.logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")
 
             # Find SUMMA timestep file
             timestep_files = list(summa_dir.glob("*timestep.nc"))
