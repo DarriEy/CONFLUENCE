@@ -7401,7 +7401,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
 def fix_summa_time_precision(input_file, output_file=None):
     """
     Round SUMMA time dimension to nearest hour to fix mizuRoute compatibility
-    Fixed to handle attribute overwriting issues
+    Fixed to handle timezone mismatch issues
     """
     import xarray as xr
     import numpy as np
@@ -7462,9 +7462,16 @@ def fix_summa_time_precision(input_file, output_file=None):
         
         print(f"Rounded time range: {rounded_timestamps.min()} to {rounded_timestamps.max()}")
         
+        # FIX: Ensure both timestamps are timezone-naive for consistent calculation
+        ref_time_calc = pd.Timestamp('1990-01-01')
+        
+        # Remove timezone from rounded_timestamps if present
+        if rounded_timestamps.tz is not None:
+            rounded_timestamps = rounded_timestamps.tz_localize(None)
+            print("Removed timezone from rounded timestamps")
+        
         # Convert back to hours since reference time
-        ref_time = pd.Timestamp('1990-01-01')
-        rounded_hours = (rounded_timestamps - ref_time).total_seconds() / 3600.0
+        rounded_hours = (rounded_timestamps - ref_time_calc).total_seconds() / 3600.0
         
         # Create new time coordinate with cleared attributes
         new_time = xr.DataArray(
