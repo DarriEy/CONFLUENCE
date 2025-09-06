@@ -7539,7 +7539,7 @@ def fix_summa_time_precision(input_file, output_file=None):
 
 
 def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logger, debug_info: Dict) -> bool:
-    """Convert lumped SUMMA output for distributed routing with safe file handling"""
+    """Convert lumped SUMMA output for distributed routing - UPDATED with model_manager logic"""
     try:
         import xarray as xr
         import numpy as np
@@ -7565,16 +7565,12 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             return False
         
         with xr.open_dataset(topology_file) as topo_ds:
-            # Handle multiple HRUs from delineated catchments
+            # Get HRU information - use first HRU ID as lumped GRU ID
             hru_ids = topo_ds['hruId'].values
             n_hrus = len(hru_ids)
-            seg_ids = topo_ds['segId'].values
-            n_segments = len(seg_ids)
+            lumped_gru_id = 1  # Use ID=1 for consistency
             
-            # Use first HRU ID as the lumped GRU ID (should be 1)
-            lumped_gru_id = hru_ids[0]
-            
-            logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs and {n_segments} segments")
+            logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")
         
         # Create backup of original file before modification
         backup_file = summa_file.with_suffix('.nc.backup')
@@ -7587,37 +7583,63 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
         
         # Ensure the original file is writable
         try:
-            os.chmod(summa_file, 0o664)  # rw-rw-r--
+            os.chmod(summa_file, 0o664)
         except Exception as e:
             logger.warning(f"Could not change file permissions: {str(e)}")
         
         # Load and convert SUMMA output
         summa_ds = None
         try:
+            # Open without decoding times to avoid conversion issues
             summa_ds = xr.open_dataset(summa_file, decode_times=False)
             
             routing_var = task_data['config'].get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
             available_vars = list(summa_ds.variables.keys())
             
-            if routing_var not in summa_ds:
-                logger.error(f"Routing variable {routing_var} not found in {available_vars}")
+            # Find the best variable to use
+            source_var = None
+            if routing_var in summa_ds:
+                source_var = routing_var
+                logger.info(f"Using configured routing variable: {routing_var}")
+            else:
+                # Try fallback variables
+                fallback_vars = ['averageRoutedRunoff', 'basin__TotalRunoff', 'scalarTotalRunoff']
+                for var in fallback_vars:
+                    if var in summa_ds:
+                        source_var = var
+                        logger.info(f"Routing variable {routing_var} not found, using: {source_var}")
+                        break
+            
+            if source_var is None:
+                logger.error(f"No suitable routing variable found in {available_vars}")
                 return False
             
-            var_data = summa_ds[routing_var]
-            logger.info(f"Selected {routing_var}: shape={var_data.shape}")
-            
-            # Create mizuRoute forcing dataset with single lumped GRU
+            # Create mizuRoute forcing dataset
             mizuForcing = xr.Dataset()
             
             # Copy time coordinate (preserve original format)
-            mizuForcing['time'] = summa_ds['time'].copy()
+            original_time = summa_ds['time']
+            mizuForcing['time'] = xr.DataArray(
+                original_time.values,
+                dims=('time',),
+                attrs=dict(original_time.attrs)
+            )
             
-            # Create single GRU using HRU ID from topology
+            # Clean up time units if needed
+            if 'units' in mizuForcing['time'].attrs:
+                time_units = mizuForcing['time'].attrs['units']
+                if 'T' in time_units:
+                    mizuForcing['time'].attrs['units'] = time_units.replace('T', ' ')
+            
+            # Create single GRU using lumped GRU ID
             mizuForcing['gru'] = xr.DataArray([lumped_gru_id], dims=('gru',))
             mizuForcing['gruId'] = xr.DataArray([lumped_gru_id], dims=('gru',))
             
             # Extract runoff data
+            var_data = summa_ds[source_var]
             runoff_data = var_data.values
+            
+            # Handle different shapes
             if len(runoff_data.shape) == 2:
                 if runoff_data.shape[1] > 1:
                     runoff_data = runoff_data.mean(axis=1)
@@ -7628,10 +7650,10 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
                 runoff_data = runoff_data.flatten()
             
             # Keep as single GRU: (time,) -> (time, 1)
-            single_gru_data = runoff_data[:, np.newaxis]  # Shape: (time, 1)
+            single_gru_data = runoff_data[:, np.newaxis]
             
             # Create runoff variable
-            mizuForcing['averageRoutedRunoff'] = xr.DataArray(
+            mizuForcing[routing_var] = xr.DataArray(
                 single_gru_data, dims=('time', 'gru'),
                 attrs={'long_name': 'Lumped runoff for distributed routing', 'units': 'm/s'}
             )
@@ -7639,20 +7661,19 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             # Copy global attributes
             mizuForcing.attrs.update(summa_ds.attrs)
             
-            # Load data into memory and close original dataset
+            # Load data and close original
             mizuForcing.load()
             summa_ds.close()
-            summa_ds = None  # Clear reference
+            summa_ds = None
             
         except Exception as e:
             if summa_ds is not None:
                 summa_ds.close()
             raise e
         
-        # Write to temporary file first, then atomically move to final location
+        # Write to temporary file first, then atomically move
         temp_file = None
         try:
-            # Create temporary file in the same directory
             with tempfile.NamedTemporaryFile(
                 delete=False, 
                 suffix='.nc', 
@@ -7665,18 +7686,20 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             mizuForcing.to_netcdf(temp_file, format='NETCDF4')
             mizuForcing.close()
             
-            # Set appropriate permissions on temp file
+            # Set permissions and move
             os.chmod(temp_file, 0o664)
-            
-            # Atomically move temporary file to final location
             shutil.move(str(temp_file), str(summa_file))
-            temp_file = None  # Successfully moved, don't try to clean up
+            temp_file = None
             
-            logger.info(f"Successfully converted SUMMA file: single lumped GRU for {n_segments} segments")
+            logger.info(f"Successfully converted SUMMA file: single lumped GRU for distributed routing")
+            
+            # CRITICAL: Now fix time precision for mizuRoute compatibility
+            fix_summa_time_precision(summa_file)
+            logger.info("Fixed SUMMA time precision for mizuRoute compatibility")
+            
             return True
             
         except Exception as e:
-            # Clean up temporary file if it exists
             if temp_file and temp_file.exists():
                 try:
                     temp_file.unlink()
