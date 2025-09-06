@@ -43,7 +43,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-# Reuse your iterative optimizer backend for SUMMA IO/parallelism
+# Reuse iterative optimizer backend for SUMMA IO/parallelism for now
 from iterative_optimizer import DEOptimizer  # type: ignore
 
 
@@ -51,7 +51,8 @@ from iterative_optimizer import DEOptimizer  # type: ignore
 # Config + Emulator definition
 # ------------------------------
 @dataclass
-class EmulatorConfig:\n    hidden_dims: List[int] = None
+class EmulatorConfig:
+    hidden_dims: List[int] = None
     dropout: float = 0.1
     activation: str = 'relu'
     n_training_samples: int = 1000
@@ -146,7 +147,7 @@ class SummaAutogradOp(torch.autograd.Function):
         obj_vec = torch.tensor([objs.get(k, objs.get(f"Calib_{k}", 0.0)) for k in dpe_self.objective_names],
                                dtype=torch.float32, device=x_norm.device)
         if use_sens:
-            J_np = dpe_self._summa_objective_jacobian(x_np)  # user must wire to Sundials sensitivities
+            J_np = dpe_self._summa_objective_jacobian(x_np)  # we must wire to Sundials sensitivities
             J = torch.tensor(J_np, dtype=torch.float32, device=x_norm.device)
             ctx.save_for_backward(J)
             ctx.jac_ready = True
@@ -367,7 +368,7 @@ class DifferentiableParameterOptimizer:
 
     # ---- SUMMA autograd path (Sundials or FD fallback) ----
     def _summa_objective_jacobian(self, x_norm: np.ndarray) -> np.ndarray:
-        """Wire this to your Sundials-enabled SUMMA sensitivity outputs.
+        """Wire this to Sundials-enabled SUMMA sensitivity outputs.
         Must return shape [n_objectives, n_parameters] wrt normalized params.
         Default raises to force explicit wiring.
         """
