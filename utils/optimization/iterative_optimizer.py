@@ -2956,26 +2956,30 @@ if __name__ == "__main__":
 
     def _update_mizuroute_control_file_for_final(self) -> None:
         """Update mizuRoute control file for final evaluation with correct input filename"""
-        mizu_control_path = self.optimization_dir / "settings" / "mizuRoute" / "mizuroute.control"
+        mizu_control_path = self.optimization_settings_dir.parent / "mizuRoute" / "mizuroute.control"
         if not mizu_control_path.exists():
+            self.logger.warning(f"mizuRoute control file not found: {mizu_control_path}")
             return
         
-        # Get the final evaluation prefix
+        # Get the final evaluation prefix (matching what SUMMA will output)
         final_prefix = f'run_{self.algorithm_name}_final_{self.experiment_id}'
         final_timestep_filename = f'{final_prefix}_timestep.nc'
+        
+        self.logger.info(f"Updating mizuRoute control file for final evaluation")
+        self.logger.info(f"Expected SUMMA output file: {final_timestep_filename}")
         
         with open(mizu_control_path, 'r') as f:
             lines = f.readlines()
         
         updated_lines = []
         for line in lines:
-            if '<fname_qsim>' in line:
+            if line.strip().startswith('<fname_qsim>'):
                 if '!' in line:
                     comment = '!' + '!'.join(line.split('!')[1:])
                     updated_lines.append(f"<fname_qsim>            {final_timestep_filename}    {comment}")
                 else:
                     updated_lines.append(f"<fname_qsim>            {final_timestep_filename}    ! netCDF name for HM_HRU runoff\n")
-            elif '<case_name>' in line:
+            elif line.strip().startswith('<case_name>'):
                 if '!' in line:
                     comment = '!' + '!'.join(line.split('!')[1:])
                     updated_lines.append(f"<case_name>             {final_prefix}    {comment}")
@@ -2987,7 +2991,7 @@ if __name__ == "__main__":
         with open(mizu_control_path, 'w') as f:
             f.writelines(updated_lines)
         
-        self.logger.info(f"Updated mizuRoute control file for final evaluation: {final_timestep_filename}")
+        self.logger.info(f"Updated mizuRoute control file: case_name={final_prefix}, fname_qsim={final_timestep_filename}")
 
 
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
@@ -2998,19 +3002,18 @@ if __name__ == "__main__":
             # Update file manager for full period
             self._update_file_manager_for_final_run()
             
-            # UPDATE MIZUROUTE CONTROL FILE FOR FINAL EVALUATION
-            self._update_mizuroute_control_file_for_final()
-            
             # Update modelDecisions.txt to use direct solver for final evaluation
             if self.config.get('FINAL_EVALUATION_NUMERICAL_METHOD', 'ida') == 'ida':
                 self._update_model_decisions_for_final_run()
-            
             
             # Apply best parameters
             self._fix_file_permissions_for_final_run()
             if not self._apply_parameters(best_params):
                 self.logger.error("Failed to apply best parameters for final run")
                 return None
+            
+            # UPDATE MIZUROUTE CONTROL FILE FOR FINAL EVALUATION (AFTER parameter application)
+            self._update_mizuroute_control_file_for_final()
             
             self.logger.info("Parameter application successful")
             
