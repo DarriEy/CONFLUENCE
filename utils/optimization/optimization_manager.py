@@ -4,10 +4,15 @@ from pathlib import Path
 import logging
 from typing import Dict, Any, Optional
 import pandas as pd
+from datetime import datetime
+import json
+
 import numpy as np
 from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, AsyncDDSOptimizer, PopulationDDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
 from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
 
+from utils.optimization.large_domain_emulator import LargeDomainEmulator
+from utils.optimization.differentiable_parameter_emulator import DifferentiableParameterOptimizer, EmulatorConfig
 
 class OptimizationManager:
     """
@@ -163,7 +168,63 @@ class OptimizationManager:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
-    
+
+    def differentiable_parameter_emulation(self):
+        """
+        Runs the full Differentiable Parameter Emulation (DPE) workflow.
+        """
+        self.logger.info("Starting Differentiable Parameter Emulation workflow...")
+
+        try:
+            # a. Configure the emulator from your main config file for flexibility
+            #    Add these DPE_* parameters to your main config.yaml if you wish.
+            emulator_config = EmulatorConfig(
+                hidden_dims=self.config.get('DPE_HIDDEN_DIMS', [256, 128, 64]),
+                n_training_samples=self.config.get('DPE_TRAINING_SAMPLES', 500),
+                n_validation_samples=self.config.get('DPE_VALIDATION_SAMPLES', 100),
+                n_epochs=self.config.get('DPE_EPOCHS', 300),
+                optimization_steps=self.config.get('DPE_OPTIMIZATION_STEPS', 200),
+                learning_rate=self.config.get('DPE_LEARNING_RATE', 1e-3),
+                optimization_lr=self.config.get('DPE_OPTIMIZATION_LR', 1e-2),
+            )
+
+            dpe = DifferentiableParameterOptimizer(self.config, self.config.get('DOMAIN_NAME'), emulator_config)
+
+            self.logger.info("Running DPE from config (EMULATOR_SETTING)…")
+            optimized_params = dpe.run_from_config()
+
+            self.logger.info("Validating optimized parameters with a final SUMMA run…")
+            validation_results = dpe.validate_optimization(optimized_params)
+
+            results_dir = Path(f"results_differentiable_{dpe.domain_name}_{datetime.now().strftime('%Y%m%d_%H%M')}")
+            dpe.save_results(optimized_params, results_dir)
+            return True
+
+        except Exception as e:
+            self.logger.error("Differentiable Parameter Emulation workflow failed.", exc_info=True)
+            # Re-raise the exception to be caught by the main CONFLUENCE error handler
+            raise e    
+
+    def run_emulation(self) -> Optional[Dict]:
+        """
+        Acts as the entry point for the Differentiable Parameter Emulation workflow.
+        """
+        if 'differentiable_parameter_emulation' in self.config.get('OPTIMISATION_METHODS', []):
+            # This now correctly calls the detailed workflow method we already defined.
+            return self.differentiable_parameter_emulation()
+        else:
+            self.logger.info("Differentiable Parameter Emulation is disabled in configuration.")
+            return None
+
+
+    def run_large_domain_emulation(self) -> Optional[Dict]:
+        """Run large domain emulation workflow."""
+        if not 'large_domain_emulation' in self.config.get('OPTIMISATION_METHODS', []):
+            return None
+        
+        self.large_domain_emulator = LargeDomainEmulator(self.config, self.logger)
+        return self.large_domain_emulator.run_emulation_workflow()
+
     def _calibrate_summa(self, algorithm: str) -> Optional[Path]:
         """
         Calibrate SUMMA model using specified algorithm.
@@ -235,7 +296,7 @@ class OptimizationManager:
             self.logger.error(traceback.format_exc())
             return None
     
-    def run_emulation(self) -> Optional[Dict]:
+    def run_sse_emulation(self) -> Optional[Dict]:
         """
         Run model parameter emulation workflow.
         
