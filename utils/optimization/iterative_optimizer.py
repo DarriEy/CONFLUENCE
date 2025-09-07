@@ -363,35 +363,13 @@ class StreamflowTarget(CalibrationTarget):
             return False
             
     def _extract_mizuroute_streamflow(self, sim_file: Path) -> pd.Series:
-        """Extract streamflow from mizuRoute output with debugging"""
+        """Extract streamflow from mizuRoute output using worker script approach"""
         with xr.open_dataset(sim_file) as ds:
-            # Debug: Log what's in the file
+            # Debug logging
             self.logger.info(f"DEBUG: mizuRoute file variables: {list(ds.variables.keys())}")
             self.logger.info(f"DEBUG: mizuRoute file dimensions: {dict(ds.dims)}")
             
-            # Find reach ID
-            reach_id = self._find_outlet_reach_id(ds)
-            self.logger.info(f"DEBUG: Using reach ID: {reach_id}")
-            
-            # Find reach index
-            if 'reachID' not in ds.variables:
-                raise ValueError("reachID variable not found in mizuRoute output")
-            
-            reach_ids = ds['reachID'].values
-            self.logger.info(f"DEBUG: Available reach IDs: {reach_ids[:10]}...{reach_ids[-10:]} (showing first/last 10)")
-            
-            reach_indices = np.where(reach_ids == reach_id)[0]
-            
-            if len(reach_indices) == 0:
-                # Debug: Try to find what reach IDs are actually available
-                self.logger.error(f"DEBUG: Reach ID {reach_id} not found")
-                self.logger.error(f"DEBUG: Available reach IDs range: {reach_ids.min()} to {reach_ids.max()}")
-                raise ValueError(f"Reach ID {reach_id} not found in mizuRoute output")
-            
-            reach_index = reach_indices[0]
-            self.logger.info(f"DEBUG: Found reach at index {reach_index}")
-            
-            # Find streamflow variable
+            # Find streamflow variable (same as worker script)
             streamflow_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
             
             for var_name in streamflow_vars:
@@ -399,10 +377,27 @@ class StreamflowTarget(CalibrationTarget):
                     var = ds[var_name]
                     self.logger.info(f"DEBUG: Using variable {var_name}, shape: {var.shape}")
                     
+                    # Use the SAME approach as worker script - find segment with highest average runoff
                     if 'seg' in var.dims:
-                        result = var.isel(seg=reach_index).to_pandas()
+                        # Calculate mean runoff across time for each segment to find outlet
+                        segment_means = var.mean(dim='time').values
+                        outlet_seg_idx = np.argmax(segment_means)
+                        
+                        self.logger.info(f"DEBUG: Found outlet at segment index {outlet_seg_idx} with mean runoff {segment_means[outlet_seg_idx]:.3f} m³/s")
+                        
+                        # Extract time series for outlet segment
+                        result = var.isel(seg=outlet_seg_idx).to_pandas()
+                        
                     elif 'reachID' in var.dims:
-                        result = var.isel(reachID=reach_index).to_pandas()
+                        # Calculate mean runoff across time for each reach to find outlet
+                        reach_means = var.mean(dim='time').values
+                        outlet_reach_idx = np.argmax(reach_means)
+                        
+                        self.logger.info(f"DEBUG: Found outlet at reach index {outlet_reach_idx} with mean runoff {reach_means[outlet_reach_idx]:.3f} m³/s")
+                        
+                        # Extract time series for outlet reach
+                        result = var.isel(reachID=outlet_reach_idx).to_pandas()
+                        
                     else:
                         self.logger.error(f"DEBUG: Unexpected dimensions for {var_name}: {var.dims}")
                         continue
@@ -411,7 +406,6 @@ class StreamflowTarget(CalibrationTarget):
                     self.logger.info(f"DEBUG: Extracted {len(result)} timesteps")
                     self.logger.info(f"DEBUG: Flow range: {result.min():.6f} to {result.max():.6f}")
                     self.logger.info(f"DEBUG: Flow mean: {result.mean():.6f}")
-                    self.logger.info(f"DEBUG: First 5 values: {result.head().values}")
                     
                     return result
             
@@ -3260,73 +3254,14 @@ if __name__ == "__main__":
         self.logger.info(f"Updated mizuRoute control file: case_name={final_prefix}, fname_qsim={final_timestep_filename}")
         self.logger.info(f"Input directory set to: {_normalize_path(self.summa_sim_dir)}")
 
-    def _calculate_metrics_using_worker_method(self, best_params: Dict) -> Optional[Dict]:
-        """Calculate metrics using the same worker method as calibration"""
-        try:
-            # Create task exactly like parallel workers do
-            task_data = {
-                'individual_id': 'final_eval',
-                'params': best_params,
-                'proc_id': 0,
-                'evaluation_id': 'final_evaluation',
-                
-                # Configuration for worker (same as parallel tasks)
-                'config': self.config,
-                'target_metric': self.target_metric,
-                'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
-                'domain_name': self.domain_name,
-                'project_dir': str(self.project_dir),
-                'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
-                
-                # Paths for worker (use main directories for final evaluation)
-                'summa_exe': str(self._get_summa_exe_path()),
-                'file_manager': str(self.optimization_settings_dir / 'fileManager.txt'),
-                'summa_dir': str(self.summa_sim_dir),
-                'mizuroute_dir': str(self.mizuroute_sim_dir),
-                'summa_settings_dir': str(self.optimization_settings_dir),
-                'mizuroute_settings_dir': str(self.optimization_dir / "settings" / "mizuRoute"),
-                
-                # Final evaluation flag
-                'final_evaluation': True,
-                'calibration_only': False  # Calculate both calibration and evaluation periods
-            }
-            
-            self.logger.info("Using worker method for final evaluation (same as calibration)")
-            
-            # Import and use the same worker function that calibration uses
-            from worker_scripts import _evaluate_parameters_worker_safe
-            
-            result = _evaluate_parameters_worker_safe(task_data)
-            
-            # Extract metrics from worker result
-            if result.get('error'):
-                self.logger.error(f"Worker evaluation failed: {result['error']}")
-                return None
-            
-            # The worker should return metrics in the result
-            metrics = result.get('metrics')
-            if metrics:
-                self.logger.info("Worker-based final evaluation successful")
-                return metrics
-            else:
-                self.logger.error("Worker evaluation returned no metrics")
-                return None
-                
-        except Exception as e:
-            self.logger.error(f"Error in worker-based final evaluation: {str(e)}")
-            return None
-
 
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
-        """Run final evaluation with best parameters using same method as calibration"""
+        """Run final evaluation with best parameters over full period"""
         self.logger.info("Running final evaluation with best parameters")
         
         try:
             # Update file manager for full period
             self._update_file_manager_for_final_run()
-            
-            # Update mizuRoute control file for final evaluation
-            self._update_mizuroute_control_file_for_final()
             
             # Update modelDecisions.txt to use direct solver for final evaluation
             if self.config.get('FINAL_EVALUATION_NUMERICAL_METHOD', 'ida') == 'ida':
@@ -3338,9 +3273,12 @@ if __name__ == "__main__":
                 self.logger.error("Failed to apply best parameters for final run")
                 return None
             
+            # UPDATE MIZUROUTE CONTROL FILE FOR FINAL EVALUATION (AFTER parameter application)
+            self._update_mizuroute_control_file_for_final()
+            
             self.logger.info("Parameter application successful")
             
-            # Run models
+            # Run models with direct solver
             if not self.model_executor.run_models(
                 self.summa_sim_dir,
                 self.mizuroute_sim_dir,
@@ -3349,11 +3287,17 @@ if __name__ == "__main__":
                 self.logger.error("Final model run failed")
                 return None
             
-            # USE SAME EVALUATION METHOD AS CALIBRATION (worker function)
-            metrics = self._calculate_metrics_using_worker_method(best_params)
+            # Calculate metrics for BOTH calibration and evaluation periods
+            metrics = self.calibration_target.calculate_metrics(
+                self.summa_sim_dir, 
+                self.mizuroute_sim_dir, 
+                calibration_only=False  # This ensures both periods are calculated
+            )
             
             if metrics:
                 self.logger.info("Final evaluation completed successfully")
+                
+                # Extract and log detailed metrics for both periods
                 self._log_detailed_final_metrics(metrics)
                 
                 return {
@@ -3362,7 +3306,7 @@ if __name__ == "__main__":
                     'mizuroute_success': self.calibration_target.needs_routing(),
                     'calibration_metrics': self._extract_period_metrics(metrics, 'Calib'),
                     'evaluation_metrics': self._extract_period_metrics(metrics, 'Eval'),
-                    'numerical_method_final': 'ida'
+                    'numerical_method_final': 'ide'  # Record that we used direct solver
                 }
             else:
                 return {'summa_success': False, 'mizuroute_success': False}
@@ -3375,6 +3319,7 @@ if __name__ == "__main__":
         finally:
             # Always restore optimization settings
             self._restore_model_decisions_for_optimization()
+            # Reset file manager back to optimization mode
             self._update_summa_file_manager(self.optimization_settings_dir / 'fileManager.txt')
 
     def _log_final_optimization_summary(self, algorithm_name: str, best_score: float, 
