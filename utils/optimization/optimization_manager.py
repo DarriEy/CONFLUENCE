@@ -9,8 +9,6 @@ import json
 
 import numpy as np
 from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, AsyncDDSOptimizer, PopulationDDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
-from utils.optimization.single_sample_emulator import EmulationRunner # type: ignore
-
 from utils.optimization.large_domain_emulator import LargeDomainEmulator
 from utils.optimization.differentiable_parameter_emulator import DifferentiableParameterOptimizer, EmulatorConfig
 
@@ -50,7 +48,6 @@ class OptimizationManager:
         project_dir (Path): Path to the project directory
         experiment_id (str): ID of the current experiment
         results_manager (OptimizationResultsManager): Manager for optimization results
-        emulation_runner (EmulationRunner): Runner for parameter emulation
         optimizers (Dict[str, Any]): Mapping of algorithm names to optimizer classes
         optimizer_methods (Dict[str, str]): Mapping of algorithm names to method names
     """
@@ -86,8 +83,6 @@ class OptimizationManager:
             self.logger
         )
         
-        # Initialize emulation runner
-        self.emulation_runner = EmulationRunner(self.config, self.logger)
         
         # Define optimizer mapping
         self.optimizers = {
@@ -132,12 +127,6 @@ class OptimizationManager:
             calibration_results = self.calibrate_model()
             if calibration_results:
                 results['calibration'] = str(calibration_results)
-        
-        # Run single-site emulation
-        if 'emulation' in optimization_methods:
-            sse_results = self.run_sse_emulation()
-            if sse_results:
-                results['single_site_emulation'] = sse_results
         
         # Run differentiable parameter emulation
         if 'differentiable_parameter_emulation' in optimization_methods:
@@ -366,14 +355,33 @@ class OptimizationManager:
 
     def run_emulation(self) -> Optional[Dict]:
         """
-        Acts as the entry point for the Differentiable Parameter Emulation workflow.
+        Entry point for all emulation workflows.
+        
+        This method dispatches to the appropriate emulation workflow based on
+        the OPTIMISATION_METHODS configuration.
         """
-        if 'differentiable_parameter_emulation' in self.config.get('OPTIMISATION_METHODS', []):
-            # This now correctly calls the detailed workflow method we already defined.
-            return self.differentiable_parameter_emulation()
-        else:
-            self.logger.info("Differentiable Parameter Emulation is disabled in configuration.")
+        optimization_methods = self.config.get('OPTIMISATION_METHODS', [])
+        results = {}
+        
+        # Run differentiable parameter emulation
+        if 'differentiable_parameter_emulation' in optimization_methods:
+            dpe_results = self.differentiable_parameter_emulation()
+            if dpe_results:
+                results['differentiable_parameter_emulation'] = dpe_results
+        
+        # Run large domain emulation
+        if 'large_domain_emulator' in optimization_methods:
+            lde_results = self.run_large_domain_emulation()
+            if lde_results:
+                results['large_domain_emulation'] = lde_results
+        
+        # If no emulation methods were configured
+        if not results:
+            if not any(method in optimization_methods for method in ['differentiable_parameter_emulation', 'large_domain_emulator']):
+                self.logger.info("No emulation methods enabled in configuration.")
             return None
+        
+        return results
 
 
     def _calibrate_summa(self, algorithm: str) -> Optional[Path]:
@@ -447,52 +455,6 @@ class OptimizationManager:
             self.logger.error(traceback.format_exc())
             return None
     
-    def run_sse_emulation(self) -> Optional[Dict]:
-        """
-        Run model parameter emulation workflow.
-        
-        This method executes the parameter emulation process, which enables rapid
-        exploration of parameter space and uncertainty quantification. The emulation
-        workflow includes:
-        1. Generation of parameter sets using Latin Hypercube Sampling or other methods
-        2. Execution of model simulations with the generated parameter sets
-        3. Analysis of model performance across the parameter space
-        4. Training of emulator models (e.g., Random Forest) to predict performance
-        5. Optimization using the trained emulator
-        
-        Parameter emulation is a computationally efficient approach for exploring
-        parameter sensitivity and uncertainty, and for identifying optimal parameter
-        sets without running the full hydrological model for every parameter combination.
-        
-        The emulation is controlled by configuration parameters starting with EMULATION_*,
-        including RUN_SINGLE_SITE_EMULATION.
-        
-        Returns:
-            Optional[Dict]: Dictionary with emulation results or None if emulation
-                          was disabled or failed
-                          
-        Raises:
-            RuntimeError: If the emulation process fails
-            Exception: For other errors during emulation
-        """
-        self.logger.info("Starting model parameter emulation")
-        
-        try:
-            # Run the complete emulation workflow
-            results = self.emulation_runner.run_emulation_workflow()
-            
-            if results:
-                self.logger.info("Model parameter emulation completed successfully")
-            else:
-                self.logger.warning("Model parameter emulation did not produce results")
-                
-            return results
-            
-        except Exception as e:
-            self.logger.error(f"Error during model parameter emulation: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
     
     def get_optimization_status(self) -> Dict[str, Any]:
         """

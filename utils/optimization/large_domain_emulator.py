@@ -26,14 +26,10 @@ from sklearn.neighbors import BallTree
 from tqdm import tqdm
 
 # Import CONFLUENCE backend components
-try:
-    from iterative_optimizer import DEOptimizer
-    from iterative_optimizer import ParameterManager, ModelExecutor, ResultsManager
-    from iterative_optimizer import CalibrationTarget, StreamflowTarget, SnowTarget, SoilMoistureTarget
-except ImportError:
-    logging.warning("CONFLUENCE backend not available. Some functionality may be limited.")
-    DEOptimizer = None
 
+from utils.optimization.iterative_optimizer import DEOptimizer
+from utils.optimization.iterative_optimizer import ParameterManager, ModelExecutor, ResultsManager
+from utils.optimization.iterative_optimizer import CalibrationTarget, StreamflowTarget, SnowTarget, SoilMoistureTarget
 
 class LargeDomainEmulator:
     """
@@ -897,7 +893,7 @@ class CONFLUENCEHydrofabricGraph:
         
         network_name = self.config.get('RIVER_NETWORK_SHP_NAME', 'default')
         if network_name == 'default':
-            network_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork.shp"
+            network_name = f"{self.config.get('DOMAIN_NAME')}_riverNetwork_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
         
         shapefile_path = Path(network_path) / network_name
         
@@ -1004,7 +1000,7 @@ class CONFLUENCEHydrofabricGraph:
         self.n_forcing = len(getattr(self, 'forcing_data', {}))
         
         self.logger.info(f"Loaded {self.n_attributes} attributes and {self.n_forcing} forcing variables")
-    
+        
     def _load_forcing_summary(self):
         """Load forcing summary from CONFLUENCE forcing data."""
         forcing_dir = self.project_dir / "forcing" / "basin_averaged_data"
@@ -1018,20 +1014,40 @@ class CONFLUENCEHydrofabricGraph:
                 try:
                     ds = xr.open_dataset(forcing_file)
                     for var in ds.data_vars:
-                        # Compute summary statistics
+                        # Skip coordinate variables that don't have time dimension
+                        if var in ['latitude', 'longitude', 'hruId', 'lat', 'lon', 'hru_id']:
+                            continue
+                        
+                        # Check if variable has time dimension
+                        if 'time' not in ds[var].dims:
+                            self.logger.debug(f"Skipping variable {var} - no time dimension")
+                            continue
+                        
+                        # Compute summary statistics for time-varying variables
                         mean_val = ds[var].mean(dim='time').values
                         std_val = ds[var].std(dim='time').values
                         
-                        self.forcing_data[f'{var}_mean'] = mean_val[:n_hrus] if len(mean_val) >= n_hrus else np.full(n_hrus, mean_val.mean())
-                        self.forcing_data[f'{var}_std'] = std_val[:n_hrus] if len(std_val) >= n_hrus else np.full(n_hrus, std_val.mean())
+                        # Handle spatial dimensions properly
+                        if len(mean_val.shape) == 1:  # Already spatial (hru dimension)
+                            self.forcing_data[f'{var}_mean'] = mean_val[:n_hrus] if len(mean_val) >= n_hrus else np.full(n_hrus, mean_val.mean())
+                            self.forcing_data[f'{var}_std'] = std_val[:n_hrus] if len(std_val) >= n_hrus else np.full(n_hrus, std_val.mean())
+                        else:  # Scalar (no spatial dimension)
+                            self.forcing_data[f'{var}_mean'] = np.full(n_hrus, float(mean_val))
+                            self.forcing_data[f'{var}_std'] = np.full(n_hrus, float(std_val))
+                    
                     ds.close()
+                    self.logger.debug(f"Successfully loaded forcing file: {forcing_file.name}")
+                    
                 except Exception as e:
                     self.logger.warning(f"Could not load forcing file {forcing_file}: {e}")
         
-        # Fill defaults if no forcing data
+        # Fill defaults if no forcing data loaded
         if not self.forcing_data:
+            self.logger.warning("No forcing data loaded, using defaults")
             for i in range(10):  # Default forcing variable count
                 self.forcing_data[f'forcing_{i}'] = np.random.normal(0, 1, n_hrus)
+        
+        self.logger.info(f"Loaded {len(self.forcing_data)} forcing summary variables")
     
     def _initialize_encoder_dimensions(self):
         """Initialize encoder dimensions."""
