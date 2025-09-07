@@ -1438,24 +1438,32 @@ class ModelExecutor:
                 
                 # Copy time coordinate
                 mizuForcing['time'] = summa_ds['time']
-                
-                # Create GRU dimension
-                mizuForcing['gru'] = xr.DataArray(seg_ids, dims=('gru',))
-                mizuForcing['gruId'] = xr.DataArray(seg_ids, dims=('gru',))
-                
-                # Get and broadcast runoff data
-                runoff_data = summa_ds[routing_var].values
+                                
+                # Create single GRU using lumped GRU ID (consistent with worker)
+                mizuForcing['gru'] = xr.DataArray([lumped_gru_id], dims=('gru',))
+                mizuForcing['gruId'] = xr.DataArray([lumped_gru_id], dims=('gru',))
+
+                # Extract runoff data
+                var_data = summa_ds[routing_var]
+                runoff_data = var_data.values
+
+                # Handle different shapes (same as worker)
                 if len(runoff_data.shape) == 2:
-                    runoff_data = runoff_data[:, 0] if runoff_data.shape[1] > 0 else runoff_data.flatten()
-                
-                # Broadcast to all segments
-                tiled_data = np.tile(runoff_data[:, np.newaxis], (1, n_segments))
-                
+                    if runoff_data.shape[1] > 1:
+                        runoff_data = runoff_data.mean(axis=1)
+                        self.logger.info(f"Used mean across {var_data.shape[1]} spatial elements")
+                    else:
+                        runoff_data = runoff_data[:, 0]
+                else:
+                    runoff_data = runoff_data.flatten()
+
+                # Keep as single GRU: (time,) -> (time, 1)
+                single_gru_data = runoff_data[:, np.newaxis]
+
                 mizuForcing['averageRoutedRunoff'] = xr.DataArray(
-                    tiled_data, dims=('time', 'gru'),
-                    attrs={'long_name': 'Broadcast runoff for distributed routing', 'units': 'm/s'}
-                )
-                
+                    single_gru_data, dims=('time', 'gru'),
+                    attrs={'long_name': 'Lumped runoff for distributed routing', 'units': 'm/s'}
+                )                
                 # Copy global attributes
                 mizuForcing.attrs.update(summa_ds.attrs)
             
