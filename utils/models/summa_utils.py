@@ -887,6 +887,9 @@ class SummaPreProcessor:
         num_hru = len(forcing_hruIds)
 
         # Define the dimensions and fill values
+        nSnow = 0
+        scalarv = 1
+
         soil_setups = {
             "FA": {
                 "mLayerDepth":  np.asarray([0.2, 0.3, 0.5]),
@@ -898,7 +901,7 @@ class SummaPreProcessor:
             },
         }
 
-        choice = self.config.get('SETTINGS_SUMMA_SOILPROFILE', 'FA')   # "FA" or "CWARHM"
+        choice = self.config.get('SETTINGS_SUMMA_SOILPROFILE', 'FA')  #"FA"  # or "CWARHM"
         mLayerDepth  = soil_setups[choice]["mLayerDepth"]
         iLayerHeight = soil_setups[choice]["iLayerHeight"]
 
@@ -914,13 +917,13 @@ class SummaPreProcessor:
             'scalarSnowDepth': 0,
             'scalarSWE': 0,
             'scalarSfcMeltPond': 0,
-            'scalarAquiferStorage': 0.4,
+            'scalarAquiferStorage': 2.5,
             'scalarSnowAlbedo': 0,
             'scalarCanairTemp': 283.16,
             'scalarCanopyTemp': 283.16,
             'mLayerTemp': 283.16,
             'mLayerVolFracIce': 0,
-            'mLayerVolFracLiq': 0.4,
+            'mLayerVolFracLiq': 0.2,
             'mLayerMatricHead': -1.0
         }
 
