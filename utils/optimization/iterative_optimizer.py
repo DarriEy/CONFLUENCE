@@ -1462,7 +1462,11 @@ class ModelExecutor:
             # Save converted file
             mizuForcing.to_netcdf(summa_file, format='NETCDF4')
             mizuForcing.close()
-            
+
+            # CRITICAL: Fix time precision for mizuRoute compatibility (same as worker scripts)
+            fix_summa_time_precision(summa_file)
+            self.logger.info("Fixed SUMMA time precision for mizuRoute compatibility")
+
             return True
             
         except Exception as e:
