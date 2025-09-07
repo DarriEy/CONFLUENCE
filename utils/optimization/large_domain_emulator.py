@@ -1196,7 +1196,28 @@ class MultiobjjectiveEvaluator:
     def _map_gridded_observations(self):
         """Map gridded observations (SMAP, GRACE, MODIS) to catchments."""
         # For each gridded dataset, create spatial mapping to catchments
-        catchment_centroids = self.hydrofabric.catchment_gdf.geometry.centroid
+        
+        # Fix: Project to appropriate coordinate system before calculating centroids
+        if self.hydrofabric.catchment_gdf.crs and self.hydrofabric.catchment_gdf.crs.is_geographic:
+            # Get a sample point to determine appropriate UTM zone
+            sample_geom = self.hydrofabric.catchment_gdf.geometry.iloc[0]
+            if hasattr(sample_geom, 'centroid'):
+                sample_point = sample_geom.centroid
+            else:
+                sample_point = sample_geom
+                
+            # Calculate UTM zone
+            utm_zone = int(((sample_point.x + 180) / 6) % 60) + 1
+            hemisphere = 'north' if sample_point.y >= 0 else 'south'
+            utm_crs = f"+proj=utm +zone={utm_zone} +{hemisphere} +datum=WGS84 +units=m +no_defs"
+            
+            # Project to UTM, calculate centroids, then project back to original CRS
+            projected_gdf = self.hydrofabric.catchment_gdf.to_crs(utm_crs)
+            projected_centroids = projected_gdf.geometry.centroid
+            catchment_centroids = projected_centroids.to_crs(self.hydrofabric.catchment_gdf.crs)
+        else:
+            # Already in projected coordinates, safe to calculate centroids directly
+            catchment_centroids = self.hydrofabric.catchment_gdf.geometry.centroid
         
         for obs_type in ['soil_moisture', 'groundwater', 'snow_cover']:
             if obs_type in self.observation_datasets:
