@@ -3260,14 +3260,73 @@ if __name__ == "__main__":
         self.logger.info(f"Updated mizuRoute control file: case_name={final_prefix}, fname_qsim={final_timestep_filename}")
         self.logger.info(f"Input directory set to: {_normalize_path(self.summa_sim_dir)}")
 
+    def _calculate_metrics_using_worker_method(self, best_params: Dict) -> Optional[Dict]:
+        """Calculate metrics using the same worker method as calibration"""
+        try:
+            # Create task exactly like parallel workers do
+            task_data = {
+                'individual_id': 'final_eval',
+                'params': best_params,
+                'proc_id': 0,
+                'evaluation_id': 'final_evaluation',
+                
+                # Configuration for worker (same as parallel tasks)
+                'config': self.config,
+                'target_metric': self.target_metric,
+                'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
+                'domain_name': self.domain_name,
+                'project_dir': str(self.project_dir),
+                'original_depths': self.parameter_manager.original_depths.tolist() if self.parameter_manager.original_depths is not None else None,
+                
+                # Paths for worker (use main directories for final evaluation)
+                'summa_exe': str(self._get_summa_exe_path()),
+                'file_manager': str(self.optimization_settings_dir / 'fileManager.txt'),
+                'summa_dir': str(self.summa_sim_dir),
+                'mizuroute_dir': str(self.mizuroute_sim_dir),
+                'summa_settings_dir': str(self.optimization_settings_dir),
+                'mizuroute_settings_dir': str(self.optimization_dir / "settings" / "mizuRoute"),
+                
+                # Final evaluation flag
+                'final_evaluation': True,
+                'calibration_only': False  # Calculate both calibration and evaluation periods
+            }
+            
+            self.logger.info("Using worker method for final evaluation (same as calibration)")
+            
+            # Import and use the same worker function that calibration uses
+            from worker_scripts import _evaluate_parameters_worker_safe
+            
+            result = _evaluate_parameters_worker_safe(task_data)
+            
+            # Extract metrics from worker result
+            if result.get('error'):
+                self.logger.error(f"Worker evaluation failed: {result['error']}")
+                return None
+            
+            # The worker should return metrics in the result
+            metrics = result.get('metrics')
+            if metrics:
+                self.logger.info("Worker-based final evaluation successful")
+                return metrics
+            else:
+                self.logger.error("Worker evaluation returned no metrics")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error in worker-based final evaluation: {str(e)}")
+            return None
+
 
     def _run_final_evaluation(self, best_params: Dict) -> Optional[Dict]:
-        """Run final evaluation with best parameters over full period"""
+        """Run final evaluation with best parameters using same method as calibration"""
         self.logger.info("Running final evaluation with best parameters")
         
         try:
             # Update file manager for full period
             self._update_file_manager_for_final_run()
+            
+            # Update mizuRoute control file for final evaluation
+            self._update_mizuroute_control_file_for_final()
             
             # Update modelDecisions.txt to use direct solver for final evaluation
             if self.config.get('FINAL_EVALUATION_NUMERICAL_METHOD', 'ida') == 'ida':
@@ -3279,12 +3338,9 @@ if __name__ == "__main__":
                 self.logger.error("Failed to apply best parameters for final run")
                 return None
             
-            # UPDATE MIZUROUTE CONTROL FILE FOR FINAL EVALUATION (AFTER parameter application)
-            self._update_mizuroute_control_file_for_final()
-            
             self.logger.info("Parameter application successful")
             
-            # Run models with direct solver
+            # Run models
             if not self.model_executor.run_models(
                 self.summa_sim_dir,
                 self.mizuroute_sim_dir,
@@ -3293,17 +3349,11 @@ if __name__ == "__main__":
                 self.logger.error("Final model run failed")
                 return None
             
-            # Calculate metrics for BOTH calibration and evaluation periods
-            metrics = self.calibration_target.calculate_metrics(
-                self.summa_sim_dir, 
-                self.mizuroute_sim_dir, 
-                calibration_only=False  # This ensures both periods are calculated
-            )
+            # USE SAME EVALUATION METHOD AS CALIBRATION (worker function)
+            metrics = self._calculate_metrics_using_worker_method(best_params)
             
             if metrics:
                 self.logger.info("Final evaluation completed successfully")
-                
-                # Extract and log detailed metrics for both periods
                 self._log_detailed_final_metrics(metrics)
                 
                 return {
@@ -3312,7 +3362,7 @@ if __name__ == "__main__":
                     'mizuroute_success': self.calibration_target.needs_routing(),
                     'calibration_metrics': self._extract_period_metrics(metrics, 'Calib'),
                     'evaluation_metrics': self._extract_period_metrics(metrics, 'Eval'),
-                    'numerical_method_final': 'ide'  # Record that we used direct solver
+                    'numerical_method_final': 'ida'
                 }
             else:
                 return {'summa_success': False, 'mizuroute_success': False}
@@ -3325,7 +3375,6 @@ if __name__ == "__main__":
         finally:
             # Always restore optimization settings
             self._restore_model_decisions_for_optimization()
-            # Reset file manager back to optimization mode
             self._update_summa_file_manager(self.optimization_settings_dir / 'fileManager.txt')
 
     def _log_final_optimization_summary(self, algorithm_name: str, best_score: float, 
