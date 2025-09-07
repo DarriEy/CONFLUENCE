@@ -23,6 +23,11 @@ CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 # Experiment settings
 DOMAIN_NAME: "Bow_at_Banff_elevation"                                     # Name of experimental domain
 EXPERIMENT_ID: run_1                                            # Name of experiment
+EXPERIMENT_TIME_START: 2000-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
+EXPERIMENT_TIME_END: 2009-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
+CALIBRATION_PERIOD: 2002-01-01, 2004-12-31                     # start_date, end_date in format YYYY-MM-DD
+EVALUATION_PERIOD:  2008-01-01, 2009-12-31                     # start_date, end_date in format YYYY-MM-DD
+SPINUP_PERIOD: 2000-01-01, 2001-12-31
 
 # Computatational settings
 MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
@@ -112,8 +117,6 @@ CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datato
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 # Experiment settings
-EXPERIMENT_TIME_START: 2009-01-01 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
-EXPERIMENT_TIME_END: 2022-12-31 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
 EXPERIMENT_BACKUP_SETTINGS: yes                                # Backup experiment settings in output folder, options yes or no.
 
 # Data acquisition settings
@@ -294,7 +297,7 @@ DPE_FORCE_RETRAIN: false
 # Autodiff/FD controls
 DPE_USE_NN_HEAD: true
 DPE_USE_SUNDIALS: true                                         # ignored if EMULATOR_SETTING == SUMMA_AUTODIFF_FD
-DPE_AUTODIFF_STEPS: 200
+DPE_AUTODIFF_STEPS: 50
 DPE_AUTODIFF_LR: 0.01
 DPE_FD_STEP: 0.001
 DPE_GD_STEP_SIZE: 0.1
@@ -308,7 +311,7 @@ LARGE_DOMAIN_TRAINING_EPOCHS: 50
 LARGE_DOMAIN_PARAMETER_ENSEMBLE_SIZE: 100
 LARGE_DOMAIN_BATCH_SIZE: 32
 LARGE_DOMAIN_VALIDATION_SPLIT: 0.2
-LARGE_DOMAIN_EMULATOR_TRAINING_SAMPLES: 200
+LARGE_DOMAIN_EMULATOR_TRAINING_SAMPLES: 500
 LARGE_DOMAIN_EMULATOR_STREAMFLOW_WEIGHT: 0.5
 LARGE_DOMAIN_EMULATOR_SMAP_WEIGHT: 0.2
 
@@ -323,9 +326,9 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                          # Options DDS, PSO or SCE-UA
+ITERATIVE_OPTIMIZATION_ALGORITHM: ASYNC-DDS                    # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 50                                           # Population size for genetic algorithms
+POPULATION_SIZE: 50                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter

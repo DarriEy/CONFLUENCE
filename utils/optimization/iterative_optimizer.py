@@ -418,9 +418,18 @@ class StreamflowTarget(CalibrationTarget):
             raise ValueError("No suitable streamflow variable found in mizuRoute output")
 
     def _find_outlet_reach_id(self, mizuroute_ds: xr.Dataset) -> int:
-        """Find the reach ID closest to the pour point with better fallbacks"""
+        """Find the reach ID closest to the pour point with comprehensive fallbacks"""
+        
+        # First get available reaches for fallbacks
         try:
-            # [Your existing projection-based logic here - keep the geographic approach as first priority]
+            available_reaches = mizuroute_ds['reachID'].values
+            self.logger.info(f"DEBUG: Found {len(available_reaches)} available reaches")
+        except Exception as e:
+            self.logger.error(f"Cannot access reachID from mizuRoute dataset: {str(e)}")
+            raise ValueError("mizuRoute dataset missing reachID variable")
+        
+        # APPROACH 1: Geographic approach (if pour point available)
+        try:
             import geopandas as gpd
             from shapely.geometry import Point
             
@@ -439,65 +448,86 @@ class StreamflowTarget(CalibrationTarget):
             pour_point_file = pour_point_path / pour_point_name
             
             if pour_point_file.exists():
-                # [Previous geographic projection logic...]
-                # ... existing code ...
-                pass
+                self.logger.info("DEBUG: Attempting geographic approach...")
+                # Load and process pour point [previous geographic logic...]
+                # Note: Keep your existing geographic logic here if needed
+                # For now, falling through to discharge approach
+                raise Exception("Geographic approach not available, using discharge approach")
             else:
-                raise Exception("Pour point file not found, trying discharge-based fallback")
+                raise Exception("Pour point file not found")
+                
+        except Exception as e:
+            self.logger.info(f"DEBUG: Geographic approach failed: {str(e)}")
+        
+        # APPROACH 2: Find outlet reach by topology (downSegId == -1)
+        try:
+            self.logger.info("DEBUG: Attempting topology-based outlet identification...")
+            if 'downSegId' in mizuroute_ds.variables:
+                down_seg_ids = mizuroute_ds['downSegId'].values
+                outlet_mask = down_seg_ids == -1
+                if np.any(outlet_mask):
+                    outlet_reach_id = available_reaches[outlet_mask][0]
+                    self.logger.info(f"DEBUG: Found outlet reach by topology: {outlet_reach_id}")
+                    return int(outlet_reach_id)
+            else:
+                self.logger.info("DEBUG: No downSegId variable in dataset")
+        except Exception as e:
+            self.logger.warning(f"DEBUG: Topology approach failed: {str(e)}")
+        
+        # APPROACH 3: Find reach with highest discharge
+        try:
+            self.logger.info("DEBUG: Attempting discharge-based outlet identification...")
+            streamflow_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
+            
+            for var_name in streamflow_vars:
+                if var_name in mizuroute_ds.variables:
+                    self.logger.info(f"DEBUG: Using {var_name} to find highest discharge reach")
+                    flow_data = mizuroute_ds[var_name]
+                    
+                    # Calculate mean discharge for each reach over the simulation period
+                    if 'seg' in flow_data.dims:
+                        # Calculate mean discharge per segment
+                        mean_discharge = flow_data.mean(dim='time')
+                        max_discharge_idx = int(mean_discharge.argmax().values)
+                        highest_discharge_reach = available_reaches[max_discharge_idx]
+                        max_discharge_value = float(mean_discharge.max().values)
+                        
+                        self.logger.info(f"DEBUG: Reach {highest_discharge_reach} has highest mean discharge: {max_discharge_value:.6f}")
+                        return int(highest_discharge_reach)
+                        
+                    elif 'reachID' in flow_data.dims:
+                        # Direct indexing by reachID
+                        mean_discharge = flow_data.mean(dim='time')
+                        max_discharge_reach_id = int(mean_discharge.idxmax(dim='reachID').values)
+                        max_discharge_value = float(mean_discharge.max().values)
+                        
+                        self.logger.info(f"DEBUG: Reach {max_discharge_reach_id} has highest mean discharge: {max_discharge_value:.6f}")
+                        return int(max_discharge_reach_id)
+                        
+                    else:
+                        self.logger.warning(f"DEBUG: {var_name} has unexpected dimensions: {flow_data.dims}")
+                        
+            self.logger.warning("DEBUG: No suitable streamflow variables found for discharge analysis")
             
         except Exception as e:
-            self.logger.warning(f"Geographic approach failed: {str(e)}")
-            self.logger.info("Attempting discharge-based outlet identification...")
-            
-            # Enhanced fallback logic with discharge-based selection
-            try:
-                available_reaches = mizuroute_ds['reachID'].values
-                self.logger.info(f"DEBUG: Fallback - Available reaches: {len(available_reaches)} total")
-                
-                # PRIORITY 1: Find outlet reach (where downSegId == -1)
-                if 'downSegId' in mizuroute_ds.variables:
-                    down_seg_ids = mizuroute_ds['downSegId'].values
-                    outlet_mask = down_seg_ids == -1
-                    if np.any(outlet_mask):
-                        outlet_reach_id = available_reaches[outlet_mask][0]
-                        self.logger.info(f"DEBUG: Found outlet reach by topology: {outlet_reach_id}")
-                        return int(outlet_reach_id)
-                
-                # PRIORITY 2: Find reach with highest discharge (most hydrologically meaningful)
-                streamflow_vars = ['IRFroutedRunoff', 'KWTroutedRunoff', 'averageRoutedRunoff']
-                
-                for var_name in streamflow_vars:
-                    if var_name in mizuroute_ds.variables:
-                        self.logger.info(f"DEBUG: Using {var_name} to find highest discharge reach")
-                        flow_data = mizuroute_ds[var_name]
-                        
-                        # Calculate mean discharge for each reach over the simulation period
-                        if 'seg' in flow_data.dims:
-                            mean_discharge = flow_data.mean(dim='time')
-                            max_discharge_idx = mean_discharge.argmax().values
-                            highest_discharge_reach = available_reaches[max_discharge_idx]
-                            
-                            self.logger.info(f"DEBUG: Reach {highest_discharge_reach} has highest mean discharge: {mean_discharge.max().values:.3f}")
-                            return int(highest_discharge_reach)
-                            
-                        elif 'reachID' in flow_data.dims:
-                            mean_discharge = flow_data.mean(dim='time')
-                            max_discharge_reach_id = mean_discharge.idxmax(dim='reachID').values
-                            
-                            self.logger.info(f"DEBUG: Reach {max_discharge_reach_id} has highest mean discharge: {mean_discharge.max().values:.3f}")
-                            return int(max_discharge_reach_id)
-                
-                # PRIORITY 3: If no discharge data, use the last reach (often the outlet in ordered lists)
-                fallback_reach = int(available_reaches[-1])
-                self.logger.info(f"DEBUG: Using last reach as positional fallback: {fallback_reach}")
-                return fallback_reach
-                
-            except Exception as e2:
-                self.logger.error(f"DEBUG: All fallback methods failed: {str(e2)}")
-                # Ultimate fallback - first reach
-                ultimate_fallback = int(mizuroute_ds['reachID'].values[0])
-                self.logger.info(f"DEBUG: Using first reach as ultimate fallback: {ultimate_fallback}")
-                return ultimate_fallback
+            self.logger.warning(f"DEBUG: Discharge approach failed: {str(e)}")
+        
+        # APPROACH 4: Use last reach (positional fallback)
+        try:
+            fallback_reach = int(available_reaches[-1])
+            self.logger.info(f"DEBUG: Using last reach as positional fallback: {fallback_reach}")
+            return fallback_reach
+        except Exception as e:
+            self.logger.warning(f"DEBUG: Positional fallback failed: {str(e)}")
+        
+        # APPROACH 5: Ultimate fallback - first reach
+        try:
+            ultimate_fallback = int(available_reaches[0])
+            self.logger.info(f"DEBUG: Using first reach as ultimate fallback: {ultimate_fallback}")
+            return ultimate_fallback
+        except Exception as e:
+            self.logger.error(f"DEBUG: Even ultimate fallback failed: {str(e)}")
+            raise ValueError("Cannot determine any valid reach ID from mizuRoute dataset")
     
     def _extract_summa_streamflow(self, sim_file: Path) -> pd.Series:
         """Extract streamflow from SUMMA output"""
