@@ -887,15 +887,25 @@ class SummaPreProcessor:
         num_hru = len(forcing_hruIds)
 
         # Define the dimensions and fill values
-        nSoil = 8
-        nSnow = 0
-        midSoil = 8
-        midToto = 8
-        ifcToto = midToto + 1
-        scalarv = 1
+        soil_setups = {
+            "FA": {
+                "mLayerDepth":  np.asarray([0.2, 0.3, 0.5]),
+                "iLayerHeight": np.asarray([0.0, 0.2, 0.5, 1.0]),
+            },
+            "CWARHM": {
+                "mLayerDepth":  np.asarray([0.025, 0.075, 0.15, 0.25, 0.5, 0.5, 1.0, 1.5]),
+                "iLayerHeight": np.asarray([0, 0.025, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 4]),
+            },
+        }
 
-        mLayerDepth = np.asarray([0.025, 0.075, 0.15, 0.25, 0.5, 0.5, 1, 1.5])
-        iLayerHeight = np.asarray([0, 0.025, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 4])
+        choice = self.config.get('SETTINGS_SUMMA_SOILPROFILE', 'FA')   # "FA" or "CWARHM"
+        mLayerDepth  = soil_setups[choice]["mLayerDepth"]
+        iLayerHeight = soil_setups[choice]["iLayerHeight"]
+
+        midToto = len(mLayerDepth)
+        ifcToto = len(iLayerHeight)
+        midSoil = midToto
+        nSoil   = midToto
 
         # States
         states = {
