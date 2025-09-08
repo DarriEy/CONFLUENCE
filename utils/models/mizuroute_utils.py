@@ -130,86 +130,150 @@ class MizuRoutePreProcessor:
         shp_river = gpd.read_file(river_network_path / river_network_name)
         shp_basin = gpd.read_file(river_basin_path / river_basin_name)
         
-        # Check if this is lumped domain with distributed routing
-        is_lumped_to_distributed = (
-            self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and 
-            self.config.get('ROUTING_DELINEATION', 'river_network') == 'river_network'
+        # Check if this is a headwater basin (river network contains only None values)
+        segid_col = self.config.get('RIVER_NETWORK_SHP_SEGID')
+        is_headwater = (
+            len(shp_river) == 1 and 
+            (shp_river[segid_col].iloc[0] is None or pd.isna(shp_river[segid_col].iloc[0]))
         )
         
-        if is_lumped_to_distributed:
-            self.logger.info("Using delineated catchments for lumped-to-distributed routing")
-            
-            # Load the delineated catchments shapefile
-            catchment_path = self.project_dir / 'shapefiles' / 'catchment' / f"{self.config['DOMAIN_NAME']}_catchment_delineated.shp"
-            if not catchment_path.exists():
-                raise FileNotFoundError(f"Delineated catchment shapefile not found: {catchment_path}")
-            
-            shp_catchments = gpd.read_file(catchment_path)
-            self.logger.info(f"Loaded {len(shp_catchments)} delineated subcatchments")
-            
-            # Use the delineated catchments as HRUs
-            num_seg = len(shp_river)
-            num_hru = len(shp_catchments)
-            
-            # Extract HRU data from delineated catchments
-            hru_ids = shp_catchments['GRU_ID'].values.astype(int)
-            hru_to_seg_ids = shp_catchments['GRU_ID'].values.astype(int)  # Each GRU drains to segment with same ID
-            
-            # Convert fractional areas to actual areas (multiply by total basin area)
-            total_basin_area = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].sum()
-            hru_areas = shp_catchments['avg_subbas'].values * total_basin_area
-            
-            # Store fractional areas for remapping
-            self.subcatchment_weights = shp_catchments['avg_subbas'].values
-            self.subcatchment_gru_ids = hru_ids
-            
-            self.logger.info(f"Created {num_hru} HRUs from delineated catchments")
-            self.logger.info(f"Weight range: {self.subcatchment_weights.min():.4f} to {self.subcatchment_weights.max():.4f}")
-            
-        else:
-            # Original logic for non-lumped cases
-            closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
-            
-            if len(shp_basin) == 1:  # For lumped case
-                shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
-                self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
-            
-            num_seg = len(shp_river)
+        if is_headwater:
+            self.logger.info("Detected headwater basin - creating synthetic single-segment network")
+            # Create synthetic river network data for headwater basin
+            synthetic_seg_data = self._create_synthetic_headwater_network(shp_basin)
+            num_seg = 1
             num_hru = len(shp_basin)
             
+            # Use synthetic data for segment variables
+            seg_ids = [synthetic_seg_data['segId']]
+            down_seg_ids = [synthetic_seg_data['downSegId']]
+            slopes = [synthetic_seg_data['slope']]
+            lengths = [synthetic_seg_data['length']]
+            
+            # For HRUs, ensure they drain to the synthetic segment
             hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
-            hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
+            hru_to_seg_ids = [synthetic_seg_data['segId']] * num_hru  # All HRUs drain to synthetic segment
             hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
+            
+        else:
+            # Check if this is lumped domain with distributed routing
+            is_lumped_to_distributed = (
+                self.config.get('DOMAIN_DEFINITION_METHOD') == 'lumped' and 
+                self.config.get('ROUTING_DELINEATION', 'river_network') == 'river_network'
+            )
+            
+            if is_lumped_to_distributed:
+                self.logger.info("Using delineated catchments for lumped-to-distributed routing")
+                
+                # Load the delineated catchments shapefile
+                catchment_path = self.project_dir / 'shapefiles' / 'catchment' / f"{self.config['DOMAIN_NAME']}_catchment_delineated.shp"
+                if not catchment_path.exists():
+                    raise FileNotFoundError(f"Delineated catchment shapefile not found: {catchment_path}")
+                
+                shp_catchments = gpd.read_file(catchment_path)
+                self.logger.info(f"Loaded {len(shp_catchments)} delineated subcatchments")
+                
+                # Use the delineated catchments as HRUs
+                num_seg = len(shp_river)
+                num_hru = len(shp_catchments)
+                
+                # Extract HRU data from delineated catchments
+                hru_ids = shp_catchments['GRU_ID'].values.astype(int)
+                hru_to_seg_ids = shp_catchments['GRU_ID'].values.astype(int)  # Each GRU drains to segment with same ID
+                
+                # Convert fractional areas to actual areas (multiply by total basin area)
+                total_basin_area = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].sum()
+                hru_areas = shp_catchments['avg_subbas'].values * total_basin_area
+                
+                # Store fractional areas for remapping
+                self.subcatchment_weights = shp_catchments['avg_subbas'].values
+                self.subcatchment_gru_ids = hru_ids
+                
+                self.logger.info(f"Created {num_hru} HRUs from delineated catchments")
+                self.logger.info(f"Weight range: {self.subcatchment_weights.min():.4f} to {self.subcatchment_weights.max():.4f}")
+                
+            else:
+                # Original logic for non-lumped cases
+                closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+                
+                if len(shp_basin) == 1:  # For lumped case
+                    shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
+                    self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
+                
+                num_seg = len(shp_river)
+                num_hru = len(shp_basin)
+                
+                hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
+                hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
+                hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
+            
+            # For non-headwater cases, extract segment data normally
+            seg_ids = shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int)
+            down_seg_ids = shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')].values.astype(int)
+            slopes = shp_river[self.config.get('RIVER_NETWORK_SHP_SLOPE')].values.astype(float)
+            lengths = shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')].values.astype(float)
         
         # Ensure minimum segment length
-        shp_river.loc[shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')] == 0, self.config.get('RIVER_NETWORK_SHP_LENGTH')] = 1
+        lengths = [max(1.0, length) if length is not None else 1.0 for length in lengths]
         
         # Enforce outlets if specified
         if self.config.get('SETTINGS_MIZU_MAKE_OUTLET') != 'n/a':
             river_outlet_ids = [int(id) for id in self.config.get('SETTINGS_MIZU_MAKE_OUTLET').split(',')]
-            for outlet_id in river_outlet_ids:
-                if outlet_id in shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values:
-                    shp_river.loc[shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')] == outlet_id, self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')] = 0
-                else:
-                    self.logger.warning(f"Outlet ID {outlet_id} not found in river network")
+            for i, seg_id in enumerate(seg_ids):
+                if seg_id in river_outlet_ids:
+                    down_seg_ids[i] = 0
+                    self.logger.info(f"Set segment {seg_id} as outlet")
         
         # Create the netCDF file
         with nc4.Dataset(self.mizuroute_setup_dir / topology_name, 'w', format='NETCDF4') as ncid:
             self._set_topology_attributes(ncid)
             self._create_topology_dimensions(ncid, num_seg, num_hru)
             
-            # Create segment variables (unchanged)
-            self._create_and_fill_nc_var(ncid, 'segId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int), 'Unique ID of each stream segment', '-')
-            self._create_and_fill_nc_var(ncid, 'downSegId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')].values.astype(int), 'ID of the downstream segment', '-')
-            self._create_and_fill_nc_var(ncid, 'slope', 'f8', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SLOPE')].values.astype(float), 'Segment slope', '-')
-            self._create_and_fill_nc_var(ncid, 'length', 'f8', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')].values.astype(float), 'Segment length', 'm')
+            # Create segment variables
+            self._create_and_fill_nc_var(ncid, 'segId', 'int', 'seg', seg_ids, 'Unique ID of each stream segment', '-')
+            self._create_and_fill_nc_var(ncid, 'downSegId', 'int', 'seg', down_seg_ids, 'ID of the downstream segment', '-')
+            self._create_and_fill_nc_var(ncid, 'slope', 'f8', 'seg', slopes, 'Segment slope', '-')
+            self._create_and_fill_nc_var(ncid, 'length', 'f8', 'seg', lengths, 'Segment length', 'm')
             
-            # Create HRU variables (using our computed values)
+            # Create HRU variables
             self._create_and_fill_nc_var(ncid, 'hruId', 'int', 'hru', hru_ids, 'Unique hru ID', '-')
             self._create_and_fill_nc_var(ncid, 'hruToSegId', 'int', 'hru', hru_to_seg_ids, 'ID of the stream segment to which the HRU discharges', '-')
             self._create_and_fill_nc_var(ncid, 'area', 'f8', 'hru', hru_areas, 'HRU area', 'm^2')
         
         self.logger.info(f"Network topology file created at {self.mizuroute_setup_dir / topology_name}")
+
+    def _create_synthetic_headwater_network(self, shp_basin):
+        """
+        Create synthetic river network data for headwater basins.
+        
+        Args:
+            shp_basin: GeoDataFrame of basin shapefile
+            
+        Returns:
+            dict: Synthetic segment data
+        """
+        self.logger.info("Creating synthetic headwater network with single outlet segment")
+        
+        # Calculate basin characteristics for synthetic segment
+        total_area = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].sum()
+        
+        # Estimate segment length as square root of area (reasonable approximation)
+        segment_length = max(1000.0, (total_area ** 0.5) * 0.1)  # At least 1km, or 10% of basin diameter
+        
+        # Default slope for headwater (typically steeper)
+        segment_slope = 0.01  # 1% slope as reasonable default for headwater
+        
+        synthetic_data = {
+            'segId': 1,           # Single segment with ID 1
+            'downSegId': 0,       # Outlet (no downstream segment)
+            'slope': segment_slope,
+            'length': segment_length
+        }
+        
+        self.logger.info(f"Created synthetic segment: ID={synthetic_data['segId']}, "
+                        f"length={segment_length:.1f}m, slope={segment_slope:.3f}")
+        
+        return synthetic_data
 
     def _find_closest_segment_to_pour_point(self, shp_river):
         """

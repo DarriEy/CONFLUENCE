@@ -1815,7 +1815,7 @@ class BaseOptimizer(ABC):
         required_files = [
             'fileManager.txt', 'modelDecisions.txt', 'outputControl.txt',
             'localParamInfo.txt', 'basinParamInfo.txt',
-            'attributes.nc'  # This is always required
+            'attributes.nc','coldState.nc'  # This is always required
         ]
         
         optional_files = [
@@ -1824,9 +1824,9 @@ class BaseOptimizer(ABC):
         ]
         
         # coldState.nc is conditionally required
-        conditional_files = {
-            'coldState.nc': self.config.get('CALIBRATE_DEPTH', False)  # Only required for depth calibration
-        }
+        #conditional_files = {
+        #    'coldState.nc': self.config.get('CALIBRATE_DEPTH', False)  # Only required for depth calibration
+        #}
         
         # Copy required files (fail if missing)
         for file_name in required_files:
@@ -1851,21 +1851,21 @@ class BaseOptimizer(ABC):
                 self.logger.warning(f"Optional SUMMA settings file not found: {source_path}")
         
         # Handle conditional files
-        for file_name, is_required in conditional_files.items():
-            source_path = source_settings_dir / file_name
-            dest_path = self.optimization_settings_dir / file_name
-            
-            if source_path.exists():
-                shutil.copy2(source_path, dest_path)
-                self.logger.debug(f"Copied conditional file: {file_name}")
-            elif is_required:
-                # Try to find it in alternative locations or create a minimal one
-                if file_name == 'coldState.nc':
-                    self.logger.warning(f"coldState.nc not found in settings, attempting to create minimal version")
-                    if not self._create_minimal_coldstate():
-                        raise FileNotFoundError(f"Required file {file_name} not found and could not be created: {source_path}")
-            else:
-                self.logger.debug(f"Conditional file not required: {file_name}")
+        #for file_name, is_required in conditional_files.items():
+        #    source_path = source_settings_dir / file_name
+        #    dest_path = self.optimization_settings_dir / file_name
+        #    
+        #    if source_path.exists():
+        #        shutil.copy2(source_path, dest_path)
+        #        self.logger.debug(f"Copied conditional file: {file_name}")
+        #    elif is_required:
+        #        # Try to find it in alternative locations or create a minimal one
+        #        if file_name == 'coldState.nc':
+        #            self.logger.warning(f"coldState.nc not found in settings, attempting to create minimal version")
+        #            if not self._create_minimal_coldstate():
+        #                raise FileNotFoundError(f"Required file {file_name} not found and could not be created: {source_path}")
+        #    else:
+        #        self.logger.debug(f"Conditional file not required: {file_name}")
         
         # Copy mizuRoute settings if they exist
         source_mizu_dir = self.project_dir / "settings" / "mizuRoute"

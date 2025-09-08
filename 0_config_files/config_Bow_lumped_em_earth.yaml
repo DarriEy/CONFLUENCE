@@ -153,7 +153,7 @@ ROUTING_MODEL: mizuRoute                                       # Routing model u
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate,Frad_vis,heightCanopyTop,windReductionParam,leafExchangeCoeff,frozenPrecipMultip,Fcapil,k_snow,heightCanopyBottom
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore,albedoDecayRate,newSnowDenMultTemp,albedoMinSpring,aquiferBaseflowExp,aquiferBaseflowRate # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: routingGammaScale,routingGammaShape # Basin parameters to calibrate                       
 
 DECISION_OPTIONS:                                              # Select which SUMMA model decisions to analyse
@@ -297,7 +297,7 @@ DPE_FORCE_RETRAIN: false
 # Autodiff/FD controls
 DPE_USE_NN_HEAD: true
 DPE_USE_SUNDIALS: true                                         # ignored if EMULATOR_SETTING == SUMMA_AUTODIFF_FD
-DPE_AUTODIFF_STEPS: 200
+DPE_AUTODIFF_STEPS: 50
 DPE_AUTODIFF_LR: 0.01
 DPE_FD_STEP: 0.001
 DPE_GD_STEP_SIZE: 0.1

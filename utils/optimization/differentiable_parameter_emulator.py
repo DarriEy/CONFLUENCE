@@ -225,7 +225,7 @@ class SummaInterface:
 
     def run_simulations_batch(self, param_samples: List[np.ndarray]) -> List[Optional[Dict]]:
         """
-        Run batch simulations for multiple parameter sets.
+        Run batch simulations for multiple parameter sets with proper multi-objective setup.
         
         Parameters
         ----------
@@ -244,17 +244,47 @@ class SummaInterface:
                 'individual_id': i,
                 'params': params,
                 'proc_id': i % self.backend.num_processes,
-                'evaluation_id': f"dpe_sample_{i:04d}",
+                'evaluation_id': f"dpe_batch_{i:04d}",
+                'multiobjective': True,  # CRITICAL: Enable multi-objective mode
+                'target_metric': 'KGE',  # Set a default target metric  
+                'config': self.backend.confluence_config,  # Ensure config is available
+                'calibration_variable': self.backend.confluence_config.get('CALIBRATION_VARIABLE', 'streamflow'),
+                'domain_name': self.backend.confluence_config.get('DOMAIN_NAME'),
+                'project_dir': str(Path(self.backend.confluence_config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.backend.confluence_config.get('DOMAIN_NAME')}"),
+                'summa_exe': self.backend.confluence_config.get('INSTALL_PATH_SUMMA'),
+                'file_manager': self.backend.confluence_config.get('SUMMA_FILE_MANAGER'),
+                'summa_dir': self.backend.confluence_config.get('SUMMA_OUTPUT_DIR'),
+                'mizuroute_dir': self.backend.confluence_config.get('MIZUROUTE_OUTPUT_DIR'),
+                'summa_settings_dir': self.backend.confluence_config.get('SUMMA_SETTINGS_DIR'),
+                'mizuroute_settings_dir': self.backend.confluence_config.get('MIZUROUTE_SETTINGS_DIR'),
             })
         
-        self.logger.info(f"Running batch simulation for {len(tasks)} parameter sets")
+        self.logger.info(f"Running batch simulation for {len(tasks)} parameter sets (multi-objective mode)")
         results = self.backend._run_parallel_evaluations(tasks)
         
-        # Organize results by individual_id
+        # Convert results to metrics format
         output = [None] * len(param_samples)
         for result in results:
-            if result and result.get('metrics') is not None:
-                output[result['individual_id']] = result['metrics']
+            if result and 'individual_id' in result:
+                idx = result['individual_id']
+                if idx < len(output):
+                    # FIXED: Extract metrics properly
+                    if 'metrics' in result and result['metrics']:
+                        output[idx] = result['metrics']
+                    elif 'objectives' in result and result['objectives'] is not None:
+                        # Convert objectives array to metrics dictionary
+                        objectives_array = result['objectives']
+                        if len(objectives_array) >= len(self.objective_names):
+                            metrics = {}
+                            for i, obj_name in enumerate(self.objective_names):
+                                metrics[obj_name] = float(objectives_array[i])
+                                metrics[f'Calib_{obj_name}'] = float(objectives_array[i])
+                            output[idx] = metrics
+                    elif 'score' in result and result['score'] is not None:
+                        # Fallback: create metrics from single score
+                        primary_obj = self.objective_names[0] if self.objective_names else 'KGE'
+                        score = float(result['score'])
+                        output[idx] = {primary_obj: score, f'Calib_{primary_obj}': score}
         
         success_rate = sum(1 for r in output if r is not None) / len(output)
         self.logger.info(f"Batch simulation completed. Success rate: {success_rate:.2%}")
@@ -521,17 +551,59 @@ class DifferentiableParameterOptimizer:
         return float(total_loss)
 
     def _evaluate_objectives_real(self, x_norm: np.ndarray) -> Dict[str, float]:
-        """Evaluate objectives using real SUMMA simulation."""
+        """Evaluate objectives using real SUMMA simulation with proper multi-objective setup."""
         params = self.summa.denormalize_parameters(x_norm)
         task = {
             'individual_id': 0,
             'params': params,
             'proc_id': 0,
-            'evaluation_id': 'dpe_eval_single'
+            'evaluation_id': 'dpe_eval_single',
+            'multiobjective': True,  # CRITICAL: Enable multi-objective mode
+            'target_metric': 'KGE',  # Set a default target metric
+            'config': self.confluence_config,  # Ensure config is available
+            'calibration_variable': self.confluence_config.get('CALIBRATION_VARIABLE', 'streamflow'),
+            'domain_name': self.confluence_config.get('DOMAIN_NAME'),
+            'project_dir': str(Path(self.confluence_config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.confluence_config.get('DOMAIN_NAME')}"),
+            'summa_exe': self.confluence_config.get('INSTALL_PATH_SUMMA'),
+            'file_manager': self.confluence_config.get('SUMMA_FILE_MANAGER'),
+            'summa_dir': self.confluence_config.get('SUMMA_OUTPUT_DIR'),
+            'mizuroute_dir': self.confluence_config.get('MIZUROUTE_OUTPUT_DIR'),
+            'summa_settings_dir': self.confluence_config.get('SUMMA_SETTINGS_DIR'),
+            'mizuroute_settings_dir': self.confluence_config.get('MIZUROUTE_SETTINGS_DIR'),
         }
         
         results = self.summa.backend._run_parallel_evaluations([task])
-        return results[0].get('metrics', {}) if results else {}
+        
+        if not results or not results[0]:
+            self.logger.warning("No results returned from SUMMA evaluation")
+            return {}
+        
+        result = results[0]
+        
+        # FIXED: Handle both old 'metrics' format and new direct objectives format
+        if 'metrics' in result and result['metrics']:
+            return result['metrics']
+        elif 'objectives' in result and result['objectives'] is not None:
+            # Convert objectives array back to metrics dictionary
+            objectives_array = result['objectives']
+            if len(objectives_array) >= len(self.objective_names):
+                metrics = {}
+                for i, obj_name in enumerate(self.objective_names):
+                    metrics[obj_name] = float(objectives_array[i])
+                    metrics[f'Calib_{obj_name}'] = float(objectives_array[i])  # Also add Calib_ prefix
+                return metrics
+        
+        # Fallback: if we only have a score, try to map it to primary objective
+        score = result.get('score')
+        if score is not None:
+            primary_obj = self.objective_names[0] if self.objective_names else 'KGE'
+            self.logger.warning(f"Only score available, mapping to {primary_obj}: {score}")
+            return {primary_obj: float(score), f'Calib_{primary_obj}': float(score)}
+        
+        self.logger.error(f"No valid objectives found in result: {result.keys()}")
+        return {}
+
+
 
     # ==============================
     # Data Generation and Caching
