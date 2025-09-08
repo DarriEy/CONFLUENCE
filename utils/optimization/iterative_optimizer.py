@@ -2210,7 +2210,7 @@ class BaseOptimizer(ABC):
             params = self.parameter_manager.denormalize_parameters(normalized_params)
             
             # Apply parameters to files
-            if not self.parameter_manager.apply_parameters(params):
+            if not self.apply_parameters(params):
                 return float('-inf')
             
             # Run models
