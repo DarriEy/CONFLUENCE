@@ -223,6 +223,9 @@ class SummaInterface:
         """Convert normalized array to parameter dictionary."""
         return self.param_manager.denormalize_parameters(x_norm)
 
+
+    
+
     def run_simulations_batch(self, param_samples: List[np.ndarray]) -> List[Optional[Dict]]:
         """
         Run batch simulations for multiple parameter sets with proper multi-objective setup.
@@ -290,7 +293,6 @@ class SummaInterface:
         self.logger.info(f"Batch simulation completed. Success rate: {success_rate:.2%}")
         
         return output
-
 
 # ==============================
 # PyTorch Autograd Integration
@@ -560,16 +562,6 @@ class DifferentiableParameterOptimizer:
             'evaluation_id': 'dpe_eval_single',
             'multiobjective': True,  # CRITICAL: Enable multi-objective mode
             'target_metric': 'KGE',  # Set a default target metric
-            'config': self.confluence_config,  # Ensure config is available
-            'calibration_variable': self.confluence_config.get('CALIBRATION_VARIABLE', 'streamflow'),
-            'domain_name': self.confluence_config.get('DOMAIN_NAME'),
-            'project_dir': str(Path(self.confluence_config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.confluence_config.get('DOMAIN_NAME')}"),
-            'summa_exe': self.confluence_config.get('INSTALL_PATH_SUMMA'),
-            'file_manager': self.confluence_config.get('SUMMA_FILE_MANAGER'),
-            'summa_dir': self.confluence_config.get('SUMMA_OUTPUT_DIR'),
-            'mizuroute_dir': self.confluence_config.get('MIZUROUTE_OUTPUT_DIR'),
-            'summa_settings_dir': self.confluence_config.get('SUMMA_SETTINGS_DIR'),
-            'mizuroute_settings_dir': self.confluence_config.get('MIZUROUTE_SETTINGS_DIR'),
         }
         
         results = self.summa.backend._run_parallel_evaluations([task])
@@ -586,23 +578,24 @@ class DifferentiableParameterOptimizer:
         elif 'objectives' in result and result['objectives'] is not None:
             # Convert objectives array back to metrics dictionary
             objectives_array = result['objectives']
-            if len(objectives_array) >= len(self.objective_names):
+            # Use standard objective names since we don't have access to self.objective_names
+            standard_objectives = ['NSE', 'KGE', 'RMSE', 'PBIAS']
+            if len(objectives_array) >= len(standard_objectives):
                 metrics = {}
-                for i, obj_name in enumerate(self.objective_names):
-                    metrics[obj_name] = float(objectives_array[i])
-                    metrics[f'Calib_{obj_name}'] = float(objectives_array[i])  # Also add Calib_ prefix
+                for i, obj_name in enumerate(standard_objectives):
+                    if i < len(objectives_array):
+                        metrics[obj_name] = float(objectives_array[i])
+                        metrics[f'Calib_{obj_name}'] = float(objectives_array[i])  # Also add Calib_ prefix
                 return metrics
         
         # Fallback: if we only have a score, try to map it to primary objective
         score = result.get('score')
         if score is not None:
-            primary_obj = self.objective_names[0] if self.objective_names else 'KGE'
-            self.logger.warning(f"Only score available, mapping to {primary_obj}: {score}")
-            return {primary_obj: float(score), f'Calib_{primary_obj}': float(score)}
+            self.logger.warning(f"Only score available, mapping to KGE: {score}")
+            return {'KGE': float(score), 'Calib_KGE': float(score)}
         
         self.logger.error(f"No valid objectives found in result: {result.keys()}")
         return {}
-
 
 
     # ==============================

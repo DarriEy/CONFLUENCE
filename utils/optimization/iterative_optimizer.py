@@ -4741,7 +4741,7 @@ class NSGA2Optimizer(BaseOptimizer):
             params = self.parameter_manager.denormalize_parameters(normalized_params)
             
             # Apply parameters to files
-            if not self.parameter_manager.apply_parameters(params):
+            if not self.apply_parameters(params):
                 return np.array([-1.0, -1.0])  # Bad NSE and KGE
             
             # Run models
@@ -4963,7 +4963,7 @@ class NSGA2Optimizer(BaseOptimizer):
             normalized_params = self.parameter_manager.normalize_parameters(params)
             
             # Apply parameters to files
-            if not self.parameter_manager.apply_parameters(params):
+            if not self.apply_parameters(params):
                 return -1.0
             
             # Check if output files already exist from parallel run (they should)
