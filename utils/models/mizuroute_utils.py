@@ -99,6 +99,85 @@ class MizuRoutePreProcessor:
         self.logger.info(f"Weight range: {weights.min():.4f} to {weights.max():.4f}")
         self.logger.info(f"Weight sum: {weights.sum():.4f}")
 
+    def _check_if_headwater_basin(self, shp_river):
+        """
+        Check if this is a headwater basin with None/invalid river network data.
+        
+        Args:
+            shp_river: GeoDataFrame of river network
+            
+        Returns:
+            bool: True if this appears to be a headwater basin with invalid network data
+        """
+        # Check for critical None values in key columns
+        seg_id_col = self.config.get('RIVER_NETWORK_SHP_SEGID')
+        downseg_id_col = self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')
+        
+        if seg_id_col in shp_river.columns and downseg_id_col in shp_river.columns:
+            # Check if all segment IDs are None/null
+            seg_ids_null = shp_river[seg_id_col].isna().all()
+            downseg_ids_null = shp_river[downseg_id_col].isna().all()
+            
+            if seg_ids_null and downseg_ids_null:
+                self.logger.info("Detected headwater basin: all river network IDs are None/null")
+                return True
+                
+            # Also check for string 'None' values (sometimes shapefiles store None as string)
+            if shp_river[seg_id_col].dtype == 'object':
+                seg_ids_none_str = (shp_river[seg_id_col] == 'None').all()
+                downseg_ids_none_str = (shp_river[downseg_id_col] == 'None').all()
+                
+                if seg_ids_none_str and downseg_ids_none_str:
+                    self.logger.info("Detected headwater basin: all river network IDs are 'None' strings")
+                    return True
+        
+        return False
+
+    def _create_synthetic_river_network(self, shp_river, hru_ids):
+        """
+        Create a synthetic single-segment river network for headwater basins.
+        
+        Args:
+            shp_river: Original GeoDataFrame (with None values)
+            hru_ids: Array of HRU IDs from delineated catchments
+            
+        Returns:
+            GeoDataFrame: Modified river network with synthetic single segment
+        """
+        self.logger.info("Creating synthetic river network for headwater basin")
+        
+        # Use the first HRU ID as the segment ID (should be reasonable identifier)
+        synthetic_seg_id = int(hru_ids[0]) if len(hru_ids) > 0 else 1
+        
+        # Create synthetic values for the single segment
+        synthetic_data = {
+            self.config.get('RIVER_NETWORK_SHP_SEGID'): synthetic_seg_id,
+            self.config.get('RIVER_NETWORK_SHP_DOWNSEGID'): 0,  # Outlet (downstream ID = 0)
+            self.config.get('RIVER_NETWORK_SHP_LENGTH'): 1000.0,  # Default 1 km length
+            self.config.get('RIVER_NETWORK_SHP_SLOPE'): 0.001,  # Default 0.1% slope
+        }
+        
+        # Get the geometry column name (usually 'geometry')
+        geom_col = shp_river.geometry.name
+        
+        # Create a simple point geometry at the centroid of the original (if it exists)
+        if not shp_river.empty and shp_river.geometry.iloc[0] is not None:
+            # Use the centroid of the first geometry
+            synthetic_geom = shp_river.geometry.iloc[0].centroid
+        else:
+            # Create a default point geometry (this won't be used for actual routing)
+            from shapely.geometry import Point
+            synthetic_geom = Point(0, 0)
+        
+        synthetic_data[geom_col] = synthetic_geom
+        
+        # Create new GeoDataFrame with single row
+        synthetic_gdf = gpd.GeoDataFrame([synthetic_data], crs=shp_river.crs)
+        
+        self.logger.info(f"Created synthetic river network: segment ID {synthetic_seg_id} (outlet)")
+        
+        return synthetic_gdf
+
     def create_network_topology_file(self):
         self.logger.info("Creating network topology file")
         
@@ -147,12 +226,18 @@ class MizuRoutePreProcessor:
             shp_catchments = gpd.read_file(catchment_path)
             self.logger.info(f"Loaded {len(shp_catchments)} delineated subcatchments")
             
+            # Extract HRU data from delineated catchments
+            hru_ids = shp_catchments['GRU_ID'].values.astype(int)
+            
+            # Check if we have a headwater basin (None values in river network)
+            if self._check_if_headwater_basin(shp_river):
+                # Create synthetic river network for headwater basin
+                shp_river = self._create_synthetic_river_network(shp_river, hru_ids)
+            
             # Use the delineated catchments as HRUs
             num_seg = len(shp_river)
             num_hru = len(shp_catchments)
             
-            # Extract HRU data from delineated catchments
-            hru_ids = shp_catchments['GRU_ID'].values.astype(int)
             hru_to_seg_ids = shp_catchments['GRU_ID'].values.astype(int)  # Each GRU drains to segment with same ID
             
             # Convert fractional areas to actual areas (multiply by total basin area)
@@ -181,15 +266,28 @@ class MizuRoutePreProcessor:
             hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
             hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
         
-        # Ensure minimum segment length
-        shp_river.loc[shp_river[self.config.get('RIVER_NETWORK_SHP_LENGTH')] == 0, self.config.get('RIVER_NETWORK_SHP_LENGTH')] = 1
+        # Ensure minimum segment length - now safe from None values
+        length_col = self.config.get('RIVER_NETWORK_SHP_LENGTH')
+        if length_col in shp_river.columns:
+            # Convert None/null values to 0 first, then set minimum
+            shp_river[length_col] = shp_river[length_col].fillna(0)
+            shp_river.loc[shp_river[length_col] == 0, length_col] = 1
+        
+        # Ensure slope column has valid values
+        slope_col = self.config.get('RIVER_NETWORK_SHP_SLOPE')
+        if slope_col in shp_river.columns:
+            shp_river[slope_col] = shp_river[slope_col].fillna(0.001)  # Default slope
+            shp_river.loc[shp_river[slope_col] == 0, slope_col] = 0.001
         
         # Enforce outlets if specified
         if self.config.get('SETTINGS_MIZU_MAKE_OUTLET') != 'n/a':
             river_outlet_ids = [int(id) for id in self.config.get('SETTINGS_MIZU_MAKE_OUTLET').split(',')]
+            seg_id_col = self.config.get('RIVER_NETWORK_SHP_SEGID')
+            downseg_id_col = self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')
+            
             for outlet_id in river_outlet_ids:
-                if outlet_id in shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values:
-                    shp_river.loc[shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')] == outlet_id, self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')] = 0
+                if outlet_id in shp_river[seg_id_col].values:
+                    shp_river.loc[shp_river[seg_id_col] == outlet_id, downseg_id_col] = 0
                 else:
                     self.logger.warning(f"Outlet ID {outlet_id} not found in river network")
         
@@ -198,7 +296,7 @@ class MizuRoutePreProcessor:
             self._set_topology_attributes(ncid)
             self._create_topology_dimensions(ncid, num_seg, num_hru)
             
-            # Create segment variables (unchanged)
+            # Create segment variables (now safe from None values)
             self._create_and_fill_nc_var(ncid, 'segId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int), 'Unique ID of each stream segment', '-')
             self._create_and_fill_nc_var(ncid, 'downSegId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_DOWNSEGID')].values.astype(int), 'ID of the downstream segment', '-')
             self._create_and_fill_nc_var(ncid, 'slope', 'f8', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SLOPE')].values.astype(float), 'Segment slope', '-')
@@ -210,7 +308,7 @@ class MizuRoutePreProcessor:
             self._create_and_fill_nc_var(ncid, 'area', 'f8', 'hru', hru_areas, 'HRU area', 'm^2')
         
         self.logger.info(f"Network topology file created at {self.mizuroute_setup_dir / topology_name}")
-
+        
     def _find_closest_segment_to_pour_point(self, shp_river):
         """
         Find the river segment closest to the pour point.
