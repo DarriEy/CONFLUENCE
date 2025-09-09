@@ -304,16 +304,16 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         
         if is_multiobjective:
             logger.info("Starting INLINE multi-objective metrics calculation")
-            
+
             try:
                 # Use inline metrics calculation
                 metrics = _calculate_metrics_inline_worker(
-                    summa_dir, 
-                    mizuroute_dir if needs_routing else None, 
-                    task_data['config'], 
+                    summa_dir,
+                    mizuroute_dir if needs_routing else None,
+                    task_data['config'],
                     logger
                 )
-                
+
                 if not metrics:
                     error_msg = 'Inline metrics calculation failed'
                     logger.error(error_msg)
@@ -327,43 +327,49 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
                         'debug_info': debug_info,
                         'runtime': eval_runtime
                     }
-                
+
                 logger.info(f"Inline metrics calculated: {list(metrics.keys())}")
-                
-                # Extract NSE and KGE
-                nse_score = metrics.get('NSE') or metrics.get('Calib_NSE')
-                kge_score = metrics.get('KGE') or metrics.get('Calib_KGE')
-                
-                logger.info(f"Extracted NSE: {nse_score}, KGE: {kge_score}")
-                
-                # Handle None/NaN values
-                if nse_score is None or (isinstance(nse_score, float) and np.isnan(nse_score)):
-                    logger.warning("NSE is None/NaN, setting to -1.0")
-                    nse_score = -1.0
-                
-                if kge_score is None or (isinstance(kge_score, float) and np.isnan(kge_score)):
-                    logger.warning("KGE is None/NaN, setting to -1.0")
-                    kge_score = -1.0
-                
-                # Create objectives array
-                objectives = [float(nse_score), float(kge_score)]
+
+                # Dynamically get objectives based on the list passed from the main process
+                objective_names = task_data.get('objective_names', ['NSE', 'KGE'])  # Fallback to old behavior
+                logger.info(f"Extracting objectives: {objective_names}")
+
+                objectives = []
+                for obj_name in objective_names:
+                    # Look for both 'Calib_OBJ' and 'OBJ' to be safe
+                    value = metrics.get(obj_name) or metrics.get(f'Calib_{obj_name}')
+
+                    logger.info(f"Extracted {obj_name}: {value}")
+
+                    # Handle None/NaN values with a penalty
+                    if value is None or (isinstance(value, float) and np.isnan(value)):
+                        logger.warning(f"{obj_name} is None/NaN, setting to a penalty value.")
+                        # Use a large penalty for minimization metrics, and a large negative penalty for maximization metrics
+                        if obj_name.upper() in ['RMSE', 'MAE', 'PBIAS']:
+                            value = 1e6
+                        else:
+                            value = -1e6
+                    
+                    objectives.append(float(value))
+
                 logger.info(f"Final objectives: {objectives}")
-                
-                # Set score based on target metric
-                target_metric = task_data.get('target_metric', 'NSE')
-                if target_metric == 'NSE':
-                    score = float(nse_score)
-                elif target_metric == 'KGE':
-                    score = float(kge_score)
-                else:
-                    score = float(kge_score)  # Default to KGE
-                
+
+                # Set the single 'score' based on the primary target_metric for backward compatibility or other modules
+                target_metric = task_data.get('target_metric', 'KGE')
+                score = -1e6  # Default penalty
+                if target_metric in objective_names:
+                    target_idx = objective_names.index(target_metric)
+                    score = objectives[target_idx]
+                else: # Fallback to KGE if available
+                    if 'KGE' in objective_names:
+                        score = objectives[objective_names.index('KGE')]
+
                 metrics_runtime = time.time() - metrics_start
                 eval_runtime = time.time() - eval_start_time
-                
-                logger.info(f"Multi-objective completed. NSE: {nse_score:.6f}, KGE: {kge_score:.6f}, Score: {score:.6f}")
+
+                logger.info(f"Multi-objective completed. Objectives: {objectives}, Score ({target_metric}): {score:.6f}")
                 logger.info(f"Runtime breakdown: Total={eval_runtime:.1f}s, SUMMA={summa_runtime:.1f}s, mizuRoute={mizuroute_runtime:.1f}s, Metrics={metrics_runtime:.1f}s")
-                
+
                 return {
                     'individual_id': individual_id,
                     'params': params,
@@ -379,7 +385,7 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
                         'metrics': metrics_runtime
                     }
                 }
-                
+
             except Exception as e:
                 import traceback
                 error_msg = f"Exception in inline multi-objective calculation: {str(e)}"

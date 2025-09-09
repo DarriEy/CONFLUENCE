@@ -2533,6 +2533,10 @@ class BaseOptimizer(ABC):
                 'params': task['params'],
                 'proc_id': task['proc_id'],
                 'evaluation_id': task['evaluation_id'],
+
+                # Pass through the multi-objective flags from the original task.
+                'multiobjective': task.get('multiobjective', False),
+                'objective_names': task.get('objective_names'),
                 
                 # Paths for worker
                 'summa_exe': str(self._get_summa_exe_path()),
