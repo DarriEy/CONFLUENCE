@@ -30,6 +30,8 @@ from tqdm import tqdm
 from utils.optimization.iterative_optimizer import DEOptimizer
 from utils.optimization.iterative_optimizer import ParameterManager, ModelExecutor, ResultsManager
 from utils.optimization.iterative_optimizer import CalibrationTarget, StreamflowTarget, SnowTarget, SoilMoistureTarget
+from utils.optimization.differentiable_parameter_emulator import ObjectiveHead
+
 
 class LargeDomainEmulator:
     """
@@ -114,7 +116,8 @@ class LargeDomainEmulator:
             'n_heads': self.config.get('LARGE_DOMAIN_EMULATOR_N_HEADS', 8),
             'n_transformer_layers': self.config.get('LARGE_DOMAIN_EMULATOR_N_LAYERS', 6),
             'dropout': self.config.get('LARGE_DOMAIN_EMULATOR_DROPOUT', 0.1),
-            
+            'pretrain_nn_head': self.config.get('LARGE_DOMAIN_EMULATOR_PRETRAIN_NN_HEAD', False),
+ 
             # Training configuration
             'batch_size': self.config.get('LARGE_DOMAIN_EMULATOR_BATCH_SIZE', 16),
             'learning_rate': self.config.get('LARGE_DOMAIN_EMULATOR_LEARNING_RATE', 1e-4),
@@ -522,21 +525,78 @@ class LargeDomainEmulator:
     # ==============================
     # Mode 3 & 4: SUMMA Autodiff Optimization
     # ==============================
-    
+
+    def _create_pretrained_objective_head(self) -> ObjectiveHead:
+        """Create ObjectiveHead initialized with DistributedGraphTransformer knowledge."""
+        self.logger.info("Creating pre-trained ObjectiveHead from graph transformer...")
+        
+        # Create head network
+        head = ObjectiveHead(self.n_parameters, len(self.emulator_config['loss_weights']))
+        
+        # Extract spatial-averaged features from trained graph transformer
+        if hasattr(self, 'emulator_model') and self.emulator_model is not None:
+            with torch.no_grad():
+                # Get sample data to extract learned representations
+                sample_params = torch.full((len(self.hydrofabric.catchment_ids), self.n_parameters), 0.5)
+                sample_graph = self.hydrofabric.update_features_with_parameters(sample_params)
+                
+                # Forward pass through graph transformer (excluding final prediction layer)
+                x = sample_graph.x
+                param_end = self.n_parameters
+                attr_end = param_end + self.hydrofabric.n_attributes
+                forcing_end = attr_end + self.hydrofabric.n_forcing
+                
+                # Get encoded features
+                params = self.emulator_model.param_encoder(x[:, :param_end])
+                attrs = self.emulator_model.attribute_encoder(x[:, param_end:attr_end])
+                
+                # Use parameter encoder weights to initialize head
+                # Map graph transformer's parameter understanding to head's parameter processing
+                if hasattr(head.net[0], 'weight'):
+                    param_encoder_weights = self.emulator_model.param_encoder[0].weight  # First linear layer
+                    head_param_dim = self.n_parameters
+                    
+                    # Initialize the parameter portion of head's input layer
+                    if param_encoder_weights.shape[1] == head_param_dim:
+                        # Direct mapping if dimensions match
+                        head.net[0].weight[:, -head_param_dim:] = param_encoder_weights[:64, :]
+                    else:
+                        # Adaptive mapping if dimensions differ
+                        min_dim = min(param_encoder_weights.shape[0], 64)
+                        min_param_dim = min(param_encoder_weights.shape[1], head_param_dim)
+                        head.net[0].weight[:min_dim, -min_param_dim:] = param_encoder_weights[:min_dim, :min_param_dim]
+        
+        self.logger.info("ObjectiveHead pre-trained with graph transformer knowledge")
+        return head
+
+
+
     def _run_summa_autodiff_mode(self, use_sundials: bool = True) -> Dict[str, Any]:
-        """Run SUMMA autodiff optimization."""
+        """Run SUMMA autodiff optimization with a choice of optimizers and optional pretraining."""
         mode_name = "SUMMA_AUTODIFF" if use_sundials else "SUMMA_AUTODIFF_FD"
+        optimizer_choice = self.config.get('LARGE_DOMAIN_EMULATOR_OPTIMIZER', 'ADAM').upper()
+
         self.logger.info(f"Running {mode_name} mode")
+        self.logger.info(f"Using optimizer: {optimizer_choice}")
         start_time = datetime.now()
         
         # Check Sundials availability
+        sundials_available = False
         if use_sundials:
             try:
                 test_params = self.parameter_manager.get_initial_parameters()
                 _ = self._compute_summa_jacobian(test_params)
+                sundials_available = True
             except NotImplementedError:
                 self.logger.warning("Sundials sensitivities not available. Falling back to finite differences.")
-                use_sundials = False
+        
+        # --- SAFETY CHECK: Prevent using L-BFGS with expensive finite-difference gradients ---
+        if optimizer_choice == 'LBFGS' and not sundials_available:
+            raise ValueError(
+                "L-BFGS optimizer is computationally infeasible with finite-difference gradients. "
+                "Please use L-BFGS only with Sundials ('SUMMA_AUTODIFF' mode) "
+                "or switch to the Adam optimizer (LARGE_DOMAIN_EMULATOR_OPTIMIZER: ADAM) for this mode."
+            )
         
         # Initialize parameters in normalized space
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -545,73 +605,103 @@ class LargeDomainEmulator:
         initial_normalized = self.parameter_manager.normalize_parameters(initial_params)
         x = torch.tensor(initial_normalized, device=device, requires_grad=True)
         
-        # Setup neural network head if requested
+        # Setup neural network head with optional pretraining
         objective_head = None
         if self.emulator_config['use_nn_head']:
-            objective_head = ObjectiveHead(self.n_parameters, len(self.emulator_config['loss_weights'])).to(device)
+            if self.emulator_config['pretrain_nn_head']:
+                self.logger.info("Pretraining mode: Running emulator training first...")
+                training_data = self._generate_emulator_training_data()
+                self._train_graph_emulator(training_data)
+                objective_head = self._create_pretrained_objective_head()
+            else:
+                objective_head = ObjectiveHead(self.n_parameters, len(self.emulator_config['loss_weights']))
+            
+            objective_head = objective_head.to(device)
+            self.logger.info(f"Using neural network head (pretrained: {self.emulator_config['pretrain_nn_head']})")
         
-        # Setup optimizer
+        # Setup optimizer based on configuration
         optimization_params = [x]
         if objective_head:
             optimization_params.extend(list(objective_head.parameters()))
         
-        optimizer = optim.Adam(optimization_params, lr=self.emulator_config['autodiff_lr'])
-        
+        if optimizer_choice == 'ADAM':
+            optimizer = optim.Adam(optimization_params, lr=self.emulator_config['autodiff_lr'])
+        elif optimizer_choice == 'LBFGS':
+            optimizer = optim.LBFGS(optimization_params, lr=self.emulator_config['autodiff_lr'])
+        else:
+            raise ValueError(f"Unknown optimizer '{optimizer_choice}'. Use 'ADAM' or 'LBFGS'.")
+
         best_loss = float('inf')
-        best_params = x.detach().clone()
+        best_params_norm = x.detach().clone()
         
-        # Optimization loop
-        for step in tqdm(range(self.emulator_config['autodiff_steps']), desc=f"{mode_name} optimization"):
-            optimizer.zero_grad()
-            
-            # Evaluate SUMMA objectives with autodiff
-            objectives_raw = SUMMAAutogradOp.apply(
-                x, self, use_sundials, float(self.emulator_config['fd_step'])
-            )
-            
-            # Apply neural network head if available
-            if objective_head:
-                objectives_adjusted = objective_head(objectives_raw, x)
-            else:
-                objectives_adjusted = objectives_raw
-            
-            # Compute loss
-            loss = self._compute_weighted_loss_tensor(objectives_adjusted)
-            
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-            
-            # Clamp parameters
-            with torch.no_grad():
-                x.clamp_(0.0, 1.0)
-            
-            # Track best
-            current_loss = loss.item()
-            if current_loss < best_loss:
-                best_loss = current_loss
-                best_params = x.detach().clone()
-            
-            if step % 20 == 0:
-                self.logger.info(f"Step {step}: Loss = {current_loss:.6f}, Best = {best_loss:.6f}")
+        # ==================================
+        # Optimization Loop
+        # ==================================
+        if optimizer_choice == 'ADAM':
+            progress_bar = tqdm(range(self.emulator_config['autodiff_steps']), desc=f"{mode_name} (Adam)")
+            for step in progress_bar:
+                optimizer.zero_grad()
+                with torch.no_grad(): x.clamp_(0.0, 1.0)
+                
+                objectives_raw = SUMMAAutogradOp.apply(x, self, sundials_available, float(self.emulator_config['fd_step']))
+                objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+                loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+                
+                loss.backward()
+                optimizer.step()
+                
+                current_loss = loss.item()
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    best_params_norm = x.detach().clone()
+                
+                progress_bar.set_postfix({'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'})
+                if step % 20 == 0:
+                    self.logger.info(f"Step {step}: Loss = {current_loss:.6f}, Best = {best_loss:.6f}")
+
+        elif optimizer_choice == 'LBFGS':
+            progress_bar = tqdm(range(self.emulator_config['autodiff_steps']), desc=f"{mode_name} (L-BFGS)")
+            last_eval = {'objectives_raw': None}
+            for step in progress_bar:
+                def closure():
+                    optimizer.zero_grad()
+                    with torch.no_grad(): x.clamp_(0.0, 1.0)
+                    
+                    objectives_raw = SUMMAAutogradOp.apply(x, self, sundials_available, float(self.emulator_config['fd_step']))
+                    last_eval['objectives_raw'] = objectives_raw.detach().clone()
+                    
+                    objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+                    loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+                    
+                    loss.backward()
+                    return loss
+
+                loss = optimizer.step(closure)
+                
+                current_loss = loss.item()
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    best_params_norm = x.detach().clone()
+
+                progress_bar.set_postfix({'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'})
+                if step % 5 == 0 or step == 0: # Log more frequently for L-BFGS
+                    self.logger.info(f"Step {step}: Loss = {current_loss:.6f}, Best = {best_loss:.6f}")
         
+        # ==================================
+        # Finalization
+        # ==================================
         optimization_time = (datetime.now() - start_time).total_seconds()
         self.timing_results[f'{mode_name.lower()}_mode'] = optimization_time
         
-        # Convert back to parameter dictionary
-        best_params_dict = self.parameter_manager.denormalize_parameters(best_params.detach().cpu().numpy())
+        best_params_dict = self.parameter_manager.denormalize_parameters(best_params_norm.detach().cpu().numpy())
         
         return {
             'mode': mode_name,
             'best_parameters': best_params_dict,
             'best_loss': best_loss,
-            'used_sundials': use_sundials,
+            'used_sundials': sundials_available,
             'optimization_time': optimization_time
         }
-    
-    # ==============================
-    # SUMMA Interface and Utilities
-    # ==============================
     
     def _compute_summa_jacobian(self, parameters: Dict[str, float]) -> np.ndarray:
         """

@@ -108,6 +108,7 @@ class EmulatorConfig:
     dropout: float = 0.1
     activation: str = 'relu'
     n_training_samples: int = 1000
+    pretrain_nn_head: bool = False
     n_validation_samples: int = 200
     batch_size: int = 32
     learning_rate: float = 1e-3
@@ -116,14 +117,40 @@ class EmulatorConfig:
     optimization_lr: float = 1e-2
     optimization_steps: int = 100
     objective_weights: Dict[str, float] = None
+    iterate_enabled: bool = False
+    iterate_max_iterations: int = 5
+    iterate_samples_per_cycle: int = 100
+    iterate_sampling_radius: float = 0.1
+    iterate_convergence_tol: float = 1e-4
+    iterate_min_improvement: float = 1e-6
+    iterate_sampling_method: str = 'gaussian'
 
     def __post_init__(self):
+        """
+        Ensures correct types for numeric fields after initialization.
+        This prevents TypeErrors when values are loaded from YAML as strings.
+        """
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64, 32]
         if self.objective_weights is None:
             # Maximize KGE/NSE: use negative weights to minimize their negatives
             self.objective_weights = {'KGE': -1.0, 'NSE': -1.0, 'RMSE': 0.1, 'PBIAS': 0.05}
-
+        
+        # --- FIX: Ensure all numeric parameters are cast to the correct type ---
+        self.dropout = float(self.dropout)
+        self.n_training_samples = int(self.n_training_samples)
+        self.n_validation_samples = int(self.n_validation_samples)
+        self.batch_size = int(self.batch_size)
+        self.learning_rate = float(self.learning_rate)
+        self.n_epochs = int(self.n_epochs)
+        self.early_stopping_patience = int(self.early_stopping_patience)
+        self.optimization_lr = float(self.optimization_lr)
+        self.optimization_steps = int(self.optimization_steps)
+        self.iterate_max_iterations = int(self.iterate_max_iterations)
+        self.iterate_samples_per_cycle = int(self.iterate_samples_per_cycle)
+        self.iterate_sampling_radius = float(self.iterate_sampling_radius)
+        self.iterate_convergence_tol = float(self.iterate_convergence_tol)
+        self.iterate_min_improvement = float(self.iterate_min_improvement)
 
 # ==============================
 # Neural Network Architecture
@@ -543,6 +570,285 @@ class DifferentiableParameterOptimizer:
     # ==============================
     # Utility Methods
     # ==============================
+
+    def _generate_samples_around_optimum(self, optimum_params: np.ndarray, 
+                                    n_samples: int, 
+                                    radius: float,
+                                    method: str = 'gaussian') -> np.ndarray:
+        """
+        Generate parameter samples around current optimum for iterative refinement.
+        
+        Parameters
+        ----------
+        optimum_params : np.ndarray
+            Current optimum in normalized space [0,1]
+        n_samples : int
+            Number of samples to generate
+        radius : float
+            Sampling radius in normalized space
+        method : str
+            Sampling method ('gaussian', 'uniform', 'adaptive')
+            
+        Returns
+        -------
+        np.ndarray
+            Array of parameter samples [n_samples, n_parameters]
+        """
+        samples = []
+        
+        for _ in range(n_samples):
+            if method == 'gaussian':
+                # Gaussian sampling around optimum
+                perturbation = np.random.normal(0, radius, self.n_parameters)
+                sample = optimum_params + perturbation
+                
+            elif method == 'uniform':
+                # Uniform sampling in hypercube around optimum
+                perturbation = np.random.uniform(-radius, radius, self.n_parameters)
+                sample = optimum_params + perturbation
+                
+            elif method == 'adaptive':
+                # Adaptive sampling with parameter-specific radii
+                # Use smaller radius for parameters that have converged
+                param_sensitivity = np.ones(self.n_parameters) * radius
+                perturbation = np.random.normal(0, param_sensitivity)
+                sample = optimum_params + perturbation
+                
+            else:
+                raise ValueError(f"Unknown sampling method: {method}")
+            
+            # Clip to valid parameter space [0,1]
+            sample = np.clip(sample, 0.0, 1.0)
+            samples.append(sample)
+        
+        return np.array(samples)
+
+    def _check_iterative_convergence(self, 
+                                    old_optimum: np.ndarray, 
+                                    new_optimum: np.ndarray,
+                                    old_loss: float,
+                                    new_loss: float) -> Tuple[bool, str]:
+        """
+        Check convergence criteria for iterative optimization.
+        
+        Parameters
+        ----------
+        old_optimum : np.ndarray
+            Previous optimum parameters
+        new_optimum : np.ndarray  
+            Current optimum parameters
+        old_loss : float
+            Previous best loss
+        new_loss : float
+            Current best loss
+            
+        Returns
+        -------
+        Tuple[bool, str]
+            (converged, reason)
+        """
+        # Parameter change convergence
+        param_change = np.linalg.norm(new_optimum - old_optimum)
+        if param_change < self.emulator_config.iterate_convergence_tol:
+            return True, f"Parameter convergence (change: {param_change:.6f})"
+        
+        # Objective improvement convergence
+        improvement = old_loss - new_loss  # Positive = improvement
+        if abs(improvement) < self.emulator_config.iterate_min_improvement:
+            return True, f"Objective convergence (improvement: {improvement:.6f})"
+        
+        return False, f"Not converged (param_change: {param_change:.6f}, improvement: {improvement:.6f})"
+
+    def _update_emulator_config_for_iteration(self, iteration: int):
+        """Update emulator config for iterative training (e.g., reduce epochs)."""
+        if iteration > 1:
+            # Reduce training epochs for subsequent iterations since we're refining
+            self.emulator_config.n_epochs = min(self.emulator_config.n_epochs, 150)
+            self.emulator_config.early_stopping_patience = min(self.emulator_config.early_stopping_patience, 25)
+            self.logger.info(f"Iteration {iteration}: Reduced training epochs to {self.emulator_config.n_epochs}")
+
+    def optimize_parameters_iterative(self, initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """
+        Iterative emulator optimization with active learning around optima.
+        
+        This method implements an iterative refinement approach:
+        1. Train emulator on initial data
+        2. Optimize to find current best parameters
+        3. Generate new samples around the optimum
+        4. Add new data and retrain emulator
+        5. Repeat until convergence
+        
+        Parameters
+        ----------
+        initial_params : Dict[str, float], optional
+            Initial parameter values
+            
+        Returns
+        -------
+        Dict[str, float]
+            Final optimized parameters
+        """
+        if not self.emulator_config.iterate_enabled:
+            return self.optimize_parameters(initial_params)
+        
+        self.logger.info("Starting iterative emulator optimization...")
+        self.logger.info(f"Max iterations: {self.emulator_config.iterate_max_iterations}")
+        self.logger.info(f"Samples per cycle: {self.emulator_config.iterate_samples_per_cycle}")
+        self.logger.info(f"Sampling radius: {self.emulator_config.iterate_sampling_radius}")
+        
+        start_time = time.time()
+        
+        # Initialize with first optimization
+        current_optimum_params = self.optimize_parameters(initial_params)
+        current_optimum_norm = self.summa.normalize_parameters(current_optimum_params)
+        
+        # Evaluate current optimum to get baseline loss
+        current_objectives = self._evaluate_objectives_real(current_optimum_norm)
+        current_loss = self._composite_loss_from_objectives(current_objectives)
+        
+        self.logger.info(f"Initial optimization complete. Loss: {current_loss:.6f}")
+        
+        # Store iteration history
+        iteration_history = [{
+            'iteration': 0,
+            'loss': current_loss,
+            'parameters': current_optimum_params.copy(),
+            'training_samples': len(self.training_data['parameters']),
+            'validation_samples': len(self.validation_data['parameters'])
+        }]
+        
+        # Iterative refinement loop
+        for iteration in range(1, self.emulator_config.iterate_max_iterations + 1):
+            iteration_start = time.time()
+            self.logger.info(f"\n{'='*60}")
+            self.logger.info(f"ITERATIVE REFINEMENT - CYCLE {iteration}/{self.emulator_config.iterate_max_iterations}")
+            self.logger.info(f"{'='*60}")
+            
+            # 1. Generate new samples around current optimum
+            self.logger.info(f"Generating {self.emulator_config.iterate_samples_per_cycle} samples around optimum...")
+            new_param_samples = self._generate_samples_around_optimum(
+                current_optimum_norm,
+                self.emulator_config.iterate_samples_per_cycle,
+                self.emulator_config.iterate_sampling_radius,
+                self.emulator_config.iterate_sampling_method
+            )
+            
+            # 2. Evaluate new samples with SUMMA
+            self.logger.info("Evaluating new samples with SUMMA...")
+            new_objective_results = self.summa.run_simulations_batch(new_param_samples, self.objective_names)
+            
+            # 3. Filter valid results and add to training data
+            valid_new_params, valid_new_objectives = [], []
+            for params, objectives in zip(new_param_samples, new_objective_results):
+                if objectives and self._is_valid_objective(objectives):
+                    valid_new_params.append(params.tolist())
+                    
+                    # Extract objective values in consistent order
+                    obj_values = []
+                    for obj_name in self.objective_names:
+                        value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}", 0.0))
+                        obj_values.append(value)
+                    valid_new_objectives.append(obj_values)
+            
+            success_rate = len(valid_new_params) / len(new_param_samples)
+            self.logger.info(f"New sample success rate: {success_rate:.2%} ({len(valid_new_params)}/{len(new_param_samples)})")
+            
+            if len(valid_new_params) == 0:
+                self.logger.warning("No valid new samples obtained. Stopping iterations.")
+                break
+            
+            # 4. Add new data to existing training data
+            self.training_data['parameters'].extend(valid_new_params)
+            self.training_data['objectives'].extend(valid_new_objectives)
+            
+            # Also add some to validation set (20% of new samples)
+            n_val_add = max(1, len(valid_new_params) // 5)
+            self.validation_data['parameters'].extend(valid_new_params[:n_val_add])
+            self.validation_data['objectives'].extend(valid_new_objectives[:n_val_add])
+            
+            total_training = len(self.training_data['parameters'])
+            total_validation = len(self.validation_data['parameters'])
+            self.logger.info(f"Updated training data: {total_training} samples")
+            self.logger.info(f"Updated validation data: {total_validation} samples")
+            
+            # 5. Update emulator config for iteration
+            self._update_emulator_config_for_iteration(iteration)
+            
+            # 6. Retrain emulator on expanded dataset
+            self.logger.info("Retraining emulator on expanded dataset...")
+            self.train_emulator()
+            
+            # 7. Re-optimize parameters
+            self.logger.info("Re-optimizing parameters with updated emulator...")
+            new_optimum_params = self.optimize_parameters(initial_params)
+            new_optimum_norm = self.summa.normalize_parameters(new_optimum_params)
+            
+            # 8. Evaluate new optimum
+            new_objectives = self._evaluate_objectives_real(new_optimum_norm)
+            new_loss = self._composite_loss_from_objectives(new_objectives)
+            
+            iteration_time = time.time() - iteration_start
+            
+            # 9. Check convergence
+            converged, convergence_reason = self._check_iterative_convergence(
+                current_optimum_norm, new_optimum_norm, current_loss, new_loss
+            )
+            
+            # Log iteration results
+            improvement = current_loss - new_loss
+            self.logger.info(f"Iteration {iteration} completed in {iteration_time:.1f}s")
+            self.logger.info(f"Previous loss: {current_loss:.6f}")
+            self.logger.info(f"New loss: {new_loss:.6f}")
+            self.logger.info(f"Improvement: {improvement:.6f}")
+            self.logger.info(f"Convergence check: {convergence_reason}")
+            
+            # Store iteration data
+            iteration_history.append({
+                'iteration': iteration,
+                'loss': new_loss,
+                'improvement': improvement,
+                'parameters': new_optimum_params.copy(),
+                'training_samples': total_training,
+                'validation_samples': total_validation,
+                'convergence_check': convergence_reason,
+                'iteration_time': iteration_time
+            })
+            
+            # Update current optimum
+            current_optimum_params = new_optimum_params
+            current_optimum_norm = new_optimum_norm
+            current_loss = new_loss
+            
+            # 10. Check for convergence
+            if converged:
+                self.logger.info(f"Converged after {iteration} iterations: {convergence_reason}")
+                break
+            
+            # Adaptive radius adjustment
+            if improvement > 0:
+                # Good improvement - keep radius
+                self.logger.info("Improvement found - maintaining sampling radius")
+            else:
+                # No improvement - reduce radius for next iteration
+                self.emulator_config.iterate_sampling_radius *= 0.8
+                self.logger.info(f"No improvement - reducing sampling radius to {self.emulator_config.iterate_sampling_radius:.4f}")
+        
+        total_time = time.time() - start_time
+        self.timing_results['iterative_emulator_optimization'] = total_time
+        
+        # Save iteration history
+        history_path = self.cache_dir / f"iterative_history_{self.domain_name}.json"
+        with open(history_path, 'w') as f:
+            json.dump(iteration_history, f, indent=2, default=str)
+        
+        self.logger.info(f"\nIterative emulator optimization completed in {total_time:.1f}s")
+        self.logger.info(f"Final loss: {current_loss:.6f}")
+        self.logger.info(f"Total iterations: {len(iteration_history) - 1}")
+        self.logger.info(f"Final training samples: {len(self.training_data['parameters'])}")
+        
+        return current_optimum_params
+
+
 
     def _latin_hypercube_sampling(self, n_samples: int) -> np.ndarray:
         """Generate Latin Hypercube samples for parameter space exploration."""
@@ -1184,18 +1490,46 @@ class DifferentiableParameterOptimizer:
             "Contact SUMMA development team for implementation status."
         )
 
+    def _create_pretrained_head(self) -> ObjectiveHead:
+        """Create ObjectiveHead initialized with emulator knowledge."""
+        self.logger.info("Creating pre-trained ObjectiveHead from emulator...")
+        
+        # Create head network
+        head = ObjectiveHead(self.n_parameters, self.n_objectives)
+        
+        # Extract useful layers from trained emulator
+        emulator_layers = list(self.emulator.network.children())[:-1]  # All except output
+        
+        # Initialize head's network with emulator's learned representations
+        # This is a simplified transfer - you might want more sophisticated mapping
+        if len(emulator_layers) >= 2:
+            # Use emulator's first hidden layer weights for head initialization
+            with torch.no_grad():
+                first_emulator_layer = emulator_layers[0]
+                if hasattr(head.net[0], 'weight') and hasattr(first_emulator_layer, 'weight'):
+                    # Map parameter portion of head input to emulator's learned representations
+                    param_dim = self.n_parameters
+                    emulator_input_dim = first_emulator_layer.weight.shape[1]
+                    if param_dim <= emulator_input_dim:
+                        head.net[0].weight[:, -param_dim:] = first_emulator_layer.weight[:64, :param_dim]
+        
+        self.logger.info("ObjectiveHead pre-trained with emulator knowledge")
+        return head
+
     def optimize_with_summa_autodiff(self,
-                                   use_sundials: bool = True,
-                                   fd_step: float = 1e-3,
-                                   steps: int = 200,
-                                   lr: float = 1e-2,
-                                   use_nn_head: bool = True,
-                                   initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+                                use_sundials: bool = True,
+                                fd_step: float = 1e-3,
+                                steps: int = 200,
+                                lr: float = 1e-2,
+                                use_nn_head: bool = True,
+                                initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
-        Optimize parameters using SUMMA autodiff integration.
+        Optimize parameters using SUMMA autodiff integration with a choice of optimizers.
         
         This method enables end-to-end gradient computation through SUMMA,
-        with optional neural network head for objective post-processing.
+        with an optional neural network head for objective post-processing.
+        It supports both 'ADAM' and 'LBFGS' optimizers, configurable via
+        the 'DPE_OPTIMIZER' setting in the confluence_config.
         
         Parameters
         ----------
@@ -1206,7 +1540,7 @@ class DifferentiableParameterOptimizer:
         steps : int
             Number of optimization steps
         lr : float
-            Learning rate
+            Learning rate for Adam, or initial step size for L-BFGS
         use_nn_head : bool
             Whether to use neural network head
         initial_params : Dict[str, float], optional
@@ -1217,7 +1551,10 @@ class DifferentiableParameterOptimizer:
         Dict[str, float]
             Optimized parameters
         """
+        optimizer_choice = self.confluence_config.get('DPE_OPTIMIZER', 'ADAM').upper()
+        
         self.logger.info(f"Starting SUMMA autodiff optimization (Sundials: {use_sundials})")
+        self.logger.info(f"Using optimizer: {optimizer_choice}")
         start_time = time.time()
         
         # Check Sundials availability
@@ -1241,80 +1578,124 @@ class DifferentiableParameterOptimizer:
         
         x = torch.tensor(x0, dtype=torch.float32, device=device, requires_grad=True)
         
-        # Setup neural network head if requested
+        # Setup neural network head with optional pretraining
         objective_head = None
         if use_nn_head:
-            objective_head = ObjectiveHead(self.n_parameters, self.n_objectives).to(device)
-            self.logger.info("Using neural network head for objective post-processing")
+            if self.emulator_config.pretrain_nn_head:
+                self.generate_training_data()
+                self.train_emulator()
+                objective_head = self._create_pretrained_head()
+            else:
+                objective_head = ObjectiveHead(self.n_parameters, self.n_objectives)
+            
+            objective_head = objective_head.to(device)
+            self.logger.info(f"Using neural network head (pretrained: {self.emulator_config.pretrain_nn_head})")
         
-        # Setup optimizer
+        # Setup optimizer based on configuration
         optimization_params = [x]
         if objective_head:
             optimization_params.extend(list(objective_head.parameters()))
         
-        optimizer = optim.Adam(optimization_params, lr=lr)
-        
+        if optimizer_choice == 'ADAM':
+            optimizer = optim.Adam(optimization_params, lr=lr)
+        elif optimizer_choice == 'LBFGS':
+            optimizer = optim.LBFGS(optimization_params, lr=lr) 
+        else:
+            raise ValueError(f"Unknown optimizer '{optimizer_choice}'. Use 'ADAM' or 'LBFGS'.")
+
         best_loss = float('inf')
         best_x = x.detach().clone()
         loss_history = []
         
-        # Optimization loop
-        progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff")
-        
-        for step in progress_bar:
-            optimizer.zero_grad()
-            
-            # Evaluate SUMMA objectives with autodiff
-            objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
-            
-            # Apply neural network head if available
-            if objective_head:
-                objectives_adjusted = objective_head(objectives_raw, x)
-            else:
-                objectives_adjusted = objectives_raw
-            
-            # Compute loss
-            loss = self._compute_weighted_loss_tensor(objectives_adjusted)
-            
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-            
-            # Clamp parameters to valid range
-            with torch.no_grad():
-                x.clamp_(0.0, 1.0)
-            
-            # Track progress
-            current_loss = loss.item()
-            loss_history.append(current_loss)
-            
-            if current_loss < best_loss:
-                best_loss = current_loss
-                best_x = x.detach().clone()
-            
-            # Format objectives for the progress bar and logging
-            obj_values = objectives_raw.detach().cpu().numpy()
-            postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
+        # ==================================
+        # Optimization Loop
+        # ==================================
+        if optimizer_choice == 'ADAM':
+            progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff (Adam)")
+            for step in progress_bar:
+                optimizer.zero_grad()
+                
+                with torch.no_grad():
+                    x.clamp_(0.0, 1.0)
+                
+                objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
+                objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+                loss = self._compute_weighted_loss_tensor(objectives_adjusted)
 
-            # Add the first two objectives to the progress bar for real-time feedback
-            if len(self.objective_names) > 0:
-                postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
-            if len(self.objective_names) > 1:
-                postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
+                loss.backward()
+                optimizer.step()
+                
+                current_loss = loss.item()
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    best_x = x.detach().clone()
+                
+                # Logging and progress bar update...
+                obj_values = objectives_raw.detach().cpu().numpy()
+                postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
+                if len(self.objective_names) > 0: postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
+                if len(self.objective_names) > 1: postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
+                progress_bar.set_postfix(postfix_dict)
+                
+                if step % 5 == 0 or step == 1:
+                    obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
+                    self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
+                    self.logger.info(f"          Objectives: [ {obj_str} ]")
+
+        elif optimizer_choice == 'LBFGS':
+            progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff (L-BFGS)")
             
-            progress_bar.set_postfix(postfix_dict)
-            
-            # Periodic logging of ALL objectives (on first step and every 50 steps)
-            if step % 5 == 0 or step == 1:
-                obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
-                self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
-                self.logger.info(f"          Objectives: [ {obj_str} ]")
-        
+            # This variable will be updated by the closure to capture objectives
+            # We use a list to make it mutable within the closure's scope
+            last_eval = {'objectives_raw': None}
+
+            for step in progress_bar:
+                def closure():
+                    optimizer.zero_grad()
+                    
+                    with torch.no_grad():
+                        x.clamp_(0.0, 1.0)
+                    
+                    objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
+                    
+                    # Capture the objectives for logging outside the closure
+                    last_eval['objectives_raw'] = objectives_raw.detach().clone()
+                    
+                    objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+                    loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+                    
+                    loss.backward()
+                    return loss  # The closure MUST return only the scalar loss
+
+                # optimizer.step() calls the closure and returns the final loss
+                loss = optimizer.step(closure)
+                
+                current_loss = loss.item()
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    best_x = x.detach().clone()
+
+                # Logging and progress bar update using the captured objectives
+                objectives_raw = last_eval['objectives_raw']
+                if objectives_raw is not None:
+                    obj_values = objectives_raw.cpu().numpy()
+                    postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
+                    if len(self.objective_names) > 0: postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
+                    if len(self.objective_names) > 1: postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
+                    progress_bar.set_postfix(postfix_dict)
+
+                    if step % 5 == 0 or step == 1:
+                        obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
+                        self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
+                        self.logger.info(f"          Objectives: [ {obj_str} ]")
+
+        # ==================================
+        # Finalization (common to both optimizers)
+        # ==================================
         optimization_time = time.time() - start_time
         self.timing_results['autodiff_optimization'] = optimization_time
         
-        # Convert back to parameter dictionary
-        final_params = self.summa.denormalize_parameters(best_x.detach().cpu().numpy())
+        final_params = self.summa.denormalize_parameters(best_x.clamp(0.0, 1.0).detach().cpu().numpy())
         
         self.logger.info(f"SUMMA autodiff optimization completed in {optimization_time:.1f}s")
         self.logger.info(f"Best loss: {best_loss:.6f}")
@@ -1356,25 +1737,52 @@ class DifferentiableParameterOptimizer:
         use_sundials = bool(self.confluence_config.get('DPE_USE_SUNDIALS', True))
         force_retrain = bool(self.confluence_config.get('DPE_FORCE_RETRAIN', False))
         
+        # Extract new configuration
+        pretrain_head = bool(self.confluence_config.get('DPE_PRETRAIN_NN_HEAD', False))
+    
+        # Update emulator config
+        self.emulator_config.pretrain_nn_head = pretrain_head
+
         # Determine cache path
         cache_setting = self.confluence_config.get("DPE_TRAINING_CACHE", "default")
         if cache_setting == "default" or not cache_setting:
             cache_path = None  # Uses default directory
         else:
             cache_path = Path(cache_setting)
+     
+        # Extract iterative configuration
+        iterate_enabled = bool(self.confluence_config.get('DPE_EMULATOR_ITERATE', False))
+        iterate_max_iterations = int(self.confluence_config.get('DPE_ITERATE_MAX_ITERATIONS', 5))
+        iterate_samples_per_cycle = int(self.confluence_config.get('DPE_ITERATE_SAMPLES_PER_CYCLE', 100))
+        iterate_sampling_radius = float(self.confluence_config.get('DPE_ITERATE_SAMPLING_RADIUS', 0.1))
+        iterate_convergence_tol = float(self.confluence_config.get('DPE_ITERATE_CONVERGENCE_TOL', 1e-4))
+        iterate_min_improvement = float(self.confluence_config.get('DPE_ITERATE_MIN_IMPROVEMENT', 1e-6))
+        iterate_sampling_method = self.confluence_config.get('DPE_ITERATE_SAMPLING_METHOD', 'gaussian')
+        
+        # Update emulator config with iterative settings
+        self.emulator_config.iterate_enabled = iterate_enabled
+        self.emulator_config.iterate_max_iterations = iterate_max_iterations
+        self.emulator_config.iterate_samples_per_cycle = iterate_samples_per_cycle
+        self.emulator_config.iterate_sampling_radius = iterate_sampling_radius
+        self.emulator_config.iterate_convergence_tol = iterate_convergence_tol
+        self.emulator_config.iterate_min_improvement = iterate_min_improvement
+        self.emulator_config.iterate_sampling_method = iterate_sampling_method
         
         try:
             if mode == 'EMULATOR':
-                self.logger.info("Running EMULATOR mode: NN surrogate optimization")
+                if iterate_enabled:
+                    self.logger.info("Running ITERATIVE EMULATOR mode: Active learning with refinement")
+                else:
+                    self.logger.info("Running EMULATOR mode: Standard NN surrogate optimization")
                 
-                # Generate/load training data
+                # Generate/load initial training data
                 self.generate_training_data(cache_path=cache_path, force=force_retrain)
                 
-                # Train emulator
+                # Train initial emulator
                 self.train_emulator()
                 
-                # Optimize using emulator
-                optimized_params = self.optimize_parameters()
+                # Optimize using emulator (iterative or standard)
+                optimized_params = self.optimize_parameters_iterative()
                 
             elif mode == 'FD':
                 self.logger.info("Running FD mode: Finite difference optimization")
