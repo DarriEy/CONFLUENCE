@@ -2044,10 +2044,10 @@ class BaseOptimizer(ABC):
                     # Preserve existing comment
                     pre_comment = line.split('!')[0].strip()
                     comment = '!' + '!'.join(line.split('!')[1:])
-                    lines[i] = f"<input_dir>             {new_path}    {comment}"
+                    lines[i] = f"<input_dir>             {new_path}/    {comment}"
                 else:
                     # Add missing comment
-                    lines[i] = f"<input_dir>             {new_path}    ! Folder that contains runoff data from SUMMA\n"
+                    lines[i] = f"<input_dir>             {new_path}/    ! Folder that contains runoff data from SUMMA\n"
             
             elif line.strip().startswith('<output_dir>'):
                 new_path = _normalize_path(self.mizuroute_sim_dir)
@@ -2055,10 +2055,10 @@ class BaseOptimizer(ABC):
                     # Preserve existing comment
                     pre_comment = line.split('!')[0].strip()
                     comment = '!' + '!'.join(line.split('!')[1:])
-                    lines[i] = f"<output_dir>            {new_path}    {comment}"
+                    lines[i] = f"<output_dir>            {new_path}/    {comment}"
                 else:
                     # Add missing comment
-                    lines[i] = f"<output_dir>            {new_path}    ! Folder that will contain mizuRoute simulations\n"
+                    lines[i] = f"<output_dir>            {new_path}/    ! Folder that will contain mizuRoute simulations\n"
         
         with open(control_path, "w", encoding="ascii", newline="\n") as f:
             f.writelines(lines)
