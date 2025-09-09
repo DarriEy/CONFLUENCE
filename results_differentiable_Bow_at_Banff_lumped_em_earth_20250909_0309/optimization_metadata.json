@@ -1,0 +1,40 @@
+{
+  "domain_name": "Bow_at_Banff_lumped_em_earth",
+  "parameter_names": [
+    "tempCritRain",
+    "k_soil",
+    "vGn_n",
+    "theta_sat",
+    "theta_res",
+    "rootingDepth",
+    "zScale_TOPMODEL",
+    "k_macropore",
+    "albedoDecayRate",
+    "newSnowDenMultTemp",
+    "albedoMinSpring",
+    "aquiferBaseflowExp",
+    "aquiferBaseflowRate",
+    "routingGammaScale",
+    "routingGammaShape",
+    "total_mult",
+    "shape_factor"
+  ],
+  "objective_names": [
+    "KGE",
+    "NSE",
+    "PBIAS",
+    "RMSE"
+  ],
+  "optimization_mode": "SUMMA_AUTODIFF_FD",
+  "timing_results": {
+    "emulator_training": 1.2564170360565186,
+    "autodiff_optimization": 18600.828767061234,
+    "total_optimization": 18600.849972963333,
+    "final_validation": 1.5811021327972412
+  },
+  "training_data_sizes": {
+    "training": 200,
+    "validation": 100
+  },
+  "generated_at": "2025-09-09T03:09:35.617116"
+}

@@ -910,13 +910,15 @@ class DifferentiableParameterOptimizer:
         }
         
         results = self.summa.backend._run_parallel_evaluations([task])
-        
+
+      
         if not results or not results[0]:
             self.logger.warning("No results returned from SUMMA evaluation")
             return {}
         
         result = results[0]
-        
+        #self.logger.info(f"Raw SUMMA objectives: {result}")
+
         # Handle both metrics format and objectives format
         if 'metrics' in result and result['metrics']:
             return result['metrics']
@@ -1524,7 +1526,7 @@ class DifferentiableParameterOptimizer:
                                 use_nn_head: bool = True,
                                 initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
-        Optimize parameters using SUMMA autodiff integration with a choice of optimizers.
+        Optimize parameters using SUMMA autodiff integration with adaptive learning rate.
         
         This method enables end-to-end gradient computation through SUMMA,
         with an optional neural network head for objective post-processing.
@@ -1581,7 +1583,7 @@ class DifferentiableParameterOptimizer:
         # Setup neural network head with optional pretraining
         objective_head = None
         if use_nn_head:
-            if self.emulator_config.pretrain_nn_head:
+            if hasattr(self.emulator_config, 'pretrain_nn_head') and self.emulator_config.pretrain_nn_head:
                 self.generate_training_data()
                 self.train_emulator()
                 objective_head = self._create_pretrained_head()
@@ -1589,7 +1591,8 @@ class DifferentiableParameterOptimizer:
                 objective_head = ObjectiveHead(self.n_parameters, self.n_objectives)
             
             objective_head = objective_head.to(device)
-            self.logger.info(f"Using neural network head (pretrained: {self.emulator_config.pretrain_nn_head})")
+            pretrained = hasattr(self.emulator_config, 'pretrain_nn_head') and self.emulator_config.pretrain_nn_head
+            self.logger.info(f"Using neural network head (pretrained: {pretrained})")
         
         # Setup optimizer based on configuration
         optimization_params = [x]
@@ -1597,15 +1600,35 @@ class DifferentiableParameterOptimizer:
             optimization_params.extend(list(objective_head.parameters()))
         
         if optimizer_choice == 'ADAM':
-            optimizer = optim.Adam(optimization_params, lr=lr)
+            # ENHANCED: Adaptive learning rate for Adam
+            initial_lr = max(lr * 5, 0.001)  # Start 5x higher, minimum 0.001
+            optimizer = optim.Adam(optimization_params, lr=initial_lr)
+            
+            # ENHANCED: Add learning rate scheduler
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, 
+                mode='min',           # Minimize loss
+                factor=0.7,           # Reduce by 30% when plateauing
+                patience=3,           # Wait 3 steps before reducing
+                min_lr=lr * 0.1,      # Don't go below 10% of original lr
+                verbose=False         # We'll log manually
+            )
+            self.logger.info(f"Using adaptive ADAM with initial LR: {initial_lr:.6f}")
+            
         elif optimizer_choice == 'LBFGS':
-            optimizer = optim.LBFGS(optimization_params, lr=lr) 
+            optimizer = optim.LBFGS(optimization_params, lr=lr)
+            scheduler = None
         else:
             raise ValueError(f"Unknown optimizer '{optimizer_choice}'. Use 'ADAM' or 'LBFGS'.")
 
         best_loss = float('inf')
         best_x = x.detach().clone()
         loss_history = []
+        
+        # ENHANCED: Progress tracking for adaptive features (Adam only)
+        if optimizer_choice == 'ADAM':
+            recent_losses = []
+            stagnation_counter = 0
         
         # ==================================
         # Optimization Loop
@@ -1623,30 +1646,64 @@ class DifferentiableParameterOptimizer:
                 loss = self._compute_weighted_loss_tensor(objectives_adjusted)
 
                 loss.backward()
+                
+                # ENHANCED: Gradient clipping to prevent explosive updates
+                torch.nn.utils.clip_grad_norm_(optimization_params, max_norm=1.0)
+                
                 optimizer.step()
                 
+                # ENHANCED: Track progress for adaptive features
                 current_loss = loss.item()
+                loss_history.append(current_loss)
+                recent_losses.append(current_loss)
+                
+                # Keep only last 5 losses for trend analysis
+                if len(recent_losses) > 5:
+                    recent_losses.pop(0)
+                
                 if current_loss < best_loss:
                     best_loss = current_loss
                     best_x = x.detach().clone()
+                    stagnation_counter = 0
+                else:
+                    stagnation_counter += 1
                 
-                # Logging and progress bar update...
+                # ENHANCED: Update learning rate based on progress
+                scheduler.step(current_loss)
+                current_lr = optimizer.param_groups[0]['lr']
+                
+                # ENHANCED: Detect stagnation and boost learning ratesing adaptive ADAM with initial L
+                if stagnation_counter >= 5 and len(recent_losses) >= 3:
+                    recent_improvement = recent_losses[0] - recent_losses[-1]
+                    if recent_improvement < 1e-4:  # Very small improvement
+                        # Temporary learning rate boost
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = min(param_group['lr'] * 2.0, initial_lr)
+                        self.logger.info(f"Step {step}: Stagnation detected, boosting LR to {optimizer.param_groups[0]['lr']:.6f}")
+                        stagnation_counter = 0
+                
+                # Enhanced logging and progress bar update
                 obj_values = objectives_raw.detach().cpu().numpy()
-                postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
+                postfix_dict = {
+                    'Loss': f'{current_loss:.6f}', 
+                    'Best': f'{best_loss:.6f}',
+                    'LR': f'{current_lr:.6f}',
+                    'KGE': f'{obj_values[0]:.3f}',  # Shorter format
+                    'NSE': f'{obj_values[1]:.3f}'   # Shorter format  
+                }
                 if len(self.objective_names) > 0: postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
                 if len(self.objective_names) > 1: postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
                 progress_bar.set_postfix(postfix_dict)
                 
                 if step % 5 == 0 or step == 1:
                     obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
-                    self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
+                    self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}, LR={current_lr:.6f}")
                     self.logger.info(f"          Objectives: [ {obj_str} ]")
 
         elif optimizer_choice == 'LBFGS':
             progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff (L-BFGS)")
             
             # This variable will be updated by the closure to capture objectives
-            # We use a list to make it mutable within the closure's scope
             last_eval = {'objectives_raw': None}
 
             for step in progress_bar:
@@ -1699,6 +1756,8 @@ class DifferentiableParameterOptimizer:
         
         self.logger.info(f"SUMMA autodiff optimization completed in {optimization_time:.1f}s")
         self.logger.info(f"Best loss: {best_loss:.6f}")
+        if optimizer_choice == 'ADAM':
+            self.logger.info(f"Final learning rate: {optimizer.param_groups[0]['lr']:.6f}")
         
         return final_params
 

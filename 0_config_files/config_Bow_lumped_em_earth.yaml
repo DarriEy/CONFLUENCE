@@ -176,9 +176,9 @@ DECISION_OPTIONS:                                              # Select which SU
     - smnv2000 
 
 # Soil depth calibration settings
-CALIBRATE_DEPTH: True                                       # Enable soil depth profile calibration (True/False)
-DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
-DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
+CALIBRATE_DEPTH: True                                          # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                            # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                          # Bounds for shape factor [min, max]
 
 # SUMMMA Paths and filenames
 SETTINGS_SUMMA_PATH: default                                   # Path to SUMMA run settings, if default self.data_dir / settings / SUMMA
@@ -291,7 +291,7 @@ DPE_EPOCHS: 300
 DPE_LEARNING_RATE: 1e-3
 DPE_OPTIMIZATION_LR: 1e-2
 DPE_OPTIMIZATION_STEPS: 200
-DPE_OPTIMIZER: "LBFGS"  # or "ADAM"
+DPE_OPTIMIZER: "ADAM"  # or "ADAM"
 
 
 # Iterative Emulator Configuration (NEW)
@@ -309,14 +309,14 @@ DPE_USE_NN_HEAD: true
 DPE_PRETRAIN_NN_HEAD: true                                     # Pretrain NN head with emulator data
 DPE_USE_SUNDIALS: true                                         # ignored if EMULATOR_SETTING == SUMMA_AUTODIFF_FD
 DPE_AUTODIFF_STEPS: 100
-DPE_AUTODIFF_LR: 0.01
+DPE_AUTODIFF_LR: 0.001
 DPE_FD_STEP: 0.005
 DPE_GD_STEP_SIZE: 0.1
 
 # Large Domain Emulation settings
 EMULATOR_SETTING: SUMMA_AUTODIFF_FD                            #- "EMULATOR" : train NN emulator;  backprop through NN only- "FD" : optimize parameters using finite-difference gradients on SUMMA- "SUMMA_AUTODIFF" : end-to-end autograd using SUMMA sensitivities (Sundials) when available, - "SUMMA_AUTODIFF_FD" : same autograd wrapper but forcing FD Jacobian (no Sundials)
 LARGE_DOMAIN_EMULATOR_MODE: "SUMMA_AUTODIFF"                # or FD, SUMMA_AUTODIFF, SUMMA_AUTODIFF_FD
-LARGE_DOMAIN_EMULATOR_OPTIMIZER: "LBFGS"
+LARGE_DOMAIN_EMULATOR_OPTIMIZER: "Adam"
 
 LARGE_DOMAIN_EMULATION_ENABLED: True
 LARGE_DOMAIN_TRAINING_EPOCHS: 100

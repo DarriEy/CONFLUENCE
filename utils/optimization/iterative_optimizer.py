@@ -1202,7 +1202,7 @@ class ParameterManager:
         except Exception as e:
             self.logger.error(f"Error updating mizuRoute parameters: {str(e)}")
             return False
-    
+        
     def _generate_trial_params_file(self, params: Dict[str, np.ndarray]) -> bool:
         """Generate trialParams.nc file with proper dimensions"""
         try:
@@ -1212,6 +1212,20 @@ class ParameterManager:
             with xr.open_dataset(self.attr_file_path) as ds:
                 num_hrus = ds.sizes.get('hru', 1)
                 num_grus = ds.sizes.get('gru', 1)
+                
+                # Get original hruId values
+                if 'hruId' in ds.variables:
+                    original_hru_ids = ds.variables['hruId'][:].copy()
+                else:
+                    original_hru_ids = np.arange(1, num_hrus + 1)
+                    self.logger.warning(f"hruId not found in attributes.nc, using sequential IDs 1 to {num_hrus}")
+                
+                # Get original gruId values
+                if 'gruId' in ds.variables:
+                    original_gru_ids = ds.variables['gruId'][:].copy()
+                else:
+                    original_gru_ids = np.arange(1, num_grus + 1)
+                    self.logger.warning(f"gruId not found in attributes.nc, using sequential IDs 1 to {num_grus}")
             
             # Define parameter levels
             routing_params = ['routingGammaShape', 'routingGammaScale']
@@ -1221,12 +1235,12 @@ class ParameterManager:
                 output_ds.createDimension('hru', num_hrus)
                 output_ds.createDimension('gru', num_grus)
                 
-                # Create coordinate variables
+                # Create coordinate variables with ORIGINAL ID values
                 hru_var = output_ds.createVariable('hruId', 'i4', ('hru',), fill_value=-9999)
-                hru_var[:] = range(1, num_hrus + 1)
+                hru_var[:] = original_hru_ids  # ← USE ORIGINAL hruId VALUES
                 
                 gru_var = output_ds.createVariable('gruId', 'i4', ('gru',), fill_value=-9999)
-                gru_var[:] = range(1, num_grus + 1)
+                gru_var[:] = original_gru_ids  # ← USE ORIGINAL gruId VALUES
                 
                 # Add parameters
                 for param_name, param_values in params.items():
