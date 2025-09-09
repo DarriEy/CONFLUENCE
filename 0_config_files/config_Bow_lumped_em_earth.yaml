@@ -306,7 +306,7 @@ DPE_ITERATE_SAMPLING_METHOD: "gaussian"    # "gaussian" | "uniform" | "adaptive"
 
 # Autodiff/FD controls
 DPE_USE_NN_HEAD: true
-DPE_PRETRAIN_NN_HEAD: true                                     # Pretrain NN head with emulator data
+DPE_PRETRAIN_NN_HEAD: false                                     # Pretrain NN head with emulator data
 DPE_USE_SUNDIALS: true                                         # ignored if EMULATOR_SETTING == SUMMA_AUTODIFF_FD
 DPE_AUTODIFF_STEPS: 100
 DPE_AUTODIFF_LR: 0.001

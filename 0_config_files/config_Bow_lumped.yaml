@@ -271,20 +271,25 @@ HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
 
-OPTIMISATION_METHODS: [iteration,differentiable_parameter_emulation]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 
 
 # DPE hyperparameters
 DPE_TRAINING_CACHE: default
-DPE_HIDDEN_DIMS: [256, 128, 64]
-DPE_TRAINING_SAMPLES: 500
+DPE_HIDDEN_DIMS: [256, 128, 64]  # Smaller network for single objective
+DPE_TRAINING_SAMPLES: 300
 DPE_VALIDATION_SAMPLES: 100
-DPE_EPOCHS: 300
-DPE_LEARNING_RATE: 0.001
-DPE_OPTIMIZATION_LR: 0.01
-DPE_OPTIMIZATION_STEPS: 200
-DPE_FORCE_RETRAIN: false
+DPE_EPOCHS: 200
+DPE_OPTIMIZATION_STEPS: 100
+
+# Single objective configuration
+OPTIMIZATION_METRIC: KGE  # Make sure this matches
+TARGET_METRIC: KGE        # Ensure consistency
+
+# DPE objective weights (will be overridden by EmulatorConfig)
+DPE_OBJECTIVE_WEIGHTS: 
+  KGE: 1.0
 
 # Autodiff/FD controls
 DPE_USE_NN_HEAD: true
@@ -325,7 +330,7 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II
+ITERATIVE_OPTIMIZATION_ALGORITHM: ASYNC-DDS                           # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 10                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
@@ -333,7 +338,7 @@ OPTIMIZATION_METRIC: KGE                                       # Options: Root m
   # -- DDS specific settings
 DDS_R:  0.2                                                    # DDS perturbation parameter
 ASYNC_DDS_POOL_SIZE: 10                                        # Size of shared solution pool
-ASYNC_DDS_BATCH_SIZE: 10                                       # Evaluations per batch  
+ASYNC_DDS_BATCH_SIZE: 1                                       # Evaluations per batch  
 MAX_STAGNATION_BATCHES: 10                                     # Stop after N batches without improvement
 
   # -- SCE-UA specific settings

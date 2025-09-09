@@ -2032,7 +2032,7 @@ class BaseOptimizer(ABC):
         """Update mizuRoute control file and ensure comments are present."""
         
         def _normalize_path(path):
-            return str(path).replace("\\", "/").rstrip("/")
+            return str(path).replace("\\", "/").rstrip("/") + "/"  # Always add trailing slash
         
         with open(control_path, "r") as f:
             lines = f.readlines()
@@ -2044,10 +2044,10 @@ class BaseOptimizer(ABC):
                     # Preserve existing comment
                     pre_comment = line.split('!')[0].strip()
                     comment = '!' + '!'.join(line.split('!')[1:])
-                    lines[i] = f"<input_dir>             {new_path}/    {comment}"
+                    lines[i] = f"<input_dir>             {new_path}    {comment}"
                 else:
                     # Add missing comment
-                    lines[i] = f"<input_dir>             {new_path}/    ! Folder that contains runoff data from SUMMA\n"
+                    lines[i] = f"<input_dir>             {new_path}    ! Folder that contains runoff data from SUMMA\n"
             
             elif line.strip().startswith('<output_dir>'):
                 new_path = _normalize_path(self.mizuroute_sim_dir)
@@ -2055,10 +2055,10 @@ class BaseOptimizer(ABC):
                     # Preserve existing comment
                     pre_comment = line.split('!')[0].strip()
                     comment = '!' + '!'.join(line.split('!')[1:])
-                    lines[i] = f"<output_dir>            {new_path}/    {comment}"
+                    lines[i] = f"<output_dir>            {new_path}    {comment}"
                 else:
                     # Add missing comment
-                    lines[i] = f"<output_dir>            {new_path}/    ! Folder that will contain mizuRoute simulations\n"
+                    lines[i] = f"<output_dir>            {new_path}    ! Folder that will contain mizuRoute simulations\n"
         
         with open(control_path, "w", encoding="ascii", newline="\n") as f:
             f.writelines(lines)
@@ -2156,6 +2156,10 @@ class BaseOptimizer(ABC):
         
         # Update mizuRoute control file
         control_file = mizu_settings_dir / 'mizuroute.control'
+
+        def _normalize_path(path):
+            return str(path).replace("\\", "/").rstrip("/") + "/"  # Always add trailing slash
+
         if control_file.exists():
             with open(control_file, 'r') as f:
                 lines = f.readlines()
@@ -2163,7 +2167,9 @@ class BaseOptimizer(ABC):
             updated_lines = []
             for line in lines:
                 if '<input_dir>' in line:
-                    input_path = str(summa_dir).replace('\\', '/')
+                    input_path = _normalize_path(summa_dir)
+                    
+
                     if '!' in line:
                         # Preserve existing comment
                         comment = '!' + '!'.join(line.split('!')[1:])
@@ -5475,7 +5481,7 @@ class AsyncDDSOptimizer(BaseOptimizer):
         
         # Calculate target evaluations in batches
         self.total_target_evaluations = self.max_iterations * self.num_processes
-        self.target_batches = max(10, self.total_target_evaluations // self.batch_size)
+        self.target_batches = self.total_target_evaluations // self.batch_size
         
         # Solution pool and tracking
         self.solution_pool = []  # List of (solution, score, generation, source) tuples
@@ -5592,7 +5598,35 @@ class AsyncDDSOptimizer(BaseOptimizer):
         
         # Evaluate initial batch
         self.logger.info(f"Evaluating {len(initial_tasks)} initial solutions")
-        initial_results = self._run_parallel_evaluations(initial_tasks)
+        if self.use_parallel:
+            initial_results = self._run_parallel_evaluations(initial_tasks)
+        else:
+            # Sequential evaluation for serial mode
+            initial_results = []
+            for task in initial_tasks:
+                individual_id = task['individual_id']
+                params = task['params']
+                
+                # Normalize parameters and evaluate
+                try:
+                    normalized_params = self.parameter_manager.normalize_parameters(params)
+                    score = self._evaluate_individual(normalized_params)
+                    
+                    result = {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': score if score != float('-inf') else None,
+                        'error': None if score != float('-inf') else 'Evaluation failed'
+                    }
+                except Exception as e:
+                    result = {
+                        'individual_id': individual_id,
+                        'params': params,
+                        'score': None,
+                        'error': f'Sequential evaluation error: {str(e)}'
+                    }
+                
+                initial_results.append(result)
         
         self.logger.debug(f"Initial evaluation completed: {len(initial_results)} results returned")
         

@@ -30,7 +30,7 @@ EVALUATION_PERIOD:  2008-01-01, 2009-12-31                     # start_date, end
 SPINUP_PERIOD: 2000-01-01, 2001-12-31
 
 # Computatational settings
-MPI_PROCESSES: 10                                               # Number of parallel processes allowed, based on your system's capabilities
+MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                      # Run all steps in the workflow and overwrite existing files
 
 ### ============================================= 2. Geospatial settings: =================================================================
@@ -279,7 +279,7 @@ USGS_STATION: '06306300'                                       # USGS   station 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
 
-OPTIMISATION_METHODS: [large_domain_emulator]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration]                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
 
 
 

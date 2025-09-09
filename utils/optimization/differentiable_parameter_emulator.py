@@ -133,8 +133,8 @@ class EmulatorConfig:
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64, 32]
         if self.objective_weights is None:
-            # Maximize KGE/NSE: use negative weights to minimize their negatives
-            self.objective_weights = {'KGE': -1.0, 'NSE': -1.0, 'RMSE': 0.1, 'PBIAS': 0.05}
+            # SINGLE OBJECTIVE: Only KGE with weight 1.0 (maximize)
+            self.objective_weights = {'KGE': 1.0}  # Positive weight to maximize KGE
         
         # --- FIX: Ensure all numeric parameters are cast to the correct type ---
         self.dropout = float(self.dropout)
@@ -250,25 +250,15 @@ class SummaInterface:
         """Convert normalized array to parameter dictionary."""
         return self.param_manager.denormalize_parameters(x_norm)
 
-    def run_simulations_batch(self, param_samples: List[np.ndarray], objective_names) -> List[Optional[Dict]]:
+    def run_simulations_batch(self, param_samples: List[np.ndarray], objective_names=None) -> List[Optional[Dict]]:
         """
-        Run batch simulations for multiple parameter sets with proper multi-objective setup.
-        
-        Parameters
-        ----------
-        param_samples : List[np.ndarray]
-            List of normalized parameter arrays
-            
-        Returns
-        -------
-        List[Optional[Dict]]
-            List of metric dictionaries (None for failed simulations)
+        Run batch simulations for multiple parameter sets with SINGLE-OBJECTIVE setup.
         """
         tasks = []
         for i, x in enumerate(param_samples):
             params = self.denormalize_parameters(x)
             
-            # Get parallel directory info (similar to NSGA-II)
+            # Get parallel directory info
             proc_dirs = self.backend.parallel_dirs[i % len(self.backend.parallel_dirs)]
             
             task = {
@@ -276,11 +266,10 @@ class SummaInterface:
                 'params': params,
                 'proc_id': i % self.backend.num_processes,
                 'evaluation_id': f"dpe_batch_{i:04d}",
-                'multiobjective': True,  # CRITICAL: Enable multi-objective mode
-                'objective_names': objective_names, 
+                'multiobjective': False,  # SINGLE OBJECTIVE MODE
+                'target_metric': 'KGE',   # Always KGE
                 
-                # Required fields for worker (copied from NSGA-II implementation)
-                'target_metric': self.backend.target_metric,
+                # Required fields for worker
                 'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
                 'config': self.config,
                 'domain_name': self.backend.domain_name,
@@ -297,41 +286,20 @@ class SummaInterface:
             }
             tasks.append(task)
         
-        self.logger.info(f"Running batch simulation for {len(tasks)} parameter sets (multi-objective mode)")
+        self.logger.info(f"Running batch simulation for {len(tasks)} parameter sets (SINGLE-objective KGE mode)")
         results = self.backend._run_parallel_evaluations(tasks)
         
-        # Convert results to metrics format
+        # Convert results to metrics format (single objective)
         output = [None] * len(param_samples)
         for result in results:
             if result and 'individual_id' in result:
                 idx = result['individual_id']
                 if idx < len(output):
-                    # Extract metrics properly - prioritize full metrics
-                    if 'metrics' in result and result['metrics']:
-                        output[idx] = result['metrics']
-                    elif 'objectives' in result and result['objectives'] is not None:
-                        # Convert objectives array to metrics dictionary
-                        objectives_array = result['objectives']
-                        # Map to the actual objective names we're tracking
-                        if len(objectives_array) >= len(objective_names):
-                            metrics = {}
-                            for i, obj_name in enumerate(objective_names):
-                                if i < len(objectives_array):
-                                    metrics[obj_name] = float(objectives_array[i])
-                                    metrics[f'Calib_{obj_name}'] = float(objectives_array[i])
-                            output[idx] = metrics
-                        else:
-                            self.logger.warning(f"Objectives array length ({len(objectives_array)}) < expected ({len(objective_names)})")
-                    elif 'score' in result and result['score'] is not None:
-                        # Fallback: create metrics from single score
-                        score = float(result['score'])
-                        # Map to all objective names with the same value (not ideal but better than nothing)
-                        metrics = {}
-                        for obj_name in objective_names:
-                            metrics[obj_name] = score
-                            metrics[f'Calib_{obj_name}'] = score
-                        output[idx] = metrics
-                        self.logger.warning(f"Only single score available, mapping to all objectives: {score}")
+                    # For single objective, just extract the score as KGE
+                    if 'score' in result and result['score'] is not None:
+                        output[idx] = {'KGE': float(result['score'])}
+                    else:
+                        self.logger.warning(f"No valid score for individual {idx}")
         
         success_rate = sum(1 for r in output if r is not None) / len(output)
         self.logger.info(f"Batch simulation completed. Success rate: {success_rate:.2%}")
@@ -538,11 +506,13 @@ class DifferentiableParameterOptimizer:
         # Initialize SUMMA interface
         self.summa = SummaInterface(confluence_config, self.logger)
         self.param_names = self.summa.param_names
-        self.objective_names = sorted(self.emulator_config.objective_weights.keys())
-        self.n_parameters = len(self.param_names)
-        self.n_objectives = len(self.objective_names)
         
-        # Initialize neural network
+        # SINGLE OBJECTIVE: Only KGE
+        self.objective_names = ['KGE']  # Only KGE
+        self.n_parameters = len(self.param_names)
+        self.n_objectives = 1  # Single objective
+        
+        # Initialize neural network for single objective
         self.emulator = ParameterEmulator(self.n_parameters, self.n_objectives, self.emulator_config)
         
         # Data storage
@@ -746,9 +716,8 @@ class DifferentiableParameterOptimizer:
                     # Extract objective values in consistent order
                     obj_values = []
                     for obj_name in self.objective_names:
-                        value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}", 0.0))
-                        obj_values.append(value)
-                    valid_new_objectives.append(obj_values)
+                        kge_value = objectives.get('KGE', 0.0)
+                    valid_objectives.append([kge_value])
             
             success_rate = len(valid_new_params) / len(new_param_samples)
             self.logger.info(f"New sample success rate: {success_rate:.2%} ({len(valid_new_params)}/{len(new_param_samples)})")
@@ -865,35 +834,31 @@ class DifferentiableParameterOptimizer:
         return True
 
     def _composite_loss_from_objectives(self, objectives: Dict[str, float]) -> float:
-        """Compute weighted composite loss from objective dictionary."""
-        total_loss = 0.0
-        for obj_name in self.objective_names:
-            value = objectives.get(obj_name, objectives.get(f"Calib_{obj_name}"))
-            if value is None or np.isnan(value) or np.isinf(value):
-                return 1e6  # Large penalty for invalid objectives
-            
-            weight = self.emulator_config.objective_weights.get(obj_name, 0.0)
-            total_loss += weight * float(value)
+        """Compute weighted composite loss from objective dictionary (single KGE)."""
+        kge_value = objectives.get('KGE')
+        if kge_value is None or np.isnan(kge_value) or np.isinf(kge_value):
+            return 1e6  # Large penalty for invalid objectives
         
-        return float(total_loss)
+        # For KGE: higher is better, so we minimize -KGE (negate it)
+        weight = self.emulator_config.objective_weights.get('KGE', 1.0)
+        return -weight * float(kge_value)  # Negative because we want to maximize KGE
 
     def _evaluate_objectives_real(self, x_norm: np.ndarray) -> Dict[str, float]:
-        """Evaluate objectives using real SUMMA simulation with proper multi-objective setup."""
+        """Evaluate objectives using real SUMMA simulation with SINGLE-OBJECTIVE setup."""
         params = self.summa.denormalize_parameters(x_norm)
         
         # Get parallel directory info for single evaluation
-        proc_dirs = self.backend.parallel_dirs[0]  # Use first available directory
+        proc_dirs = self.backend.parallel_dirs[0]
         
         task = {
             'individual_id': 0,
             'params': params,
             'proc_id': 0,
             'evaluation_id': 'dpe_eval_single',
-            'multiobjective': True,  # CRITICAL: Enable multi-objective mode
-            'objective_names': self.objective_names, 
+            'multiobjective': False,  # SINGLE OBJECTIVE MODE
+            'target_metric': 'KGE',   # Always KGE
             
-            # Required fields for worker (matching NSGA-II implementation)
-            'target_metric': self.backend.target_metric,
+            # Required fields for worker
             'calibration_variable': self.config.get('CALIBRATION_VARIABLE', 'streamflow'),
             'config': self.config,
             'domain_name': self.backend.domain_name,
@@ -910,44 +875,19 @@ class DifferentiableParameterOptimizer:
         }
         
         results = self.summa.backend._run_parallel_evaluations([task])
-
-      
+        
         if not results or not results[0]:
             self.logger.warning("No results returned from SUMMA evaluation")
             return {}
         
         result = results[0]
-        #self.logger.info(f"Raw SUMMA objectives: {result}")
-
-        # Handle both metrics format and objectives format
-        if 'metrics' in result and result['metrics']:
-            return result['metrics']
-        elif 'objectives' in result and result['objectives'] is not None:
-            # Convert objectives array back to metrics dictionary
-            objectives_array = result['objectives']
-            if len(objectives_array) >= len(self.objective_names):
-                metrics = {}
-                for i, obj_name in enumerate(self.objective_names):
-                    if i < len(objectives_array):
-                        metrics[obj_name] = float(objectives_array[i])
-                        metrics[f'Calib_{obj_name}'] = float(objectives_array[i])
-                return metrics
-            else:
-                self.logger.warning(f"Objectives array length ({len(objectives_array)}) < expected ({len(self.objective_names)})")
         
-        # Fallback: if we only have a score, try to map it to primary objective
-        score = result.get('score')
-        if score is not None:
-            self.logger.warning(f"Only score available, mapping to primary objective: {score}")
-            # Map to all objectives (not ideal but maintains consistency)
-            metrics = {}
-            for obj_name in self.objective_names:
-                metrics[obj_name] = float(score)
-                metrics[f'Calib_{obj_name}'] = float(score)
-            return metrics
-        
-        self.logger.error(f"No valid objectives found in result: {result.keys()}")
-        return {}
+        # For single objective, extract the score as KGE
+        if 'score' in result and result['score'] is not None:
+            return {'KGE': float(result['score'])}
+        else:
+            self.logger.error(f"No valid score found in result: {result.keys()}")
+            return {}
 
     # ==============================
     # Data Generation and Caching
@@ -1179,14 +1119,11 @@ class DifferentiableParameterOptimizer:
     # ==============================
 
     def _compute_weighted_loss_tensor(self, objective_tensor: torch.Tensor) -> torch.Tensor:
-        """Compute weighted composite loss from objective tensor."""
-        loss = torch.tensor(0.0, dtype=torch.float32, device=objective_tensor.device)
-        
-        for i, obj_name in enumerate(self.objective_names):
-            weight = self.emulator_config.objective_weights.get(obj_name, 0.0)
-            loss = loss + weight * objective_tensor[i]
-        
-        return loss
+        """Compute weighted composite loss from objective tensor (single KGE)."""
+        # objective_tensor should be a single value for KGE
+        kge_weight = self.emulator_config.objective_weights.get('KGE', 1.0)
+        # Negate KGE because we want to maximize it (minimize -KGE)
+        return -kge_weight * objective_tensor.squeeze()
 
     def optimize_parameters(self, initial_params: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
