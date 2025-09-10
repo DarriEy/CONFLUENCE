@@ -5525,7 +5525,35 @@ class AsyncDDSOptimizer(BaseOptimizer):
                 break
             
             # Evaluate batch using existing MPI framework
-            batch_results = self._run_parallel_evaluations(trial_tasks)
+            if self.use_parallel:
+                batch_results = self._run_parallel_evaluations(trial_tasks)
+            else:
+                # Sequential evaluation for serial mode
+                batch_results = []
+                for task in trial_tasks:
+                    individual_id = task['individual_id']
+                    params = task['params']
+                    
+                    # Normalize parameters and evaluate
+                    try:
+                        normalized_params = self.parameter_manager.normalize_parameters(params)
+                        score = self._evaluate_individual(normalized_params)
+                        
+                        result = {
+                            'individual_id': individual_id,
+                            'params': params,
+                            'score': score if score != float('-inf') else None,
+                            'error': None if score != float('-inf') else 'Evaluation failed'
+                        }
+                    except Exception as e:
+                        result = {
+                            'individual_id': individual_id,
+                            'params': params,
+                            'score': None,
+                            'error': f'Sequential evaluation error: {str(e)}'
+                        }
+                    
+                    batch_results.append(result)
             
             # Update solution pool with results
             improvements = self._update_pool_with_batch_results(batch_results, batch_num)

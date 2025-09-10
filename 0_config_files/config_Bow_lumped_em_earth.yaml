@@ -291,8 +291,15 @@ DPE_EPOCHS: 300
 DPE_LEARNING_RATE: 1e-3
 DPE_OPTIMIZATION_LR: 1e-2
 DPE_OPTIMIZATION_STEPS: 200
-DPE_OPTIMIZER: "ADAM"  # or "ADAM"
+DPE_OPTIMIZER: "LBFGS"  # or "ADAM"
 
+# Single objective configuration
+OPTIMIZATION_METRIC: KGE  # Make sure this matches
+TARGET_METRIC: KGE        # Ensure consistency
+
+# DPE objective weights (will be overridden by EmulatorConfig)
+DPE_OBJECTIVE_WEIGHTS: 
+  KGE: 1.0
 
 # Iterative Emulator Configuration (NEW)
 DPE_EMULATOR_ITERATE: true                 # Enable iterative emulator refinement

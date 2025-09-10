@@ -1,0 +1,53 @@
+{
+  "tempCritRain": [
+    274.16
+  ],
+  "k_soil": [
+    0.01
+  ],
+  "vGn_n": [
+    3.843609571456909
+  ],
+  "theta_sat": [
+    0.6223680257797242
+  ],
+  "theta_res": [
+    0.08
+  ],
+  "rootingDepth": [
+    6.0
+  ],
+  "zScale_TOPMODEL": [
+    10.0
+  ],
+  "k_macropore": [
+    0.01
+  ],
+  "albedoDecayRate": [
+    4259298.175573349
+  ],
+  "newSnowDenMultTemp": [
+    12.0
+  ],
+  "albedoMinSpring": [
+    1.0
+  ],
+  "aquiferBaseflowExp": [
+    4.955285549163818
+  ],
+  "aquiferBaseflowRate": [
+    1e-05
+  ],
+  "routingGammaScale": [
+    92535.34986811876
+  ],
+  "routingGammaShape": [
+    5.0
+  ],
+  "total_mult": [
+    3.2091397941112523
+  ],
+  "shape_factor": [
+    2.8309180200099946
+  ]
+}

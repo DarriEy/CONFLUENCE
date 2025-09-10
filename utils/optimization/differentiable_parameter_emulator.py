@@ -1609,7 +1609,7 @@ class DifferentiableParameterOptimizer:
                 scheduler.step(current_loss)
                 current_lr = optimizer.param_groups[0]['lr']
                 
-                # ENHANCED: Detect stagnation and boost learning ratesing adaptive ADAM with initial L
+                # ENHANCED: Detect stagnation and boost learning rates
                 if stagnation_counter >= 5 and len(recent_losses) >= 3:
                     recent_improvement = recent_losses[0] - recent_losses[-1]
                     if recent_improvement < 1e-4:  # Very small improvement
@@ -1619,21 +1619,27 @@ class DifferentiableParameterOptimizer:
                         self.logger.info(f"Step {step}: Stagnation detected, boosting LR to {optimizer.param_groups[0]['lr']:.6f}")
                         stagnation_counter = 0
                 
-                # Enhanced logging and progress bar update
+                # FIXED: Enhanced logging and progress bar update - make dynamic based on actual objectives
                 obj_values = objectives_raw.detach().cpu().numpy()
+                
+                # Base progress dict
                 postfix_dict = {
                     'Loss': f'{current_loss:.6f}', 
                     'Best': f'{best_loss:.6f}',
-                    'LR': f'{current_lr:.6f}',
-                    'KGE': f'{obj_values[0]:.3f}',  # Shorter format
-                    'NSE': f'{obj_values[1]:.3f}'   # Shorter format  
+                    'LR': f'{current_lr:.6f}'
                 }
-                if len(self.objective_names) > 0: postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
-                if len(self.objective_names) > 1: postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
+                
+                # Add objective values dynamically based on what actually exists
+                for i, obj_name in enumerate(self.objective_names):
+                    if i < len(obj_values):
+                        postfix_dict[obj_name] = f'{obj_values[i]:.3f}'
+                
                 progress_bar.set_postfix(postfix_dict)
                 
                 if step % 5 == 0 or step == 1:
-                    obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
+                    obj_str = ", ".join([f"{name}={obj_values[i]:.4f}" 
+                                    for i, name in enumerate(self.objective_names) 
+                                    if i < len(obj_values)])
                     self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}, LR={current_lr:.6f}")
                     self.logger.info(f"          Objectives: [ {obj_str} ]")
 
@@ -1669,17 +1675,25 @@ class DifferentiableParameterOptimizer:
                     best_loss = current_loss
                     best_x = x.detach().clone()
 
-                # Logging and progress bar update using the captured objectives
+                # FIXED: Logging and progress bar update using the captured objectives - make dynamic
                 objectives_raw = last_eval['objectives_raw']
                 if objectives_raw is not None:
                     obj_values = objectives_raw.cpu().numpy()
+                    
+                    # Base progress dict
                     postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
-                    if len(self.objective_names) > 0: postfix_dict[self.objective_names[0]] = f'{obj_values[0]:.4f}'
-                    if len(self.objective_names) > 1: postfix_dict[self.objective_names[1]] = f'{obj_values[1]:.4f}'
+                    
+                    # Add objective values dynamically based on what actually exists
+                    for i, obj_name in enumerate(self.objective_names):
+                        if i < len(obj_values):
+                            postfix_dict[obj_name] = f'{obj_values[i]:.4f}'
+                    
                     progress_bar.set_postfix(postfix_dict)
 
                     if step % 5 == 0 or step == 1:
-                        obj_str = ", ".join([f"{name}={val:.4f}" for name, val in zip(self.objective_names, obj_values)])
+                        obj_str = ", ".join([f"{name}={obj_values[i]:.4f}" 
+                                        for i, name in enumerate(self.objective_names) 
+                                        if i < len(obj_values)])
                         self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
                         self.logger.info(f"          Objectives: [ {obj_str} ]")
 
