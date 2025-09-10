@@ -17,8 +17,8 @@
 ### ============================================= 1. Global settings: =====================================================================
 
 # Main paths
-CONFLUENCE_DATA_DIR: "/anvil/scratch/x-deythorsson/CONFLUENCE_data/"
-CONFLUENCE_CODE_DIR: "/home/x-deythorsson/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
+CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 # Experiment settings
 DOMAIN_NAME: "paradise"                                        # Name of experimental domain
@@ -43,7 +43,7 @@ POUR_POINT_SHP_PATH: default                                   # If 'default', u
 POUR_POINT_SHP_NAME: default                                   # If 'default', uses '[domain_name]_pourPoint.shp'.
 
 # Domain representation settings
-DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+DOMAIN_DEFINITION_METHOD: point                                # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 7500                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: pysheds                               # Use pysheds or TauDEM for lumped delineation
@@ -273,7 +273,8 @@ HYDAT_PATH: /work/comphyd_lab/data/geospatial-data/hydat/Hydat.sqlite3 #Path to 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-OPTIMISATION_METHODS: []                   # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_TARGET: swe                                       # Options streamflow (default), swe and sca
 
 # Single Site Emulation settings
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
@@ -286,7 +287,7 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
+ITERATIVE_OPTIMIZATION_ALGORITHM: DDS                           # Options DDS, PSO or SCE-UA
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 50                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"

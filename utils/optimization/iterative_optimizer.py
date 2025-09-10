@@ -325,6 +325,423 @@ class CalibrationTarget(ABC):
         return None, None
 
 
+class ETTarget(CalibrationTarget):
+    """Evapotranspiration calibration target for FluxNet data"""
+    
+    def __init__(self, config: Dict, project_dir: Path, logger: logging.Logger):
+        super().__init__(config, project_dir, logger)
+        
+        # Determine ET variable type from config
+        self.optimization_target = config.get('OPTIMISATION_TARGET', 'streamflow')
+        if self.optimization_target not in ['et', 'latent_heat']:
+            raise ValueError(f"Invalid ET optimization target: {self.optimization_target}")
+        
+        self.variable_name = self.optimization_target
+        
+        # Temporal aggregation method for high-frequency FluxNet data
+        self.temporal_aggregation = config.get('ET_TEMPORAL_AGGREGATION', 'daily_mean')  # daily_mean, daily_sum
+        
+        # Quality control settings
+        self.use_quality_control = config.get('ET_USE_QUALITY_CONTROL', True)
+        self.max_quality_flag = config.get('ET_MAX_QUALITY_FLAG', 2)  # FluxNet QC flags: 0=best, 3=worst
+        
+        self.logger.info(f"Initialized ETTarget for {self.optimization_target.upper()} calibration")
+        self.logger.info(f"Temporal aggregation: {self.temporal_aggregation}")
+        if self.use_quality_control:
+            self.logger.info(f"Quality control enabled: max flag = {self.max_quality_flag}")
+    
+    def get_simulation_files(self, sim_dir: Path) -> List[Path]:
+        """Get SUMMA daily output files containing ET variables"""
+        # Look for daily output files (they contain ET variables)
+        daily_files = list(sim_dir.glob("*_day.nc"))
+        if daily_files:
+            return daily_files
+        
+        # Fallback to timestep files if daily not available
+        return list(sim_dir.glob("*timestep.nc"))
+    
+    def extract_simulated_data(self, sim_files: List[Path], **kwargs) -> pd.Series:
+        """Extract ET data from SUMMA simulation files"""
+        sim_file = sim_files[0]  # Use first file
+        
+        try:
+            with xr.open_dataset(sim_file) as ds:
+                if self.optimization_target == 'et':
+                    return self._extract_et_data(ds)
+                elif self.optimization_target == 'latent_heat':
+                    return self._extract_latent_heat_data(ds)
+                else:
+                    raise ValueError(f"Unknown ET target: {self.optimization_target}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error extracting ET data from {sim_file}: {str(e)}")
+            raise
+    
+    def _extract_et_data(self, ds: xr.Dataset) -> pd.Series:
+        """Extract total ET from SUMMA output"""
+        # Primary variable: scalarTotalET
+        if 'scalarTotalET' in ds.variables:
+            et_var = ds['scalarTotalET']
+            self.logger.debug(f"Found scalarTotalET variable with shape: {et_var.shape}")
+            
+            # Extract data - handle spatial dimensions
+            if len(et_var.shape) > 1:
+                if 'hru' in et_var.dims:
+                    if et_var.shape[et_var.dims.index('hru')] == 1:
+                        sim_data = et_var.isel(hru=0).to_pandas()
+                    else:
+                        # Average across HRUs for distributed domain
+                        sim_data = et_var.mean(dim='hru').to_pandas()
+                        self.logger.info(f"Averaged ET across {et_var.shape[et_var.dims.index('hru')]} HRUs")
+                else:
+                    non_time_dims = [dim for dim in et_var.dims if dim != 'time']
+                    if non_time_dims:
+                        sim_data = et_var.isel({non_time_dims[0]: 0}).to_pandas()
+                    else:
+                        sim_data = et_var.to_pandas()
+            else:
+                sim_data = et_var.to_pandas()
+            
+            # Convert units: SUMMA outputs kg m-2 s-1, convert to mm/day
+            sim_data = self._convert_et_units(sim_data, from_unit='kg_m2_s', to_unit='mm_day')
+            
+            self.logger.debug(f"Extracted ET data: {len(sim_data)} timesteps, range: {sim_data.min():.3f} to {sim_data.max():.3f} mm/day")
+            return sim_data
+            
+        else:
+            # Fallback: sum ET components
+            self.logger.warning("scalarTotalET not found, summing ET components")
+            return self._sum_et_components(ds)
+    
+    def _sum_et_components(self, ds: xr.Dataset) -> pd.Series:
+        """Sum individual ET components to get total ET"""
+        try:
+            et_components = {}
+            
+            # ET component variables in SUMMA
+            component_vars = {
+                'canopy_transpiration': 'scalarCanopyTranspiration',
+                'canopy_evaporation': 'scalarCanopyEvaporation', 
+                'ground_evaporation': 'scalarGroundEvaporation',
+                'snow_sublimation': 'scalarSnowSublimation',
+                'canopy_sublimation': 'scalarCanopySublimation'
+            }
+            
+            total_et = None
+            
+            for component_name, var_name in component_vars.items():
+                if var_name in ds.variables:
+                    component_var = ds[var_name]
+                    
+                    # Handle spatial dimensions
+                    if len(component_var.shape) > 1:
+                        if 'hru' in component_var.dims:
+                            if component_var.shape[component_var.dims.index('hru')] == 1:
+                                component_data = component_var.isel(hru=0)
+                            else:
+                                component_data = component_var.mean(dim='hru')
+                        else:
+                            non_time_dims = [dim for dim in component_var.dims if dim != 'time']
+                            if non_time_dims:
+                                component_data = component_var.isel({non_time_dims[0]: 0})
+                            else:
+                                component_data = component_var
+                    else:
+                        component_data = component_var
+                    
+                    if total_et is None:
+                        total_et = component_data
+                    else:
+                        total_et = total_et + component_data
+                    
+                    self.logger.debug(f"Added {component_name} to total ET")
+            
+            if total_et is None:
+                raise ValueError("No ET component variables found in SUMMA output")
+            
+            # Convert to pandas and apply unit conversion
+            sim_data = total_et.to_pandas()
+            sim_data = self._convert_et_units(sim_data, from_unit='kg_m2_s', to_unit='mm_day')
+            
+            self.logger.info("Calculated total ET from component sum")
+            return sim_data
+            
+        except Exception as e:
+            self.logger.error(f"Error summing ET components: {str(e)}")
+            raise
+    
+    def _extract_latent_heat_data(self, ds: xr.Dataset) -> pd.Series:
+        """Extract latent heat flux from SUMMA output"""
+        # Primary variable: scalarLatHeatTotal
+        if 'scalarLatHeatTotal' in ds.variables:
+            lh_var = ds['scalarLatHeatTotal']
+            self.logger.debug(f"Found scalarLatHeatTotal variable with shape: {lh_var.shape}")
+            
+            # Extract data - handle spatial dimensions
+            if len(lh_var.shape) > 1:
+                if 'hru' in lh_var.dims:
+                    if lh_var.shape[lh_var.dims.index('hru')] == 1:
+                        sim_data = lh_var.isel(hru=0).to_pandas()
+                    else:
+                        sim_data = lh_var.mean(dim='hru').to_pandas()
+                        self.logger.info(f"Averaged latent heat across {lh_var.shape[lh_var.dims.index('hru')]} HRUs")
+                else:
+                    non_time_dims = [dim for dim in lh_var.dims if dim != 'time']
+                    if non_time_dims:
+                        sim_data = lh_var.isel({non_time_dims[0]: 0}).to_pandas()
+                    else:
+                        sim_data = lh_var.to_pandas()
+            else:
+                sim_data = lh_var.to_pandas()
+            
+            # SUMMA outputs W m-2, which matches FluxNet LE units
+            self.logger.debug(f"Extracted latent heat data: {len(sim_data)} timesteps, range: {sim_data.min():.2f} to {sim_data.max():.2f} W/m²")
+            return sim_data
+            
+        else:
+            raise ValueError("scalarLatHeatTotal not found in SUMMA output")
+    
+    def _convert_et_units(self, et_data: pd.Series, from_unit: str, to_unit: str) -> pd.Series:
+        """Convert ET units"""
+        if from_unit == 'kg_m2_s' and to_unit == 'mm_day':
+            # Convert kg m-2 s-1 to mm/day
+            # 1 kg m-2 s-1 = 86400 mm/day (since 1 kg/m² = 1 mm water)
+            converted = et_data * 86400.0
+            self.logger.debug("Converted ET from kg m-2 s-1 to mm/day (factor: 86400)")
+            return converted
+        elif from_unit == to_unit:
+            return et_data
+        else:
+            self.logger.warning(f"Unknown unit conversion: {from_unit} to {to_unit}")
+            return et_data
+    
+    def get_observed_data_path(self) -> Path:
+        """Get path to observed FluxNet data"""
+        return self.project_dir / "observations" / "energy_fluxes" / "processed" / f"{self.domain_name}_fluxnet_processed.csv"
+    
+    def _get_observed_data_column(self, columns: List[str]) -> Optional[str]:
+        """Identify the ET data column in FluxNet file"""
+        if self.optimization_target == 'et':
+            # Look for ET column
+            for col in columns:
+                if any(term in col.lower() for term in ['et_from_le', 'et', 'evapotranspiration']):
+                    return col
+            # Fallback to exact match
+            if 'ET_from_LE_mm_per_day' in columns:
+                return 'ET_from_LE_mm_per_day'
+                
+        elif self.optimization_target == 'latent_heat':
+            # Look for latent heat flux column
+            for col in columns:
+                if any(term in col.lower() for term in ['le_f_mds', 'le_', 'latent']):
+                    return col
+            # Fallback to exact match
+            if 'LE_F_MDS' in columns:
+                return 'LE_F_MDS'
+        
+        return None
+    
+    def _load_observed_data(self) -> Optional[pd.Series]:
+        """Load observed FluxNet data with quality control and temporal aggregation"""
+        try:
+            obs_path = self.get_observed_data_path()
+            if not obs_path.exists():
+                self.logger.error(f"Observed FluxNet data file not found: {obs_path}")
+                return None
+            
+            obs_df = pd.read_csv(obs_path)
+            self.logger.debug(f"Loaded FluxNet data with columns: {list(obs_df.columns)}")
+            
+            # Find date and data columns
+            date_col = self._find_date_column(obs_df.columns)
+            data_col = self._get_observed_data_column(obs_df.columns)
+            
+            if not date_col or not data_col:
+                self.logger.error(f"Could not identify date/data columns in {obs_path}")
+                self.logger.error(f"Available columns: {list(obs_df.columns)}")
+                return None
+            
+            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            
+            # Process datetime
+            obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], errors='coerce')
+            obs_df = obs_df.dropna(subset=['DateTime'])
+            obs_df.set_index('DateTime', inplace=True)
+            
+            # Extract data column
+            obs_data = pd.to_numeric(obs_df[data_col], errors='coerce')
+            
+            # Apply quality control if enabled
+            if self.use_quality_control:
+                obs_data = self._apply_quality_control(obs_df, obs_data, data_col)
+            
+            # Remove remaining NaN values
+            obs_data = obs_data.dropna()
+            
+            # Apply temporal aggregation (FluxNet is typically 30-min, we want daily)
+            if self.temporal_aggregation == 'daily_mean':
+                obs_daily = obs_data.resample('D').mean()
+                self.logger.info(f"Aggregated to daily means: {len(obs_data)} → {len(obs_daily)} points")
+            elif self.temporal_aggregation == 'daily_sum':
+                obs_daily = obs_data.resample('D').sum() 
+                self.logger.info(f"Aggregated to daily sums: {len(obs_data)} → {len(obs_daily)} points")
+            else:
+                obs_daily = obs_data  # No aggregation
+                self.logger.info("No temporal aggregation applied")
+            
+            # Remove any remaining NaN from aggregation
+            obs_daily = obs_daily.dropna()
+            
+            self.logger.info(f"Final dataset: {len(obs_daily)} valid daily observations")
+            self.logger.debug(f"Observed data range: {obs_daily.min():.3f} to {obs_daily.max():.3f}")
+            
+            return obs_daily
+            
+        except Exception as e:
+            self.logger.error(f"Error loading observed FluxNet data: {str(e)}")
+            return None
+    
+    def _apply_quality_control(self, obs_df: pd.DataFrame, obs_data: pd.Series, data_col: str) -> pd.Series:
+        """Apply FluxNet quality control filters"""
+        try:
+            # Find quality control column
+            qc_col = None
+            if self.optimization_target == 'et':
+                # For ET derived from LE, use LE quality flags
+                if 'LE_F_MDS_QC' in obs_df.columns:
+                    qc_col = 'LE_F_MDS_QC'
+            elif self.optimization_target == 'latent_heat':
+                if 'LE_F_MDS_QC' in obs_df.columns:
+                    qc_col = 'LE_F_MDS_QC'
+            
+            if qc_col and qc_col in obs_df.columns:
+                qc_flags = pd.to_numeric(obs_df[qc_col], errors='coerce')
+                
+                # Apply quality filter
+                quality_mask = qc_flags <= self.max_quality_flag
+                valid_before = len(obs_data.dropna())
+                obs_data = obs_data[quality_mask]
+                valid_after = len(obs_data.dropna())
+                
+                self.logger.info(f"Quality control applied: {valid_before} → {valid_after} valid points")
+                self.logger.debug(f"Rejected {valid_before - valid_after} points with QC > {self.max_quality_flag}")
+            else:
+                self.logger.warning(f"Quality control column '{qc_col}' not found, skipping QC")
+            
+            return obs_data
+            
+        except Exception as e:
+            self.logger.warning(f"Error applying quality control: {str(e)}")
+            return obs_data
+    
+    def _find_date_column(self, columns: List[str]) -> Optional[str]:
+        """Find timestamp column in FluxNet data"""
+        timestamp_candidates = ['timestamp', 'TIMESTAMP_START', 'TIMESTAMP_END', 'datetime', 'time']
+        
+        for candidate in timestamp_candidates:
+            if candidate in columns:
+                return candidate
+        
+        # Look for columns containing timestamp-like terms
+        for col in columns:
+            if any(term in col.lower() for term in ['timestamp', 'time', 'date']):
+                return col
+        
+        return None
+    
+    def needs_routing(self) -> bool:
+        """ET calibration doesn't need routing"""
+        return False
+    
+    def _calculate_performance_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate ET-specific performance metrics"""
+        try:
+            # Clean data
+            observed = pd.to_numeric(observed, errors='coerce')
+            simulated = pd.to_numeric(simulated, errors='coerce')
+            
+            valid = ~(observed.isna() | simulated.isna())
+            observed = observed[valid]
+            simulated = simulated[valid]
+            
+            if len(observed) == 0:
+                return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+            
+            # Standard metrics
+            base_metrics = super()._calculate_performance_metrics(observed, simulated)
+            
+            # Add ET-specific metrics
+            et_metrics = self._calculate_et_specific_metrics(observed, simulated)
+            base_metrics.update(et_metrics)
+            
+            return base_metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating ET performance metrics: {str(e)}")
+            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+    
+    def _calculate_et_specific_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate ET-specific metrics"""
+        try:
+            metrics = {}
+            
+            # Seasonal cycle analysis
+            if len(observed) > 365:  # Need at least a year
+                obs_seasonal = self._extract_seasonal_cycle(observed)
+                sim_seasonal = self._extract_seasonal_cycle(simulated)
+                
+                # Seasonal amplitude comparison
+                obs_amplitude = obs_seasonal.max() - obs_seasonal.min()
+                sim_amplitude = sim_seasonal.max() - sim_seasonal.min()
+                
+                if obs_amplitude > 0:
+                    amplitude_ratio = sim_amplitude / obs_amplitude
+                    metrics['Seasonal_Amplitude_Ratio'] = amplitude_ratio
+                
+                # Growing season ET (May-September in Northern Hemisphere)
+                growing_months = [5, 6, 7, 8, 9]
+                obs_growing = obs_seasonal[obs_seasonal.index.isin(growing_months)]
+                sim_growing = sim_seasonal[sim_seasonal.index.isin(growing_months)]
+                
+                if len(obs_growing) > 0 and len(sim_growing) > 0:
+                    growing_bias = (sim_growing.mean() - obs_growing.mean()) / obs_growing.mean() * 100
+                    metrics['Growing_Season_Bias_Pct'] = growing_bias
+            
+            # Water use efficiency proxy (if precipitation data available)
+            # This would require additional data, skipping for now
+            
+            # High/low flow periods
+            obs_high_threshold = observed.quantile(0.9)
+            obs_low_threshold = observed.quantile(0.1)
+            
+            high_mask = observed >= obs_high_threshold
+            low_mask = observed <= obs_low_threshold
+            
+            if high_mask.any():
+                high_bias = (simulated[high_mask].mean() - observed[high_mask].mean()) / observed[high_mask].mean() * 100
+                metrics['High_ET_Bias_Pct'] = high_bias
+            
+            if low_mask.any():
+                low_bias = (simulated[low_mask].mean() - observed[low_mask].mean()) / observed[low_mask].mean() * 100
+                metrics['Low_ET_Bias_Pct'] = low_bias
+            
+            return metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating ET-specific metrics: {str(e)}")
+            return {}
+    
+    def _extract_seasonal_cycle(self, data: pd.Series) -> pd.Series:
+        """Extract average seasonal cycle from ET data"""
+        try:
+            # Group by month and calculate mean
+            monthly_means = data.groupby(data.index.month).mean()
+            return monthly_means
+            
+        except Exception:
+            return pd.Series()
+
+
 class StreamflowTarget(CalibrationTarget):
     """Streamflow calibration target"""
     
@@ -443,8 +860,6 @@ class StreamflowTarget(CalibrationTarget):
             
             if pour_point_file.exists():
                 self.logger.info("DEBUG: Attempting geographic approach...")
-                # Load and process pour point [previous geographic logic...]
-                # Note: Keep your existing geographic logic here if needed
                 # For now, falling through to discharge approach
                 raise Exception("Geographic approach not available, using discharge approach")
             else:
@@ -678,115 +1093,870 @@ class SoilMoistureTarget(CalibrationTarget):
 
 
 class SnowTarget(CalibrationTarget):
-    """
-    Placeholder implementation for snow calibration target.
-    
-    This class provides a basic implementation for snow-based calibration
-    that can be extended with actual MODIS SCA or other snow observation data.
-    """
+    """Snow calibration target supporting both SWE and SCA"""
     
     def __init__(self, config: Dict, project_dir: Path, logger: logging.Logger):
         super().__init__(config, project_dir, logger)
-        self.variable_name = "snow_cover"
-        self.logger.info("Initialized SnowTarget (placeholder implementation)")
-    
-    def calculate_metrics(self, sim_dir: Path, mizuroute_dir: Optional[Path] = None, 
-                         calibration_only: bool = True) -> Optional[Dict[str, float]]:
-        """
-        Calculate snow performance metrics.
         
-        This is a placeholder implementation that returns synthetic metrics.
-        In a full implementation, this would:
-        1. Load MODIS SCA or other snow observations
-        2. Extract simulated snow cover/SWE from SUMMA outputs
-        3. Calculate RMSE, correlation, bias metrics
-        """
+        # Determine snow variable type from config
+        self.optimization_target = config.get('OPTIMISATION_TARGET', 'streamflow')
+        if self.optimization_target not in ['swe', 'sca']:
+            raise ValueError(f"Invalid snow optimization target: {self.optimization_target}")
+        
+        self.variable_name = self.optimization_target
+        self.logger.info(f"Initialized SnowTarget for {self.optimization_target.upper()} calibration")
+    
+    def get_simulation_files(self, sim_dir: Path) -> List[Path]:
+        """Get SUMMA daily output files containing snow variables"""
+        # Look for daily output files (they contain snow variables)
+        daily_files = list(sim_dir.glob("*_day.nc"))
+        if daily_files:
+            return daily_files
+        
+        # Fallback to timestep files if daily not available
+        return list(sim_dir.glob("*timestep.nc"))
+    
+    def extract_simulated_data(self, sim_files: List[Path], **kwargs) -> pd.Series:
+        """Extract snow data from SUMMA simulation files"""
+        sim_file = sim_files[0]  # Use first file
+        
         try:
-            # Placeholder metrics - would be replaced with actual calculation
+            with xr.open_dataset(sim_file) as ds:
+                if self.optimization_target == 'swe':
+                    return self._extract_swe_data(ds)
+                elif self.optimization_target == 'sca':
+                    return self._extract_sca_data(ds)
+                else:
+                    raise ValueError(f"Unknown snow target: {self.optimization_target}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error extracting snow data from {sim_file}: {str(e)}")
+            raise
+    
+    def _extract_swe_data(self, ds: xr.Dataset) -> pd.Series:
+        """Extract SWE data from SUMMA output"""
+        if 'scalarSWE' not in ds.variables:
+            raise ValueError("scalarSWE variable not found in SUMMA output")
+        
+        swe_var = ds['scalarSWE']
+        self.logger.debug(f"Found scalarSWE variable with shape: {swe_var.shape}")
+        
+        # Extract data - handle spatial dimensions
+        if len(swe_var.shape) > 1:
+            if 'hru' in swe_var.dims:
+                # Take first HRU or average across HRUs
+                if swe_var.shape[swe_var.dims.index('hru')] == 1:
+                    sim_data = swe_var.isel(hru=0).to_pandas()
+                else:
+                    # Average across HRUs for distributed domain
+                    sim_data = swe_var.mean(dim='hru').to_pandas()
+                    self.logger.info(f"Averaged SWE across {swe_var.shape[swe_var.dims.index('hru')]} HRUs")
+            else:
+                # Handle other dimensions
+                non_time_dims = [dim for dim in swe_var.dims if dim != 'time']
+                if non_time_dims:
+                    sim_data = swe_var.isel({non_time_dims[0]: 0}).to_pandas()
+                else:
+                    sim_data = swe_var.to_pandas()
+        else:
+            sim_data = swe_var.to_pandas()
+        
+        # Convert units if needed (SUMMA outputs kg/m² = mm water equivalent)
+        # Observed SWE might be in inches, need to check and convert
+        self.logger.debug(f"Extracted SWE data: {len(sim_data)} timesteps, range: {sim_data.min():.2f} to {sim_data.max():.2f} kg/m²")
+        
+        return sim_data
+    
+    def _extract_sca_data(self, ds: xr.Dataset) -> pd.Series:
+        """Extract SCA data from SUMMA output"""
+        # Try different possible SCA variables
+        sca_vars = ['scalarGroundSnowFraction', 'scalarSWE']  # Can derive SCA from SWE
+        
+        for var_name in sca_vars:
+            if var_name in ds.variables:
+                sca_var = ds[var_name]
+                self.logger.debug(f"Found {var_name} variable with shape: {sca_var.shape}")
+                
+                # Extract data - handle spatial dimensions
+                if len(sca_var.shape) > 1:
+                    if 'hru' in sca_var.dims:
+                        if sca_var.shape[sca_var.dims.index('hru')] == 1:
+                            sim_data = sca_var.isel(hru=0).to_pandas()
+                        else:
+                            # Average across HRUs for distributed domain
+                            sim_data = sca_var.mean(dim='hru').to_pandas()
+                            self.logger.info(f"Averaged {var_name} across {sca_var.shape[sca_var.dims.index('hru')]} HRUs")
+                    else:
+                        non_time_dims = [dim for dim in sca_var.dims if dim != 'time']
+                        if non_time_dims:
+                            sim_data = sca_var.isel({non_time_dims[0]: 0}).to_pandas()
+                        else:
+                            sim_data = sca_var.to_pandas()
+                else:
+                    sim_data = sca_var.to_pandas()
+                
+                # Convert to SCA fraction if using SWE
+                if var_name == 'scalarSWE':
+                    # Convert SWE to binary snow cover (0 or 1)
+                    swe_threshold = 1.0  # kg/m² threshold for snow presence
+                    sim_data = (sim_data > swe_threshold).astype(float)
+                    self.logger.info(f"Converted SWE to binary SCA using threshold {swe_threshold} kg/m²")
+                
+                self.logger.debug(f"Extracted SCA data: {len(sim_data)} timesteps, range: {sim_data.min():.3f} to {sim_data.max():.3f}")
+                return sim_data
+        
+        raise ValueError("No suitable SCA variable found in SUMMA output")
+    
+    def get_observed_data_path(self) -> Path:
+        """Get path to observed snow data"""
+        if self.optimization_target == 'swe':
+            return self.project_dir / "observations" / "snow" / "swe" / "processed" / f"{self.domain_name}_swe_processed.csv"
+        elif self.optimization_target == 'sca':
+            return self.project_dir / "observations" / "snow" / "sca" / "processed" / f"{self.domain_name}_sca_processed.csv"
+        else:
+            raise ValueError(f"Unknown snow target: {self.optimization_target}")
+    
+    def _get_observed_data_column(self, columns: List[str]) -> Optional[str]:
+        """Identify the snow data column in observed data file"""
+        if self.optimization_target == 'swe':
+            # Look for SWE column
+            for col in columns:
+                if any(term in col.lower() for term in ['swe', 'snow_water_equivalent']):
+                    return col
+            # Fallback to exact match
+            if 'SWE' in columns:
+                return 'SWE'
+                
+        elif self.optimization_target == 'sca':
+            # Look for snow cover ratio column
+            for col in columns:
+                if any(term in col.lower() for term in ['snow_cover_ratio', 'sca', 'snow_cover']):
+                    return col
+            # Fallback to exact match
+            if 'snow_cover_ratio' in columns:
+                return 'snow_cover_ratio'
+        
+        return None
+    
+    def _load_observed_data(self) -> Optional[pd.Series]:
+        """Load observed snow data with proper date parsing and unit handling"""
+        try:
+            obs_path = self.get_observed_data_path()
+            if not obs_path.exists():
+                self.logger.error(f"Observed snow data file not found: {obs_path}")
+                return None
+            
+            obs_df = pd.read_csv(obs_path)
+            self.logger.debug(f"Loaded observed data with columns: {list(obs_df.columns)}")
+            
+            # Find date and data columns
+            date_col = self._find_date_column(obs_df.columns)
+            data_col = self._get_observed_data_column(obs_df.columns)
+            
+            if not date_col or not data_col:
+                self.logger.error(f"Could not identify date/data columns in {obs_path}")
+                self.logger.error(f"Available columns: {list(obs_df.columns)}")
+                return None
+            
+            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            
+            # Process data
+            if self.optimization_target == 'swe':
+                obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], format='%d/%m/%Y', errors='coerce')
+            else:  # sca
+                obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], errors='coerce')
+            
+            # Remove rows with invalid dates
+            obs_df = obs_df.dropna(subset=['DateTime'])
+            obs_df.set_index('DateTime', inplace=True)
+            
+            # Extract data column and clean
+            obs_series = pd.to_numeric(obs_df[data_col], errors='coerce')
+            
+            # Handle unit conversion for SWE if needed
+            if self.optimization_target == 'swe':
+                obs_series = self._convert_swe_units(obs_series)
+            
+            # Remove NaN values
+            obs_series = obs_series.dropna()
+            
+            self.logger.info(f"Loaded {len(obs_series)} valid observations")
+            self.logger.debug(f"Observed data range: {obs_series.min():.3f} to {obs_series.max():.3f}")
+            
+            return obs_series
+            
+        except Exception as e:
+            self.logger.error(f"Error loading observed snow data: {str(e)}")
+            return None
+    
+    def _find_date_column(self, columns: List[str]) -> Optional[str]:
+        """Find date column in observed data"""
+        date_candidates = ['date', 'Date', 'DATE', 'datetime', 'DateTime', 'time', 'Time']
+        
+        for candidate in date_candidates:
+            if candidate in columns:
+                return candidate
+        
+        # Look for columns containing date-like terms
+        for col in columns:
+            if any(term in col.lower() for term in ['date', 'time']):
+                return col
+        
+        return None
+    
+    def _convert_swe_units(self, obs_swe: pd.Series) -> pd.Series:
+        """Convert SWE units if needed (inches to kg/m²)"""
+        # Check if observed SWE appears to be in inches (typical range 0-50+ inches)
+        max_value = obs_swe.max()
+        
+        if max_value > 500:  # Likely already in kg/m² (mm water equivalent)
+            self.logger.info("Observed SWE appears to be in kg/m² (mm), no conversion needed")
+            return obs_swe
+        elif max_value > 10:  # Likely in inches  
+            # Convert inches to kg/m² (1 inch = 25.4 mm = 25.4 kg/m²)
+            converted = obs_swe * 25.4
+            self.logger.info(f"Converted SWE from inches to kg/m² (factor: 25.4)")
+            self.logger.debug(f"Conversion: {obs_swe.max():.1f} inches → {converted.max():.1f} kg/m²")
+            return converted
+        else:
+            # Might be in meters, convert to kg/m²
+            converted = obs_swe * 1000
+            self.logger.info(f"Converted SWE from meters to kg/m² (factor: 1000)")
+            return converted
+    
+    def needs_routing(self) -> bool:
+        """Snow calibration doesn't need routing"""
+        return False
+    
+    def _calculate_performance_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate snow-specific performance metrics"""
+        try:
+            # Clean data
+            observed = pd.to_numeric(observed, errors='coerce')
+            simulated = pd.to_numeric(simulated, errors='coerce')
+            
+            valid = ~(observed.isna() | simulated.isna())
+            observed = observed[valid]
+            simulated = simulated[valid]
+            
+            if len(observed) == 0:
+                return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+            
+            # Standard metrics
+            base_metrics = super()._calculate_performance_metrics(observed, simulated)
+            
+            # Add snow-specific metrics
+            if self.optimization_target == 'sca':
+                # For SCA, add categorical metrics
+                sca_metrics = self._calculate_sca_metrics(observed, simulated)
+                base_metrics.update(sca_metrics)
+            elif self.optimization_target == 'swe':
+                # For SWE, add seasonal metrics
+                swe_metrics = self._calculate_swe_metrics(observed, simulated)
+                base_metrics.update(swe_metrics)
+            
+            return base_metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating snow performance metrics: {str(e)}")
+            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+    
+    def _calculate_sca_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate SCA-specific categorical metrics"""
+        try:
+            # Convert to binary if not already
+            obs_binary = (observed > 0.5).astype(int)
+            sim_binary = (simulated > 0.5).astype(int)
+            
+            # Contingency table
+            true_pos = np.sum((obs_binary == 1) & (sim_binary == 1))
+            false_pos = np.sum((obs_binary == 0) & (sim_binary == 1))
+            false_neg = np.sum((obs_binary == 1) & (sim_binary == 0))
+            true_neg = np.sum((obs_binary == 0) & (sim_binary == 0))
+            
+            # Categorical metrics
+            pod = true_pos / (true_pos + false_neg) if (true_pos + false_neg) > 0 else np.nan  # Probability of Detection
+            far = false_pos / (true_pos + false_pos) if (true_pos + false_pos) > 0 else np.nan  # False Alarm Ratio
+            csi = true_pos / (true_pos + false_pos + false_neg) if (true_pos + false_pos + false_neg) > 0 else np.nan  # Critical Success Index
+            accuracy = (true_pos + true_neg) / len(observed) if len(observed) > 0 else np.nan
+            
+            return {
+                'POD': pod,
+                'FAR': far, 
+                'CSI': csi,
+                'Accuracy': accuracy
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating SCA metrics: {str(e)}")
+            return {}
+    
+    def _calculate_swe_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate SWE-specific metrics"""
+        try:
             metrics = {}
             
-            # Add calibration period metrics
-            if calibration_only or True:  # Always calculate calibration for now
-                metrics.update({
-                    'Calib_snow_cover_RMSE': 0.15 + np.random.normal(0, 0.03),
-                    'Calib_snow_cover_correlation': 0.8 + np.random.normal(0, 0.05),
-                    'Calib_snow_cover_bias': np.random.normal(0, 0.05)
-                })
+            # Peak SWE timing and magnitude
+            if len(observed) > 10:  # Need reasonable amount of data
+                obs_peak_idx = observed.idxmax()
+                sim_peak_idx = simulated.idxmax()
+                
+                obs_peak_value = observed.max()
+                sim_peak_value = simulated.max()
+                
+                # Peak timing difference (days)
+                if pd.notna(obs_peak_idx) and pd.notna(sim_peak_idx):
+                    peak_timing_diff = abs((sim_peak_idx - obs_peak_idx).days)
+                    metrics['Peak_Timing_Error_Days'] = peak_timing_diff
+                
+                # Peak magnitude error
+                if pd.notna(obs_peak_value) and pd.notna(sim_peak_value):
+                    peak_magnitude_error = abs(sim_peak_value - obs_peak_value) / obs_peak_value * 100
+                    metrics['Peak_Magnitude_Error_Pct'] = peak_magnitude_error
             
-            # Add evaluation period metrics if requested
-            if not calibration_only:
-                metrics.update({
-                    'Eval_snow_cover_RMSE': 0.18 + np.random.normal(0, 0.03),
-                    'Eval_snow_cover_correlation': 0.75 + np.random.normal(0, 0.05),
-                    'Eval_snow_cover_bias': np.random.normal(0, 0.06)
-                })
-            
-            self.logger.debug(f"Calculated snow metrics: {metrics}")
             return metrics
             
         except Exception as e:
-            self.logger.error(f"Error calculating snow metrics: {e}")
-            return None
+            self.logger.error(f"Error calculating SWE metrics: {str(e)}")
+            return {}
     
-    def needs_routing(self) -> bool:
-        """Snow calibration doesn't need routing."""
-        return False
-
+    def _calculate_snow_depth_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate snow depth-specific metrics"""
+        try:
+            metrics = {}
+            
+            # Peak snow depth timing and magnitude (similar to SWE but for depth)
+            if len(observed) > 10:  # Need reasonable amount of data
+                obs_peak_idx = observed.idxmax()
+                sim_peak_idx = simulated.idxmax()
+                
+                obs_peak_value = observed.max()
+                sim_peak_value = simulated.max()
+                
+                # Peak timing difference (days)
+                if pd.notna(obs_peak_idx) and pd.notna(sim_peak_idx):
+                    peak_timing_diff = abs((sim_peak_idx - obs_peak_idx).days)
+                    metrics['Peak_Timing_Error_Days'] = peak_timing_diff
+                
+                # Peak magnitude error
+                if pd.notna(obs_peak_value) and pd.notna(sim_peak_value):
+                    peak_magnitude_error = abs(sim_peak_value - obs_peak_value) / obs_peak_value * 100
+                    metrics['Peak_Magnitude_Error_Pct'] = peak_magnitude_error
+            
+            # Snow season length metrics
+            snow_threshold = 0.01  # 1 cm threshold for snow presence
+            
+            obs_snow_days = np.sum(observed > snow_threshold)
+            sim_snow_days = np.sum(simulated > snow_threshold)
+            
+            if obs_snow_days > 0:
+                snow_season_error = abs(sim_snow_days - obs_snow_days) / obs_snow_days * 100
+                metrics['Snow_Season_Length_Error_Pct'] = snow_season_error
+            
+            # First and last snow dates (if sufficient data)
+            if len(observed) > 100:  # Need sufficient seasonal data
+                obs_snow_mask = observed > snow_threshold
+                sim_snow_mask = simulated > snow_threshold
+                
+                if obs_snow_mask.any() and sim_snow_mask.any():
+                    obs_first_snow = observed[obs_snow_mask].index.min()
+                    obs_last_snow = observed[obs_snow_mask].index.max()
+                    sim_first_snow = simulated[sim_snow_mask].index.min()
+                    sim_last_snow = simulated[sim_snow_mask].index.max()
+                    
+                    first_snow_diff = abs((sim_first_snow - obs_first_snow).days)
+                    last_snow_diff = abs((sim_last_snow - obs_last_snow).days)
+                    
+                    metrics['First_Snow_Error_Days'] = first_snow_diff
+                    metrics['Last_Snow_Error_Days'] = last_snow_diff
+            
+            return metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating snow depth metrics: {str(e)}")
+            return {}
 
 class GroundwaterTarget(CalibrationTarget):
-    """
-    Placeholder implementation for groundwater calibration target.
-    
-    This class provides a basic implementation for groundwater-based calibration
-    that can be extended with actual GRACE or other groundwater observation data.
-    """
+    """Groundwater calibration target supporting both depth and GRACE TWS"""
     
     def __init__(self, config: Dict, project_dir: Path, logger: logging.Logger):
         super().__init__(config, project_dir, logger)
-        self.variable_name = "groundwater"
-        self.logger.info("Initialized GroundwaterTarget (placeholder implementation)")
-    
-    def calculate_metrics(self, sim_dir: Path, mizuroute_dir: Optional[Path] = None, 
-                         calibration_only: bool = True) -> Optional[Dict[str, float]]:
-        """
-        Calculate groundwater performance metrics.
         
-        This is a placeholder implementation that returns synthetic metrics.
-        In a full implementation, this would:
-        1. Load GRACE or other groundwater observations
-        2. Extract simulated groundwater from SUMMA outputs
-        3. Calculate RMSE, correlation, bias metrics
-        """
+        # Determine groundwater variable type from config
+        self.optimization_target = config.get('OPTIMISATION_TARGET', 'streamflow')
+        if self.optimization_target not in ['gw_depth', 'gw_grace']:
+            raise ValueError(f"Invalid groundwater optimization target: {self.optimization_target}")
+        
+        self.variable_name = self.optimization_target
+        
+        # GRACE processing center preference
+        self.grace_center = config.get('GRACE_PROCESSING_CENTER', 'csr')  # Options: jpl, csr, gsfc
+        
+        self.logger.info(f"Initialized GroundwaterTarget for {self.optimization_target.upper()} calibration")
+        if self.optimization_target == 'gw_grace':
+            self.logger.info(f"Using GRACE {self.grace_center.upper()} processing center data")
+    
+    def get_simulation_files(self, sim_dir: Path) -> List[Path]:
+        """Get SUMMA daily output files containing groundwater variables"""
+        # Look for daily output files (they contain groundwater variables)
+        daily_files = list(sim_dir.glob("*_day.nc"))
+        if daily_files:
+            return daily_files
+        
+        # Fallback to timestep files if daily not available
+        return list(sim_dir.glob("*timestep.nc"))
+    
+    def extract_simulated_data(self, sim_files: List[Path], **kwargs) -> pd.Series:
+        """Extract groundwater data from SUMMA simulation files"""
+        sim_file = sim_files[0]  # Use first file
+        
         try:
-            # Placeholder metrics - would be replaced with actual calculation
+            with xr.open_dataset(sim_file) as ds:
+                if self.optimization_target == 'gw_depth':
+                    return self._extract_groundwater_depth(ds)
+                elif self.optimization_target == 'gw_grace':
+                    return self._extract_total_water_storage(ds)
+                else:
+                    raise ValueError(f"Unknown groundwater target: {self.optimization_target}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error extracting groundwater data from {sim_file}: {str(e)}")
+            raise
+    
+    def _extract_groundwater_depth(self, ds: xr.Dataset) -> pd.Series:
+        """Extract groundwater depth from SUMMA output"""
+        # Primary variable: scalarAquiferStorage (water needed to reach bottom of soil profile)
+        if 'scalarAquiferStorage' in ds.variables:
+            gw_var = ds['scalarAquiferStorage']
+            self.logger.debug(f"Found scalarAquiferStorage variable with shape: {gw_var.shape}")
+            
+            # Extract data - handle spatial dimensions
+            if len(gw_var.shape) > 1:
+                if 'hru' in gw_var.dims:
+                    if gw_var.shape[gw_var.dims.index('hru')] == 1:
+                        sim_data = gw_var.isel(hru=0).to_pandas()
+                    else:
+                        # Average across HRUs for distributed domain
+                        sim_data = gw_var.mean(dim='hru').to_pandas()
+                        self.logger.info(f"Averaged aquifer storage across {gw_var.shape[gw_var.dims.index('hru')]} HRUs")
+                else:
+                    non_time_dims = [dim for dim in gw_var.dims if dim != 'time']
+                    if non_time_dims:
+                        sim_data = gw_var.isel({non_time_dims[0]: 0}).to_pandas()
+                    else:
+                        sim_data = gw_var.to_pandas()
+            else:
+                sim_data = gw_var.to_pandas()
+            
+            # scalarAquiferStorage is in meters - this represents depth to water table
+            # Convert to positive depth (if negative values, make positive)
+            sim_data = sim_data.abs()
+            
+            self.logger.debug(f"Extracted groundwater depth: {len(sim_data)} timesteps, range: {sim_data.min():.2f} to {sim_data.max():.2f} m")
+            return sim_data
+            
+        else:
+            # Fallback: try to derive from soil moisture layers
+            self.logger.warning("scalarAquiferStorage not found, attempting to derive from soil layers")
+            return self._derive_groundwater_depth(ds)
+    
+    def _derive_groundwater_depth(self, ds: xr.Dataset) -> pd.Series:
+        """Derive groundwater depth from soil moisture layers"""
+        try:
+            if 'mLayerVolFracLiq' not in ds.variables or 'mLayerDepth' not in ds.variables:
+                raise ValueError("Required soil layer variables not found for groundwater depth derivation")
+            
+            vol_frac_liq = ds['mLayerVolFracLiq']
+            layer_depths = ds['mLayerDepth']
+            
+            # Calculate cumulative depth and find water table
+            # This is a simplified approach - water table is where saturation drops below threshold
+            saturation_threshold = 0.8  # 80% saturation threshold
+            
+            # Take first HRU if multiple
+            if 'hru' in vol_frac_liq.dims and vol_frac_liq.shape[vol_frac_liq.dims.index('hru')] > 1:
+                vol_frac_liq = vol_frac_liq.isel(hru=0)
+                layer_depths = layer_depths.isel(hru=0)
+            elif 'hru' in vol_frac_liq.dims:
+                vol_frac_liq = vol_frac_liq.isel(hru=0)
+                layer_depths = layer_depths.isel(hru=0)
+            
+            # Calculate cumulative depths
+            cumulative_depths = layer_depths.cumsum(dim=layer_depths.dims[-2])  # Sum over layer dimension
+            
+            # Find water table depth (simplified)
+            # Take mean depth of saturated layers as proxy for water table depth
+            saturated_mask = vol_frac_liq > saturation_threshold
+            
+            # Calculate average depth of saturated zone
+            water_table_depths = []
+            for t in range(len(vol_frac_liq.time)):
+                time_sat_mask = saturated_mask.isel(time=t)
+                time_cum_depths = cumulative_depths.isel(time=t)
+                
+                if time_sat_mask.any():
+                    # Find deepest saturated layer
+                    sat_depths = time_cum_depths.where(time_sat_mask, drop=True)
+                    if len(sat_depths) > 0:
+                        water_table_depths.append(float(sat_depths.max()))
+                    else:
+                        water_table_depths.append(0.0)  # Surface
+                else:
+                    water_table_depths.append(float(time_cum_depths.max()))  # Deep water table
+            
+            sim_data = pd.Series(water_table_depths, index=vol_frac_liq.time.to_pandas())
+            
+            self.logger.info("Derived groundwater depth from soil moisture layers")
+            self.logger.debug(f"Derived depth range: {sim_data.min():.2f} to {sim_data.max():.2f} m")
+            
+            return sim_data
+            
+        except Exception as e:
+            self.logger.error(f"Error deriving groundwater depth: {str(e)}")
+            raise
+    
+    def _extract_total_water_storage(self, ds: xr.Dataset) -> pd.Series:
+        """Extract total water storage for GRACE comparison"""
+        try:
+            # Components of total water storage
+            storage_components = {}
+            
+            # 1. Snow water equivalent
+            if 'scalarSWE' in ds.variables:
+                storage_components['swe'] = ds['scalarSWE']
+            
+            # 2. Soil water storage
+            if 'scalarTotalSoilWat' in ds.variables:
+                storage_components['soil'] = ds['scalarTotalSoilWat']
+            
+            # 3. Aquifer storage
+            if 'scalarAquiferStorage' in ds.variables:
+                storage_components['aquifer'] = ds['scalarAquiferStorage']
+            
+            # 4. Canopy water (if available)
+            if 'scalarCanopyWat' in ds.variables:
+                storage_components['canopy'] = ds['scalarCanopyWat']
+            elif 'scalarCanopyLiq' in ds.variables:
+                storage_components['canopy'] = ds['scalarCanopyLiq']
+            
+            if not storage_components:
+                raise ValueError("No water storage components found for TWS calculation")
+            
+            self.logger.info(f"Found TWS components: {list(storage_components.keys())}")
+            
+            # Sum all components to get total water storage
+            total_storage = None
+            for component_name, component_data in storage_components.items():
+                # Handle spatial dimensions
+                if len(component_data.shape) > 1:
+                    if 'hru' in component_data.dims:
+                        if component_data.shape[component_data.dims.index('hru')] == 1:
+                            component_series = component_data.isel(hru=0)
+                        else:
+                            # Average across HRUs
+                            component_series = component_data.mean(dim='hru')
+                    else:
+                        non_time_dims = [dim for dim in component_data.dims if dim != 'time']
+                        if non_time_dims:
+                            component_series = component_data.isel({non_time_dims[0]: 0})
+                        else:
+                            component_series = component_data
+                else:
+                    component_series = component_data
+                
+                if total_storage is None:
+                    total_storage = component_series
+                else:
+                    total_storage = total_storage + component_series
+                
+                self.logger.debug(f"Added {component_name} component to TWS")
+            
+            # Convert to pandas Series
+            sim_data = total_storage.to_pandas()
+            
+            # Convert units to match GRACE (typically cm equivalent water height)
+            # Most SUMMA variables are in kg/m² or m, convert to cm
+            sim_data = self._convert_tws_units(sim_data)
+            
+            self.logger.debug(f"Extracted TWS: {len(sim_data)} timesteps, range: {sim_data.min():.2f} to {sim_data.max():.2f} cm")
+            
+            return sim_data
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating total water storage: {str(e)}")
+            raise
+    
+    def _convert_tws_units(self, tws_data: pd.Series) -> pd.Series:
+        """Convert TWS units to cm equivalent water height"""
+        # Check data range to infer units
+        data_range = tws_data.max() - tws_data.min()
+        
+        if data_range > 1000:  # Likely in kg/m² (mm)
+            # Convert kg/m² to cm (divide by 10)
+            converted = tws_data / 10.0
+            self.logger.info("Converted TWS from kg/m² to cm (factor: 0.1)")
+        elif data_range > 10:  # Likely in meters
+            # Convert meters to cm (multiply by 100)
+            converted = tws_data * 100.0
+            self.logger.info("Converted TWS from meters to cm (factor: 100)")
+        else:  # Likely already in cm or similar
+            converted = tws_data
+            self.logger.info("TWS appears to be in cm, no conversion applied")
+        
+        return converted
+    
+    def get_observed_data_path(self) -> Path:
+        """Get path to observed groundwater data"""
+        if self.optimization_target == 'gw_depth':
+            return self.project_dir / "observations" / "groundwater" / "depth" / "processed" / f"{self.domain_name}_gw_processed.csv"
+        elif self.optimization_target == 'gw_grace':
+            return self.project_dir / "observations" / "groundwater" / "grace" / "processed" / f"{self.domain_name}_grace_processed.csv"
+        else:
+            raise ValueError(f"Unknown groundwater target: {self.optimization_target}")
+    
+    def _get_observed_data_column(self, columns: List[str]) -> Optional[str]:
+        """Identify the groundwater data column in observed data file"""
+        if self.optimization_target == 'gw_depth':
+            # Look for depth column
+            for col in columns:
+                if any(term in col.lower() for term in ['depth', 'depth_m', 'water_level']):
+                    return col
+            # Fallback to exact match
+            if 'Depth_m' in columns:
+                return 'Depth_m'
+                
+        elif self.optimization_target == 'gw_grace':
+            # Look for GRACE TWS column based on processing center
+            grace_columns = {
+                'jpl': ['grace_jpl_tws'],
+                'csr': ['grace_csr_tws'],
+                'gsfc': ['grace_gsfc_tws']
+            }
+            
+            preferred_cols = grace_columns.get(self.grace_center, ['grace_csr_tws'])
+            
+            for col in preferred_cols:
+                if col in columns:
+                    return col
+            
+            # Fallback to any GRACE column
+            for col in columns:
+                if 'grace' in col.lower() and 'tws' in col.lower():
+                    return col
+        
+        return None
+    
+    def _load_observed_data(self) -> Optional[pd.Series]:
+        """Load observed groundwater data with proper date parsing"""
+        try:
+            obs_path = self.get_observed_data_path()
+            if not obs_path.exists():
+                self.logger.error(f"Observed groundwater data file not found: {obs_path}")
+                return None
+            
+            obs_df = pd.read_csv(obs_path)
+            self.logger.debug(f"Loaded observed data with columns: {list(obs_df.columns)}")
+            
+            # Find date and data columns
+            date_col = self._find_date_column(obs_df.columns)
+            data_col = self._get_observed_data_column(obs_df.columns)
+            
+            if not date_col or not data_col:
+                self.logger.error(f"Could not identify date/data columns in {obs_path}")
+                self.logger.error(f"Available columns: {list(obs_df.columns)}")
+                return None
+            
+            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            
+            # Process data based on target type
+            if self.optimization_target == 'gw_depth':
+                # Handle timezone-aware datetime
+                obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], errors='coerce')
+            else:  # gw_grace
+                # Handle MM/DD/YYYY format
+                obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], format='%m/%d/%Y', errors='coerce')
+            
+            # Remove rows with invalid dates
+            obs_df = obs_df.dropna(subset=['DateTime'])
+            obs_df.set_index('DateTime', inplace=True)
+            
+            # Extract data column and clean
+            obs_series = pd.to_numeric(obs_df[data_col], errors='coerce')
+            
+            # Remove NaN values
+            obs_series = obs_series.dropna()
+            
+            # Convert timezone-naive for consistency
+            if obs_series.index.tz is not None:
+                obs_series.index = obs_series.index.tz_convert('UTC').tz_localize(None)
+            
+            self.logger.info(f"Loaded {len(obs_series)} valid observations")
+            self.logger.debug(f"Observed data range: {obs_series.min():.3f} to {obs_series.max():.3f}")
+            
+            return obs_series
+            
+        except Exception as e:
+            self.logger.error(f"Error loading observed groundwater data: {str(e)}")
+            return None
+    
+    def _find_date_column(self, columns: List[str]) -> Optional[str]:
+        """Find date column in observed data"""
+        date_candidates = ['time', 'Time', 'date', 'Date', 'DATE', 'datetime', 'DateTime']
+        
+        for candidate in date_candidates:
+            if candidate in columns:
+                return candidate
+        
+        # Look for columns containing date-like terms
+        for col in columns:
+            if any(term in col.lower() for term in ['date', 'time']):
+                return col
+        
+        return None
+    
+    def needs_routing(self) -> bool:
+        """Groundwater calibration doesn't need routing"""
+        return False
+    
+    def _calculate_performance_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate groundwater-specific performance metrics"""
+        try:
+            # Clean data
+            observed = pd.to_numeric(observed, errors='coerce')
+            simulated = pd.to_numeric(simulated, errors='coerce')
+            
+            valid = ~(observed.isna() | simulated.isna())
+            observed = observed[valid]
+            simulated = simulated[valid]
+            
+            if len(observed) == 0:
+                return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+            
+            # Standard metrics
+            base_metrics = super()._calculate_performance_metrics(observed, simulated)
+            
+            # Add groundwater-specific metrics
+            if self.optimization_target == 'gw_depth':
+                depth_metrics = self._calculate_depth_metrics(observed, simulated)
+                base_metrics.update(depth_metrics)
+            elif self.optimization_target == 'gw_grace':
+                tws_metrics = self._calculate_tws_metrics(observed, simulated)
+                base_metrics.update(tws_metrics)
+            
+            return base_metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating groundwater performance metrics: {str(e)}")
+            return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'PBIAS': np.nan, 'MAE': np.nan}
+    
+    def _calculate_depth_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate groundwater depth-specific metrics"""
+        try:
             metrics = {}
             
-            # Add calibration period metrics
-            if calibration_only or True:  # Always calculate calibration for now
-                metrics.update({
-                    'Calib_groundwater_RMSE': 0.08 + np.random.normal(0, 0.02),
-                    'Calib_groundwater_correlation': 0.6 + np.random.normal(0, 0.1),
-                    'Calib_groundwater_bias': np.random.normal(0, 0.03)
-                })
+            # Range preservation
+            obs_range = observed.max() - observed.min()
+            sim_range = simulated.max() - simulated.min()
             
-            # Add evaluation period metrics if requested
-            if not calibration_only:
-                metrics.update({
-                    'Eval_groundwater_RMSE': 0.10 + np.random.normal(0, 0.02),
-                    'Eval_groundwater_correlation': 0.55 + np.random.normal(0, 0.1),
-                    'Eval_groundwater_bias': np.random.normal(0, 0.035)
-                })
+            if obs_range > 0:
+                range_ratio = sim_range / obs_range
+                metrics['Range_Ratio'] = range_ratio
+                
+                # Range bias (how well does model capture variability)
+                range_bias = (sim_range - obs_range) / obs_range * 100
+                metrics['Range_Bias_Pct'] = range_bias
             
-            self.logger.debug(f"Calculated groundwater metrics: {metrics}")
+            # Trend analysis (are long-term trends captured?)
+            if len(observed) > 30:  # Need sufficient data
+                obs_trend = self._calculate_trend(observed)
+                sim_trend = self._calculate_trend(simulated)
+                
+                metrics['Obs_Trend'] = obs_trend
+                metrics['Sim_Trend'] = sim_trend
+                
+                if abs(obs_trend) > 1e-6:  # Avoid division by near-zero
+                    trend_ratio = sim_trend / obs_trend
+                    metrics['Trend_Ratio'] = trend_ratio
+            
             return metrics
             
         except Exception as e:
-            self.logger.error(f"Error calculating groundwater metrics: {e}")
-            return None
+            self.logger.error(f"Error calculating depth metrics: {str(e)}")
+            return {}
     
-    def needs_routing(self) -> bool:
-        """Groundwater calibration doesn't need routing."""
-        return False
+    def _calculate_tws_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
+        """Calculate GRACE TWS-specific metrics"""
+        try:
+            metrics = {}
+            
+            # Seasonal cycle analysis
+            if len(observed) > 365:  # Need at least a year of data
+                obs_seasonal = self._extract_seasonal_cycle(observed)
+                sim_seasonal = self._extract_seasonal_cycle(simulated)
+                
+                # Seasonal amplitude comparison
+                obs_amplitude = obs_seasonal.max() - obs_seasonal.min()
+                sim_amplitude = sim_seasonal.max() - sim_seasonal.min()
+                
+                if obs_amplitude > 0:
+                    amplitude_ratio = sim_amplitude / obs_amplitude
+                    metrics['Seasonal_Amplitude_Ratio'] = amplitude_ratio
+                
+                # Seasonal timing (month of maximum)
+                obs_max_month = obs_seasonal.idxmax()
+                sim_max_month = sim_seasonal.idxmax()
+                
+                phase_diff = abs(obs_max_month - sim_max_month)
+                if phase_diff > 6:  # Handle wrap-around
+                    phase_diff = 12 - phase_diff
+                
+                metrics['Seasonal_Phase_Diff_Months'] = phase_diff
+            
+            # Anomaly correlation (detrended correlation)
+            obs_anomaly = observed - observed.rolling(window=12, center=True).mean()
+            sim_anomaly = simulated - simulated.rolling(window=12, center=True).mean()
+            
+            valid_anomaly = ~(obs_anomaly.isna() | sim_anomaly.isna())
+            if valid_anomaly.sum() > 10:
+                anomaly_corr = obs_anomaly[valid_anomaly].corr(sim_anomaly[valid_anomaly])
+                metrics['Anomaly_Correlation'] = anomaly_corr
+            
+            return metrics
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating TWS metrics: {str(e)}")
+            return {}
+    
+    def _calculate_trend(self, data: pd.Series) -> float:
+        """Calculate linear trend in data (units per year)"""
+        try:
+            if len(data) < 10:
+                return 0.0
+            
+            # Convert index to numeric (days since start)
+            numeric_time = (data.index - data.index[0]).days.values
+            numeric_time = numeric_time / 365.25  # Convert to years
+            
+            # Linear regression
+            coeffs = np.polyfit(numeric_time, data.values, 1)
+            trend_per_year = coeffs[0]
+            
+            return trend_per_year
+            
+        except Exception:
+            return 0.0
+    
+    def _extract_seasonal_cycle(self, data: pd.Series) -> pd.Series:
+        """Extract average seasonal cycle from data"""
+        try:
+            # Group by month and calculate mean
+            monthly_means = data.groupby(data.index.month).mean()
+            return monthly_means
+            
+        except Exception:
+            return pd.Series()
+
+
 
 
 # ============= PARAMETER MANAGEMENT =============
@@ -2062,18 +3232,22 @@ class BaseOptimizer(ABC):
         
         with open(control_path, "w", encoding="ascii", newline="\n") as f:
             f.writelines(lines)
-    
+        
     def _create_calibration_target(self) -> CalibrationTarget:
         """Factory method to create appropriate calibration target"""
-        calibration_var = self.config.get('CALIBRATION_VARIABLE', 'streamflow')
+        optimization_target = self.config.get('OPTIMISATION_TARGET', 'streamflow')
         
-        if calibration_var == 'streamflow':
+        if optimization_target == 'streamflow':
             return StreamflowTarget(self.config, self.project_dir, self.logger)
-        elif calibration_var == 'snow':
+        elif optimization_target in ['swe', 'sca', 'snow_depth']:
             return SnowTarget(self.config, self.project_dir, self.logger)
+        elif optimization_target in ['gw_depth', 'gw_grace']:
+            return GroundwaterTarget(self.config, self.project_dir, self.logger)
+        elif optimization_target in ['et', 'latent_heat']:
+            return ETTarget(self.config, self.project_dir, self.logger)
         else:
-            raise ValueError(f"Unsupported calibration variable: {calibration_var}")
-    
+            raise ValueError(f"Unsupported optimization target: {optimization_target}")
+                
     def _setup_parallel_processing(self) -> None:
         """Setup parallel processing directories and files"""
         self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
