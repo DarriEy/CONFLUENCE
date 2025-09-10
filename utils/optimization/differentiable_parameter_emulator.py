@@ -1553,8 +1553,31 @@ class DifferentiableParameterOptimizer:
             self.logger.info(f"Using adaptive ADAM with initial LR: {initial_lr:.6f}")
             
         elif optimizer_choice == 'LBFGS':
-            optimizer = optim.LBFGS(optimization_params, lr=lr)
+            # ENHANCED: Robust L-BFGS configuration for hydrological optimization
+            optimizer = optim.LBFGS(
+                optimization_params,
+                lr=lr,
+                max_iter=10,                    # Reduced from default 20 (expensive function evals)
+                max_eval=15,                    # Reduced from default 25  
+                tolerance_grad=1e-7,            # Gradient convergence tolerance
+                tolerance_change=1e-9,          # Parameter change tolerance
+                history_size=10,                # Reduced from default 100 (noisy gradients)
+                line_search_fn='strong_wolfe'   # More robust than default
+            )
             scheduler = None
+            
+            # ENHANCED: L-BFGS specific tracking variables
+            line_search_failures = 0
+            max_line_search_failures = 3
+            restart_counter = 0
+            max_restarts = 2
+            recent_losses = []
+            stagnation_threshold = 5
+            min_improvement_threshold = 1e-6
+            
+            self.logger.info(f"Using robust L-BFGS with history_size=10, strong_wolfe line search")
+            self.logger.info(f"Max line search failures before restart: {max_line_search_failures}")
+
         else:
             raise ValueError(f"Unknown optimizer '{optimizer_choice}'. Use 'ADAM' or 'LBFGS'.")
 
@@ -1566,7 +1589,8 @@ class DifferentiableParameterOptimizer:
         if optimizer_choice == 'ADAM':
             recent_losses = []
             stagnation_counter = 0
-        
+
+
         # ==================================
         # Optimization Loop
         # ==================================
@@ -1644,58 +1668,177 @@ class DifferentiableParameterOptimizer:
                     self.logger.info(f"          Objectives: [ {obj_str} ]")
 
         elif optimizer_choice == 'LBFGS':
-            progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff (L-BFGS)")
+            progress_bar = tqdm(range(1, steps + 1), desc="SUMMA Autodiff (Enhanced L-BFGS)")
             
-            # This variable will be updated by the closure to capture objectives
-            last_eval = {'objectives_raw': None}
-
+            # Variables to capture state from closure
+            last_eval = {
+                'objectives_raw': None, 
+                'loss': None,
+                'iteration_count': 0,
+                'function_evals': 0
+            }
+            
             for step in progress_bar:
+                step_start_time = time.time()
+                
                 def closure():
+                    last_eval['iteration_count'] += 1
+                    last_eval['function_evals'] += 1
+                    
                     optimizer.zero_grad()
                     
                     with torch.no_grad():
                         x.clamp_(0.0, 1.0)
                     
-                    objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
-                    
-                    # Capture the objectives for logging outside the closure
-                    last_eval['objectives_raw'] = objectives_raw.detach().clone()
-                    
-                    objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
-                    loss = self._compute_weighted_loss_tensor(objectives_adjusted)
-                    
-                    loss.backward()
-                    return loss  # The closure MUST return only the scalar loss
+                    try:
+                        objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
+                        
+                        # Capture objectives for logging
+                        last_eval['objectives_raw'] = objectives_raw.detach().clone()
+                        
+                        objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+                        loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+                        
+                        # ENHANCED: Gradient clipping for noisy FD gradients
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(optimization_params, max_norm=2.0)
+                        
+                        last_eval['loss'] = loss.detach().clone()
+                        return loss
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Error in closure: {e}")
+                        # Return large penalty loss
+                        penalty_loss = torch.tensor(1e6, requires_grad=True)
+                        last_eval['loss'] = penalty_loss.detach().clone()
+                        return penalty_loss
 
-                # optimizer.step() calls the closure and returns the final loss
-                loss = optimizer.step(closure)
+                try:
+                    # Reset function evaluation counter for this step
+                    last_eval['function_evals'] = 0
+                    
+                    # ENHANCED: Robust L-BFGS step with error handling
+                    loss = optimizer.step(closure)
+                    line_search_failures = 0  # Reset on success
+                    
+                except RuntimeError as e:
+                    error_msg = str(e).lower()
+                    
+                    if "line search failed" in error_msg or "strong wolfe" in error_msg:
+                        line_search_failures += 1
+                        self.logger.warning(f"L-BFGS line search failed (attempt {line_search_failures}/{max_line_search_failures})")
+                        
+                        if line_search_failures >= max_line_search_failures:
+                            if restart_counter < max_restarts:
+                                # ENHANCED: Restart L-BFGS with cleared history
+                                restart_counter += 1
+                                line_search_failures = 0
+                                
+                                self.logger.info(f"Restarting L-BFGS (restart {restart_counter}/{max_restarts})")
+                                
+                                # Clear optimizer state (history)
+                                optimizer.state = {}
+                                
+                                # Reduce learning rate for restart
+                                for param_group in optimizer.param_groups:
+                                    param_group['lr'] *= 0.5
+                                
+                                self.logger.info(f"Reduced LR to {optimizer.param_groups[0]['lr']:.6f} for restart")
+                                
+                                # Try again with cleared state
+                                try:
+                                    loss = optimizer.step(closure)
+                                except RuntimeError:
+                                    # If still failing, use gradient descent fallback
+                                    self.logger.warning("L-BFGS restart failed, using gradient descent step")
+                                    loss = self._gradient_descent_fallback_step(x, objective_head, use_sundials, fd_step, lr * 0.1)
+                            else:
+                                # ENHANCED: Gradient descent fallback after max restarts
+                                self.logger.warning("Max L-BFGS restarts reached, switching to gradient descent fallback")
+                                loss = self._gradient_descent_fallback_step(x, objective_head, use_sundials, fd_step, lr * 0.1)
+                        else:
+                            # Try again with same state
+                            try:
+                                loss = optimizer.step(closure)
+                            except RuntimeError:
+                                # Fallback to gradient descent for this step
+                                loss = self._gradient_descent_fallback_step(x, objective_head, use_sundials, fd_step, lr * 0.1)
+                    else:
+                        # Other RuntimeError - use fallback
+                        self.logger.error(f"L-BFGS error: {e}")
+                        loss = self._gradient_descent_fallback_step(x, objective_head, use_sundials, fd_step, lr * 0.1)
+
+                # Extract current loss value
+                if last_eval['loss'] is not None:
+                    current_loss = last_eval['loss'].item()
+                else:
+                    current_loss = loss.item() if hasattr(loss, 'item') else float(loss)
                 
-                current_loss = loss.item()
+                loss_history.append(current_loss)
+                recent_losses.append(current_loss)
+                
+                # Keep only recent losses for stagnation detection
+                if len(recent_losses) > stagnation_threshold:
+                    recent_losses.pop(0)
+                
+                # Track best solution
                 if current_loss < best_loss:
                     best_loss = current_loss
                     best_x = x.detach().clone()
 
-                # FIXED: Logging and progress bar update using the captured objectives - make dynamic
+                # ENHANCED: Stagnation detection and recovery
+                if len(recent_losses) >= stagnation_threshold:
+                    recent_improvement = recent_losses[0] - recent_losses[-1]
+                    if abs(recent_improvement) < min_improvement_threshold:
+                        self.logger.info(f"Step {step}: Stagnation detected (improvement: {recent_improvement:.8f})")
+                        
+                        # Clear L-BFGS history to escape local minimum
+                        if restart_counter < max_restarts:
+                            optimizer.state = {}
+                            restart_counter += 1
+                            self.logger.info(f"Cleared L-BFGS history (restart {restart_counter})")
+                        
+                        # Reset recent losses tracking
+                        recent_losses = recent_losses[-2:]  # Keep only last 2
+
+                # ENHANCED: Progress monitoring and logging
+                step_time = time.time() - step_start_time
+                function_evals = last_eval['function_evals']
+                
+                # Dynamic progress bar updates
                 objectives_raw = last_eval['objectives_raw']
                 if objectives_raw is not None:
                     obj_values = objectives_raw.cpu().numpy()
                     
                     # Base progress dict
-                    postfix_dict = {'Loss': f'{current_loss:.6f}', 'Best': f'{best_loss:.6f}'}
+                    postfix_dict = {
+                        'Loss': f'{current_loss:.6f}', 
+                        'Best': f'{best_loss:.6f}',
+                        'Evals': f'{function_evals}',
+                        'Restarts': f'{restart_counter}'
+                    }
                     
-                    # Add objective values dynamically based on what actually exists
+                    # Add objective values dynamically
                     for i, obj_name in enumerate(self.objective_names):
                         if i < len(obj_values):
-                            postfix_dict[obj_name] = f'{obj_values[i]:.4f}'
+                            postfix_dict[obj_name] = f'{obj_values[i]:.3f}'
                     
                     progress_bar.set_postfix(postfix_dict)
 
+                    # Detailed logging every 5 steps
                     if step % 5 == 0 or step == 1:
                         obj_str = ", ".join([f"{name}={obj_values[i]:.4f}" 
                                         for i, name in enumerate(self.objective_names) 
                                         if i < len(obj_values)])
+                        
                         self.logger.info(f"Step {step:4d}: Loss={current_loss:.6f}, Best={best_loss:.6f}")
                         self.logger.info(f"          Objectives: [ {obj_str} ]")
+                        self.logger.info(f"          Function evals: {function_evals}, Step time: {step_time:.2f}s")
+                        
+                        if line_search_failures > 0:
+                            self.logger.info(f"          Line search failures: {line_search_failures}")
+                        if restart_counter > 0:
+                            self.logger.info(f"          Restarts used: {restart_counter}/{max_restarts}")
 
         # ==================================
         # Finalization (common to both optimizers)
@@ -1711,6 +1854,51 @@ class DifferentiableParameterOptimizer:
             self.logger.info(f"Final learning rate: {optimizer.param_groups[0]['lr']:.6f}")
         
         return final_params
+
+    def _gradient_descent_fallback_step(self, x, objective_head, use_sundials, fd_step, fallback_lr):
+        """
+        Gradient descent fallback when L-BFGS fails.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Current parameters
+        objective_head : ObjectiveHead or None
+            Neural network head
+        use_sundials : bool
+            Whether to use Sundials sensitivities
+        fd_step : float
+            Finite difference step
+        fallback_lr : float
+            Fallback learning rate
+            
+        Returns
+        -------
+        torch.Tensor
+            Loss value
+        """
+        with torch.no_grad():
+            x.clamp_(0.0, 1.0)
+        
+        # Compute objectives and loss
+        objectives_raw = SummaAutogradOp.apply(x, self, use_sundials, float(fd_step))
+        objectives_adjusted = objective_head(objectives_raw, x) if objective_head else objectives_raw
+        loss = self._compute_weighted_loss_tensor(objectives_adjusted)
+        
+        # Compute gradients
+        loss.backward()
+        
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_([x], max_norm=1.0)
+        
+        # Manual gradient descent step
+        with torch.no_grad():
+            if x.grad is not None:
+                x -= fallback_lr * x.grad
+                x.clamp_(0.0, 1.0)
+                x.grad.zero_()
+        
+        return loss
 
     # ==============================
     # Main Orchestration

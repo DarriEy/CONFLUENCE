@@ -250,7 +250,7 @@ class SummaPreProcessor:
                     raise ValueError(f"File {file}: No valid HRUs found after filtering")
             
             # 2. FIX NaN VALUES IN FORCING DATA
-            dat = self._fix_nan_values(dat, file)
+            #dat = self._fix_nan_values(dat, file)
             
             # 3. VALIDATE DATA RANGES
             dat = self._validate_and_fix_data_ranges(dat, file)

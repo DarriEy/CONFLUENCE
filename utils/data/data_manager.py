@@ -1319,9 +1319,6 @@ class DataManager:
             logger.error(f"Error remapping {input_file.name}: {str(e)}")
             return False
 
-
-
-
     def _replace_forcing_variables_with_em_earth(self):
         """
         Replace precipitation and temperature variables in basin-averaged data with EM-Earth values.
@@ -1425,51 +1422,85 @@ class DataManager:
             # Align time coordinates
             em_combined = em_combined.sel(time=slice(start_time, end_time))
             
-            # Replace precipitation and temperature variables
+             # Replace precipitation and temperature variables
             updated_ds = forcing_ds.copy(deep=True)
-            
-            # FIXED: Updated variable mapping to include CONFLUENCE variable names
+            # FIXED: Better variable mapping and unit conversions
             variable_mapping = {
-                'prcp': ['pcp', 'precipitation', 'PRCP', 'prcp', 'pptrate'],  # Added pptrate
-                'prcp_corrected': ['pcp', 'precipitation', 'PRCP', 'prcp', 'pptrate'],  # Added pptrate
-                'tmean': ['tmp', 'temperature', 'TEMP', 'tmean', 'tas', 'airtemp']  # Added airtemp
+                'prcp': ['pptrate', 'pcp', 'precipitation', 'PRCP', 'prcp'],
+                'prcp_corrected': ['pptrate', 'pcp', 'precipitation', 'PRCP', 'prcp'],  
+                'tmean': ['airtemp', 'tmp', 'temperature', 'TEMP', 'tmean', 'tas']
             }
             
-            # Update variables
+            # Update variables with proper unit conversions
             for em_var, forcing_vars in variable_mapping.items():
                 if em_var in em_combined.data_vars:
-                    # Find corresponding variable in forcing dataset
                     for forcing_var in forcing_vars:
                         if forcing_var in updated_ds.data_vars:
-                            #self.logger.info(f"Replacing {forcing_var} with EM-Earth {em_var}")
+                            self.logger.info(f"Replacing {forcing_var} with EM-Earth {em_var}")
                             
                             # Interpolate EM-Earth data to forcing time grid
                             em_data_interp = em_combined[em_var].interp(time=forcing_ds.time)
                             
-                            # Convert units if necessary
+                            # CRITICAL FIX: Handle unit conversions more carefully
                             if em_var in ['prcp', 'prcp_corrected']:
-                                # EM-Earth is in mm/hour, check if forcing expects different units
+                                # EM-Earth is in mm/hour
                                 current_units = str(updated_ds[forcing_var].attrs.get('units', ''))
+                                self.logger.info(f"Converting precipitation: EM-Earth mm/h -> {current_units}")
+                                
+                                # Check if original values are reasonable before conversion
+                                original_max = float(em_data_interp.max())
+                                self.logger.info(f"Original EM-Earth precipitation max: {original_max:.6f} mm/h")
                                 
                                 if 'kg m-2 s-1' in current_units or 'kg m**-2 s**-1' in current_units:
-                                    # Convert mm/hour to kg/m²/s (mm/hour / 3.6)
-                                    em_data_interp = em_data_interp / 3600
-                                    #self.logger.info(f"Converted precipitation from mm/hour to kg/m²/s")
-                                elif 'mm/s' in current_units or 'mm s-1' in current_units:
-                                    # Convert mm/hour to mm/s (mm/hour / 3600)
-                                    em_data_interp = em_data_interp / 3600
-                                    #self.logger.info(f"Converted precipitation from mm/hour to mm/s")
+                                    # mm/hour to kg/m²/s: 1 mm/h = 1 kg/m²/h = 1/3600 kg/m²/s
+                                    em_data_interp = em_data_interp / 3600  # FIXED: was /3.6
+                                    self.logger.info("Converted precipitation from mm/h to kg/m²/s (÷3600)")
+                                elif 'm s-1' in current_units:
+                                    # mm/hour to m/s: 1 mm/h = 0.001 m/h = 0.001/3600 m/s
+                                    em_data_interp = em_data_interp / 3600000  # mm/h to m/s
+                                    self.logger.info("Converted precipitation from mm/h to m/s (÷3,600,000)")
+                                elif 'mm s-1' in current_units or 'mm/s' in current_units:
+                                    # mm/hour to mm/s: 1 mm/h = 1/3600 mm/s
+                                    em_data_interp = em_data_interp / 3600  # mm/h to mm/s
+                                    self.logger.info("Converted precipitation from mm/h to mm/s (÷3600)")
                                 else:
-                                    self.logger.warning(f"Unknown precipitation units: {current_units}, using mm/hour")
+                                    # Keep as mm/h and update units
+                                    self.logger.info(f"Keeping precipitation in mm/h, updating units from {current_units}")
+                                    updated_ds[forcing_var].attrs['units'] = 'mm/h'
+                                
+                                # Validate conversion didn't zero out data
+                                converted_max = float(em_data_interp.max())
+                                self.logger.info(f"Converted precipitation max: {converted_max:.10f} {current_units}")
+                                
+                                if converted_max == 0.0 and original_max > 0.0:
+                                    self.logger.error(f"Conversion zeroed out precipitation data! Original: {original_max:.6f} mm/h")
+                                    raise ValueError("Precipitation conversion resulted in zero values")
                             
                             elif em_var == 'tmean':
-                                # EM-Earth is in Celsius, check if forcing expects Kelvin
+                                # EM-Earth is in Celsius
                                 current_units = str(updated_ds[forcing_var].attrs.get('units', ''))
+                                self.logger.info(f"Converting temperature: EM-Earth °C -> {current_units}")
                                 
-                                if 'K' in current_units and 'Celsius' not in current_units:
+                                # Check for valid temperature range first
+                                temp_min = float(em_data_interp.min())
+                                temp_max = float(em_data_interp.max())
+                                self.logger.info(f"Original EM-Earth temperature range: {temp_min:.2f} to {temp_max:.2f} °C")
+                                
+                                # Validate temperature data is reasonable
+                                if temp_min == temp_max and temp_min == 0.0:
+                                    self.logger.warning("EM-Earth temperature data appears to be all zeros - this may indicate a data issue")
+                                
+                                if 'K' in current_units and 'Celsius' not in current_units.lower():
                                     # Convert Celsius to Kelvin
                                     em_data_interp = em_data_interp + 273.15
-
+                                    self.logger.info("Converted temperature from °C to K (+273.15)")
+                                    
+                                    # Validate conversion
+                                    kelvin_min = float(em_data_interp.min())
+                                    kelvin_max = float(em_data_interp.max())
+                                    self.logger.info(f"Converted temperature range: {kelvin_min:.2f} to {kelvin_max:.2f} K")
+                                else:
+                                    self.logger.info("Keeping temperature in °C")
                             
                             # Update the forcing variable
                             updated_ds[forcing_var] = em_data_interp
@@ -1477,11 +1508,12 @@ class DataManager:
                             # Update attributes
                             updated_ds[forcing_var].attrs.update({
                                 'source': f'EM-Earth {em_var}',
-                                'replacement_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                'replacement_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                'original_units': f'EM-Earth: mm/h (prcp) or °C (temp)',
+                                'converted_units': current_units
                             })
                             
                             break
-            
             # Add global attributes about EM-Earth replacement
             # Convert boolean to integer for NetCDF compatibility
             updated_ds.attrs.update({
