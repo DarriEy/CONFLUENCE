@@ -9,6 +9,7 @@ Integrates with the existing CONFLUENCE optimization framework.
 """
 
 import numpy as np
+import xarray as xr
 import pandas as pd
 from pathlib import Path
 import logging
@@ -41,6 +42,10 @@ class FUSEOptimizer:
         
         # FUSE execution settings
         self.fuse_exe_path = self._get_fuse_executable_path()
+        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        project_dir = data_dir / f"domain_{self.domain_name}"
+        self.fuse_sim_dir = project_dir / 'simulations' / self.experiment_id / 'FUSE'
+        self.fuse_setup_dir = project_dir / 'settings' / 'FUSE'
         
         # Results tracking
         self.results_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.domain_name}" / "optimisation"
@@ -214,54 +219,167 @@ class FUSEOptimizer:
             })
         
         return self._save_results('DDS')
+
+
+
+    def _create_parameter_file_for_iteration(self, params: Dict[str, float], iteration: int) -> Path:
+        # Use shorter directory name
+        iter_dir = self.param_manager.fuse_sim_dir / f"i{iteration:03d}"  # "i001" instead of "iter_0001"
+        iter_dir.mkdir(exist_ok=True)
         
-    def _run_fuse_model(self) -> bool:
-        """Execute FUSE model run - FIXED VERSION"""
-        try:
-            from utils.models.fuse_utils import FUSERunner
+        param_file = iter_dir / f"p{iteration:03d}.nc"  # "p001.nc" instead of "para_iter_0001.nc"
+
+        
+        # Copy structure from para_def.nc and update values
+        with xr.open_dataset(self.param_manager.para_def_path) as template:  # Use param_manager's path
+            ds = template.copy()
             
+            # Update with new parameter values (use only first parameter set)
+            for param_name, param_value in params.items():
+                if param_name in ds.variables:
+                    ds[param_name][0] = param_value
+        
+        # Save the modified parameter file
+        ds.to_netcdf(param_file)
+        
+        # VERIFY the file was created and is readable
+        if not param_file.exists():
+            self.logger.error(f"Failed to create parameter file: {param_file}")
+            return None
+        
+        try:
+            # Test that the file can be opened
+            with xr.open_dataset(param_file) as test_ds:
+                self.logger.debug(f"Parameter file created successfully: {param_file}")
+        except Exception as e:
+            self.logger.error(f"Parameter file corrupted: {param_file}, error: {e}")
+            return None
+        
+        return param_file
+
+    def _create_parameter_list_file(self, param_file: Path, iteration: int) -> Path:
+        """Create text file listing parameter NetCDF files"""
+        
+        list_file = param_file.parent / f"para_list_{iteration:04d}.txt"
+        
+        # Debug: log the paths being used
+        self.logger.debug(f"Creating list file: {list_file}")
+        self.logger.debug(f"Parameter file path: {param_file}")
+        
+        # Ensure parameter file exists before adding to list
+        if not param_file.exists():
+            self.logger.error(f"Parameter file does not exist: {param_file}")
+            return None
+        
+        # Write with explicit UTF-8 encoding and newline
+        with open(list_file, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(f"{param_file.resolve().as_posix()}\n")
+        
+        # Debug: read back and verify content
+        with open(list_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            self.logger.debug(f"List file content: '{content.strip()}'")
+        
+        return list_file
+
+    def _run_fuse_model(self, params: Dict[str, float], iteration: int) -> bool:
+        """Execute FUSE model with run_pre mode"""
+        try:
+            # Create parameter file and list file
+            param_file = self._create_parameter_file_for_iteration(params, iteration)
+            list_file = self._create_parameter_list_file(param_file, iteration)
+            
+            from utils.models.fuse_utils import FUSERunner
             fuse_runner = FUSERunner(self.config, self.logger)
             
-            # FIXED: Use 'run_def' mode during calibration iterations
-            # This ensures FUSE reads from para_def.nc which we're updating
-            success = fuse_runner._execute_fuse('run_best')
+            # Use run_pre with parameter list file
+            success = fuse_runner._execute_fuse('run_pre', list_file)
             return bool(success)
             
         except Exception as e:
             self.logger.error(f"Error running FUSE model: {str(e)}")
             return False
 
+    def update_constraint_defaults(self, params: Dict[str, float]) -> bool:
+        constraint_file = self.param_manager.fuse_setup_dir / 'fuse_zConstraints_snow.txt'
+        self.logger.debug(f"Updating constraints file: {constraint_file}")
+        
+        try:
+            with open(constraint_file, 'r') as f:
+                lines = f.readlines()
+            
+            updates_made = 0
+            for i, line in enumerate(lines):
+                if line.startswith('T 0') or line.startswith('F 0'):
+                    parts = line.split()
+                    if len(parts) >= 14:  # Need at least 14 parts
+                        param_name = parts[13]  # FIXED: Parameter name is at index 13, not 12
+                        
+                        if param_name in params:
+                            old_value = float(parts[2])
+                            new_value = params[param_name]
+                            
+                            # DEBUG: Log the change
+                            self.logger.debug(f"  {param_name}: {old_value:.3f} -> {new_value:.3f}")
+                            
+                            # CRITICAL: Use exact FORTRAN fixed-width format
+                            formatted_value = f"{new_value:9.3f}"
+                            
+                            # Replace the exact character positions
+                            start_pos = 4  # After "T 0 "
+                            end_pos = start_pos + 9  # 9 characters for F9.3
+                            
+                            # Replace in the original line preserving exact positions
+                            new_line = line[:start_pos] + formatted_value + line[end_pos:]
+                            lines[i] = new_line
+                            updates_made += 1
+            
+            # Write back
+            with open(constraint_file, 'w') as f:
+                f.writelines(lines)
+            
+            self.logger.debug(f"Made {updates_made} parameter updates to constraints file")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error updating constraints file: {str(e)}")
+            return False
+
     def _evaluate_particle(self, normalized_params: np.ndarray, iteration: int, particle_id: int) -> float:
-        """Evaluate a single parameter set - FIXED VERSION"""
         try:
             # Denormalize parameters
             params = self.param_manager.denormalize_parameters(normalized_params)
+            # DEBUG: Log parameter values for this iteration
+            self.logger.debug(f"Iteration {iteration} parameters:")
+            for param_name, param_value in params.items():
+                self.logger.debug(f"  {param_name}: {param_value:.6f}")
             
             # Validate parameters
-            if not self.param_manager.validate_parameters(params):
-                return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
+            #if not self.param_manager.validate_parameters(params):
+            #    return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
             
-            # FIXED: Update parameter file (use_best_file=False for calibration)
-            if not self.param_manager.update_parameter_file(params, use_best_file=False):
-                return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
-            
-            # FIXED: Add a small delay to ensure file write is complete
-            import time
-            time.sleep(0.1)  # 100ms delay to ensure file sync
-            
+            # FIXED: Update constraints file instead of parameter files
+            self.logger.debug(f"About to update constraints file for iteration {iteration}")
+            success = self.update_constraint_defaults(params)
+            self.logger.debug(f"Constraints update result: {success}")
+                        
             # Run FUSE model
-            success = self._run_fuse_model()
+
+            success = self._run_fuse_model_with_constraints()
             if not success:
                 return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
-            
+            self.logger.debug(f"fuse run: {success}")
+
             # Calculate metrics using calibration target
             data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
             project_dir = data_dir / f"domain_{self.domain_name}"
             fuse_sim_dir = project_dir / 'simulations' / self.experiment_id / 'FUSE'
             
+            self.logger.debug(f"about to calculate metrics")
             # Calculate metrics
             metrics = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
-            
+            self.logger.debug(f"metrics calculated")
+
             if not metrics:
                 return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
             
@@ -276,7 +394,21 @@ class FUSEOptimizer:
         except Exception as e:
             self.logger.error(f"Error evaluating parameters: {str(e)}")
             return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
-    
+
+    def _run_fuse_model_with_constraints(self) -> bool:
+        """Execute FUSE model using run_def with updated constraints"""
+        try:
+            from utils.models.fuse_utils import FUSERunner
+            fuse_runner = FUSERunner(self.config, self.logger)
+            
+            # Use run_def - it will read the updated constraints
+            success = fuse_runner._execute_fuse('run_def')
+            return bool(success)
+            
+        except Exception as e:
+            self.logger.error(f"Error running FUSE model: {str(e)}")
+        return False
+
     def _extract_target_metric(self, metrics: Dict[str, float]) -> Optional[float]:
         """Extract target metric from metrics dictionary"""
         # Try exact match

@@ -220,17 +220,29 @@ class FUSECalibrationTarget:
         self.logger.error(f"All datetime parsing strategies failed for column '{datetime_col}'")
         self.logger.error(f"Sample values: {sample_values}")
         raise ValueError(f"Could not parse datetime column '{datetime_col}'. Sample values: {sample_values}")
-    
+        
     def calculate_metrics(self, fuse_sim_dir: Path, mizuroute_dir: Optional[Path] = None) -> Optional[Dict[str, float]]:
         """Calculate metrics from FUSE simulation output"""
         try:
+            self.logger.debug(f"Starting metrics calculation in: {fuse_sim_dir}")
+            
             # Find FUSE simulation file (prefer runs_def.nc for calibration)
             sim_file = None
-            for pattern in ['runs_best.nc','runs_def.nc', 'runs_sce.nc', ]:
+            available_files = []
+            
+            for pattern in ['runs_def.nc','runs_pre.nc', 'runs_best.nc']:
                 potential_files = list(fuse_sim_dir.glob(f"*_{pattern}"))
+                available_files.extend([f.name for f in potential_files])
                 if potential_files:
                     sim_file = potential_files[0]
+                    
+                    # DEBUG: Check file timestamp
+                    import os
+                    mtime = os.path.getmtime(sim_file)
+                    self.logger.debug(f"Using simulation file: {sim_file.name}, timestamp: {mtime}")
                     break
+            
+            self.logger.debug(f"Available simulation files: {available_files}")
             
             if not sim_file:
                 self.logger.error(f"No FUSE simulation files found in {fuse_sim_dir}")
@@ -240,6 +252,8 @@ class FUSECalibrationTarget:
             
             # Read FUSE simulation output
             with xr.open_dataset(sim_file) as ds:
+                self.logger.debug(f"Dataset variables: {list(ds.variables.keys())}")
+                
                 # Get the appropriate runoff variable
                 if 'q_routed' in ds.variables:
                     sim_var = 'q_routed'
@@ -249,15 +263,27 @@ class FUSECalibrationTarget:
                     self.logger.error("No runoff variable found in FUSE output")
                     return None
                 
+                self.logger.debug(f"Using variable: {sim_var}")
+                
                 # Extract simulated data (assuming single parameter set)
                 simulated = ds[sim_var].isel(param_set=0, latitude=0, longitude=0)
                 simulated_df = simulated.to_pandas()
+            
+            # DEBUG: Log simulation statistics before unit conversion
+            self.logger.debug(f"Raw simulation mean: {simulated_df.mean():.6f} mm/day")
+            self.logger.debug(f"Raw simulation std: {simulated_df.std():.6f} mm/day")
+            self.logger.debug(f"Raw simulation min: {simulated_df.min():.6f} mm/day")
+            self.logger.debug(f"Raw simulation max: {simulated_df.max():.6f} mm/day")
             
             # Convert FUSE output from mm/day to cms if needed
             if self._needs_unit_conversion():
                 # Q(cms) = Q(mm/day) * Area(km2) / 86.4
                 simulated_df = simulated_df * self.catchment_area_km2 / 86.4
                 self.logger.debug(f"Converted FUSE output to cms using area: {self.catchment_area_km2:.2f} km2")
+            
+            # DEBUG: Log simulation statistics after unit conversion
+            self.logger.debug(f"Final simulation mean: {simulated_df.mean():.6f} cms")
+            self.logger.debug(f"Final simulation std: {simulated_df.std():.6f} cms")
             
             # Calculate metrics with observations
             return self._calculate_performance_metrics(simulated_df)
@@ -685,26 +711,37 @@ class FUSESnowTarget:
         """SWE in FUSE is in mm water equivalent; no area conversion needed"""
         return False
 
+
     def calculate_metrics(self, fuse_sim_dir: Path, mizuroute_dir: Optional[Path] = None) -> Optional[Dict[str, float]]:
-        """Read SWE from FUSE output and compute SWE metrics - FIXED VERSION"""
         try:
-            # Find the simulation file
+            self.logger.debug(f"Starting SWE metrics calculation in: {fuse_sim_dir}")
+            
+            # Find FUSE simulation file
             sim_file = None
-            for pattern in ['runs_best.nc', 'runs_def.nc', 'runs_sce.nc']:
-                files = list(fuse_sim_dir.glob(f"*_{pattern}"))
-                if files:
-                    sim_file = files[0]
+            available_files = []
+            
+            for pattern in ['runs_def.nc', 'runs_best.nc', 'runs_sce.nc']:
+                potential_files = list(fuse_sim_dir.glob(f"*_{pattern}"))
+                available_files.extend([f.name for f in potential_files])
+                if potential_files:
+                    sim_file = potential_files[0]
+                    
+                    # DEBUG: Check file timestamp
+                    import os
+                    mtime = os.path.getmtime(sim_file)
+                    self.logger.debug(f"Using simulation file: {sim_file.name}, timestamp: {mtime}")
                     break
             
+            self.logger.debug(f"Available simulation files: {available_files}")
+            
             if not sim_file:
-                self.logger.error(f"No FUSE simulation files found in {fuse_sim_dir}")
+                self.logger.error(f"No simulation files found in {fuse_sim_dir}")
                 return None
 
-            self.logger.info(f"Reading FUSE simulation (SWE) from: {sim_file}")
-            
+            # Read FUSE simulation output
+            self.logger.debug(f"Opening dataset: {sim_file}")
             with xr.open_dataset(sim_file) as ds:
-                # Log all available variables for debugging
-                self.logger.debug(f"Available variables in {sim_file.name}: {list(ds.variables.keys())}")
+                self.logger.debug(f"Dataset variables: {list(ds.variables.keys())}")
                 
                 # FIXED: Better SWE variable detection with fallbacks
                 sim_var = None
@@ -724,7 +761,7 @@ class FUSESnowTarget:
                 for candidate in swe_candidates:
                     if candidate in ds.variables:
                         sim_var = candidate
-                        self.logger.info(f"Using SWE variable: {sim_var}")
+                        self.logger.debug(f"Using SWE variable: {sim_var}")
                         break
                 
                 # If no SWE variable found, check for any snow-related variable
@@ -742,12 +779,14 @@ class FUSESnowTarget:
                         return None
                 
                 # Extract the simulation data
-                try:
-                    simulated = ds[sim_var].isel(param_set=0, latitude=0, longitude=0).to_pandas()
-                    self.logger.info(f"Successfully extracted {sim_var} data: {len(simulated)} time steps")
-                except Exception as e:
-                    self.logger.error(f"Error extracting data from variable '{sim_var}': {str(e)}")
-                    return None
+                simulated = ds[sim_var].isel(param_set=0, latitude=0, longitude=0).to_pandas()
+                self.logger.debug(f"Successfully extracted {sim_var} data: {len(simulated)} time steps")
+
+            # DEBUG: Log SWE simulation statistics
+            self.logger.debug(f"SWE simulation mean: {simulated.mean():.6f} mm")
+            self.logger.debug(f"SWE simulation std: {simulated.std():.6f} mm")
+            self.logger.debug(f"SWE simulation min: {simulated.min():.6f} mm")
+            self.logger.debug(f"SWE simulation max: {simulated.max():.6f} mm")
 
             # No unit conversion for SWE (already in mm water equivalent)
             return self._calculate_swe_metrics(simulated)

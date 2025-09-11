@@ -37,6 +37,7 @@ class FUSEParameterManager:
         self.data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.fuse_sim_dir = self.project_dir / 'simulations' / self.experiment_id / 'FUSE'
+        self.fuse_setup_dir = self.project_dir / 'settings' / 'FUSE'
         
         # Parameter file paths
         self.para_def_path = self.fuse_sim_dir / f"{self.domain_name}_{self.experiment_id}_para_def.nc"
@@ -44,7 +45,7 @@ class FUSEParameterManager:
         self.para_best_path = self.fuse_sim_dir / f"{self.domain_name}_{self.experiment_id}_para_best.nc"
         
         # CRITICAL: Use para_sce.nc for calibration iterations, but ensure it's properly structured
-        self.param_file_path = self.para_sce_path
+        self.param_file_path = self.para_def_path
     
     def _get_default_fuse_bounds(self) -> Dict[str, Dict[str, float]]:
         """Define reasonable bounds for FUSE parameters"""
@@ -196,9 +197,9 @@ class FUSEParameterManager:
         """Update FUSE parameter NetCDF file with new parameter values - FIXED VERSION"""
         try:
             # FIRST: Verify parameter files are properly structured
-            if not self.verify_and_fix_parameter_files():
-                self.logger.error("Cannot proceed - parameter files have structural issues")
-                return False
+            #if not self.verify_and_fix_parameter_files():
+            #    self.logger.error("Cannot proceed - parameter files have structural issues")
+            #    return False
             
             # Choose which file to update
             target_file = self.param_file_path
@@ -262,9 +263,9 @@ class FUSEParameterManager:
         """Get initial parameter values from existing FUSE parameter file"""
         try:
             # First ensure files are properly structured
-            if not self.verify_and_fix_parameter_files():
-                self.logger.warning("Parameter files need fixing - using default values")
-                return self._get_default_initial_values()
+            #if not self.verify_and_fix_parameter_files():
+            #    self.logger.warning("Parameter files need fixing - using default values")
+            #    return self._get_default_initial_values()
             
             if not self.param_file_path.exists():
                 self.logger.warning(f"FUSE parameter file not found: {self.param_file_path}")

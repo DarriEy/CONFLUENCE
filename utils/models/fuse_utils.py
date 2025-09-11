@@ -870,7 +870,7 @@ class FUSERunner:
             return self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "FUSE"
         return Path(self.config.get('EXPERIMENT_OUTPUT_FUSE'))
 
-    def _execute_fuse(self, mode) -> bool:
+    def _execute_fuse(self, mode, para_file=None) -> bool:
         """
         Execute the FUSE model.
         
@@ -893,6 +893,9 @@ class FUSERunner:
             self.config['DOMAIN_NAME'],
             mode
         ]
+            # ADD THIS: Add parameter file for run_pre mode
+        if mode == 'run_pre' and para_file:
+            command.append(str(para_file))
         
         # Create log directory
         log_dir = self.output_path / 'logs'

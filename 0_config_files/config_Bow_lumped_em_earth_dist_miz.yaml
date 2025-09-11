@@ -218,7 +218,7 @@ SETTINGS_MIZU_ROUTING_VAR: averageRoutedRunoff                 # Name of output 
 SETTINGS_MIZU_OUTPUT_FREQ: single                              # Frequency with which mizuRoute generates new output files. Must be one of 'single', 'daily', 'monthly', 'yearly'.
 SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output. '0' for both KWT and IRF; '1' IRF only; '2' KWT only.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
-SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
+SETTINGS_MIZU_NEEDS_REMAP: yes                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
 
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
@@ -298,8 +298,8 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 10                                      # Number of iterations for calibration 
+ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, PSO or SCE-UA, ASYNC-DDS, POP-DDS, DE, NSGA-II
+NUMBER_OF_ITERATIONS: 10                                       # Number of iterations for calibration 
 POPULATION_SIZE: 30                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: NSE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings
