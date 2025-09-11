@@ -7,6 +7,8 @@ import pandas as pd
 from datetime import datetime
 import json
 
+
+
 import numpy as np
 from utils.optimization.iterative_optimizer import DEOptimizer, DDSOptimizer, AsyncDDSOptimizer, PopulationDDSOptimizer, PSOOptimizer, NSGA2Optimizer, SCEUAOptimizer # type: ignore
 from utils.optimization.large_domain_emulator import LargeDomainEmulator
@@ -260,9 +262,33 @@ class OptimizationManager:
         
         return status
     
+
     def calibrate_model(self) -> Optional[Path]:
         """
         Calibrate the model using the specified optimization algorithm.
+        
+        This method coordinates the calibration process for the configured
+        hydrological model using the optimization algorithm specified in the
+        configuration. It supports calibration for both SUMMA and FUSE models.
+        
+        The calibration process involves:
+        1. Checking if iterative optimization is enabled in the configuration
+        2. Determining which optimization algorithm to use
+        3. Executing the calibration for each configured hydrological model
+        4. Saving and returning the path to the calibration results
+        
+        The optimization algorithm is specified through the ITERATIVE_OPTIMIZATION_ALGORITHM
+        configuration parameter (default: 'PSO'). Supported algorithms include PSO,
+        SCE-UA, DDS, DE, and NSGA-II.
+        
+        Returns:
+            Optional[Path]: Path to calibration results file or None if calibration
+                        was disabled or failed
+                        
+        Raises:
+            ValueError: If the optimization algorithm is not supported
+            RuntimeError: If the calibration process fails
+            Exception: For other errors during calibration
         """
         self.logger.info("Starting model calibration")
         
@@ -295,38 +321,125 @@ class OptimizationManager:
             self.logger.error(traceback.format_exc())
             return None
 
+
     def _calibrate_fuse(self, algorithm: str) -> Optional[Path]:
         """
-        Execute FUSE model calibration using the specified optimization algorithm.
+        Calibrate FUSE model using specified algorithm.
+        
+        This is an internal method that handles the specifics of calibrating the
+        FUSE hydrological model. It:
+        1. Creates the optimization directory if it doesn't exist
+        2. Loads the appropriate FUSEOptimizer and runs the algorithm
+        3. Saves and returns the results
+        
+        The method supports different optimization algorithms including:
+        - Population-based: PSO, SCE-UA, DDS, DE, NSGA-II
+        - Gradient-based: ADAM, LBFGS, ADAM-MULTI, LBFGS-MULTI
+        
+        Args:
+            algorithm (str): Optimization algorithm to use
+            
+        Returns:
+            Optional[Path]: Path to results file or None if optimization failed
+            
+        Raises:
+            ValueError: If the specified algorithm is not supported
+            RuntimeError: If the optimization process fails
+            Exception: For other errors during optimization
         """
-        self.logger.info(f"Starting FUSE calibration using {algorithm}")
+        # UPDATED: Expanded supported algorithms for FUSE
+        supported_algorithms = [
+            # Population-based algorithms
+            'PSO', 'SCE-UA', 'DDS', 'DE', 'NSGA-II',
+            # Gradient-based algorithms
+            'ADAM', 'LBFGS', 'ADAM-MULTI', 'LBFGS-MULTI'
+        ]
+        
+        if algorithm not in supported_algorithms:
+            raise ValueError(f"Unsupported optimization algorithm for FUSE: {algorithm}. "
+                            f"Supported: {', '.join(supported_algorithms)}")
+        
+        # Create optimization directory if it doesn't exist
+        opt_dir = self.project_dir / "optimisation"
+        opt_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            from utils.optimization.iterative_optimizer import FUSEOptimizer
+            # Import FUSEOptimizer
+            from fuse_optimiser import FUSEOptimizer
             
-            # Initialize FUSE-specific optimizer
-            optimizer = FUSEOptimizer(
-                config=self.config,
-                logger=self.logger,
-                optimization_settings_dir=self.project_dir / "settings" / "FUSE"
-            )
+            # Initialize FUSE optimizer
+            self.logger.info(f"Using {algorithm} optimization for FUSE")
+            fuse_optimizer = FUSEOptimizer(self.config, self.logger, opt_dir)
             
-            # Run optimization based on algorithm
-            if algorithm.upper() == 'PSO':
-                results_path = optimizer.run_pso()
-            elif algorithm.upper() == 'DDS':
-                results_path = optimizer.run_dds()
-            elif algorithm.upper() == 'SCE-UA':
-                results_path = optimizer.run_sce()
+            # UPDATED: Enhanced algorithm routing with gradient-based methods
+            if algorithm == 'PSO':
+                results_file = fuse_optimizer.run_pso()
+            elif algorithm == 'SCE-UA':
+                results_file = fuse_optimizer.run_sce()
+            elif algorithm == 'DDS':
+                results_file = fuse_optimizer.run_dds()
+            elif algorithm == 'DE':
+                results_file = fuse_optimizer.run_de()
+            elif algorithm == 'NSGA-II':
+                results_file = fuse_optimizer.run_nsga2()
+            
+            # NEW: Gradient-based algorithm routing
+            elif algorithm == 'ADAM':
+                # Get configuration parameters for Adam
+                steps = self.config.get('ADAM_STEPS', 100)
+                lr = self.config.get('ADAM_LEARNING_RATE', 0.01)
+                initial_params = self.config.get('ADAM_INITIAL_PARAMS', None)
+                results_file = fuse_optimizer.run_adam(steps=steps, lr=lr, initial_params=initial_params)
+                
+            elif algorithm == 'LBFGS':
+                # Get configuration parameters for L-BFGS
+                steps = self.config.get('LBFGS_STEPS', 50)
+                lr = self.config.get('LBFGS_LEARNING_RATE', 0.1)
+                initial_params = self.config.get('LBFGS_INITIAL_PARAMS', None)
+                results_file = fuse_optimizer.run_lbfgs(steps=steps, lr=lr, initial_params=initial_params)
+                
+            elif algorithm == 'ADAM-MULTI':
+                # Multi-objective Adam optimization
+                steps = self.config.get('ADAM_STEPS', 100)
+                lr = self.config.get('ADAM_LEARNING_RATE', 0.01)
+                objectives = self.config.get('MULTI_OBJECTIVES', ['NSE', 'KGE'])
+                weights = self.config.get('MULTI_OBJECTIVE_WEIGHTS', [0.5, 0.5])
+                initial_params = self.config.get('ADAM_INITIAL_PARAMS', None)
+                results_file = fuse_optimizer.run_differentiable_multiobjective(
+                    optimizer='ADAM', steps=steps, lr=lr, 
+                    objectives=objectives, weights=weights, initial_params=initial_params
+                )
+                
+            elif algorithm == 'LBFGS-MULTI':
+                # Multi-objective L-BFGS optimization
+                steps = self.config.get('LBFGS_STEPS', 50)
+                lr = self.config.get('LBFGS_LEARNING_RATE', 0.1)
+                objectives = self.config.get('MULTI_OBJECTIVES', ['NSE', 'KGE'])
+                weights = self.config.get('MULTI_OBJECTIVE_WEIGHTS', [0.5, 0.5])
+                initial_params = self.config.get('LBFGS_INITIAL_PARAMS', None)
+                results_file = fuse_optimizer.run_differentiable_multiobjective(
+                    optimizer='LBFGS', steps=steps, lr=lr,
+                    objectives=objectives, weights=weights, initial_params=initial_params
+                )
+                
             else:
-                raise ValueError(f"Unsupported optimization algorithm for FUSE: {algorithm}")
+                raise ValueError(f"Algorithm {algorithm} not implemented for FUSE")
             
-            self.logger.info(f"FUSE calibration completed. Results: {results_path}")
-            return results_path
-            
+            if results_file and results_file.exists():
+                self.logger.info(f"FUSE calibration completed successfully: {results_file}")
+                return results_file
+            else:
+                self.logger.warning("FUSE calibration completed but results file not found")
+                return None
+                
+        except ImportError as e:
+            self.logger.error(f"Could not import FUSEOptimizer: {str(e)}")
+            return None
         except Exception as e:
-            self.logger.error(f"Error during FUSE calibration: {str(e)}")
-            raise
+            self.logger.error(f"Error during FUSE {algorithm} optimization: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
 
     def differentiable_parameter_emulation(self):
         """
