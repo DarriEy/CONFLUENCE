@@ -1,4 +1,4 @@
-# In utils/config/logging_manager.py
+# In utils/project/logging_manager.py
 
 from pathlib import Path
 import logging
@@ -33,6 +33,7 @@ class LoggingManager:
     
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
+        debug_mode (bool): Whether debug mode is enabled
         data_dir (Path): Path to the CONFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
@@ -41,7 +42,7 @@ class LoggingManager:
         config_log_file (Path): Path to the logged configuration file
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], debug_mode: bool = False):
         """
         Initialize the logging manager.
         
@@ -51,6 +52,7 @@ class LoggingManager:
         
         Args:
             config (Dict[str, Any]): Configuration dictionary containing all settings
+            debug_mode (bool): Whether to enable debug mode for detailed console output
             
         Raises:
             KeyError: If essential configuration values are missing
@@ -58,6 +60,7 @@ class LoggingManager:
             OSError: If other file system operations fail
         """
         self.config = config
+        self.debug_mode = debug_mode
         self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
@@ -66,8 +69,12 @@ class LoggingManager:
         # Create log directory
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
-        # Set up main logger
+        # Set up main logger with debug mode consideration
         self.logger = self.setup_logging()
+        
+        # Log debug mode status
+        if self.debug_mode:
+            self.logger.debug("DEBUG MODE ENABLED - Detailed console output active")
         
         # Log configuration
         self.config_log_file = self.log_configuration()
@@ -80,8 +87,9 @@ class LoggingManager:
         two handlers:
         1. A file handler that captures detailed log information for debugging
            and records all log levels (DEBUG and above)
-        2. A console handler that provides less verbose output for interactive
-           feedback, showing only important messages (INFO and above)
+        2. A console handler that provides output based on debug mode:
+           - Normal mode: INFO and above (clean output)
+           - Debug mode: DEBUG and above (detailed output)
         
         The log file is named with a timestamp to ensure uniqueness across runs.
         
@@ -124,24 +132,36 @@ class LoggingManager:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Enhanced console formatter for cleaner output
-        simple_formatter = self.EnhancedFormatter(
-            '%(asctime)s │ %(message)s',
-            datefmt='%H:%M:%S'
-        )
+        # Console formatter - different based on debug mode
+        if self.debug_mode:
+            # Detailed console formatter for debug mode
+            console_formatter = self.EnhancedFormatter(
+                '%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s',
+                datefmt='%H:%M:%S'
+            )
+        else:
+            # Clean console formatter for normal mode
+            console_formatter = self.EnhancedFormatter(
+                '%(asctime)s ● %(message)s',
+                datefmt='%H:%M:%S'
+            )
         
-        # File handler with detailed formatting
+        # File handler with detailed formatting (always logs everything)
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)  # Log everything to file
+        file_handler.setLevel(logging.DEBUG)  # Always log everything to file
         file_handler.setFormatter(detailed_formatter)
         
-        # Console handler with simple formatting
+        # Console handler - level depends on debug mode
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)  # Only INFO and above to console
-        console_handler.setFormatter(simple_formatter)
+        if self.debug_mode:
+            console_handler.setLevel(logging.DEBUG)  # Show debug messages in debug mode
+        else:
+            console_handler.setLevel(logging.INFO)   # Only INFO and above in normal mode
+        console_handler.setFormatter(console_formatter)
         
-        # Add custom filter for console to reduce verbosity
-        console_handler.addFilter(self.ConsoleFilter())
+        # Add custom filter for console to reduce verbosity (only in normal mode)
+        if not self.debug_mode:
+            console_handler.addFilter(self.ConsoleFilter())
         
         # Add handlers to logger
         logger.addHandler(file_handler)
@@ -150,6 +170,8 @@ class LoggingManager:
         # Log startup information
         logger.info("=" * 60)
         logger.info(f"CONFLUENCE Logging Initialized")
+        if self.debug_mode:
+            logger.info(f"DEBUG MODE: Enabled")
         logger.info(f"Domain: {self.domain_name}")
         logger.info(f"Experiment ID: {self.config.get('EXPERIMENT_ID', 'N/A')}")
         logger.info(f"Log Level: {log_level}")
@@ -198,8 +220,8 @@ class LoggingManager:
         Returns:
             Formatted section header
         """
-        separator = "═" * 60
-        return f"\n{separator}\n║ {section_name:<56} ║\n{separator}"
+        separator = "╔" * 60
+        return f"\n{separator}\n╠ {section_name:<56} ╣\n{separator}"
     
     def log_configuration(self) -> Path:
         """
@@ -350,6 +372,7 @@ class LoggingManager:
             'start_time': start_time.isoformat(),
             'end_time': end_time.isoformat(),
             'duration': str(end_time - start_time),
+            'debug_mode': self.debug_mode,  # Add debug mode to summary
             'status': status,
             'configuration': {
                 'hydrological_model': self.config.get('HYDROLOGICAL_MODEL'),
@@ -462,36 +485,46 @@ class LoggingManager:
         def format(self, record):
             """Format log record with enhanced visual styling."""
             # Get the basic formatted message
-            formatted = super().format(record)
-            
-            # Add color coding for log levels (if terminal supports it)
-            if hasattr(sys.stdout, 'isatty') and sys.stdout.isatty():
-                level_color = self.COLORS.get(record.levelname, '')
-                if level_color:
-                    # Color the level indicator
-                    level_indicator = f"{level_color}●{self.RESET}"
-                else:
-                    level_indicator = "●"
-            else:
-                level_indicator = "●"
-            
-            # Special formatting for different message types
             message = record.getMessage()
             
-            # Step headers (messages starting with step numbers or containing "Step")
-            if "Step " in message and "/" in message:
-                return f"\n{formatted}"
+            # Special formatting for different message types
             
-            # Completion messages (messages with checkmarks or duration info)
+            # Step headers (messages starting with "Step X/Y:" or containing step patterns)
+            if (message.startswith("Step ") and "/" in message and ":" in message) or \
+               (message.startswith("┌") or message.startswith("│") or message.startswith("└")):
+                # Return step headers without timestamp or bullets, just the message
+                return message
+            
+            # Section separators (messages with lots of = signs)
+            elif message.count("=") > 10:
+                # Return section separators without timestamp or bullets
+                return message
+            
+            # Completion messages (messages with status symbols)
             elif any(symbol in message for symbol in ["✓", "✗", "→", "Duration:"]):
-                return f"{formatted}"
+                # Format timestamp but use the original formatted string approach
+                formatted = super().format(record)
+                return formatted
             
-            # Section headers (messages with lots of = or -)
-            elif message.count("=") > 10 or message.count("─") > 10:
-                return f"\n{formatted}"
+            # Debug messages (only in debug mode)
+            elif record.levelname == 'DEBUG':
+                # Use the detailed debug format from super().format()
+                formatted = super().format(record)
+                return formatted
             
-            # Regular messages
+            # Regular info messages
             else:
+                # Add color coding for log levels (if terminal supports it)
+                if hasattr(sys.stdout, 'isatty') and sys.stdout.isatty():
+                    level_color = self.COLORS.get(record.levelname, '')
+                    if level_color and record.levelname == 'INFO':
+                        level_indicator = f"{level_color}●{self.RESET}"
+                    else:
+                        level_indicator = "●"
+                else:
+                    level_indicator = "●"
+                
+                # Format: "HH:MM:SS ● message"
                 return f"{record.asctime} {level_indicator} {message}"
     
     class ConsoleFilter(logging.Filter):

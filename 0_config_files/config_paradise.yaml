@@ -143,7 +143,7 @@ INTERSECT_LAND_NAME: catchment_with_landclass.shp              # Name of the sha
 
 ### ============================================= 4. Model Specific settings: =============================================================
 ## Model settings
-HYDROLOGICAL_MODEL: SUMMA                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
+HYDROLOGICAL_MODEL: FUSE                                       # Hydrological model used, current options: SUMMA, FUSE, GR, HYPE, FLASH, MESH (to be implemented)
 ROUTING_MODEL: mizuRoute                                       # Routing model used, current options: mizuRoute
 
 # SUMMA settings
@@ -227,8 +227,9 @@ EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA e
 
 # FUSE settings
 SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
+SETTINGS_FUSE_PARAMS_TO_CALIBRATE: MBASE,MFMAX,MFMIN,PXTEMP,LAPSE
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
-
+FUSE_TIMEOUT: 300                            # Timeout in seconds
 # GR settings
 GR_EXE: GR.r                                                   # Name of GR executable script
 
@@ -290,7 +291,7 @@ EMULATION_MAX_ITERATIONS': 3                                   # Iterative refin
 
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DDS                          # Options DDS, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
+NUMBER_OF_ITERATIONS: 200                                      # Number of iterations for calibration 
 POPULATION_SIZE: 50                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: RMSE                                      # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings

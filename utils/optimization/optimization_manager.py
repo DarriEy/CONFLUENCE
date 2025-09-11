@@ -263,30 +263,6 @@ class OptimizationManager:
     def calibrate_model(self) -> Optional[Path]:
         """
         Calibrate the model using the specified optimization algorithm.
-        
-        This method coordinates the calibration process for the configured
-        hydrological model using the optimization algorithm specified in the
-        configuration. It currently supports calibration for the SUMMA model,
-        with planned support for other models.
-        
-        The calibration process involves:
-        1. Checking if iterative optimization is enabled in the configuration
-        2. Determining which optimization algorithm to use
-        3. Executing the calibration for each configured hydrological model
-        4. Saving and returning the path to the calibration results
-        
-        The optimization algorithm is specified through the ITERATIVE_OPTIMIZATION_ALGORITHM
-        configuration parameter (default: 'PSO'). Supported algorithms include PSO,
-        SCE-UA, and DDS.
-        
-        Returns:
-            Optional[Path]: Path to calibration results file or None if calibration
-                          was disabled or failed
-                          
-        Raises:
-            ValueError: If the optimization algorithm is not supported
-            RuntimeError: If the calibration process fails
-            Exception: For other errors during calibration
         """
         self.logger.info("Starting model calibration")
         
@@ -306,6 +282,8 @@ class OptimizationManager:
                 
                 if model == 'SUMMA':
                     return self._calibrate_summa(opt_algorithm)
+                elif model == 'FUSE':
+                    return self._calibrate_fuse(opt_algorithm)
                 else:
                     self.logger.warning(f"Calibration for model {model} not yet implemented")
             
@@ -316,6 +294,39 @@ class OptimizationManager:
             import traceback
             self.logger.error(traceback.format_exc())
             return None
+
+    def _calibrate_fuse(self, algorithm: str) -> Optional[Path]:
+        """
+        Execute FUSE model calibration using the specified optimization algorithm.
+        """
+        self.logger.info(f"Starting FUSE calibration using {algorithm}")
+        
+        try:
+            from utils.optimization.iterative_optimizer import FUSEOptimizer
+            
+            # Initialize FUSE-specific optimizer
+            optimizer = FUSEOptimizer(
+                config=self.config,
+                logger=self.logger,
+                optimization_settings_dir=self.project_dir / "settings" / "FUSE"
+            )
+            
+            # Run optimization based on algorithm
+            if algorithm.upper() == 'PSO':
+                results_path = optimizer.run_pso()
+            elif algorithm.upper() == 'DDS':
+                results_path = optimizer.run_dds()
+            elif algorithm.upper() == 'SCE-UA':
+                results_path = optimizer.run_sce()
+            else:
+                raise ValueError(f"Unsupported optimization algorithm for FUSE: {algorithm}")
+            
+            self.logger.info(f"FUSE calibration completed. Results: {results_path}")
+            return results_path
+            
+        except Exception as e:
+            self.logger.error(f"Error during FUSE calibration: {str(e)}")
+            raise
 
     def differentiable_parameter_emulation(self):
         """

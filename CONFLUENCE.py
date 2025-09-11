@@ -65,24 +65,26 @@ class CONFLUENCE:
     
     Attributes:
         config (dict): Loaded configuration dictionary
+        debug_mode (bool): Whether debug mode is enabled
         logging_manager (LoggingManager): Logging management instance
         logger (logging.Logger): Main logger instance
         managers (dict): Dictionary of all manager instances
         workflow_orchestrator (WorkflowOrchestrator): Workflow coordination instance
     """
     
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, debug_mode: bool = False):
         """
         Initialize the CONFLUENCE system with a configuration file.
         
         This method sets up all the necessary components for CONFLUENCE operation:
         1. Loads and validates the configuration
-        2. Initializes the logging system
+        2. Initializes the logging system with debug settings
         3. Creates all manager instances
         4. Sets up the workflow orchestrator
         
         Args:
             config_path: Path to the YAML configuration file
+            debug_mode: Whether to enable debug logging and output
             
         Raises:
             FileNotFoundError: If the configuration file doesn't exist
@@ -90,12 +92,21 @@ class CONFLUENCE:
             RuntimeError: If initialization of any component fails
         """
         try:
+            # Store debug mode
+            self.debug_mode = debug_mode
+            
             # Initialize configuration management
             self.config = self.load_config(config_path)
+            
+            # Add debug mode to config for other components to use
+            self.config['DEBUG_MODE'] = debug_mode
 
-            # Initialize logging system
-            self.logging_manager = LoggingManager(self.config)
+            # Initialize logging system with debug setting
+            self.logging_manager = LoggingManager(self.config, debug_mode=debug_mode)
             self.logger = self.logging_manager.logger
+            
+            if debug_mode:
+                self.logger.debug("DEBUG MODE ENABLED - Detailed logging active")
             
             self.logger.info("Initializing CONFLUENCE system")
             self.logger.info(f"Configuration loaded from: {config_path}")
@@ -112,8 +123,7 @@ class CONFLUENCE:
             self.workflow_orchestrator = WorkflowOrchestrator(
                 self.managers, 
                 self.config, 
-                self.logger,
-                self.logging_manager 
+                self.logger
             )
             
             # Validate system initialization
@@ -211,7 +221,6 @@ class CONFLUENCE:
             'domain': self.config.get('DOMAIN_NAME'),
             'experiment': self.config.get('EXPERIMENT_ID')
         }
-
 def parse_arguments() -> argparse.Namespace:
     """
     Parse command line arguments.
@@ -230,6 +239,12 @@ Examples:
   # Run with custom configuration
   python CONFLUENCE.py --config /path/to/config.yaml
   
+  # Run with debug output enabled
+  python CONFLUENCE.py --debug
+  
+  # Run with debug and custom config
+  python CONFLUENCE.py --config /path/to/config.yaml --debug
+  
   # Show version information
   python CONFLUENCE.py --version
   
@@ -241,6 +256,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         '--config', 
         type=str,
         help='Path to YAML configuration file (default: ./0_config_files/config_active.yaml)'
+    )
+    
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug output and detailed logging'
     )
     
     parser.add_argument(
@@ -284,8 +305,11 @@ def main() -> None:
             sys.exit(1)
         
         # Initialize and run CONFLUENCE
-        print(f"Starting CONFLUENCE with configuration: {config_path}")
-        confluence = CONFLUENCE(config_path)
+        debug_message = " (DEBUG MODE)" if args.debug else ""
+        print(f"Starting CONFLUENCE with configuration: {config_path}{debug_message}")
+        
+        # Pass debug flag to CONFLUENCE
+        confluence = CONFLUENCE(config_path, debug_mode=args.debug)
         confluence.run_workflow()
         
         print("CONFLUENCE completed successfully")

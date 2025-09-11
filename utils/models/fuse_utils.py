@@ -12,7 +12,7 @@ import xarray as xr # type: ignore
 import shutil
 from datetime import datetime
 import rasterio # type: ignore
-
+from scipy import ndimage
 import csv
 import itertools
 import matplotlib.pyplot as plt # type: ignore
@@ -180,6 +180,92 @@ class FUSEPreProcessor:
         
         return pet
 
+    def generate_synthetic_hydrograph(self, ds, area_km2, mean_temp_threshold=0.0):
+        """
+        Generate a realistic synthetic hydrograph for snow optimization cases.
+        
+        Args:
+            ds: xarray dataset with precipitation and temperature
+            area_km2: catchment area in km2
+            mean_temp_threshold: temperature threshold for snow/rain (°C)
+        
+        Returns:
+            np.array: synthetic streamflow in mm/day
+        """
+        self.logger.info("Generating synthetic hydrograph for snow optimization")
+        
+        # Get precipitation and temperature data
+        precip = ds['pr'].values  # mm/day
+        temp = ds['temp'].values - 273.15  # Convert K to °C
+        
+        # Simple rainfall-runoff model parameters
+        # These create a realistic but generic hydrograph
+        runoff_coeff_rain = 0.3  # 30% of rain becomes runoff
+        runoff_coeff_snow = 0.1  # 10% of snow becomes immediate runoff
+        baseflow_recession = 0.95  # Daily baseflow recession coefficient
+        
+        # Initialize arrays
+        n_days = len(precip)
+        runoff = np.zeros(n_days)
+        baseflow = np.zeros(n_days)
+        snowpack = np.zeros(n_days)
+        
+        # Simple degree-day snowmelt parameters
+        melt_factor = 3.0  # mm/°C/day
+        
+        # Initial baseflow (small constant)
+        baseflow[0] = 0.5  # mm/day
+        
+        for i in range(n_days):
+            # Determine if precipitation is rain or snow
+            if temp[i] > mean_temp_threshold:
+                # Rain
+                rain = precip[i]
+                snow = 0.0
+            else:
+                # Snow
+                rain = 0.0
+                snow = precip[i]
+            
+            # Snow accumulation and melt
+            if i > 0:
+                snowpack[i] = snowpack[i-1] + snow
+            else:
+                snowpack[i] = snow
+                
+            # Snowmelt (only if temperature > 0°C)
+            if temp[i] > 0.0 and snowpack[i] > 0.0:
+                melt = min(snowpack[i], melt_factor * temp[i])
+                snowpack[i] -= melt
+                rain += melt  # Add melt to effective rainfall
+            
+            # Calculate surface runoff
+            surface_runoff = rain * runoff_coeff_rain + snow * runoff_coeff_snow
+            
+            # Update baseflow (simple recession + recharge)
+            if i > 0:
+                baseflow[i] = baseflow[i-1] * baseflow_recession + surface_runoff * 0.1
+            else:
+                baseflow[i] = surface_runoff * 0.1
+            
+            # Total runoff
+            runoff[i] = surface_runoff + baseflow[i]
+        
+        # Add some realistic variability and ensure non-negative
+        # Add small random component (±10% of mean)
+        mean_runoff = np.mean(runoff)
+        noise = np.random.normal(0, mean_runoff * 0.05, n_days)
+        runoff = np.maximum(runoff + noise, 0.01)  # Ensure minimum flow
+        
+        # Apply a simple routing delay (moving average)
+        from scipy import ndimage
+        runoff_routed = ndimage.uniform_filter1d(runoff, size=3, mode='reflect')
+        
+        self.logger.info(f"Generated synthetic hydrograph: mean={np.mean(runoff_routed):.2f} mm/day, "
+                        f"max={np.max(runoff_routed):.2f} mm/day")
+        
+        return runoff_routed
+
     def prepare_forcing_data(self):
         try:
             # Read and process forcing data
@@ -205,60 +291,72 @@ class FUSEPreProcessor:
             except:
                 pass
 
+            # Always try to load streamflow observations, but handle missing gracefully
+            obs_ds = None
+            try:
+                if self.config.get('OPTIMISATION_TARGET','streamflow') == 'streamflow':
+                    # Load streamflow observations
+                    obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
+                    
+                    # Read observations - explicitly rename 'datetime' column to 'time'
+                    obs_df = pd.read_csv(obs_path)
+                    obs_df['time'] = pd.to_datetime(obs_df['datetime'])
+                    obs_df = obs_df.drop('datetime', axis=1)
+                    obs_df.set_index('time', inplace=True)
+                    obs_df.index = obs_df.index.tz_localize(None)
+                    
+                    # Convert to daily resolution
+                    obs_daily = obs_df.resample('D').mean()
 
-            # Load streamflow observations
-            obs_path = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
-            
-            # Read observations - explicitly rename 'datetime' column to 'time'
-            obs_df = pd.read_csv(obs_path)
-            obs_df['time'] = pd.to_datetime(obs_df['datetime'])
-            obs_df = obs_df.drop('datetime', axis=1)
-            obs_df.set_index('time', inplace=True)
-            obs_df.index = obs_df.index.tz_localize(None)
-            
-            # Convert to daily resolution
-            obs_daily = obs_df.resample('D').mean()
-
-            # Convert to mm/day
-            # Get area from river basins shapefile using GRU_area
-            basin_name = self.config.get('RIVER_BASINS_NAME')
-            if basin_name == 'default':
-                basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
-            basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
-            basin_gdf = gpd.read_file(basin_path)
-            
-            # Sum the GRU_area column and convert from m2 to km2
-            area_km2 = basin_gdf['GRU_area'].sum() / 1e6
-            self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
-            
-            # Convert units from cms to mm/day 
-            # Q(cms) = Q(mm/day) * Area(km2) / 86.4
-            obs_daily['discharge_mmday'] = obs_daily['discharge_cms'] / area_km2 * 86.4
-            
-            # Create observation dataset with explicit time dimension
-            obs_ds = xr.Dataset(
-                {'q_obs': ('time', obs_daily['discharge_mmday'].values)},
-                coords={'time': obs_daily.index.values}
-            )
+                    # Convert to mm/day
+                    # Get area from river basins shapefile using GRU_area
+                    basin_name = self.config.get('RIVER_BASINS_NAME')
+                    if basin_name == 'default':
+                        basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+                    basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+                    basin_gdf = gpd.read_file(basin_path)
+                    
+                    # Sum the GRU_area column and convert from m2 to km2
+                    area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+                    self.logger.info(f"Total catchment area from GRU_area: {area_km2:.2f} km2")
+                    
+                    # Convert units from cms to mm/day 
+                    # Q(cms) = Q(mm/day) * Area(km2) / 86.4
+                    obs_daily['discharge_mmday'] = obs_daily['discharge_cms'] / area_km2 * 86.4
+                    
+                    # Create observation dataset with explicit time dimension
+                    obs_ds = xr.Dataset(
+                        {'q_obs': ('time', obs_daily['discharge_mmday'].values)},
+                        coords={'time': obs_daily.index.values}
+                    )
+            except Exception as e:
+                self.logger.warning(f"Could not load streamflow observations: {str(e)}. Will create synthetic q_obs for snow optimization.")
+                obs_ds = None
 
             # Read catchment and get centroid
             catchment = gpd.read_file(self.catchment_path / self.catchment_name)
             mean_lon, mean_lat = self._get_catchment_centroid(catchment)
-            
+        
             # Calculate PET using Oudin formula
             pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
 
             # Find overlapping time period
-            start_time = max(ds.time.min().values, obs_ds.time.min().values)
-            end_time = min(ds.time.max().values, obs_ds.time.max().values)
+            if obs_ds is not None:
+                start_time = max(ds.time.min().values, obs_ds.time.min().values)
+                end_time = min(ds.time.max().values, obs_ds.time.max().values)
+            else:
+                start_time = pd.to_datetime(ds['time'].min().values)  # numpy.datetime64 -> Timestamp
+                end_time   = pd.to_datetime(ds['time'].max().values)
             
             # Create explicit time index
             time_index = pd.date_range(start=start_time, end=end_time, freq='D')
             
             # Select the common time period and align to the new time index
             ds = ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
-            obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            if obs_ds is not None:
+                obs_ds = obs_ds.sel(time=slice(start_time, end_time)).reindex(time=time_index)
             pet = pet.sel(time=slice(start_time, end_time)).reindex(time=time_index)
+            
             # Convert time to days since 1970-01-01
             time_days = (time_index - pd.Timestamp('1970-01-01')).days.values
 
@@ -291,14 +389,34 @@ class FUSEPreProcessor:
                 'long_name': 'time'
             }
 
-            # Prepare data variables
+            # Prepare data variables - always include core meteorological variables
             var_mapping = [
                 ('pr', ds['pr'].values, 'precipitation', 'mm/day', 'Mean daily precipitation'),
                 ('temp', ds['temp'].values, 'temperature', 'degC', 'Mean daily temperature'),
-                ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet'),
-                ('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge')
+                ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet')
             ]
-
+            
+            # Add q_obs - either real observations or synthetic data
+            if obs_ds is not None:
+                var_mapping.append(('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge'))
+                self.logger.info("Using real streamflow observations")
+            else:
+                # *** MODIFIED SECTION: Generate synthetic hydrograph instead of -9999 values ***
+                
+                # Get catchment area for synthetic hydrograph generation
+                basin_name = self.config.get('RIVER_BASINS_NAME')
+                if basin_name == 'default':
+                    basin_name = f"{self.config.get('DOMAIN_NAME')}_riverBasins_{self.config.get('DOMAIN_DEFINITION_METHOD')}.shp"
+                basin_path = self._get_file_path('RIVER_BASINS_PATH', 'shapefiles/river_basins', basin_name)
+                basin_gdf = gpd.read_file(basin_path)
+                area_km2 = basin_gdf['GRU_area'].sum() / 1e6
+                
+                # Generate realistic synthetic hydrograph
+                synthetic_q = self.generate_synthetic_hydrograph(ds, area_km2)
+                
+                var_mapping.append(('q_obs', synthetic_q, 'streamflow', 'mm/day', 'Synthetic discharge for snow optimization'))
+                self.logger.info("Generated synthetic streamflow for snow optimization mode")
+            
             encoding = {}
             
             for var_name, data, _, units, long_name in var_mapping:
@@ -673,13 +791,15 @@ class FUSERunner:
             # Create output directory
             self.output_path.mkdir(parents=True, exist_ok=True)
             
+            
+            # Normal workflow for streamflow optimization
             # Execute FUSE for default
             success = self._execute_fuse('run_def')
             
             # Calibrate FUSE 
             success = self._execute_fuse('calib_sce')
 
-            # Excute FUSE for best parameters
+            # Execute FUSE for best parameters
             success = self._execute_fuse('run_best')
 
             if success:
@@ -695,16 +815,58 @@ class FUSERunner:
             self.logger.error(f"Error during FUSE run: {str(e)}")
             raise
 
+    def _is_snow_optimization(self) -> bool:
+        """Check if this is a snow optimization run by examining the forcing data."""
+        try:
+            # Check if q_obs contains only dummy values
+            forcing_file = self.forcing_fuse_path / f"{self.domain_name}_input.nc"
+            
+            if forcing_file.exists():
+                with xr.open_dataset(forcing_file) as ds:
+                    if 'q_obs' in ds.variables:
+                        q_obs_values = ds['q_obs'].values
+                        # If all values are -9999 or very close to it, it's dummy data
+                        if np.all(np.abs(q_obs_values + 9999) < 0.1):
+                            return True
+            
+            # Also check optimization target from config
+            optimization_target = self.config.get('OPTIMISATION_TARGET', 'streamflow')
+            if optimization_target in ['swe', 'sca', 'snow_depth', 'snow']:
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"Could not determine if snow optimization: {str(e)}")
+            # Fall back to checking config
+            optimization_target = self.config.get('OPTIMISATION_TARGET', 'streamflow')
+            return optimization_target in ['swe', 'sca', 'snow_depth', 'snow']
+
+    def _copy_default_to_best_params(self):
+        """Copy default parameter file to best parameter file for snow optimization."""
+        try:
+            default_params = self.output_path / f"{self.domain_name}_{self.config['EXPERIMENT_ID']}_para_def.nc"
+            best_params = self.output_path / f"{self.domain_name}_{self.config['EXPERIMENT_ID']}_para_sce.nc"
+            
+            if default_params.exists():
+                import shutil
+                shutil.copy2(default_params, best_params)
+                self.logger.info("Copied default parameters to best parameters file for snow optimization")
+            else:
+                self.logger.warning("Default parameter file not found - snow optimization may fail")
+                
+        except Exception as e:
+            self.logger.error(f"Error copying default to best parameters: {str(e)}")
     def _get_install_path(self) -> Path:
         """Get the FUSE installation path."""
-        fuse_path = self.config.get('FUSE_INSTALL_PATH')
+        fuse_path = self.config.get('FUSE_INSTALL_PATH', 'default')
         if fuse_path == 'default':
             return self.data_dir / 'installs' / 'fuse' / 'bin'
         return Path(fuse_path)
 
     def _get_output_path(self) -> Path:
         """Get the path for FUSE outputs."""
-        if self.config.get('EXPERIMENT_OUTPUT_FUSE') == 'default':
+        if self.config.get('EXPERIMENT_OUTPUT_FUSE', 'default') == 'default':
             return self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID') / "FUSE"
         return Path(self.config.get('EXPERIMENT_OUTPUT_FUSE'))
 
@@ -715,7 +877,7 @@ class FUSERunner:
         Returns:
             bool: True if execution was successful, False otherwise
         """
-        self.logger.info("Executing FUSE model")
+        self.logger.debug("Executing FUSE model")
         
         # Construct command
         fuse_fm = self.config['SETTINGS_FUSE_FILEMANAGER']
@@ -746,7 +908,7 @@ class FUSERunner:
                     stderr=subprocess.STDOUT,
                     text=True
                 )
-            self.logger.info(f"FUSE execution completed with return code: {result.returncode}")
+            self.logger.debug(f"FUSE execution completed with return code: {result.returncode}")
             return result.returncode == 0
             
         except subprocess.CalledProcessError as e:

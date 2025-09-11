@@ -512,7 +512,7 @@ class ETTarget(CalibrationTarget):
                 self.logger.error(f"Available columns: {list(obs_df.columns)}")
                 return None
             
-            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            self.logger.debug(f"Using date column: '{date_col}', data column: '{data_col}'")
             
             # Process datetime
             obs_df['DateTime'] = pd.to_datetime(obs_df[date_col], errors='coerce')
@@ -1365,7 +1365,7 @@ class SoilMoistureTarget(CalibrationTarget):
                 self.logger.error(f"Available columns: {list(obs_df.columns)}")
                 return None
             
-            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            self.logger.debug(f"Using date column: '{date_col}', data column: '{data_col}'")
             
             # Process data based on target type
             if self.optimization_target == 'sm_point':
@@ -1718,7 +1718,7 @@ class SnowTarget(CalibrationTarget):
                 self.logger.error(f"Available columns: {list(obs_df.columns)}")
                 return None
             
-            self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            self.logger.debug(f"Using date column: '{date_col}', data column: '{data_col}'")
             
             # Process data
             if self.optimization_target == 'swe':
@@ -2305,7 +2305,7 @@ class GroundwaterTarget(CalibrationTarget):
                 self.logger.error(f"Available columns: {list(obs_df.columns)}")
                 return None
             
-            #self.logger.info(f"Using date column: '{date_col}', data column: '{data_col}'")
+            self.logger.debug(f"Using date column: '{date_col}', data column: '{data_col}'")
             
             # Process data based on target type
             if self.optimization_target == 'gw_depth':

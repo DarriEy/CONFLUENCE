@@ -82,6 +82,15 @@ from calibration_targets import (
     SoilMoistureTarget
 )
 
+from fuse_parameter_manager import FUSEParameterManager
+from fuse_optimiser import FUSEOptimizer
+from fuse_calibration_targets import FUSESnowTarget, FUSEStreamflowTarget
+from fuse_worker_functions import (
+    _apply_fuse_parameters_worker,
+    _run_fuse_worker, 
+    _calculate_fuse_metrics_worker,
+    _evaluate_fuse_parameters_worker
+)
 
 # ============= PARAMETER MANAGEMENT =============
 
@@ -3000,7 +3009,7 @@ class DDSOptimizer(BaseOptimizer):
     
     def _run_single_dds(self) -> Tuple[Dict, float, List]:
         """Run single-instance DDS algorithm"""
-        self.logger.info("Single-instance DDS")
+        self.logger.debug("Single-instance DDS")
         
         # Use the single solution from initialization
         current_solution = self.population[0].copy()
