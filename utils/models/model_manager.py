@@ -214,10 +214,34 @@ class ModelManager:
         
         self.logger.info("Model-specific preprocessing completed")
 
+    def _needs_mizuroute_routing(self, domain_method: str, routing_delineation: str) -> bool:
+        """
+        Determine if mizuRoute routing is needed based on domain and routing configuration.
+        Enhanced to support FUSE distributed modes.
+        """
+        # Check for FUSE distributed modes
+        models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
+        if 'FUSE' in [m.strip() for m in models]:
+            fuse_spatial_mode = self.config.get('FUSE_SPATIAL_MODE', 'lumped')
+            fuse_routing = self.config.get('FUSE_ROUTING_INTEGRATION', 'none')
+            
+            if fuse_routing == 'mizuRoute':
+                if fuse_spatial_mode in ['semi_distributed', 'distributed']:
+                    return True
+                elif fuse_spatial_mode == 'lumped' and routing_delineation == 'river_network':
+                    return True
+        
+        # Original SUMMA logic
+        if domain_method not in ['point', 'lumped']:
+            return True
+        
+        if domain_method == 'lumped' and routing_delineation == 'river_network':
+            return True
+        
+        return False
+
     def run_models(self):
-        """
-        Run all configured hydrological models.
-        """
+        """Enhanced run_models with FUSE distributed support"""
         self.logger.info("Starting model runs")
         
         models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
@@ -245,23 +269,31 @@ class ModelManager:
                     self.logger.error(f"Runner method not found for model: {model}")
                     continue
                 
-                # Enhanced routing logic for SUMMA
-                if model == 'SUMMA':
-                    routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
-                    domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
-                    
-                    # Determine if we need mizuRoute
-                    needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
-                    
-                    if needs_mizuroute:
+                # Enhanced routing logic for both SUMMA and FUSE
+                routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
+                domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
+                
+                # Determine if we need mizuRoute (now handles FUSE too)
+                needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
+                
+                if needs_mizuroute:
+                    # Handle different conversion scenarios
+                    if model == 'SUMMA':
                         # Handle lumped-to-distributed conversion if needed
                         if domain_method == 'lumped' and routing_delineation == 'river_network':
                             self.logger.info("Converting lumped SUMMA output for distributed routing")
                             self._convert_lumped_to_distributed_routing()
-                        
-                        # Run mizuRoute
-                        mizuroute_runner = MizuRouteRunner(self.config, self.logger)
-                        mizuroute_runner.run_mizuroute()
+                    
+                    elif model == 'FUSE':
+                        # FUSE-specific routing setup
+                        fuse_spatial_mode = self.config.get('FUSE_SPATIAL_MODE', 'lumped')
+                        if fuse_spatial_mode == 'lumped' and routing_delineation == 'river_network':
+                            self.logger.info("Converting lumped FUSE output for distributed routing")
+                            self._convert_fuse_lumped_to_distributed_routing()
+                    
+                    # Run mizuRoute
+                    mizuroute_runner = MizuRouteRunner(self.config, self.logger)
+                    mizuroute_runner.run_mizuroute()
                 
                 self.logger.info(f"{model} model run completed successfully")
                 
@@ -274,28 +306,119 @@ class ModelManager:
         self.visualize_outputs()
         self.logger.info("Model runs completed")
 
-    def _needs_mizuroute_routing(self, domain_method: str, routing_delineation: str) -> bool:
-        """
-        Determine if mizuRoute routing is needed based on domain and routing configuration.
+    def _convert_fuse_lumped_to_distributed_routing(self):
+        """Convert lumped FUSE output for distributed routing (similar to SUMMA approach)"""
+        self.logger.info("Converting lumped FUSE output for distributed routing")
         
-        Args:
-            domain_method (str): Domain definition method
-            routing_delineation (str): Routing delineation method
+        try:
+            import xarray as xr
+            import numpy as np
+            import shutil
+            import tempfile
             
-        Returns:
-            bool: True if mizuRoute routing is needed
-        """
-        # Original logic: distributed domain always needs routing
-        if domain_method not in ['point', 'lumped']:
-            return True
-        
-        # New logic: lumped domain with river network routing
-        if domain_method == 'lumped' and routing_delineation == 'river_network':
-            return True
-        
-        # Point simulations never need routing
-        # Lumped domain with lumped routing doesn't need mizuRoute
-        return False
+            experiment_id = self.config.get('EXPERIMENT_ID')
+            
+            # Paths
+            fuse_output_dir = self.project_dir / "simulations" / experiment_id / "FUSE"
+            mizuroute_settings_dir = self.project_dir / "settings" / "mizuRoute"
+            
+            # FUSE output file (adjust based on your FUSE output naming)
+            fuse_output_file = fuse_output_dir / f"{self.domain_name}_{experiment_id}_runs_best.nc"
+            
+            if not fuse_output_file.exists():
+                raise FileNotFoundError(f"FUSE output file not found: {fuse_output_file}")
+            
+            # Load mizuRoute topology to get HRU information
+            topology_file = mizuroute_settings_dir / self.config.get('SETTINGS_MIZU_TOPOLOGY', 'topology.nc')
+            
+            if not topology_file.exists():
+                raise FileNotFoundError(f"mizuRoute topology file not found: {topology_file}")
+            
+            with xr.open_dataset(topology_file) as mizuTopology:
+                hru_id = 1  # Single lumped HRU
+                seg_ids = mizuTopology['segId'].values
+                n_segments = len(seg_ids)
+            
+            self.logger.info(f"Creating single lumped GRU (ID={hru_id}) for {n_segments} routing segments")
+            
+            # Load FUSE output
+            fuse_output = xr.open_dataset(fuse_output_file, decode_times=False)
+            
+            try:
+                # Create mizuRoute forcing dataset
+                mizuForcing = xr.Dataset()
+                
+                # Copy time coordinate from FUSE output
+                mizuForcing['time'] = fuse_output['time']
+                
+                # Create single GRU
+                mizuForcing['gru'] = xr.DataArray([hru_id], dims=('gru',))
+                mizuForcing['gruId'] = xr.DataArray([hru_id], dims=('gru',))
+                
+                # Find runoff variable in FUSE output
+                routing_var = self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')
+                source_var = None
+                
+                # Look for suitable runoff variable
+                if routing_var in fuse_output:
+                    source_var = routing_var
+                else:
+                    # Try common FUSE output variables
+                    fuse_runoff_vars = ['q_routed', 'runoff', 'discharge', 'streamflow']
+                    for var in fuse_runoff_vars:
+                        if var in fuse_output:
+                            source_var = var
+                            break
+                
+                if source_var is None:
+                    available_vars = list(fuse_output.variables.keys())
+                    raise ValueError(f"No suitable runoff variable found. Available: {available_vars}")
+                
+                # Extract runoff data
+                lumped_runoff = fuse_output[source_var].values
+                
+                # Handle different shapes
+                if len(lumped_runoff.shape) == 1:
+                    pass  # Already (time,)
+                elif len(lumped_runoff.shape) == 2:
+                    if lumped_runoff.shape[1] == 1:
+                        lumped_runoff = lumped_runoff.flatten()
+                    else:
+                        lumped_runoff = lumped_runoff[:, 0]  # Take first spatial unit
+                
+                # Create routing variable: (time,) -> (time, 1)
+                tiled_data = lumped_runoff[:, np.newaxis]
+                
+                mizuForcing[routing_var] = xr.DataArray(
+                    tiled_data,
+                    dims=('time', 'gru'),
+                    attrs={
+                        'long_name': 'Lumped FUSE runoff for distributed routing',
+                        'units': 'm/s'
+                    }
+                )
+                
+                # Close original and save converted
+                fuse_output.close()
+                
+                # Backup and save
+                backup_file = fuse_output_dir / f"{fuse_output_file.stem}_original.nc"
+                if not backup_file.exists():
+                    shutil.copy2(fuse_output_file, backup_file)
+                
+                # Save converted file
+                mizuForcing.to_netcdf(fuse_output_file, format='NETCDF4')
+                mizuForcing.close()
+                
+                self.logger.info("FUSE lumped-to-distributed conversion completed successfully")
+                
+            except Exception as e:
+                fuse_output.close()
+                raise
+                
+        except Exception as e:
+            self.logger.error(f"Error converting FUSE output: {str(e)}")
+            raise
 
     def _convert_lumped_to_distributed_routing(self):
         """

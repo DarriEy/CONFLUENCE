@@ -332,7 +332,7 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: LBFGS                   # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II, ADAM, ADAM-MULTI, LBFGS, LBFGS-MULTI
+ITERATIVE_OPTIMIZATION_ALGORITHM: SCE-UA                   # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II, ADAM, ADAM-MULTI, LBFGS, LBFGS-MULTI
 NUMBER_OF_ITERATIONS: 1000                                     # Number of iterations for calibration 
 POPULATION_SIZE: 10                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
