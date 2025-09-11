@@ -185,18 +185,7 @@ class DomainManager:
             
             # Perform discretization
             hru_shapefile = self.domain_discretizer.discretize_domain()
-            
-            # Log results based on return type
-            if isinstance(hru_shapefile, dict):
-                self.logger.info(f"Domain discretized successfully. HRU shapefiles:")
-                for key, path in hru_shapefile.items():
-                    self.logger.info(f"  {key}: {path}")
-            elif hru_shapefile:
-                self.logger.info(f"Domain discretized successfully. HRU shapefile: {hru_shapefile}")
-            else:
-                self.logger.error("Domain discretization failed - no shapefile created")
-                return None
-            
+                        
             # Visualize the discretized domain
             self.visualize_discretized_domain()
             

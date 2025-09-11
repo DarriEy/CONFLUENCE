@@ -287,7 +287,7 @@ class FUSEPreProcessor:
             ds = xr.open_mfdataset(forcing_files)
             ds = variable_handler.process_forcing_data(ds)
             
-            # Spatial organization based on mode
+            # Spatial organization based on mode BEFORE resampling
             if spatial_mode == 'lumped':
                 ds = self._prepare_lumped_forcing(ds)
             elif spatial_mode == 'semi_distributed':
@@ -297,7 +297,8 @@ class FUSEPreProcessor:
             else:
                 raise ValueError(f"Unknown FUSE spatial mode: {spatial_mode}")
             
-            # Convert to daily resolution
+            # Convert to daily resolution AFTER spatial organization
+            self.logger.info("Resampling data to daily resolution")
             ds = ds.resample(time='D').mean()
             
             # Process temperature and precipitation
@@ -310,13 +311,18 @@ class FUSEPreProcessor:
             # Handle streamflow observations
             obs_ds = self._load_streamflow_observations(spatial_mode)
             
-            # Calculate PET
+            # Calculate PET for the correct spatial configuration
             if spatial_mode == 'lumped':
                 catchment = gpd.read_file(self.catchment_path / self.catchment_name)
                 mean_lon, mean_lat = self._get_catchment_centroid(catchment)
                 pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
             else:
+                # For distributed modes, calculate PET after spatial organization and resampling
                 pet = self._calculate_distributed_pet(ds, spatial_mode)
+            
+            # Ensure PET is also daily resolution
+            if 'D' not in pet.resample(time='D').mean().time.dt.freq:
+                pet = pet.resample(time='D').mean()
             
             # Create FUSE forcing dataset
             fuse_forcing = self._create_fuse_forcing_dataset(ds, pet, obs_ds, spatial_mode, subcatchment_dim)
@@ -334,6 +340,197 @@ class FUSEPreProcessor:
             self.logger.error(f"Error preparing forcing data: {str(e)}")
             raise
 
+    def _add_forcing_variables(self, fuse_forcing, ds, pet, obs_ds, spatial_dims, n_subcatchments):
+        """Add forcing variables to the dataset with proper dimension handling"""
+        
+        # Get the time dimension length from the coordinate system
+        time_length = len(fuse_forcing.time)
+        
+        # Ensure all input data has the same time dimension
+        self.logger.info(f"Expected time length: {time_length}")
+        self.logger.info(f"ds time length: {len(ds.time)}")
+        self.logger.info(f"pet time length: {len(pet.time)}")
+        if obs_ds is not None:
+            self.logger.info(f"obs_ds time length: {len(obs_ds.time)}")
+        
+        # Align all data to the common time coordinate
+        common_time = fuse_forcing.time
+        
+        # For distributed case, make sure we're working with the right spatial dimension
+        if len(spatial_dims) == 3:  # (time, spatial, 1) or (time, 1, spatial)
+            if spatial_dims[1] in ['latitude', 'longitude'] and fuse_forcing.sizes[spatial_dims[1]] > 1:
+                # Multiple subcatchments in this dimension
+                target_shape = (time_length, n_subcatchments, 1)
+            else:
+                # Multiple subcatchments in the other dimension
+                target_shape = (time_length, 1, n_subcatchments)
+        else:
+            target_shape = (time_length, n_subcatchments)
+        
+        # Core meteorological variables - extract only the time dimension that matches
+        var_mapping = []
+        
+        # Handle precipitation
+        if 'hru' in ds.dims and spatial_dims[1] != 'longitude':
+            # Distributed data with HRU dimension
+            pr_data = ds['pr'].values  # Shape: (time, hru)
+            if pr_data.shape[0] != time_length:
+                self.logger.warning(f"Precipitation time dimension mismatch: {pr_data.shape[0]} vs {time_length}")
+                # Truncate or pad to match expected length
+                if pr_data.shape[0] > time_length:
+                    pr_data = pr_data[:time_length, :]
+                else:
+                    # Pad with the last available value
+                    pad_length = time_length - pr_data.shape[0]
+                    pad_values = np.repeat(pr_data[-1:, :], pad_length, axis=0)
+                    pr_data = np.concatenate([pr_data, pad_values], axis=0)
+        else:
+            # Lumped data or single column
+            pr_data = ds['pr'].values
+            if pr_data.shape[0] != time_length:
+                if pr_data.shape[0] > time_length:
+                    pr_data = pr_data[:time_length]
+                else:
+                    pad_length = time_length - pr_data.shape[0]
+                    pr_data = np.concatenate([pr_data, np.repeat(pr_data[-1], pad_length)])
+        
+        var_mapping.append(('pr', pr_data, 'precipitation', 'mm/day', 'Mean daily precipitation'))
+        
+        # Handle temperature
+        if 'hru' in ds.dims and spatial_dims[1] != 'longitude':
+            temp_data = ds['temp'].values
+            if temp_data.shape[0] != time_length:
+                if temp_data.shape[0] > time_length:
+                    temp_data = temp_data[:time_length, :]
+                else:
+                    pad_length = time_length - temp_data.shape[0]
+                    pad_values = np.repeat(temp_data[-1:, :], pad_length, axis=0)
+                    temp_data = np.concatenate([temp_data, pad_values], axis=0)
+        else:
+            temp_data = ds['temp'].values
+            if temp_data.shape[0] != time_length:
+                if temp_data.shape[0] > time_length:
+                    temp_data = temp_data[:time_length]
+                else:
+                    pad_length = time_length - temp_data.shape[0]
+                    temp_data = np.concatenate([temp_data, np.repeat(temp_data[-1], pad_length)])
+        
+        var_mapping.append(('temp', temp_data, 'temperature', 'degC', 'Mean daily temperature'))
+        
+        # Handle PET
+        pet_data = pet.values
+        if pet_data.shape[0] != time_length:
+            if pet_data.shape[0] > time_length:
+                pet_data = pet_data[:time_length]
+            else:
+                pad_length = time_length - pet_data.shape[0]
+                if len(pet_data.shape) > 1:
+                    pad_values = np.repeat(pet_data[-1:, :], pad_length, axis=0)
+                    pet_data = np.concatenate([pet_data, pad_values], axis=0)
+                else:
+                    pet_data = np.concatenate([pet_data, np.repeat(pet_data[-1], pad_length)])
+        
+        var_mapping.append(('pet', pet_data, 'pet', 'mm/day', 'Mean daily pet'))
+        
+        # Add streamflow observations
+        if obs_ds is not None:
+            obs_data = obs_ds['q_obs'].values
+            if obs_data.shape[0] != time_length:
+                if obs_data.shape[0] > time_length:
+                    obs_data = obs_data[:time_length]
+                else:
+                    pad_length = time_length - obs_data.shape[0]
+                    obs_data = np.concatenate([obs_data, np.repeat(obs_data[-1], pad_length)])
+            var_mapping.append(('q_obs', obs_data, 'streamflow', 'mm/day', 'Mean observed daily discharge'))
+        else:
+            # Generate synthetic hydrograph for each subcatchment
+            synthetic_q = self._generate_distributed_synthetic_hydrograph(ds, n_subcatchments, time_length)
+            var_mapping.append(('q_obs', synthetic_q, 'streamflow', 'mm/day', 'Synthetic discharge for optimization'))
+        
+        # Add variables to dataset
+        encoding = {}
+        for var_name, data, _, units, long_name in var_mapping:
+            # Reshape data to match spatial structure
+            if len(data.shape) == 1:  # Time series only
+                # Replicate for all subcatchments
+                if target_shape[1] > target_shape[2]:  # More subcatchments in second dimension
+                    reshaped_data = np.tile(data[:, np.newaxis, np.newaxis], (1, target_shape[1], 1))
+                else:  # More subcatchments in third dimension
+                    reshaped_data = np.tile(data[:, np.newaxis, np.newaxis], (1, 1, target_shape[2]))
+            elif len(data.shape) == 2 and data.shape[1] == n_subcatchments:  # (time, subcatchments)
+                # Already has subcatchment data
+                if target_shape[1] > target_shape[2]:
+                    reshaped_data = data[:, :, np.newaxis]
+                else:
+                    reshaped_data = data[:, np.newaxis, :]
+            else:
+                # Default case: replicate along subcatchment dimension
+                if target_shape[1] > target_shape[2]:
+                    reshaped_data = np.tile(data.reshape(-1, 1, 1), (1, target_shape[1], 1))
+                else:
+                    reshaped_data = np.tile(data.reshape(-1, 1, 1), (1, 1, target_shape[2]))
+            
+            # Verify final shape matches expected dimensions
+            expected_shape = (time_length, fuse_forcing.sizes[spatial_dims[1]], fuse_forcing.sizes[spatial_dims[2]])
+            if reshaped_data.shape != expected_shape:
+                self.logger.error(f"Shape mismatch for {var_name}: got {reshaped_data.shape}, expected {expected_shape}")
+                raise ValueError(f"Shape mismatch for {var_name}")
+            
+            # Handle NaN values
+            if np.any(np.isnan(reshaped_data)):
+                reshaped_data = np.nan_to_num(reshaped_data, nan=-9999.0)
+            
+            fuse_forcing[var_name] = xr.DataArray(
+                reshaped_data,
+                dims=spatial_dims,
+                coords=fuse_forcing.coords,
+                attrs={
+                    'units': units,
+                    'long_name': long_name
+                }
+            )
+            
+            encoding[var_name] = {
+                '_FillValue': -9999.0,
+                'dtype': 'float32'
+            }
+        
+        return encoding
+
+    def _generate_distributed_synthetic_hydrograph(self, ds, n_subcatchments, time_length):
+        """Generate synthetic hydrograph for each subcatchment with correct time dimension"""
+        
+        # Use only the time-matched data for generating the hydrograph
+        temp_data = ds['temp'].values
+        pr_data = ds['pr'].values
+        
+        # Ensure we're using the correct time length
+        if temp_data.shape[0] > time_length:
+            temp_data = temp_data[:time_length]
+        if pr_data.shape[0] > time_length:
+            pr_data = pr_data[:time_length]
+        
+        # Create a temporary dataset for hydrograph generation
+        temp_ds = xr.Dataset({
+            'temp': (['time'], temp_data if len(temp_data.shape) == 1 else temp_data.mean(axis=1)),
+            'pr': (['time'], pr_data if len(pr_data.shape) == 1 else pr_data.mean(axis=1))
+        })
+        
+        base_hydrograph = self.generate_synthetic_hydrograph(temp_ds, area_km2=100.0)
+        
+        # Ensure the base hydrograph has the correct length
+        if len(base_hydrograph) != time_length:
+            if len(base_hydrograph) > time_length:
+                base_hydrograph = base_hydrograph[:time_length]
+            else:
+                pad_length = time_length - len(base_hydrograph)
+                base_hydrograph = np.concatenate([base_hydrograph, np.repeat(base_hydrograph[-1], pad_length)])
+        
+        # Create variations for different subcatchments (simple approach)
+        variations = np.random.uniform(0.8, 1.2, n_subcatchments)  # ±20% variation
+        distributed_q = np.outer(base_hydrograph, variations)  # (time, subcatchments)
+        
+        return distributed_q
     def _prepare_lumped_forcing(self, ds):
         """Prepare lumped forcing data (current implementation)"""
         return ds.mean(dim='hru') if 'hru' in ds.dims else ds
@@ -450,89 +647,7 @@ class FUSEPreProcessor:
         
         return fuse_forcing
 
-    def _add_forcing_variables(self, fuse_forcing, ds, pet, obs_ds, spatial_dims, n_subcatchments):
-        """Add forcing variables to the dataset"""
-        
-        # Reshape data for spatial dimensions
-        if len(spatial_dims) == 3:  # (time, spatial, 1) or (time, 1, spatial)
-            if spatial_dims[1] in ['latitude', 'longitude'] and fuse_forcing.sizes[spatial_dims[1]] > 1:
-                # Multiple subcatchments in this dimension
-                target_shape = (len(fuse_forcing.time), n_subcatchments, 1)
-            else:
-                # Multiple subcatchments in the other dimension
-                target_shape = (len(fuse_forcing.time), 1, n_subcatchments)
-        else:
-            target_shape = (len(fuse_forcing.time), n_subcatchments)
-        
-        # Core meteorological variables
-        var_mapping = [
-            ('pr', ds['pr'].values, 'precipitation', 'mm/day', 'Mean daily precipitation'),
-            ('temp', ds['temp'].values, 'temperature', 'degC', 'Mean daily temperature'),
-            ('pet', pet.values, 'pet', 'mm/day', 'Mean daily pet')
-        ]
-        
-        # Add streamflow observations
-        if obs_ds is not None:
-            var_mapping.append(('q_obs', obs_ds['q_obs'].values, 'streamflow', 'mm/day', 'Mean observed daily discharge'))
-        else:
-            # Generate synthetic hydrograph for each subcatchment
-            synthetic_q = self._generate_distributed_synthetic_hydrograph(ds, n_subcatchments)
-            var_mapping.append(('q_obs', synthetic_q, 'streamflow', 'mm/day', 'Synthetic discharge for optimization'))
-        
-        # Add variables to dataset
-        encoding = {}
-        for var_name, data, _, units, long_name in var_mapping:
-            # Reshape data to match spatial structure
-            if len(data.shape) == 1:  # Time series only
-                # Replicate for all subcatchments
-                if target_shape[1] > target_shape[2]:  # More subcatchments in second dimension
-                    reshaped_data = np.tile(data[:, np.newaxis, np.newaxis], (1, target_shape[1], 1))
-                else:  # More subcatchments in third dimension
-                    reshaped_data = np.tile(data[:, np.newaxis, np.newaxis], (1, 1, target_shape[2]))
-            elif len(data.shape) == 2 and data.shape[1] == n_subcatchments:  # (time, subcatchments)
-                # Already has subcatchment data
-                if target_shape[1] > target_shape[2]:
-                    reshaped_data = data[:, :, np.newaxis]
-                else:
-                    reshaped_data = data[:, np.newaxis, :]
-            else:
-                # Default case: replicate along subcatchment dimension
-                if target_shape[1] > target_shape[2]:
-                    reshaped_data = np.tile(data.reshape(-1, 1, 1), (1, target_shape[1], 1))
-                else:
-                    reshaped_data = np.tile(data.reshape(-1, 1, 1), (1, 1, target_shape[2]))
-            
-            # Handle NaN values
-            if np.any(np.isnan(reshaped_data)):
-                reshaped_data = np.nan_to_num(reshaped_data, nan=-9999.0)
-            
-            fuse_forcing[var_name] = xr.DataArray(
-                reshaped_data,
-                dims=spatial_dims,
-                coords=fuse_forcing.coords,
-                attrs={
-                    'units': units,
-                    'long_name': long_name
-                }
-            )
-            
-            encoding[var_name] = {
-                '_FillValue': -9999.0,
-                'dtype': 'float32'
-            }
-        
-        return encoding
 
-    def _generate_distributed_synthetic_hydrograph(self, ds, n_subcatchments):
-        """Generate synthetic hydrograph for each subcatchment"""
-        base_hydrograph = self.generate_synthetic_hydrograph(ds, area_km2=100.0)  # Use reference area
-        
-        # Create variations for different subcatchments (simple approach)
-        variations = np.random.uniform(0.8, 1.2, n_subcatchments)  # ±20% variation
-        distributed_q = np.outer(base_hydrograph, variations)  # (time, subcatchments)
-        
-        return distributed_q
-        
     def create_filemanager(self):
         """
         Create FUSE file manager file by modifying template with project-specific settings.
@@ -948,8 +1063,8 @@ class FUSEPreProcessor:
         for coord in fuse_forcing.coords:
             if coord == 'time':
                 encoding[coord] = {
-                    'dtype': 'float64',
-                    'units': 'days since 1970-01-01'
+                    'dtype': 'float64'
+                    # NOTE: 'units' should NOT be here - it belongs in attributes only
                 }
             elif coord in ['longitude', 'latitude']:
                 encoding[coord] = {

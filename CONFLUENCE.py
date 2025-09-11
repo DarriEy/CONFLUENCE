@@ -37,6 +37,7 @@ import sys
 import yaml
 from datetime import datetime
 from typing import Dict, Any, List
+import warnings
 
 # Add the parent directory to the path to enable imports
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -54,6 +55,11 @@ from utils.optimization.optimization_manager import OptimizationManager
 # Import the new CLI argument manager
 from utils.cli.cli_argument_manager import CLIArgumentManager
 
+# Suppress pyogrio field width warnings (non-fatal - data is still written)
+warnings.filterwarnings('ignore', 
+                       message='.*not successfully written.*field width.*',
+                       category=RuntimeWarning,
+                       module='pyogrio.raw')
 
 class CONFLUENCE:
     """
