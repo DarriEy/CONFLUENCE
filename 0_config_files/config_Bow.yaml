@@ -332,7 +332,7 @@ DDS_R:  0.2                                                    # DDS perturbatio
 NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
 POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
 NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
-EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
+EVOLUTION_STAGNATION: 50                                        # Number of iterations with minimal improvement before convergence
 PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
   # -- PSO specific settings 
 SWRMSIZE: 20                                                   # Number of particles in the swarm

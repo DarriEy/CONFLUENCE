@@ -16,3 +16,4 @@
 1000   ! Maximum number of iterations used in the implicit scheme
 0.01   ! Minimum time step length (minutes)
 1440   ! Maximum time step length (minutes)
+1      ! Compute and output numerical jacobian (0=no, 1=yes)

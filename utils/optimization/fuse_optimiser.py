@@ -498,7 +498,7 @@ class FUSEOptimizer:
 
     def _run_differentiable_optimization(self, optimizer_choice: str, steps: int, lr: float, 
                                     initial_params: Optional[Dict[str, float]]) -> Path:
-        """Core differentiable optimization implementation"""
+        """Core differentiable optimization implementation with enhanced LBFGS"""
         self.logger.info(f"Starting FUSE differentiable optimization with {optimizer_choice}")
         
         # Setup device
@@ -533,12 +533,30 @@ class FUSEOptimizer:
             self.logger.info(f"Using Adam with initial LR: {initial_lr:.6f}")
             
         elif optimizer_choice == 'LBFGS':
+            # ENHANCED: Robust L-BFGS configuration for noisy gradients
             optimizer = optim.LBFGS(
-                [x], lr=lr, max_iter=10, max_eval=15, tolerance_grad=1e-7,
-                tolerance_change=1e-9, history_size=10, line_search_fn='strong_wolfe'
+                [x], 
+                lr=lr,
+                max_iter=5,                    # Reduced for noisy gradients
+                max_eval=10,                   # Reduced for noisy gradients  
+                tolerance_grad=1e-4,           # Relaxed for finite differences
+                tolerance_change=1e-6,         # Relaxed for finite differences
+                history_size=5,                # Reduced for noisy gradients
+                line_search_fn='strong_wolfe'   # More robust line search
             )
             scheduler = None
-            self.logger.info("Using L-BFGS with strong Wolfe line search")
+            
+            # ENHANCED: L-BFGS specific tracking variables
+            line_search_failures = 0
+            max_line_search_failures = 3
+            restart_counter = 0
+            max_restarts = 3
+            recent_losses = []
+            stagnation_threshold = 5
+            min_improvement_threshold = 1e-5  # Relaxed for noisy gradients
+            
+            self.logger.info("Using enhanced L-BFGS with relaxed tolerances for finite differences")
+            self.logger.info(f"tolerance_grad=1e-4, tolerance_change=1e-6, history_size=5")
             
         else:
             raise ValueError(f"Unknown optimizer '{optimizer_choice}'. Use 'ADAM' or 'LBFGS'.")
@@ -614,52 +632,146 @@ class FUSEOptimizer:
                 })
         
         elif optimizer_choice == 'LBFGS':
-            self.logger.info("Starting L-BFGS optimization")
+            self.logger.info("Starting enhanced L-BFGS optimization")
             
             for step in range(1, steps + 1):
+                step_start_time = time.time()
+                
                 def closure():
                     optimizer.zero_grad()
                     loss, gradients = self._fuse_autograd_step(x)
+                    
+                    # ENHANCED: Gradient clipping for noisy finite difference gradients
                     x.grad = gradients
+                    torch.nn.utils.clip_grad_norm_([x], max_norm=2.0)
+                    
                     return loss
                 
                 try:
+                    # ENHANCED: Robust L-BFGS step with error handling
                     loss = optimizer.step(closure)
                     function_evals += 1
+                    line_search_failures = 0  # Reset on success
                     
                     current_loss = float(loss)
-                    is_better = (current_loss < best_loss if self.optimization_metric.upper() in ['RMSE', 'MAE'] 
-                                else current_loss > best_loss)
-                    
-                    if is_better:
-                        best_loss = current_loss
-                        best_x = x.detach().clone()
-                        stagnation_counter = 0
-                    else:
-                        stagnation_counter += 1
-                    
-                    # Logging
-                    if step % 5 == 0 or step == 1:
-                        self.logger.info(f"L-BFGS Step {step:4d}: {self.optimization_metric}={current_loss:.6f}, "
-                                    f"Best={best_loss:.6f}")
-                    
-                    # Store iteration results
-                    self.iteration_results.append({
-                        'iteration': step,
-                        'particle': 0,
-                        'fitness': current_loss,
-                        'parameters': self.param_manager.denormalize_parameters(x.detach().cpu().numpy()),
-                        'gradient_norm': float(torch.norm(x.grad).cpu()) if x.grad is not None else 0.0
-                    })
                     
                 except RuntimeError as e:
-                    self.logger.warning(f"L-BFGS error at step {step}: {e}")
-                    # Fallback to gradient descent step
-                    current_loss, gradients = self._fuse_autograd_step(x)
-                    x.grad = gradients
-                    with torch.no_grad():
-                        x -= lr * 0.1 * gradients  # Small gradient step
-                        x.clamp_(0.0, 1.0)
+                    error_msg = str(e).lower()
+                    
+                    if "line search failed" in error_msg or "strong wolfe" in error_msg:
+                        line_search_failures += 1
+                        self.logger.warning(f"L-BFGS line search failed (attempt {line_search_failures}/{max_line_search_failures})")
+                        
+                        if line_search_failures >= max_line_search_failures:
+                            if restart_counter < max_restarts:
+                                # ENHANCED: Restart L-BFGS with cleared history
+                                restart_counter += 1
+                                line_search_failures = 0
+                                
+                                self.logger.info(f"Restarting L-BFGS (restart {restart_counter}/{max_restarts})")
+                                
+                                # Clear optimizer state (history)
+                                optimizer.state = {}
+                                
+                                # Reduce learning rate for restart
+                                for param_group in optimizer.param_groups:
+                                    param_group['lr'] *= 0.7
+                                
+                                self.logger.info(f"Reduced LR to {optimizer.param_groups[0]['lr']:.6f} for restart")
+                                
+                                # Try again with cleared state
+                                try:
+                                    loss = optimizer.step(closure)
+                                    current_loss = float(loss)
+                                    function_evals += 1
+                                except RuntimeError:
+                                    # If still failing, use gradient descent fallback
+                                    self.logger.warning("L-BFGS restart failed, using gradient descent step")
+                                    current_loss = self._gradient_descent_fallback_step(x, lr * 0.1)
+                                    function_evals += 1
+                            else:
+                                # ENHANCED: Gradient descent fallback after max restarts
+                                self.logger.warning("Max L-BFGS restarts reached, using gradient descent fallback")
+                                current_loss = self._gradient_descent_fallback_step(x, lr * 0.1)
+                                function_evals += 1
+                        else:
+                            # Try with current state one more time
+                            try:
+                                loss = optimizer.step(closure)
+                                current_loss = float(loss)
+                                function_evals += 1
+                            except RuntimeError:
+                                # Fallback to gradient descent for this step
+                                self.logger.warning("Using gradient descent fallback for this step")
+                                current_loss = self._gradient_descent_fallback_step(x, lr * 0.1)
+                                function_evals += 1
+                    else:
+                        # Other RuntimeError - use fallback
+                        self.logger.error(f"L-BFGS error: {e}")
+                        current_loss = self._gradient_descent_fallback_step(x, lr * 0.1)
+                        function_evals += 1
+                
+                # Track best solution
+                is_better = (current_loss < best_loss if self.optimization_metric.upper() in ['RMSE', 'MAE'] 
+                            else current_loss > best_loss)
+                
+                if is_better:
+                    best_loss = current_loss
+                    best_x = x.detach().clone()
+                    stagnation_counter = 0
+                else:
+                    stagnation_counter += 1
+                
+                # Store loss history for stagnation detection
+                loss_history.append(current_loss)
+                recent_losses.append(current_loss)
+                
+                # Keep only recent losses for stagnation detection
+                if len(recent_losses) > stagnation_threshold:
+                    recent_losses.pop(0)
+                
+                # ENHANCED: Stagnation detection and recovery
+                if len(recent_losses) >= stagnation_threshold:
+                    recent_improvement = abs(recent_losses[0] - recent_losses[-1])
+                    if recent_improvement < min_improvement_threshold:
+                        self.logger.info(f"Step {step}: Stagnation detected (improvement: {recent_improvement:.8f})")
+                        
+                        # Clear L-BFGS history to escape local minimum
+                        if restart_counter < max_restarts:
+                            optimizer.state = {}
+                            restart_counter += 1
+                            self.logger.info(f"Cleared L-BFGS history (restart {restart_counter})")
+                            
+                            # Add small perturbation to escape local minimum
+                            with torch.no_grad():
+                                perturbation = torch.normal(0, 0.01, size=x.shape, device=x.device)
+                                x.add_(perturbation)
+                                x.clamp_(0.0, 1.0)
+                        
+                        # Reset recent losses tracking
+                        recent_losses = recent_losses[-2:]  # Keep only last 2
+                
+                # Logging
+                step_time = time.time() - step_start_time
+                if step % 5 == 0 or step == 1:
+                    self.logger.info(f"L-BFGS Step {step:4d}: {self.optimization_metric}={current_loss:.6f}, "
+                                f"Best={best_loss:.6f}")
+                    if line_search_failures > 0:
+                        self.logger.info(f"                 Line search failures: {line_search_failures}")
+                    if restart_counter > 0:
+                        self.logger.info(f"                 Restarts used: {restart_counter}/{max_restarts}")
+                    self.logger.info(f"                 Step time: {step_time:.2f}s, Function evals: {function_evals}")
+                
+                # Store iteration results
+                self.iteration_results.append({
+                    'iteration': step,
+                    'particle': 0,
+                    'fitness': current_loss,
+                    'parameters': self.param_manager.denormalize_parameters(x.detach().cpu().numpy()),
+                    'gradient_norm': float(torch.norm(x.grad).cpu()) if x.grad is not None else 0.0,
+                    'line_search_failures': line_search_failures,
+                    'restart_counter': restart_counter
+                })
         
         # Finalization
         optimization_time = time.time() - start_time
@@ -672,50 +784,41 @@ class FUSEOptimizer:
         self.logger.info(f"FUSE differentiable optimization completed in {optimization_time:.1f}s")
         self.logger.info(f"Best {self.optimization_metric}: {best_loss:.6f}")
         self.logger.info(f"Total function evaluations: {function_evals}")
+        if optimizer_choice == 'LBFGS':
+            self.logger.info(f"Total restarts used: {restart_counter}")
         
         return self._save_results(f'{optimizer_choice}_DIFF')
 
-    def _fuse_autograd_step(self, x: torch.Tensor) -> Tuple[float, torch.Tensor]:
+    def _gradient_descent_fallback_step(self, x: torch.Tensor, fallback_lr: float) -> float:
         """
-        Single forward+backward pass for FUSE optimization
+        Gradient descent fallback when L-BFGS fails.
+        
+        Args:
+            x: Current parameter tensor
+            fallback_lr: Learning rate for gradient descent step
         
         Returns:
-            Tuple of (loss_value, gradients_tensor)
+            Loss value after gradient descent step
         """
         try:
-            # Convert to numpy parameters
-            x_np = x.detach().cpu().numpy()
-            params = self.param_manager.denormalize_parameters(x_np)
+            # Compute loss and gradients
+            current_loss, gradients = self._fuse_autograd_step(x)
             
-            # Update constraints and run FUSE
-            success = self.update_constraint_defaults(params)
-            if not success:
-                return self._get_worst_loss(), torch.zeros_like(x)
+            # Gradient descent step
+            with torch.no_grad():
+                # Apply gradient step with sign flip for maximization
+                if self.optimization_metric.upper() in ['KGE', 'NSE']:
+                    x.add_(gradients, alpha=fallback_lr)  # Gradient ascent
+                else:
+                    x.sub_(gradients, alpha=fallback_lr)  # Gradient descent
+                x.clamp_(0.0, 1.0)
             
-            success = self._run_fuse_model_with_constraints()
-            if not success:
-                return self._get_worst_loss(), torch.zeros_like(x)
-            
-            metrics, jacobian = self._calculate_metrics_with_jacobian()
-            if metrics is None:
-                return self._get_worst_loss(), torch.zeros_like(x)
-
-            fitness = self._extract_target_metric(metrics)
-            if fitness is None or np.isnan(fitness):
-                return self._get_worst_loss(), torch.zeros_like(x)
-
-            if jacobian is None:
-                # NEW: fall back to FD gradients so ADAM can still work
-                gradients = self._finite_difference_gradients(x)
-            else:
-                gradients = self._jacobian_to_gradients(jacobian, x.device)
-
-            return fitness, gradients
-
+            self.logger.debug(f"Gradient descent fallback: loss={current_loss:.6f}")
+            return current_loss
             
         except Exception as e:
-            self.logger.error(f"Error in autograd step: {str(e)}")
-            return self._get_worst_loss(), torch.zeros_like(x)
+            self.logger.error(f"Error in gradient descent fallback: {str(e)}")
+            return self._get_worst_loss()
 
     def _get_worst_loss(self) -> float:
         """Get worst possible loss value for the optimization metric"""
@@ -754,17 +857,14 @@ class FUSEOptimizer:
         """
         Extract numerical jacobian from FUSE output NetCDF file
         
-        The jacobian represents d(outputs)/d(parameters) and has shape:
-        [n_time_steps, n_param_sets, n_spatial, n_outputs, n_parameters]
-        
-        For optimization, we typically want the jacobian of streamflow (q_instnt or q_routed)
-        with respect to parameters, aggregated over time.
+        Updated to handle cases where jacobian output is not configured in FUSE.
+        Falls back gracefully to None, which triggers finite difference gradients.
         """
         try:
             # Find the most recent FUSE output file
             output_files = list(fuse_sim_dir.glob("*_runs_def.nc"))
             if not output_files:
-                self.logger.error("No FUSE output files found")
+                self.logger.debug("No FUSE output files found for jacobian extraction")
                 return None
             
             output_file = sorted(output_files)[-1]  # Most recent
@@ -772,57 +872,193 @@ class FUSEOptimizer:
             with xr.open_dataset(output_file) as ds:
                 # Check if jacobian data exists
                 if 'numjacobian' not in ds.data_vars:
-                    self.logger.error("numjacobian not found in FUSE output")
+                    self.logger.debug("numjacobian not found in FUSE output - using finite differences")
                     return None
                 
                 # Extract jacobian - shape should be (time, param_set, lat, lon, n_params)
                 jacobian_raw = ds['numjacobian'].values
                 
                 if jacobian_raw.size == 0:
-                    self.logger.warning("Jacobian array is empty")
+                    self.logger.debug("Jacobian array is empty - using finite differences")
                     return None
                 
-                # For streamflow optimization, we typically want q_instnt or q_routed gradients
-                # The jacobian in FUSE output represents d(q)/d(params)
+                # Check if jacobian has reasonable dimensions
+                expected_length = len(self.param_manager.all_param_names)
                 
-                # Aggregate over time (could use mean, sum, or focus on specific period)
-                if len(jacobian_raw.shape) >= 3:
-                    # Take mean over time dimension (index 0)
+                # Handle different possible jacobian shapes from FUSE
+                if len(jacobian_raw.shape) == 1:
+                    # 1D array - should be length of parameters
+                    jacobian = jacobian_raw
+                elif len(jacobian_raw.shape) == 2:
+                    # 2D array - (time, params) or (param_set, params)
+                    jacobian = np.nanmean(jacobian_raw, axis=0)
+                elif len(jacobian_raw.shape) >= 3:
+                    # Multi-dimensional - aggregate over time and space
                     jacobian_aggregated = np.nanmean(jacobian_raw, axis=0)
                     
-                    # If there are spatial dimensions, aggregate those too
-                    while len(jacobian_aggregated.shape) > 2:
-                        jacobian_aggregated = np.nanmean(jacobian_aggregated, axis=1)
+                    # Continue aggregating until we get to parameter dimension
+                    while len(jacobian_aggregated.shape) > 1:
+                        jacobian_aggregated = np.nanmean(jacobian_aggregated, axis=0)
                     
-                    # Final shape should be (param_set, n_parameters)
-                    # For single parameter set optimization, take first set
-                    if len(jacobian_aggregated.shape) == 2:
-                        jacobian = jacobian_aggregated[0, :]  # Shape: (n_parameters,)
-                    else:
-                        jacobian = jacobian_aggregated  # Already 1D
-                    
-                    # Handle NaN values
-                    jacobian = np.nan_to_num(jacobian, nan=0.0, posinf=0.0, neginf=0.0)
-                    
-                    # Ensure correct length
-                    expected_length = len(self.param_manager.all_param_names)
-                    if len(jacobian) != expected_length:
-                        self.logger.warning(f"Jacobian length ({len(jacobian)}) doesn't match "
-                                        f"parameter count ({expected_length})")
-                        # Pad or truncate as needed
-                        if len(jacobian) < expected_length:
-                            jacobian = np.pad(jacobian, (0, expected_length - len(jacobian)))
-                        else:
-                            jacobian = jacobian[:expected_length]
-                    
-                    return jacobian
+                    jacobian = jacobian_aggregated
                 else:
-                    self.logger.error(f"Unexpected jacobian shape: {jacobian_raw.shape}")
+                    self.logger.debug(f"Unexpected jacobian shape: {jacobian_raw.shape}")
                     return None
-                    
+                
+                # Ensure jacobian is 1D array
+                if jacobian.ndim > 1:
+                    jacobian = jacobian.flatten()
+                
+                # Handle NaN values
+                jacobian = np.nan_to_num(jacobian, nan=0.0, posinf=0.0, neginf=0.0)
+                
+                # Check if jacobian length matches parameter count
+                if len(jacobian) != expected_length:
+                    self.logger.debug(f"Jacobian length ({len(jacobian)}) doesn't match "
+                                    f"parameter count ({expected_length}) - using finite differences")
+                    return None
+                
+                # Check if jacobian has meaningful values (not all zeros)
+                if np.all(jacobian == 0.0):
+                    self.logger.debug("Jacobian is all zeros - using finite differences")
+                    return None
+                
+                self.logger.debug(f"Successfully extracted jacobian with shape {jacobian.shape}")
+                return jacobian
+                
         except Exception as e:
-            self.logger.error(f"Error extracting FUSE jacobian: {str(e)}")
+            self.logger.debug(f"Error extracting FUSE jacobian: {str(e)} - using finite differences")
             return None
+
+    def _fuse_autograd_step(self, x: torch.Tensor) -> Tuple[float, torch.Tensor]:
+        """
+        Single forward+backward pass for FUSE optimization
+        
+        Updated to handle jacobian extraction more gracefully and use finite differences
+        as the primary method when jacobians are not available.
+        """
+        try:
+            # Convert to numpy parameters
+            x_np = x.detach().cpu().numpy()
+            params = self.param_manager.denormalize_parameters(x_np)
+            
+            # Update constraints and run FUSE
+            success = self.update_constraint_defaults(params)
+            if not success:
+                return self._get_worst_loss(), torch.zeros_like(x)
+            
+            success = self._run_fuse_model_with_constraints()
+            if not success:
+                return self._get_worst_loss(), torch.zeros_like(x)
+            
+            # Calculate metrics first
+            data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+            project_dir = data_dir / f"domain_{self.domain_name}"
+            fuse_sim_dir = project_dir / 'simulations' / self.experiment_id / 'FUSE'
+            
+            metrics = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
+            if not metrics:
+                return self._get_worst_loss(), torch.zeros_like(x)
+
+            fitness = self._extract_target_metric(metrics)
+            if fitness is None or np.isnan(fitness):
+                return self._get_worst_loss(), torch.zeros_like(x)
+
+            # Try to extract jacobian, fall back to finite differences if not available
+            jacobian = self._extract_fuse_jacobian(fuse_sim_dir)
+            
+            if jacobian is not None:
+                # Use analytical jacobian if available
+                gradients = self._jacobian_to_gradients(jacobian, x.device)
+                self.logger.debug("Using analytical jacobian for gradients")
+            else:
+                # Use finite differences as fallback
+                gradients = self._finite_difference_gradients(x)
+                self.logger.debug("Using finite difference gradients")
+
+            return fitness, gradients
+            
+        except Exception as e:
+            self.logger.error(f"Error in autograd step: {str(e)}")
+            return self._get_worst_loss(), torch.zeros_like(x)
+
+    def _finite_difference_gradients(self, x: torch.Tensor, step_size: float = 1e-4) -> torch.Tensor:
+        """
+        Improved finite difference gradient computation with better error handling
+        """
+        try:
+            x_np = x.detach().cpu().numpy()
+            n_params = len(x_np)
+            gradients = np.zeros(n_params)
+            
+            # Get baseline evaluation
+            params_base = self.param_manager.denormalize_parameters(x_np)
+            self.update_constraint_defaults(params_base)
+            success = self._run_fuse_model_with_constraints()
+            
+            if not success:
+                self.logger.warning("Failed to run baseline evaluation for finite differences")
+                return torch.zeros_like(x)
+            
+            data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+            project_dir = data_dir / f"domain_{self.domain_name}"
+            fuse_sim_dir = project_dir / 'simulations' / self.experiment_id / 'FUSE'
+            
+            metrics_base = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
+            if not metrics_base:
+                self.logger.warning("Failed to calculate baseline metrics for finite differences")
+                return torch.zeros_like(x)
+                
+            fitness_base = self._extract_target_metric(metrics_base)
+            if fitness_base is None:
+                self.logger.warning("Failed to extract baseline fitness for finite differences")
+                return torch.zeros_like(x)
+            
+            # Compute finite differences for each parameter
+            for i in range(n_params):
+                x_pert = x_np.copy()
+                
+                # Use adaptive step size based on parameter magnitude
+                param_magnitude = abs(x_pert[i])
+                adaptive_step = step_size if param_magnitude < 1e-3 else step_size * param_magnitude
+                
+                x_pert[i] = np.clip(x_pert[i] + adaptive_step, 0.0, 1.0)
+                
+                params_pert = self.param_manager.denormalize_parameters(x_pert)
+                self.update_constraint_defaults(params_pert)
+                success = self._run_fuse_model_with_constraints()
+                
+                if success:
+                    metrics_pert = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
+                    if metrics_pert:
+                        fitness_pert = self._extract_target_metric(metrics_pert)
+                        if fitness_pert is not None:
+                            gradients[i] = (fitness_pert - fitness_base) / adaptive_step
+                        else:
+                            gradients[i] = 0.0
+                    else:
+                        gradients[i] = 0.0
+                else:
+                    self.logger.debug(f"Failed to evaluate perturbation for parameter {i}")
+                    gradients[i] = 0.0
+            
+            # Convert to tensor with appropriate sign for optimization direction
+            if self.optimization_metric.upper() in ['KGE', 'NSE']:
+                gradients = -gradients  # Negative for maximization (since optimizers minimize)
+            
+            # Add small amount of noise to prevent zero gradients
+            gradients += np.random.normal(0, 1e-8, gradients.shape)
+            
+            # Gradient clipping for stability
+            gradient_norm = np.linalg.norm(gradients)
+            if gradient_norm > 1.0:
+                gradients = gradients / gradient_norm
+            
+            return torch.tensor(gradients, dtype=torch.float32, device=x.device)
+            
+        except Exception as e:
+            self.logger.error(f"Error in finite difference gradients: {str(e)}")
+            return torch.zeros_like(x)
 
     def _jacobian_to_gradients(self, jacobian: np.ndarray, device: torch.device) -> torch.Tensor:
         """
@@ -861,55 +1097,6 @@ class FUSEOptimizer:
             self.logger.error(f"Error converting jacobian to gradients: {str(e)}")
             return torch.zeros(len(self.param_manager.all_param_names), device=device)
 
-    def _finite_difference_gradients(self, x: torch.Tensor, step_size: float = 1e-4) -> torch.Tensor:
-        """
-        Fallback method to compute gradients using finite differences
-        when jacobian extraction fails
-        """
-        try:
-            x_np = x.detach().cpu().numpy()
-            n_params = len(x_np)
-            gradients = np.zeros(n_params)
-            
-            # Get baseline evaluation
-            params_base = self.param_manager.denormalize_parameters(x_np)
-            self.update_constraint_defaults(params_base)
-            self._run_fuse_model_with_constraints()
-            
-            data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-            project_dir = data_dir / f"domain_{self.domain_name}"
-            fuse_sim_dir = project_dir / 'simulations' / self.experiment_id / 'FUSE'
-            
-            metrics_base = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
-            fitness_base = self._extract_target_metric(metrics_base) if metrics_base else 0.0
-            
-            # Compute finite differences
-            for i in range(n_params):
-                x_pert = x_np.copy()
-                x_pert[i] = np.clip(x_pert[i] + step_size, 0.0, 1.0)
-                
-                params_pert = self.param_manager.denormalize_parameters(x_pert)
-                self.update_constraint_defaults(params_pert)
-                success = self._run_fuse_model_with_constraints()
-                
-                if success:
-                    metrics_pert = self.calibration_target.calculate_metrics(fuse_sim_dir, None)
-                    fitness_pert = self._extract_target_metric(metrics_pert) if metrics_pert else fitness_base
-                    gradients[i] = (fitness_pert - fitness_base) / step_size
-                else:
-                    gradients[i] = 0.0
-            
-            # Convert to tensor with appropriate sign
-            if self.optimization_metric.upper() in ['KGE', 'NSE']:
-                gradients = -gradients  # Negative for maximization
-            
-            return torch.tensor(gradients, dtype=torch.float32, device=x.device)
-            
-        except Exception as e:
-            self.logger.error(f"Error in finite difference gradients: {str(e)}")
-            return torch.zeros_like(x)
-
-    # Multi-objective differentiable optimization
 
     def run_differentiable_multiobjective(self, optimizer: str = 'ADAM', steps: int = 100, 
                                         lr: float = 0.01, objectives: List[str] = None,
