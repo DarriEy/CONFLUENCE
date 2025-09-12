@@ -44,6 +44,7 @@ POUR_POINT_SHP_NAME: default                                   # If 'default', u
 
 # Domain representation settings
 DOMAIN_DEFINITION_METHOD: delineate                            # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+ROUTING_DELINEATION: river_network
 GEOFABRIC_TYPE: TDX                                            # Source geofabric to subset from, current options: Merit, TDX, NWS
 STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
 LUMPED_WATERSHED_METHOD: TauDEM                                # Use pysheds or TauDEM for lumped delineation
@@ -183,9 +184,9 @@ SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA
 
 # Mizuroute settings
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
-SETTINGS_MIZU_ROUTING_DT: 3600                                 # Duration of the routing time step [s].
-SETTINGS_MIZU_ROUTING_UNITS: m/s                               # Units of the variable to be routed.
-SETTINGS_MIZU_ROUTING_VAR: averageRoutedRunoff                 # Name of output variable to use for routing.
+SETTINGS_MIZU_ROUTING_DT: 86400                                 # Duration of the routing time step [s].
+SETTINGS_MIZU_ROUTING_UNITS: mm/d                               # Units of the variable to be routed.
+SETTINGS_MIZU_ROUTING_VAR: q_routed                            # Name of output variable to use for routing.
 SETTINGS_MIZU_OUTPUT_FREQ: single                              # Frequency with which mizuRoute generates new output files. Must be one of 'single', 'daily', 'monthly', 'yearly'.
 SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output. '0' for both KWT and IRF; '1' IRF only; '2' KWT only.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
@@ -207,13 +208,14 @@ EXPERIMENT_LOG_MIZUROUTE: default                              # Path to mizuRou
 EXPERIMENT_LOG_SUMMA: default                                  # Path to SUMMA experiment log file. If 'default', uses 'root_path/domain_[name]/simulations/[experiment_id]/mizuRoute/mizuRoute_logs'
 
 # FUSE settings
-FUSE_SPATIAL_MODE: distributed
+FUSE_ROUTING_INTEGRATION: mizuRoute
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
 SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
 FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
-FUSE_spatial: lumped                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+FUSE_SPATIAL_MODE: distributed                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
 EXPERIMENT_OUTPUT_FUSE: default                                # Directory for FUSE experiment output
+SETTINGS_FUSE_PARAMS_TO_CALIBRATE: MAXWATR_1,MAXWATR_2,BASERTE,QB_POWR,TIMEDELAY,PERCRTE,FRACTEN,RTFRAC1,MBASE,MFMAX,MFMIN,PXTEMP,LAPSE
 
 # GR settings
 SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
@@ -320,8 +322,8 @@ EMULATION_USE_ATTRIBUTES: false                                # Use attributes 
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: ASYNC-DDS                    # Options DDS, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
+ITERATIVE_OPTIMIZATION_ALGORITHM: DDS                    # Options DDS, PSO or SCE-UA
+NUMBER_OF_ITERATIONS: 2000                                      # Number of iterations for calibration 
 POPULATION_SIZE: 50                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
   # -- DDS specific settings

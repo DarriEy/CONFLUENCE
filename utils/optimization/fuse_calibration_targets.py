@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-FUSE Calibration Target
+FUSE Calibration Target - UPDATED for Distributed FUSE + mizuRoute
 
 Provides calibration target classes specifically designed for FUSE model output.
-Handles FUSE-specific file patterns and data structures.
+Handles both lumped FUSE output and distributed FUSE + mizuRoute output.
 """
 
 import numpy as np
@@ -32,6 +32,9 @@ class FUSECalibrationTarget:
         self.domain_name = config.get('DOMAIN_NAME')
         self.experiment_id = config.get('EXPERIMENT_ID')
         
+        # Check if using distributed FUSE + mizuRoute
+        self.is_distributed = config.get('FUSE_SPATIAL_MODE', 'lumped').lower() == 'distributed'
+        
         # Get observation data
         self._load_observations()
         
@@ -56,7 +59,7 @@ class FUSECalibrationTarget:
                 try:
                     area = self._try_get_area_from_shapefile(path_key, name_key, default_subdir, file_pattern, area_col)
                     if area and area > 0:
-                        self.logger.info(f"Successfully calculated catchment area: {area:.2f} km2 from {area_col}")
+                        self.logger.debug(f"Successfully calculated catchment area: {area:.2f} km2 from {area_col}")
                         return area
                 except Exception as e:
                     self.logger.debug(f"Failed to get area from {path_key}/{area_col}: {str(e)}")
@@ -226,6 +229,23 @@ class FUSECalibrationTarget:
         try:
             self.logger.debug(f"Starting metrics calculation in: {fuse_sim_dir}")
             
+            # Check if using distributed mode
+            if self.is_distributed:
+                self.logger.debug("Using distributed FUSE + mizuRoute mode")
+                return self._calculate_distributed_metrics(fuse_sim_dir, mizuroute_dir)
+            else:
+                self.logger.debug("Using lumped FUSE mode")
+                return self._calculate_lumped_metrics(fuse_sim_dir)
+                
+        except Exception as e:
+            self.logger.error(f"Error calculating FUSE metrics: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+    
+    def _calculate_lumped_metrics(self, fuse_sim_dir: Path) -> Optional[Dict[str, float]]:
+        """Calculate metrics from lumped FUSE output (original logic)"""
+        try:
             # Find FUSE simulation file (prefer runs_def.nc for calibration)
             sim_file = None
             available_files = []
@@ -289,10 +309,184 @@ class FUSECalibrationTarget:
             return self._calculate_performance_metrics(simulated_df)
             
         except Exception as e:
-            self.logger.error(f"Error calculating FUSE metrics: {str(e)}")
+            self.logger.error(f"Error calculating lumped metrics: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             return None
+    
+    def _calculate_distributed_metrics(self, fuse_sim_dir: Path, mizuroute_dir: Optional[Path] = None) -> Optional[Dict[str, float]]:
+        """Calculate metrics from distributed FUSE + mizuRoute output"""
+        try:
+            # Determine mizuRoute directory
+            if mizuroute_dir is None:
+                mizuroute_dir = self.project_dir / 'simulations' / self.experiment_id / 'mizuRoute'
+            
+            self.logger.debug(f"Reading mizuRoute output from: {mizuroute_dir}")
+            
+            # Find mizuRoute output file
+            sim_file = self._find_mizuroute_output_file(mizuroute_dir)
+            if sim_file is None:
+                return None
+            
+            # Read mizuRoute output and find segment with highest discharge
+            simulated_df = self._read_mizuroute_streamflow(sim_file)
+            if simulated_df is None:
+                return None
+            
+            # Round to nearest hour
+            simulated_df = self._round_to_nearest_hour(simulated_df)
+            
+            # mizuRoute output is already in cms, no unit conversion needed
+            self.logger.debug(f"mizuRoute simulation mean: {simulated_df.mean():.6f} cms")
+            self.logger.debug(f"mizuRoute simulation std: {simulated_df.std():.6f} cms")
+            
+            # Calculate metrics with observations
+            return self._calculate_performance_metrics(simulated_df)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating distributed metrics: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return None
+    
+    def _find_mizuroute_output_file(self, mizuroute_dir: Path) -> Optional[Path]:
+        """Find mizuRoute output file"""
+        if not mizuroute_dir.exists():
+            self.logger.error(f"mizuRoute directory does not exist: {mizuroute_dir}")
+            return None
+        
+        # Look for mizuRoute output files with experiment ID pattern
+        patterns = [
+            f"{self.experiment_id}_*.nc",
+            f"*{self.experiment_id}*.nc",
+            "*.nc"
+        ]
+        
+        for pattern in patterns:
+            potential_files = list(mizuroute_dir.glob(pattern))
+            if potential_files:
+                # Use the most recent file if multiple found
+                sim_file = max(potential_files, key=lambda x: x.stat().st_mtime)
+                self.logger.debug(f"Found mizuRoute output file: {sim_file.name}")
+                return sim_file
+        
+        # List available files for debugging
+        available_files = list(mizuroute_dir.glob("*.nc"))
+        self.logger.error(f"No mizuRoute output files found. Available files: {[f.name for f in available_files]}")
+        return None
+    
+    def _read_mizuroute_streamflow(self, sim_file: Path) -> Optional[pd.Series]:
+        """Read streamflow from mizuRoute output and find segment with highest discharge"""
+        try:
+            with xr.open_dataset(sim_file) as ds:
+                self.logger.debug(f"mizuRoute dataset variables: {list(ds.variables.keys())}")
+                self.logger.debug(f"mizuRoute dataset dimensions: {dict(ds.sizes)}")
+                
+                # Find streamflow variable
+                flow_var = None
+                flow_candidates = ['IRFroutedRunoff', 'streamflow', 'discharge', 'flow', 'q']
+                
+                for candidate in flow_candidates:
+                    if candidate in ds.variables:
+                        flow_var = candidate
+                        break
+                
+                if flow_var is None:
+                    self.logger.error(f"No streamflow variable found. Available variables: {list(ds.variables.keys())}")
+                    return None
+                
+                self.logger.debug(f"Using mizuRoute streamflow variable: {flow_var}")
+                
+                # Get streamflow data
+                flow_data = ds[flow_var]
+                self.logger.debug(f"Flow data shape: {flow_data.shape}")
+                self.logger.debug(f"Flow data dimensions: {flow_data.dims}")
+                
+                # Find segment with highest mean discharge
+                if 'seg' in flow_data.dims:
+                    # Calculate mean discharge for each segment
+                    mean_discharge_per_seg = flow_data.mean(dim='time')
+                    max_seg_idx = mean_discharge_per_seg.argmax()
+                    
+                    if hasattr(max_seg_idx, 'values'):
+                        max_seg_idx = int(max_seg_idx.values)
+                    else:
+                        max_seg_idx = int(max_seg_idx)
+                    
+                    # Extract time series for the segment with highest discharge
+                    segment_flow = flow_data.isel(seg=max_seg_idx)
+                    max_discharge_value = float(mean_discharge_per_seg.isel(seg=max_seg_idx).values)
+                    
+                    self.logger.debug(f"Selected segment {max_seg_idx} with mean discharge {max_discharge_value:.3f} cms")
+                    
+                elif 'reachID' in flow_data.dims:
+                    # Handle different dimension name
+                    mean_discharge_per_reach = flow_data.mean(dim='time')
+                    max_reach_idx = mean_discharge_per_reach.argmax()
+                    
+                    if hasattr(max_reach_idx, 'values'):
+                        max_reach_idx = int(max_reach_idx.values)
+                    else:
+                        max_reach_idx = int(max_reach_idx)
+                    
+                    segment_flow = flow_data.isel(reachID=max_reach_idx)
+                    max_discharge_value = float(mean_discharge_per_reach.isel(reachID=max_reach_idx).values)
+                    
+                    self.logger.debug(f"Selected reach {max_reach_idx} with mean discharge {max_discharge_value:.3f} cms")
+                    
+                else:
+                    # Assume single segment or take spatial mean
+                    if len(flow_data.dims) > 1:
+                        # Take mean over spatial dimensions (keeping time)
+                        spatial_dims = [dim for dim in flow_data.dims if dim != 'time']
+                        segment_flow = flow_data.mean(dim=spatial_dims)
+                        self.logger.info("Using spatial mean of streamflow (no segment dimension found)")
+                    else:
+                        segment_flow = flow_data
+                        self.logger.debug("Using single streamflow time series")
+                
+                # Convert to pandas Series
+                simulated_df = segment_flow.to_pandas()
+                
+                # Ensure we have a proper time index
+                if not isinstance(simulated_df.index, pd.DatetimeIndex):
+                    self.logger.warning("mizuRoute output does not have proper datetime index")
+                    # Try to convert if possible
+                    try:
+                        simulated_df.index = pd.to_datetime(simulated_df.index)
+                    except Exception as e:
+                        self.logger.error(f"Could not convert mizuRoute time index: {str(e)}")
+                        return None
+                
+                self.logger.debug(f"Extracted mizuRoute streamflow: {len(simulated_df)} time steps")
+                self.logger.debug(f"Time period: {simulated_df.index.min()} to {simulated_df.index.max()}")
+                
+                return simulated_df
+                
+        except Exception as e:
+            self.logger.error(f"Error reading mizuRoute streamflow: {str(e)}")
+            return None
+    
+    def _round_to_nearest_hour(self, simulated_df: pd.Series) -> pd.Series:
+        """Round mizuRoute output to the nearest hour"""
+        try:
+            # Round the index to nearest hour
+            rounded_index = simulated_df.index.round('h')
+            
+            # Create new series with rounded index
+            rounded_df = pd.Series(simulated_df.values, index=rounded_index)
+            
+            # If there are duplicate indices after rounding, take the mean
+            if rounded_df.index.duplicated().any():
+                self.logger.debug("Found duplicate indices after rounding, taking mean")
+                rounded_df = rounded_df.groupby(rounded_df.index).mean()
+            
+            self.logger.debug(f"Rounded mizuRoute output to hourly: {len(rounded_df)} time steps")
+            return rounded_df
+            
+        except Exception as e:
+            self.logger.error(f"Error rounding to nearest hour: {str(e)}")
+            return simulated_df  # Return original if rounding fails
     
     def _needs_unit_conversion(self) -> bool:
         """Check if unit conversion is needed (to be overridden by subclasses)"""
@@ -304,7 +498,7 @@ class FUSECalibrationTarget:
 
 
 class FUSEStreamflowTarget(FUSECalibrationTarget):
-    """FUSE calibration target for streamflow"""
+    """FUSE calibration target for streamflow - UPDATED for distributed mode"""
     
     def _load_observations(self):
         """Load streamflow observations with improved error handling"""
@@ -326,7 +520,7 @@ class FUSEStreamflowTarget(FUSECalibrationTarget):
             
             # Read observations with flexible column detection
             dfObs = pd.read_csv(obs_file_path)
-            self.logger.info(f"Loaded CSV with columns: {list(dfObs.columns)}")
+            self.logger.debug(f"Loaded CSV with columns: {list(dfObs.columns)}")
             
             # Find datetime and discharge columns
             datetime_col, discharge_col = self._identify_columns(dfObs)
@@ -337,8 +531,8 @@ class FUSEStreamflowTarget(FUSECalibrationTarget):
             # Extract discharge data
             self.observed_streamflow = dfObs[discharge_col].resample('d').mean()
             
-            self.logger.info(f"Loaded streamflow observations: {len(self.observed_streamflow)} days")
-            self.logger.info(f"Observation period: {self.observed_streamflow.index.min()} to {self.observed_streamflow.index.max()}")
+            self.logger.debug(f"Loaded streamflow observations: {len(self.observed_streamflow)} days")
+            self.logger.debug(f"Observation period: {self.observed_streamflow.index.min()} to {self.observed_streamflow.index.max()}")
             
         except Exception as e:
             self.logger.error(f"Error loading streamflow observations: {str(e)}")
@@ -440,22 +634,41 @@ class FUSEStreamflowTarget(FUSECalibrationTarget):
             self.logger.error(f"Error processing datetime index: {str(e)}")
             raise
     
+    def _needs_unit_conversion(self) -> bool:
+        """For distributed mode, mizuRoute already provides cms; for lumped mode, conversion needed"""
+        return not self.is_distributed
+    
     def _calculate_performance_metrics(self, simulated_df: pd.Series) -> Dict[str, float]:
         """Calculate streamflow performance metrics"""
         if self.observed_streamflow is None:
             self.logger.error("No streamflow observations available")
             return {}
-        
+
         try:
-            # Align time series
+            # --- NEW: Harmonize temporal resolution when obs are daily ---
+            # Heuristic: if the median obs timestep is >= 23h, treat as daily
+            if len(self.observed_streamflow.index) > 1:
+                obs_dt = pd.Series(self.observed_streamflow.index).diff().median()
+            else:
+                obs_dt = pd.Timedelta('1D')
+
+            obs_is_daily = pd.isna(obs_dt) or (obs_dt >= pd.Timedelta(hours=23))
+
+            if obs_is_daily:
+                # Resample simulated hourly to daily mean and normalize to midnight
+                simulated_df = simulated_df.resample('D').mean()
+                simulated_df.index = simulated_df.index.normalize()
+                self.logger.debug("Resampled simulated streamflow to daily mean for alignment with daily observations")
+
+            # Align time series on common timestamps
             common_index = self.observed_streamflow.index.intersection(simulated_df.index)
             if len(common_index) == 0:
                 self.logger.error("No overlapping time period between observations and simulations")
                 return {}
-            
+
             obs_aligned = self.observed_streamflow.loc[common_index].dropna()
             sim_aligned = simulated_df.loc[common_index].dropna()
-            
+
             # Further align after dropping NaNs
             final_index = obs_aligned.index.intersection(sim_aligned.index)
             obs_values = obs_aligned.loc[final_index].values
@@ -496,6 +709,9 @@ class FUSESnowTarget:
         self.logger = logger
         self.domain_name = config.get('DOMAIN_NAME')
         self.experiment_id = config.get('EXPERIMENT_ID')
+        
+        # Check if using distributed FUSE + mizuRoute
+        self.is_distributed = config.get('FUSE_SPATIAL_MODE', 'lumped').lower() == 'distributed'
         
         # Get observation data
         self._load_observations()
@@ -711,10 +927,13 @@ class FUSESnowTarget:
         """SWE in FUSE is in mm water equivalent; no area conversion needed"""
         return False
 
-
     def calculate_metrics(self, fuse_sim_dir: Path, mizuroute_dir: Optional[Path] = None) -> Optional[Dict[str, float]]:
+        """Calculate SWE metrics - snow calibration only uses FUSE output, not mizuRoute"""
         try:
             self.logger.debug(f"Starting SWE metrics calculation in: {fuse_sim_dir}")
+            
+            # For snow variables, always use FUSE output (not mizuRoute)
+            # mizuRoute doesn't route snow variables, only streamflow
             
             # Find FUSE simulation file
             sim_file = None
@@ -779,7 +998,23 @@ class FUSESnowTarget:
                         return None
                 
                 # Extract the simulation data
-                simulated = ds[sim_var].isel(param_set=0, latitude=0, longitude=0).to_pandas()
+                if self.is_distributed:
+                    # For distributed mode, aggregate over spatial dimensions
+                    if 'param_set' in ds[sim_var].dims:
+                        simulated = ds[sim_var].isel(param_set=0)
+                    else:
+                        simulated = ds[sim_var]
+                    
+                    # Take spatial mean if multiple spatial dimensions
+                    spatial_dims = [dim for dim in simulated.dims if dim not in ['time']]
+                    if spatial_dims:
+                        simulated = simulated.mean(dim=spatial_dims)
+                        self.logger.debug(f"Averaged SWE over spatial dimensions: {spatial_dims}")
+                else:
+                    # For lumped mode
+                    simulated = ds[sim_var].isel(param_set=0, latitude=0, longitude=0)
+                
+                simulated = simulated.to_pandas()
                 self.logger.debug(f"Successfully extracted {sim_var} data: {len(simulated)} time steps")
 
             # DEBUG: Log SWE simulation statistics

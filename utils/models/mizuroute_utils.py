@@ -21,16 +21,21 @@ class MizuRoutePreProcessor:
         self.mizuroute_setup_dir = self.project_dir / "settings" / "mizuRoute"
 
     def run_preprocessing(self):
-        self.logger.info("Starting mizuRoute spatial preprocessing")
-        
+        self.logger.debug("Starting mizuRoute spatial preprocessing")
         self.copy_base_settings()
         self.create_network_topology_file()
         self.logger.info(f"Should we remap?: {self.config.get('SETTINGS_MIZU_NEEDS_REMAP')}")
         if self.config.get('SETTINGS_MIZU_NEEDS_REMAP'):
             self.remap_summa_catchments_to_routing()
-        self.create_control_file()
-        
+
+        # NEW: choose control writer based on source model
+        if self.config.get('MIZU_FROM_MODEL') == 'FUSE' or self.config.get('FUSE_ROUTING_INTEGRATION', 'mizuRoute') == 'mizuRoute':
+            self.create_fuse_control_file()
+        else:
+            self.create_control_file()
+
         self.logger.info("mizuRoute spatial preprocessing completed")
+
 
     def copy_base_settings(self):
         self.logger.info("Copying mizuRoute base settings")
@@ -484,7 +489,7 @@ class MizuRoutePreProcessor:
         self.logger.info(f"Remapping file created at {self.mizuroute_setup_dir / remap_name}")
 
     def create_control_file(self):
-        self.logger.info("Creating mizuRoute control file")
+        self.logger.debug("Creating mizuRoute control file")
         
         control_name = self.config.get('SETTINGS_MIZU_CONTROL_FILE')
         
@@ -498,7 +503,7 @@ class MizuRoutePreProcessor:
             self._write_control_file_remapping(cf)
             self._write_control_file_miscellaneous(cf)
         
-        self.logger.info(f"mizuRoute control file created at {self.mizuroute_setup_dir / control_name}")
+        self.logger.debug(f"mizuRoute control file created at {self.mizuroute_setup_dir / control_name}")
 
     def _set_topology_attributes(self, ncid):
         now = datetime.now()
@@ -509,6 +514,77 @@ class MizuRoutePreProcessor:
     def _create_topology_dimensions(self, ncid, num_seg, num_hru):
         ncid.createDimension('seg', num_seg)
         ncid.createDimension('hru', num_hru)
+
+    def create_fuse_control_file(self):
+        """Create mizuRoute control file specifically for FUSE input"""
+        self.logger.debug("Creating mizuRoute control file for FUSE")
+        
+        control_name = self.config.get('SETTINGS_MIZU_CONTROL_FILE')
+        
+        with open(self.mizuroute_setup_dir / control_name, 'w') as cf:
+            self._write_control_file_header(cf)
+            self._write_fuse_control_file_directories(cf)  # FUSE-specific directories
+            self._write_control_file_parameters(cf)
+            self._write_control_file_simulation_controls(cf)
+            self._write_control_file_topology(cf)
+            self._write_fuse_control_file_runoff(cf)  # FUSE-specific runoff settings
+            self._write_control_file_remapping(cf)
+            self._write_control_file_miscellaneous(cf)
+
+    def _write_fuse_control_file_directories(self, cf):
+        """Write FUSE-specific directory paths for mizuRoute control"""
+        experiment_output_fuse = self.config.get('EXPERIMENT_OUTPUT_FUSE')
+        experiment_output_mizuroute = self.config.get('EXPERIMENT_OUTPUT_MIZUROUTE')
+
+        if experiment_output_fuse == 'default':
+            experiment_output_fuse = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'FUSE'
+        else:
+            experiment_output_fuse = Path(experiment_output_fuse)
+
+        if experiment_output_mizuroute == 'default':
+            experiment_output_mizuroute = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'mizuRoute'
+        else:
+            experiment_output_mizuroute = Path(experiment_output_mizuroute)
+
+        cf.write("!\n! --- DEFINE DIRECTORIES \n")
+        cf.write(f"<ancil_dir>             {self.mizuroute_setup_dir}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n")
+        cf.write(f"<input_dir>             {experiment_output_fuse}/    ! Folder that contains runoff data from FUSE \n")
+        cf.write(f"<output_dir>            {experiment_output_mizuroute}/    ! Folder that will contain mizuRoute simulations \n")
+
+
+    def _write_fuse_control_file_runoff(self, cf):
+        """Write FUSE-specific runoff file settings"""
+        cf.write("!\n! --- DEFINE RUNOFF FILE \n")
+        cf.write(f"<fname_qsim>            {self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_runs_def.nc    ! netCDF name for FUSE runoff \n")
+        cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR')}    ! Variable name for FUSE runoff \n")
+        cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS')}    ! Units of input runoff \n")
+        cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT')}    ! Time interval of input runoff in seconds \n")
+        cf.write("<dname_time>            time    ! Dimension name for time \n")
+        cf.write("<vname_time>            time    ! Variable name for time \n")
+        cf.write("<dname_hruid>           gru     ! Dimension name for HM_HRU ID \n")
+        cf.write("<vname_hruid>           gruId   ! Variable name for HM_HRU ID \n")
+        cf.write("<calendar>              standard    ! Calendar of the nc file \n")
+
+
+    def _write_control_file_simulation_controls(self, cf):
+        """Enhanced simulation control writing with proper time handling"""
+        # Get simulation dates from config
+        sim_start = self.config.get('EXPERIMENT_TIME_START')
+        sim_end = self.config.get('EXPERIMENT_TIME_END')
+        
+        # Ensure dates are in proper format
+        from datetime import datetime
+        if isinstance(sim_start, str) and len(sim_start) == 10:  # YYYY-MM-DD format
+            sim_start = f"{sim_start} 00:00"
+        if isinstance(sim_end, str) and len(sim_end) == 10:  # YYYY-MM-DD format
+            sim_end = f"{sim_end} 23:00"
+        
+        cf.write("!\n! --- DEFINE SIMULATION CONTROLS \n")
+        cf.write(f"<case_name>             {self.config.get('EXPERIMENT_ID')}    ! Simulation case name \n")
+        cf.write(f"<sim_start>             {sim_start}    ! Time of simulation start \n")
+        cf.write(f"<sim_end>               {sim_end}    ! Time of simulation end \n")
+        cf.write(f"<route_opt>             {self.config.get('SETTINGS_MIZU_OUTPUT_VARS')}    ! Option for routing schemes \n")
+        cf.write(f"<newFileFrequency>      {self.config.get('SETTINGS_MIZU_OUTPUT_FREQ')}    ! Frequency for new output files \n")
 
     def _create_topology_variables(self, ncid, shp_river, shp_basin):
         self._create_and_fill_nc_var(ncid, 'segId', 'int', 'seg', shp_river[self.config.get('RIVER_NETWORK_SHP_SEGID')].values.astype(int), 'Unique ID of each stream segment', '-')
@@ -592,24 +668,6 @@ class MizuRoutePreProcessor:
         cf.write("!\n! --- NAMELIST FILENAME \n")
         cf.write(f"<param_nml>             {self.config.get('SETTINGS_MIZU_PARAMETERS')}    ! Spatially constant parameter namelist (should be stored in the ancil_dir) \n")
 
-    def _write_control_file_simulation_controls(self, cf):
-        self.sim_start = self.config.get('EXPERIMENT_TIME_START')
-        self.sim_end = self.config.get('EXPERIMENT_TIME_END')
-
-        if self.sim_start == 'default' or self.sim_end == 'default':
-            raw_time = [
-                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
-                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
-                ]
-            self.sim_start = f"{raw_time[0]}-01-01 00:00" if self.sim_start == 'default' else self.sim_start
-            self.sim_end = f"{raw_time[1]}-12-31 23:00" if self.sim_end == 'default' else self.sim_end
-
-        cf.write("!\n! --- DEFINE SIMULATION CONTROLS \n")
-        cf.write(f"<case_name>             {self.config.get('EXPERIMENT_ID')}    ! Simulation case name. This used for output netCDF, and restart netCDF name \n")
-        cf.write(f"<sim_start>             {self.sim_start}    ! Time of simulation start. format: yyyy-mm-dd or yyyy-mm-dd hh:mm:ss \n")
-        cf.write(f"<sim_end>               {self.sim_end}    ! Time of simulation end. format: yyyy-mm-dd or yyyy-mm-dd hh:mm:ss \n")
-        cf.write(f"<route_opt>             {self.config.get('SETTINGS_MIZU_OUTPUT_VARS')}    ! Option for routing schemes. 0: both; 1: IRF; 2: KWT. Saves no data if not specified \n")
-        cf.write(f"<newFileFrequency>      {self.config.get('SETTINGS_MIZU_OUTPUT_FREQ')}    ! Frequency for new output files (single, day, month, or annual) \n")
 
     def _write_control_file_topology(self, cf):
         cf.write("!\n! --- DEFINE TOPOLOGY FILE \n")
@@ -624,18 +682,6 @@ class MizuRoutePreProcessor:
         cf.write("<varname_hruSegId>      hruToSegId    ! Name of variable holding the stream segment below each HRU \n")
         cf.write("<varname_segId>         segId    ! Name of variable holding the ID of each stream segment \n")
         cf.write("<varname_downSegId>     downSegId    ! Name of variable holding the ID of the next downstream segment \n")
-
-    def _write_control_file_runoff(self, cf):
-        cf.write("!\n! --- DEFINE RUNOFF FILE \n")
-        cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for HM_HRU runoff \n")
-        cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR')}    ! Variable name for HM_HRU runoff \n")
-        cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS')}    ! Units of input runoff. e.g., mm/s \n")
-        cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT')}    ! Time interval of input runoff in seconds, e.g., 86400 sec for daily step \n")
-        cf.write("<dname_time>            time    ! Dimension name for time \n")
-        cf.write("<vname_time>            time    ! Variable name for time \n")
-        cf.write("<dname_hruid>           gru     ! Dimension name for HM_HRU ID \n")
-        cf.write("<vname_hruid>           gruId   ! Variable name for HM_HRU ID \n")
-        cf.write("<calendar>              standard    ! Calendar of the nc file if not provided in the time variable of the nc file \n")
 
     def _write_control_file_remapping(self, cf):
         cf.write("!\n! --- DEFINE RUNOFF MAPPING FILE \n")
@@ -691,74 +737,188 @@ class MizuRouteRunner:
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 
-    def fix_summa_time_precision(self):
+    def fix_time_precision(self):
         """
-        Fix SUMMA output time precision by rounding to nearest hour.
+        Fix model output time precision by rounding to nearest hour.
         This fixes compatibility issues with mizuRoute time matching.
+        Now supports both SUMMA and FUSE outputs with proper time format detection.
         """
-        self.logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
+        # Determine which model's output to process
+        models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
+        active_models = [m.strip() for m in models]
         
-        # Get SUMMA output path
-        experiment_output_summa = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
-        if experiment_output_summa == 'default':
-            experiment_output_summa = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
+        # For FUSE, check if it has already converted its output
+        if 'FUSE' in active_models:
+            self.logger.debug("Fixing FUSE time precision for mizuRoute compatibility")
+            experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'FUSE'
+            runoff_filename = f"{self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_runs_def.nc"
         else:
-            experiment_output_summa = Path(experiment_output_summa)
+            self.logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
+            experiment_output_summa = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
+            if experiment_output_summa == 'default':
+                experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
+            else:
+                experiment_output_dir = Path(experiment_output_summa)
+            runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
         
-        # Get the specific runoff file
-        runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
-        runoff_filepath = experiment_output_summa / runoff_filename
+        runoff_filepath = experiment_output_dir / runoff_filename
         
         if not runoff_filepath.exists():
-            self.logger.error(f"SUMMA output file not found: {runoff_filepath}")
+            self.logger.error(f"Model output file not found: {runoff_filepath}")
             return
         
         try:
             import xarray as xr
             import os
             
-            self.logger.info(f"Processing {runoff_filepath}")
-            # Open without decoding times to avoid conflicts
+            self.logger.debug(f"Processing {runoff_filepath}")
+            
+            # Open dataset and examine time format
             ds = xr.open_dataset(runoff_filepath, decode_times=False)
             
-            # Check if time fixing is needed
-            first_time = pd.to_datetime(ds.time.values[0], unit='s', origin='1990-01-01')
-            rounded_time = first_time.round('H')
+            # Detect the time format by examining attributes and values
+            time_attrs = ds.time.attrs
+            time_values = ds.time.values
             
-            if first_time != rounded_time:
-                self.logger.info("Time precision issue detected, rounding to nearest hour")
+            self.logger.debug(f"Time units: {time_attrs.get('units', 'No units specified')}")
+            self.logger.debug(f"Time range: {time_values.min()} to {time_values.max()}")
+            
+            # Check if time precision fix is needed and determine format
+            needs_fix = False
+            time_format_detected = None
+            
+            if 'units' in time_attrs:
+                units_str = time_attrs['units'].lower()
                 
-                # Convert to pandas timestamps, round, then back to seconds
-                time_stamps = pd.to_datetime(ds.time.values, unit='s', origin='1990-01-01')
-                rounded_stamps = time_stamps.round('H')
-                
-                # Convert back to seconds since reference
+                if 'since 1990-01-01' in units_str:
+                    # SUMMA-style format: seconds since 1990-01-01
+                    time_format_detected = 'summa_seconds_1990'
+                    first_time = pd.to_datetime(time_values[0], unit='s', origin='1990-01-01')
+                    rounded_time = first_time.round('h')
+                    needs_fix = (first_time != rounded_time)
+                    
+                elif 'since' in units_str:
+                    # Other reference time format - extract the reference
+                    import re
+                    since_match = re.search(r'since\s+([0-9-]+(?:\s+[0-9:]+)?)', units_str)
+                    if since_match:
+                        ref_time_str = since_match.group(1).strip()
+                        time_format_detected = f'generic_since_{ref_time_str}'
+                        
+                        # Determine the unit (seconds, hours, days)
+                        if 'second' in units_str:
+                            first_time = pd.to_datetime(time_values[0], unit='s', origin=ref_time_str)
+                            time_unit = 's'
+                        elif 'hour' in units_str:
+                            first_time = pd.to_datetime(time_values[0], unit='h', origin=ref_time_str)
+                            time_unit = 'h'
+                        elif 'day' in units_str:
+                            first_time = pd.to_datetime(time_values[0], unit='D', origin=ref_time_str)
+                            time_unit = 'D'
+                        else:
+                            # Default to seconds
+                            first_time = pd.to_datetime(time_values[0], unit='s', origin=ref_time_str)
+                            time_unit = 's'
+                        
+                        rounded_time = first_time.round('h')
+                        needs_fix = (first_time != rounded_time)
+                        
+                else:
+                    # No 'since' found, might be already in datetime format
+                    time_format_detected = 'unknown'
+                    try:
+                        # Try to interpret as datetime directly
+                        ds_decoded = xr.open_dataset(runoff_filepath, decode_times=True)
+                        first_time = pd.Timestamp(ds_decoded.time.values[0])
+                        rounded_time = first_time.round('h')
+                        needs_fix = (first_time != rounded_time)
+                        ds_decoded.close()
+                        time_format_detected = 'datetime64'
+                    except:
+                        self.logger.warning("Could not determine time format - skipping time precision fix")
+                        ds.close()
+                        return
+            else:
+                # No units attribute - try to decode directly
+                try:
+                    ds_decoded = xr.open_dataset(runoff_filepath, decode_times=True)
+                    first_time = pd.Timestamp(ds_decoded.time.values[0])
+                    rounded_time = first_time.round('h')
+                    needs_fix = (first_time != rounded_time)
+                    ds_decoded.close()
+                    time_format_detected = 'datetime64'
+                except:
+                    self.logger.warning("No time units and cannot decode times - skipping time precision fix")
+                    ds.close()
+                    return
+            
+            self.logger.debug(f"Detected time format: {time_format_detected}")
+            self.logger.debug(f"Needs time precision fix: {needs_fix}")
+            
+            if not needs_fix:
+                self.logger.debug("Time precision is already correct")
+                ds.close()
+                return
+            
+            # Apply the appropriate fix based on detected format
+            if time_format_detected == 'summa_seconds_1990':
+                # Original SUMMA logic
+                self.logger.info("Applying SUMMA-style time precision fix")
+                time_stamps = pd.to_datetime(time_values, unit='s', origin='1990-01-01')
+                rounded_stamps = time_stamps.round('h')
                 reference = pd.Timestamp('1990-01-01')
                 rounded_seconds = (rounded_stamps - reference).total_seconds().values
                 
-                # Create new time coordinate
                 ds = ds.assign_coords(time=rounded_seconds)
-                
-                # Set simple attributes without conflicts
-                ds.time.attrs.clear()  # Clear all existing attributes
+                ds.time.attrs.clear()
                 ds.time.attrs['units'] = 'seconds since 1990-01-01 00:00:00'
                 ds.time.attrs['calendar'] = 'standard'
                 ds.time.attrs['long_name'] = 'time'
                 
-                # Load and save
-                ds.load()
-                ds.close()
+            elif time_format_detected.startswith('generic_since_'):
+                # Generic 'since' format
+                self.logger.info(f"Applying generic time precision fix for format: {time_format_detected}")
+                ref_time_str = time_format_detected.split('generic_since_')[1]
                 
-                # Make file writable and overwrite
-                os.chmod(runoff_filepath, 0o664)
-                ds.to_netcdf(runoff_filepath, format='NETCDF4')
-                self.logger.info("SUMMA time precision fixed")
-            else:
-                self.logger.info("SUMMA time precision is already correct")
-                ds.close()
+                time_stamps = pd.to_datetime(time_values, unit=time_unit, origin=ref_time_str)
+                rounded_stamps = time_stamps.round('h')
+                reference = pd.Timestamp(ref_time_str)
                 
+                if time_unit == 's':
+                    rounded_values = (rounded_stamps - reference).total_seconds().values
+                elif time_unit == 'h':
+                    rounded_values = (rounded_stamps - reference) / pd.Timedelta(hours=1)
+                elif time_unit == 'D':
+                    rounded_values = (rounded_stamps - reference) / pd.Timedelta(days=1)
+                
+                ds = ds.assign_coords(time=rounded_values)
+                ds.time.attrs.clear()
+                ds.time.attrs['units'] = f"{time_unit} since {ref_time_str}"
+                ds.time.attrs['calendar'] = 'standard'
+                ds.time.attrs['long_name'] = 'time'
+                
+            elif time_format_detected == 'datetime64':
+                # Already in datetime format, just round
+                self.logger.info("Applying datetime64 time precision fix")
+                ds_decoded = xr.open_dataset(runoff_filepath, decode_times=True)
+                time_stamps = pd.to_datetime(ds_decoded.time.values)
+                rounded_stamps = time_stamps.round('h')
+                
+                # Keep original format but with rounded times
+                ds = ds_decoded.assign_coords(time=rounded_stamps)
+                ds_decoded.close()
+            
+            # Save the corrected file
+            ds.load()
+            ds.close()
+            
+            os.chmod(runoff_filepath, 0o664)
+            ds.to_netcdf(runoff_filepath, format='NETCDF4')
+            self.logger.info("Time precision fixed successfully")
+            
         except Exception as e:
-            self.logger.error(f"Error fixing SUMMA time precision: {e}")
+            self.logger.error(f"Error fixing time precision: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def run_mizuroute(self):
@@ -768,8 +928,8 @@ class MizuRouteRunner:
         This method sets up the necessary paths, executes the mizuRoute model,
         and handles any errors that occur during the run.
         """
-        self.logger.info("Starting mizuRoute run")
-        self.fix_summa_time_precision()
+        self.logger.debug("Starting mizuRoute run")
+        self.fix_time_precision()
         # Set up paths and filenames
         mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
         
@@ -796,11 +956,11 @@ class MizuRouteRunner:
         # Run mizuRoute
         os.makedirs(mizu_log_path, exist_ok=True)
         mizu_command = f"{mizu_path / mizu_exe} {settings_path / control_file}"
-        
+        self.logger.debug(f'Running mizuRoute with comman: {mizu_command}')
         try:
             with open(mizu_log_path / mizu_log_name, 'w') as log_file:
                 subprocess.run(mizu_command, shell=True, check=True, stdout=log_file, stderr=subprocess.STDOUT)
-            self.logger.info("mizuRoute run completed successfully")
+            self.logger.debug("mizuRoute run completed successfully")
             return mizu_out_path
 
         except subprocess.CalledProcessError as e:

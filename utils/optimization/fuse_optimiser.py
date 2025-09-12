@@ -1916,19 +1916,31 @@ class FUSEOptimizer:
             self.logger.error(f"Error evaluating parameters: {str(e)}")
             return -np.inf if self.optimization_metric.upper() in ['KGE', 'NSE'] else np.inf
 
+    
+
     def _run_fuse_model_with_constraints(self) -> bool:
-        """Execute FUSE model using run_def with updated constraints"""
+        """Execute FUSE model using run_def with updated constraints, and
+        run mizuRoute automatically for distributed mode."""
         try:
             from utils.models.fuse_utils import FUSERunner
             fuse_runner = FUSERunner(self.config, self.logger)
-            
-            # Use run_def - it will read the updated constraints
-            success = fuse_runner._execute_fuse('run_def')
-            return bool(success)
-            
+
+            spatial = str(self.config.get('FUSE_SPATIAL_MODE', 'lumped')).lower()
+
+            # If distributed/semi_distributed and user asked for mizuRoute, let the runner
+            # handle routing just like in fuse_utils.
+            if self.config.get('FUSE_SPATIAL_MODE', 'lumped') == 'distributed':
+                result_path = fuse_runner.run_fuse()
+                return result_path is not None
+            else:
+                # Preserve existing behavior
+                success = fuse_runner._execute_fuse('run_def')
+                return bool(success)
+
         except Exception as e:
             self.logger.error(f"Error running FUSE model: {str(e)}")
-        return False
+            return False
+
 
     def _extract_target_metric(self, metrics: Dict[str, float]) -> Optional[float]:
         """Extract target metric from metrics dictionary"""
