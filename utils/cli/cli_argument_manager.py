@@ -1643,7 +1643,7 @@ class CLIArgumentManager:
         else:
             print("   ✅ All Python dependencies satisfied")
         
-        # ADD binary summary
+        # binary summary
         valid_tools = len(binary_results['valid_tools'])
         total_tools = len(self.external_tools)
         missing_tools = len(binary_results['missing_tools'])
@@ -1866,7 +1866,7 @@ python CONFLUENCE.py --list_templates
 python CONFLUENCE.py --update_config my_config.yaml
 python CONFLUENCE.py --validate_environment
 
-# Binary/executable management - ADD these lines
+# Binary/executable management 
 python CONFLUENCE.py --get_executables
 python CONFLUENCE.py --get_executables summa mizuroute
 python CONFLUENCE.py --validate_binaries
