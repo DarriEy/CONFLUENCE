@@ -16,8 +16,8 @@
 
 ## ================================================= 0. Global Paths: =====================================================================
 
-CONFLUENCE_DATA_DIR: "/work/comphyd_lab/data/CONFLUENCE_data"
-CONFLUENCE_CODE_DIR: "/home/darri.eythorsson/code/CONFLUENCE"
+CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
+CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
 ### ============================================= 1. Experiment settings: =====================================================================
 

@@ -171,6 +171,8 @@ SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA e
 # Calibration settings 
 PARAMS_TO_CALIBRATE: Fcapil,albedoDecayRate,tempCritRain,k_soil,vGn_n,theta_sat,theta_res,theta_mp,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: routingGammaShape,routingGammaScale # Basin parameters to calibrate                       
+CALIBRATE_MIZUROUTE: True
+MIZUROUTE_PARAMS_TO_CALIBRATE: 'velo,diff'
 
 # Parallel SUMMA settings
 SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel

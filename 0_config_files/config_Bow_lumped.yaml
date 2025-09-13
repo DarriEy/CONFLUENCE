@@ -283,7 +283,7 @@ DPE_HIDDEN_DIMS: [256, 128, 64]  # Smaller network for single objective
 DPE_TRAINING_SAMPLES: 300
 DPE_VALIDATION_SAMPLES: 100
 DPE_EPOCHS: 200
-DPE_OPTIMIZATION_STEPS: 100
+DPE_OPTIMIZATION_STEPS: 200
 
 # Single objective configuration
 OPTIMIZATION_METRIC: KGE  # Make sure this matches
@@ -341,8 +341,8 @@ FUSE_FD_PARALLEL: false        # Parallel FD evaluation (if supported)
 
 
 # Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: ADAM-MULTI                         # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II, ADAM, ADAM-MULTI, LBFGS, LBFGS-MULTI
-NUMBER_OF_ITERATIONS: 1000                                     # Number of iterations for calibration 
+ITERATIVE_OPTIMIZATION_ALGORITHM: DDS                         # Options DDS (Multi-start when parallel), ASYNC-DDS, POP-DDS, SCE-UA, PSO, DE or NSGA-II, ADAM, ADAM-MULTI, LBFGS, LBFGS-MULTI
+NUMBER_OF_ITERATIONS: 10000                                     # Number of iterations for calibration 
 POPULATION_SIZE: 10                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
 ADAM_STEPS: 100 

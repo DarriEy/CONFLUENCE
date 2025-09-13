@@ -311,18 +311,79 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
     config_overrides = plan.get('config_overrides', {})
     settings = plan.get('settings', {})
     
-    # Initialize CONFLUENCE with overrides
+    cli_manager = CLIArgumentManager()
+    
+    # Handle management operations
+    if mode == 'management':
+        ops = plan['management_operations']
+        
+        # Operations that don't need CONFLUENCE instance
+        if ops['list_templates']:
+            cli_manager.list_templates()
+        
+        if ops['update_config']:
+            cli_manager.update_config(ops['update_config'])
+        
+        if ops['validate_environment']:
+            cli_manager.validate_environment()
+        
+        # Operations that need CONFLUENCE instance
+        confluence = None
+        if ops['workflow_status'] or ops['resume_from'] or ops['clean']:
+            try:
+                confluence = CONFLUENCE(
+                    config_path=config_path,
+                    config_overrides=config_overrides,
+                    debug_mode=settings.get('debug', False)
+                )
+            except Exception as e:
+                print(f"⚠️  Could not initialize CONFLUENCE: {str(e)}")
+                if ops['workflow_status'] or ops['resume_from']:
+                    print("Cannot perform workflow operations without valid configuration")
+                    return
+        
+        if ops['workflow_status']:
+            status = cli_manager.get_detailed_workflow_status(confluence)
+            cli_manager.print_detailed_workflow_status(status)
+        
+        if ops['resume_from']:
+            steps = cli_manager.resume_workflow_from_step(ops['resume_from'], confluence)
+            if steps:
+                confirm = input(f"\n🚀 Execute {len(steps)} steps? (y/N): ").strip().lower()
+                if confirm in ['y', 'yes']:
+                    confluence.run_individual_steps(steps)
+                else:
+                    print("❌ Workflow resume cancelled")
+        
+        if ops['clean']:
+            cli_manager.clean_workflow_files(
+                clean_level=ops['clean_level'],
+                confluence_instance=confluence,
+                dry_run=settings.get('dry_run', False)
+            )
+        
+        return
+    
+    # Handle status-only operations
+    if mode == 'status_only':
+        try:
+            confluence = CONFLUENCE(
+                config_path=config_path,
+                config_overrides=config_overrides,
+                debug_mode=settings.get('debug', False)
+            )
+            cli_manager.print_status_information(confluence, plan['status_operations'])
+        except:
+            print("⚠️  Could not initialize CONFLUENCE for status check")
+            cli_manager.print_status_information(None, plan['status_operations'])
+        return
+    
+    # Initialize CONFLUENCE for workflow operations
     confluence = CONFLUENCE(
         config_path=config_path,
         config_overrides=config_overrides,
         debug_mode=settings.get('debug', False)
     )
-    
-    # Handle status-only operations
-    if mode == 'status_only':
-        cli_manager = CLIArgumentManager()
-        cli_manager.print_status_information(confluence, plan['status_operations'])
-        return
     
     # Handle dry run
     if settings.get('dry_run'):
@@ -381,12 +442,6 @@ def print_dry_run_plan(plan: Dict[str, Any], confluence) -> None:
 def main() -> None:
     """
     Enhanced main entry point for CONFLUENCE with comprehensive CLI support.
-    
-    Exit codes:
-        0: Success
-        1: Configuration or argument validation error
-        2: Runtime error during execution
-        130: Interrupted by user
     """
     try:
         # Initialize CLI argument manager
@@ -406,8 +461,24 @@ def main() -> None:
         # Get execution plan
         plan = cli_manager.get_execution_plan(args)
         
-        # Determine configuration file path
-        config_path = Path(args.config)
+        # Handle pour point setup FIRST (before config loading)
+        if plan['mode'] == 'pour_point_setup':
+            pour_point_info = plan['pour_point']
+            
+            # Create config file using CLI manager
+            setup_result = cli_manager.setup_pour_point_workflow(
+                coordinates=pour_point_info['coordinates'],
+                domain_def_method=pour_point_info['domain_definition_method'],
+                domain_name=pour_point_info['domain_name'],
+                bounding_box_coords=pour_point_info.get('bounding_box_coords'),
+                confluence_code_dir=None  # Let it auto-detect
+            )
+            
+            # Use the newly created config file
+            config_path = Path(setup_result['config_file'])
+        else:
+            # Use the specified config file for other modes
+            config_path = Path(args.config)
         
         # Display startup message
         if not plan.get('settings', {}).get('dry_run') and plan['mode'] != 'status_only':
@@ -432,7 +503,6 @@ def main() -> None:
     except Exception as e:
         print(f"❌ Error running CONFLUENCE: {str(e)}")
         sys.exit(2)
-
 
 if __name__ == "__main__":
     main()
