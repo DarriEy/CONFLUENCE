@@ -28,6 +28,9 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import yaml
+import subprocess
+import os
+import shutil
 
 
 class CLIArgumentManager:
@@ -49,6 +52,7 @@ class CLIArgumentManager:
         self.parser = None
         self.workflow_steps = self._define_workflow_steps()
         self.domain_definition_methods = ['lumped', 'point', 'subset', 'delineate']
+        self.external_tools = self._define_external_tools()  
         self._setup_parser()
         
     def _define_workflow_steps(self) -> Dict[str, Dict[str, str]]:
@@ -156,6 +160,536 @@ class CLIArgumentManager:
                 'function_name': 'postprocess_results'
             }
         }
+
+    def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Define external tools/binaries required by CONFLUENCE.
+        
+        Returns:
+            Dictionary with tool definitions including config keys, executables, and repositories
+        """
+        return {
+            'summa': {
+                'description': 'Structure for Unifying Multiple Modeling Alternatives',
+                'config_path_key': 'SUMMA_INSTALL_PATH',
+                'config_exe_key': 'SUMMA_EXE',
+                'default_path_suffix': 'installs/summa/bin',
+                'default_exe': 'summa.exe',
+                'repository': 'https://github.com/NCAR/summa.git',
+                'install_dir': 'summa',
+                'build_commands': [
+                    'cd build && make -f Makefile'
+                ],
+                'dependencies': ['gfortran', 'netcdf-fortran'],
+                'test_command': '--version'
+            },
+            'mizuroute': {
+                'description': 'Mizukami routing model for river network routing',
+                'config_path_key': 'INSTALL_PATH_MIZUROUTE',
+                'config_exe_key': 'EXE_NAME_MIZUROUTE',
+                'default_path_suffix': 'installs/mizuRoute/route/bin',
+                'default_exe': 'mizuroute.exe',
+                'repository': 'https://github.com/ESCOMP/mizuRoute.git',
+                'install_dir': 'mizuRoute',
+                'build_commands': [
+                    'cd route/build && make -f Makefile'
+                ],
+                'dependencies': ['gfortran', 'netcdf-fortran'],
+                'test_command': '--version'
+            },
+            'fuse': {
+                'description': 'Framework for Understanding Structural Errors',
+                'config_path_key': 'FUSE_INSTALL_PATH',
+                'config_exe_key': 'FUSE_EXE',
+                'default_path_suffix': 'installs/fuse/bin',
+                'default_exe': 'fuse.exe',
+                'repository': 'https://github.com/naddor/fuse.git',
+                'install_dir': 'fuse',
+                'build_commands': [
+                    'cd build && make -f Makefile'
+                ],
+                'dependencies': ['gfortran', 'netcdf-fortran'],
+                'test_command': '--version'
+            },
+            'taudem': {
+                'description': 'Terrain Analysis Using Digital Elevation Models',
+                'config_path_key': 'TAUDEM_INSTALL_PATH',
+                'config_exe_key': 'TAUDEM_EXE',
+                'default_path_suffix': 'installs/taudem/bin',
+                'default_exe': 'pitremove',
+                'repository': 'https://github.com/dtarb/TauDEM.git',
+                'install_dir': 'taudem',
+                'build_commands': [
+                    'mkdir -p build && cd build && cmake .. && make'
+                ],
+                'dependencies': ['cmake', 'gcc', 'openmpi-dev', 'gdal-dev'],
+                'test_command': '--help'
+            },
+            'gistool': {
+                'description': 'Geospatial data extraction and processing tool',
+                'config_path_key': 'GISTOOL_PATH',
+                'config_exe_key': 'GISTOOL_SCRIPT',
+                'default_path_suffix': 'installs/gistool',
+                'default_exe': 'extract-gis.sh',
+                'repository': 'https://github.com/kasra-keshavarz/gistool.git',
+                'install_dir': 'gistool',
+                'build_commands': [
+                    'chmod +x scripts/*.sh'
+                ],
+                'dependencies': ['bash', 'gdal-bin', 'R'],
+                'test_command': '--help'
+            },
+            'datatool': {
+                'description': 'Meteorological data extraction and processing tool',
+                'config_path_key': 'DATATOOL_PATH',
+                'config_exe_key': 'DATATOOL_SCRIPT',
+                'default_path_suffix': 'installs/datatool',
+                'default_exe': 'extract-dataset.sh',
+                'repository': 'https://github.com/kasra-keshavarz/datatool.git',
+                'install_dir': 'datatool',
+                'build_commands': [
+                    # The script is already executable, no build needed
+                    'chmod +x extract-dataset.sh'  # Just ensure it's executable
+                ],
+                'dependencies': ['bash', 'python3'],  # Removed netcdf-bin, added python3
+                'test_command': '--help'
+            }
+        }
+
+    def _check_dependencies(self, dependencies: List[str]) -> List[str]:
+        """Check which dependencies are missing from the system."""
+        missing_deps = []
+        
+        for dep in dependencies:
+            if not shutil.which(dep):
+                missing_deps.append(dep)
+        
+        return missing_deps
+
+    def _verify_installation(self, tool_name: str, tool_info: Dict[str, Any], 
+                        install_dir: Path) -> bool:
+        """Verify that a tool was installed correctly."""
+        try:
+            # Look for expected executable
+            exe_name = tool_info['default_exe']
+            
+            # Common locations to check
+            possible_paths = [
+                install_dir / exe_name,
+                install_dir / 'bin' / exe_name,
+                install_dir / 'build' / exe_name,
+                install_dir / 'route' / 'bin' / exe_name,  # mizuRoute specific
+                install_dir / exe_name.replace('.exe', ''),  # Linux version
+            ]
+            
+            for exe_path in possible_paths:
+                if exe_path.exists():
+                    print(f"   ✅ Executable found: {exe_path}")
+                    return True
+            
+            print(f"   ⚠️  Executable not found in expected locations")
+            return False
+            
+        except Exception as e:
+            print(f"   ⚠️  Verification error: {str(e)}")
+            return False
+
+
+    def get_executables(self, specific_tools: List[str] = None, confluence_instance=None, 
+                    force: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        Clone and install external tool repositories.
+        
+        Args:
+            specific_tools: List of specific tools to install, or None for all
+            confluence_instance: CONFLUENCE instance for config access
+            force: Force reinstallation even if tools exist
+            dry_run: Show what would be done without actually doing it
+            
+        Returns:
+            Dictionary with installation results
+        """
+        print(f"\n🚀 {'Planning' if dry_run else 'Installing'} External Tools:")
+        print("=" * 60)
+        
+        if dry_run:
+            print("🔍 DRY RUN - No actual installation will occur")
+            print("-" * 30)
+        
+        installation_results = {
+            'successful': [],
+            'failed': [],
+            'skipped': [],
+            'errors': [],
+            'dry_run': dry_run
+        }
+        
+        # Get config
+        config = {}
+        if confluence_instance and hasattr(confluence_instance, 'config'):
+            config = confluence_instance.config
+        else:
+            # Try to load default config
+            try:
+                config_path = Path('./0_config_files/config_active.yaml')
+                if not config_path.exists():
+                    config_path = Path('./0_config_files/config_template.yaml')
+                
+                if config_path.exists():
+                    with open(config_path, 'r') as f:
+                        config = yaml.safe_load(f)
+            except:
+                pass
+        
+        # Determine installation directory
+        data_dir = config.get('CONFLUENCE_DATA_DIR', '.')
+        install_base_dir = Path(data_dir) / 'installs'
+        
+        print(f"📁 Installation directory: {install_base_dir}")
+        
+        if not dry_run:
+            install_base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Determine which tools to install
+        if specific_tools is None:
+            tools_to_install = list(self.external_tools.keys())
+            print(f"🎯 Installing all tools: {', '.join(tools_to_install)}")
+        else:
+            tools_to_install = []
+            for tool in specific_tools:
+                if tool in self.external_tools:
+                    tools_to_install.append(tool)
+                else:
+                    print(f"⚠️  Unknown tool: {tool}")
+                    installation_results['errors'].append(f"Unknown tool: {tool}")
+            print(f"🎯 Installing specific tools: {', '.join(tools_to_install)}")
+        
+        # Install each tool
+        for tool_name in tools_to_install:
+            tool_info = self.external_tools[tool_name]
+            print(f"\n🔧 {'Planning' if dry_run else 'Installing'} {tool_name.upper()}:")
+            print(f"   📝 {tool_info['description']}")
+            
+            tool_install_dir = install_base_dir / tool_info['install_dir']
+            repository_url = tool_info['repository']
+            
+            try:
+                # Check if already exists
+                if tool_install_dir.exists() and not force:
+                    print(f"   ⏭️  Skipping - already exists at: {tool_install_dir}")
+                    print(f"   💡 Use --force_install to reinstall")
+                    installation_results['skipped'].append(tool_name)
+                    continue
+                
+                if dry_run:
+                    print(f"   🔍 Would clone: {repository_url}")
+                    print(f"   🔍 Target directory: {tool_install_dir}")
+                    print(f"   🔍 Would run build commands: {tool_info['build_commands']}")
+                    installation_results['successful'].append(f"{tool_name} (dry run)")
+                    continue
+                
+                # Remove existing if force reinstall
+                if tool_install_dir.exists() and force:
+                    print(f"   🗑️  Removing existing installation: {tool_install_dir}")
+                    shutil.rmtree(tool_install_dir)
+                
+                # Clone repository
+                print(f"   📥 Cloning from: {repository_url}")
+                clone_result = subprocess.run(
+                    ['git', 'clone', repository_url, str(tool_install_dir)],
+                    capture_output=True, text=True, check=True
+                )
+                
+                print(f"   ✅ Clone successful")
+                
+                # Check dependencies
+                missing_deps = self._check_dependencies(tool_info['dependencies'])
+                if missing_deps:
+                    print(f"   ⚠️  Missing dependencies: {', '.join(missing_deps)}")
+                    print(f"   💡 Install with your package manager before building")
+                    installation_results['errors'].append(f"{tool_name}: missing dependencies {missing_deps}")
+                
+                # Run build commands
+                if tool_info['build_commands']:
+                    print(f"   🔨 Running build commands...")
+                    
+                    original_dir = os.getcwd()
+                    os.chdir(tool_install_dir)
+                    
+                    try:
+                        for i, cmd in enumerate(tool_info['build_commands'], 1):
+                            print(f"      {i}. {cmd}")
+                            build_result = subprocess.run(
+                                cmd, shell=True, check=True, 
+                                capture_output=True, text=True
+                            )
+                            print(f"         ✅ Build step {i} completed")
+                        
+                        print(f"   ✅ Build successful")
+                        installation_results['successful'].append(tool_name)
+                        
+                    except subprocess.CalledProcessError as build_error:
+                        print(f"   ❌ Build failed: {build_error}")
+                        print(f"      Error output: {build_error.stderr[:200]}")
+                        installation_results['failed'].append(tool_name)
+                        installation_results['errors'].append(f"{tool_name} build failed: {build_error.stderr}")
+                    
+                    finally:
+                        os.chdir(original_dir)
+                else:
+                    print(f"   ✅ No build required")
+                    installation_results['successful'].append(tool_name)
+                
+                # Verify installation
+                self._verify_installation(tool_name, tool_info, tool_install_dir)
+                
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Failed to clone {repository_url}: {e.stderr}"
+                print(f"   ❌ {error_msg}")
+                installation_results['failed'].append(tool_name)
+                installation_results['errors'].append(f"{tool_name}: {error_msg}")
+            
+            except Exception as e:
+                error_msg = f"Installation error: {str(e)}"
+                print(f"   ❌ {error_msg}")
+                installation_results['failed'].append(tool_name)
+                installation_results['errors'].append(f"{tool_name}: {error_msg}")
+        
+        # Print summary
+        successful_count = len(installation_results['successful'])
+        failed_count = len(installation_results['failed'])
+        skipped_count = len(installation_results['skipped'])
+        
+        print(f"\n📊 Installation Summary:")
+        if dry_run:
+            print(f"   🔍 Would install: {successful_count} tools")
+            print(f"   ⏭️  Would skip: {skipped_count} tools")
+        else:
+            print(f"   ✅ Successful: {successful_count} tools")
+            print(f"   ❌ Failed: {failed_count} tools")
+            print(f"   ⏭️  Skipped: {skipped_count} tools")
+        
+        if installation_results['errors']:
+            print(f"\n❌ Errors encountered:")
+            for error in installation_results['errors']:
+                print(f"   • {error}")
+        
+        if successful_count > 0 and not dry_run:
+            print(f"\n✅ Installation complete!")
+            print(f"💡 Run 'python CONFLUENCE.py --validate_environment' to verify")
+        
+        return installation_results
+
+    def handle_binary_management(cli_manager, execution_plan, confluence_instance=None):
+        """
+        Handle binary management operations (validate_binaries, get_executables).
+        
+        Args:
+            cli_manager: CLIArgumentManager instance
+            execution_plan: Execution plan from CLI manager
+            confluence_instance: CONFLUENCE instance (optional)
+        
+        Returns:
+            bool: Success status
+        """
+        try:
+            binary_ops = execution_plan.get('binary_operations', {})
+            
+            # Handle --validate_binaries
+            if binary_ops.get('validate_binaries', False):
+                print("\n🔧 Binary Validation Requested")
+                results = cli_manager.validate_binaries(confluence_instance)
+                return len(results['missing_tools']) == 0 and len(results['failed_tools']) == 0
+            
+            # Handle --get_executables
+            if binary_ops.get('get_executables') is not None:
+                print("\n🚀 Executable Installation Requested")
+                specific_tools = binary_ops.get('get_executables')
+                force_install = binary_ops.get('force_install', False)
+                dry_run = execution_plan.get('settings', {}).get('dry_run', False)
+                
+                # If empty list, install all tools
+                if isinstance(specific_tools, list) and len(specific_tools) == 0:
+                    specific_tools = None
+                
+                results = cli_manager.get_executables(
+                    specific_tools=specific_tools,
+                    confluence_instance=confluence_instance,
+                    force=force_install,
+                    dry_run=dry_run
+                )
+                
+                return len(results['failed_tools']) == 0
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error in binary management: {str(e)}")
+            return False
+
+
+    def validate_binaries(self, confluence_instance=None) -> Dict[str, Any]:
+        """
+        Validate that required binary executables exist and are functional.
+        
+        Args:
+            confluence_instance: CONFLUENCE system instance for accessing config
+            
+        Returns:
+            Dictionary with validation results for each tool
+        """
+        print("\n🔧 Validating External Tool Binaries:")
+        print("=" * 50)
+        
+        validation_results = {
+            'valid_tools': [],
+            'missing_tools': [],
+            'failed_tools': [],
+            'warnings': [],
+            'summary': {}
+        }
+        
+        # Get config if available
+        config = {}
+        if confluence_instance and hasattr(confluence_instance, 'config'):
+            config = confluence_instance.config
+        elif confluence_instance and hasattr(confluence_instance, 'workflow_orchestrator'):
+            config = confluence_instance.workflow_orchestrator.config
+        
+        # If no config available, try to load default
+        if not config:
+            try:
+                config_path = Path('./0_config_files/config_active.yaml')
+                if not config_path.exists():
+                    config_path = Path('./0_config_files/config_template.yaml')
+                
+                if config_path.exists():
+                    with open(config_path, 'r') as f:
+                        config = yaml.safe_load(f)
+                    print(f"📄 Using config from: {config_path}")
+                else:
+                    print("⚠️  No configuration file found - using default paths")
+            except Exception as e:
+                print(f"⚠️  Could not load config: {str(e)} - using default paths")
+        
+        # Validate each tool
+        for tool_name, tool_info in self.external_tools.items():
+            print(f"\n🔍 Checking {tool_name.upper()}:")
+            
+            tool_result = {
+                'name': tool_name,
+                'description': tool_info['description'],
+                'status': 'unknown',
+                'path': None,
+                'executable': None,
+                'version': None,
+                'errors': []
+            }
+            
+            try:
+                # Determine tool path
+                config_path_key = tool_info['config_path_key']
+                tool_path = config.get(config_path_key, 'default')
+                
+                if tool_path == 'default':
+                    # Use default path construction
+                    data_dir = config.get('CONFLUENCE_DATA_DIR', '.')
+                    tool_path = Path(data_dir) / tool_info['default_path_suffix']
+                else:
+                    tool_path = Path(tool_path)
+                
+                tool_result['path'] = str(tool_path)
+                
+                # Determine executable name
+                config_exe_key = tool_info.get('config_exe_key')
+                if config_exe_key and config_exe_key in config:
+                    exe_name = config[config_exe_key]
+                else:
+                    exe_name = tool_info['default_exe']
+                
+                tool_result['executable'] = exe_name
+                
+                # Check if executable exists
+                exe_path = tool_path / exe_name
+                if not exe_path.exists():
+                    # Try without extension for Linux systems
+                    exe_name_no_ext = exe_name.replace('.exe', '')
+                    exe_path_no_ext = tool_path / exe_name_no_ext
+                    if exe_path_no_ext.exists():
+                        exe_path = exe_path_no_ext
+                        tool_result['executable'] = exe_name_no_ext
+                
+                if exe_path.exists():
+                    # Try to get version/test the executable
+                    test_cmd = tool_info.get('test_command', '--help')
+                    try:
+                        result = subprocess.run(
+                            [str(exe_path), test_cmd],
+                            capture_output=True, 
+                            text=True, 
+                            timeout=10
+                        )
+                        if result.returncode == 0 or test_cmd == '--help':
+                            tool_result['status'] = 'valid'
+                            tool_result['version'] = result.stdout.strip()[:100] if result.stdout else 'Available'
+                            validation_results['valid_tools'].append(tool_name)
+                            print(f"   ✅ Found at: {exe_path}")
+                            print(f"   ✅ Status: Working")
+                        else:
+                            tool_result['status'] = 'failed'
+                            tool_result['errors'].append(f"Test command failed: {result.stderr}")
+                            validation_results['failed_tools'].append(tool_name)
+                            print(f"   🟡 Found but test failed: {exe_path}")
+                            print(f"   ⚠️  Error: {result.stderr[:100]}")
+                    
+                    except subprocess.TimeoutExpired:
+                        tool_result['status'] = 'timeout'
+                        tool_result['errors'].append("Test command timed out")
+                        validation_results['warnings'].append(f"{tool_name}: test timed out")
+                        print(f"   🟡 Found but test timed out: {exe_path}")
+                    
+                    except Exception as test_error:
+                        tool_result['status'] = 'test_error'
+                        tool_result['errors'].append(f"Test error: {str(test_error)}")
+                        validation_results['warnings'].append(f"{tool_name}: {str(test_error)}")
+                        print(f"   🟡 Found but couldn't test: {exe_path}")
+                        print(f"   ⚠️  Test error: {str(test_error)}")
+                
+                else:
+                    tool_result['status'] = 'missing'
+                    tool_result['errors'].append(f"Executable not found at: {exe_path}")
+                    validation_results['missing_tools'].append(tool_name)
+                    print(f"   ❌ Not found: {exe_path}")
+                    print(f"   💡 Try: python CONFLUENCE.py --get_executables {tool_name}")
+            
+            except Exception as e:
+                tool_result['status'] = 'error'
+                tool_result['errors'].append(f"Validation error: {str(e)}")
+                validation_results['failed_tools'].append(tool_name)
+                print(f"   ❌ Validation error: {str(e)}")
+            
+            validation_results['summary'][tool_name] = tool_result
+        
+        # Print summary
+        total_tools = len(self.external_tools)
+        valid_count = len(validation_results['valid_tools'])
+        missing_count = len(validation_results['missing_tools'])
+        failed_count = len(validation_results['failed_tools'])
+        
+        print(f"\n📊 Binary Validation Summary:")
+        print(f"   ✅ Valid: {valid_count}/{total_tools}")
+        print(f"   ❌ Missing: {missing_count}/{total_tools}")
+        print(f"   🔧 Failed: {failed_count}/{total_tools}")
+        
+        if missing_count > 0:
+            print(f"\n💡 To install missing tools:")
+            print(f"   python CONFLUENCE.py --get_executables")
+            print(f"   python CONFLUENCE.py --get_executables {' '.join(validation_results['missing_tools'])}")
+        
+        if failed_count > 0:
+            print(f"\n🔧 Failed tools may need rebuilding or dependency installation")
+        
+        return validation_results
 
     def validate_step_availability(self, confluence_instance, requested_steps: List[str]) -> Tuple[List[str], List[str]]:
         """
@@ -1095,7 +1629,34 @@ class CLIArgumentManager:
                 
         except ImportError:
             print("   ⚠️  psutil not available - cannot check system resources")
+
+
+        # Validate external binaries
+        binary_results = self.validate_binaries()
+                
+
+        print(f"\n📊 Validation Summary:")
         
+        if missing_packages:
+            print(f"   ❌ Missing packages: {', '.join(missing_packages)}")
+            print(f"   💡 Install with: pip install {' '.join(missing_packages)}")
+        else:
+            print("   ✅ All Python dependencies satisfied")
+        
+        # ADD binary summary
+        valid_tools = len(binary_results['valid_tools'])
+        total_tools = len(self.external_tools)
+        missing_tools = len(binary_results['missing_tools'])
+        
+        if missing_tools > 0:
+            print(f"   🔧 External tools: {valid_tools}/{total_tools} available")
+            print(f"   💡 Install missing tools: python CONFLUENCE.py --get_executables")
+        else:
+            print(f"   ✅ All external tools available ({valid_tools}/{total_tools})")
+        
+        print("   🚀 CONFLUENCE is ready to run!")
+
+
         # Summary
         print(f"\n📊 Validation Summary:")
         if missing_packages:
@@ -1150,6 +1711,25 @@ class CLIArgumentManager:
             '--validate_environment',
             action='store_true',
             help='Validate system environment and dependencies'
+        )
+        #Binary/Executable Management
+        binary_mgmt_group = self.parser.add_argument_group('Binary Management')
+        binary_mgmt_group.add_argument(
+            '--get_executables',
+            nargs='*',
+            metavar='TOOL_NAME',
+            help='Clone and install external tool repositories (summa, mizuroute, fuse, taudem, gistool, datatool). ' +
+                'Use without arguments to install all tools, or specify specific tools.'
+        )
+        binary_mgmt_group.add_argument(
+            '--validate_binaries',
+            action='store_true',
+            help='Validate that external tool binaries exist and are functional'
+        )
+        binary_mgmt_group.add_argument(
+            '--force_install',
+            action='store_true',
+            help='Force reinstallation of tools even if they already exist'
         )
         
         # Workflow execution options
@@ -1266,7 +1846,7 @@ class CLIArgumentManager:
         )
             
     def _get_examples_text(self) -> str:
-        """Generate examples text for help output."""
+        """Generate examples text for help output including new binary management commands."""
         return """
 Examples:
 # Basic workflow execution
@@ -1285,6 +1865,12 @@ python CONFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate --dom
 python CONFLUENCE.py --list_templates
 python CONFLUENCE.py --update_config my_config.yaml
 python CONFLUENCE.py --validate_environment
+
+# Binary/executable management - ADD these lines
+python CONFLUENCE.py --get_executables
+python CONFLUENCE.py --get_executables summa mizuroute
+python CONFLUENCE.py --validate_binaries
+python CONFLUENCE.py --get_executables --force_install
 
 # Workflow management
 python CONFLUENCE.py --workflow_status
@@ -1392,6 +1978,15 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 'dry_run': args.dry_run
             }
         }
+        # Handle binary management operations
+        if (hasattr(args, 'get_executables') and args.get_executables is not None) or getattr(args, 'validate_binaries', False):
+            plan['mode'] = 'binary_management'
+            plan['binary_operations'] = {
+                'get_executables': getattr(args, 'get_executables', None),
+                'validate_binaries': getattr(args, 'validate_binaries', False),
+                'force_install': getattr(args, 'force_install', False)
+            }
+            return plan
         
         # Handle management operations (config and workflow management)
         if (args.list_templates or args.update_config or args.validate_environment or 
@@ -1461,6 +2056,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         return plan
 
+
+
     def validate_arguments(self, args: argparse.Namespace) -> Tuple[bool, List[str]]:
         """
         Validate parsed arguments for logical consistency.
@@ -1503,13 +2100,27 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         if args.stop_on_error and args.continue_on_error:
             errors.append("Cannot specify both --stop_on_error and --continue_on_error")
         
-        # Check configuration file exists (only if not doing pour point setup or management operations)
-        management_ops = any([
-            args.list_templates, args.update_config, args.validate_environment,
-            args.workflow_status, args.resume_from, args.clean
-        ])
+        # Check if operations that don't need config files are being run
+        binary_management_ops = (
+            (hasattr(args, 'get_executables') and args.get_executables is not None) or 
+            getattr(args, 'validate_binaries', False)
+        )
         
-        if not args.pour_point and not management_ops:
+        standalone_management_ops = (
+            args.list_templates or 
+            args.validate_environment or
+            args.update_config
+        )
+        
+        status_only_ops = (
+            args.list_steps or 
+            (args.validate_config and not args.pour_point)
+        )
+        
+        # Only validate config file if we actually need it
+        needs_config_file = not (binary_management_ops or standalone_management_ops or status_only_ops)
+        
+        if needs_config_file and not args.pour_point:
             config_path = Path(args.config)
             if not config_path.exists():
                 errors.append(f"Configuration file not found: {config_path}")

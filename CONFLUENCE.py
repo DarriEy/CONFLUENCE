@@ -299,6 +299,9 @@ class CONFLUENCE:
         }
 
 
+# Fix for the execute_confluence_plan function in CONFLUENCE.py
+# Replace the existing execute_confluence_plan function with this corrected version:
+
 def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
     """
     Execute CONFLUENCE based on the CLI execution plan.
@@ -313,8 +316,46 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
     
     cli_manager = CLIArgumentManager()
     
+    # Handle binary management operations FIRST
+    if mode == 'binary_management':
+        binary_ops = plan.get('binary_operations', {})
+        
+        # For binary operations, we may or may not need a CONFLUENCE instance
+        confluence_instance = None
+        try:
+            confluence_instance = CONFLUENCE(
+                config_path=config_path,
+                config_overrides=config_overrides,
+                debug_mode=settings.get('debug', False)
+            )
+        except Exception as e:
+            print(f"⚠️  Could not initialize CONFLUENCE instance: {str(e)}")
+            print("   Proceeding with binary operations without CONFLUENCE instance...")
+        
+        if binary_ops.get('validate_binaries', False):
+            cli_manager.validate_binaries(confluence_instance)
+        
+        if binary_ops.get('get_executables') is not None:
+            specific_tools = binary_ops.get('get_executables')
+            force_install = binary_ops.get('force_install', False)
+            dry_run = settings.get('dry_run', False)
+            
+            # If empty list, install all tools
+            if isinstance(specific_tools, list) and len(specific_tools) == 0:
+                specific_tools = None
+            
+            cli_manager.get_executables(
+                specific_tools=specific_tools,
+                confluence_instance=confluence_instance,
+                force=force_install,
+                dry_run=dry_run
+            )
+        
+        print("✅ Binary management completed successfully")
+        return
+
     # Handle management operations
-    if mode == 'management':
+    elif mode == 'management':
         ops = plan['management_operations']
         
         # Operations that don't need CONFLUENCE instance
@@ -365,7 +406,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
         return
     
     # Handle status-only operations
-    if mode == 'status_only':
+    elif mode == 'status_only':
         try:
             confluence = CONFLUENCE(
                 config_path=config_path,
