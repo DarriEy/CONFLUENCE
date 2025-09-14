@@ -207,15 +207,18 @@ This project is released under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Citation
 
-If CONFLUENCE contributes to your research, please consider citing:
+If you use CONFLUENCE in your research, please cite:
 
 ```bibtex
-@software{confluence2024,
-  title = {CONFLUENCE: Community Optimization Nexus for Leveraging Understanding of Environmental Networks in Computational Exploration},
-  author = {Eythorsson, D.},
-  year = {2024},
-  url = {https://github.com/DarriEy/CONFLUENCE},
-  note = {Version 1.0.0}
+@article{eythorsson2025,
+  title={Toward Automated Scientific Discovery in Hydrology: The Opportunities and Dangers of AI Augmented Research Frameworks},
+  author={Eythorsson, Darri and Clark, Martyn},
+  journal={Hydrological Processes},
+  volume={39},
+  number={1},
+  pages={e70065},
+  year={2025},
+  doi={10.1002/hyp.70065}
 }
 ```
 
@@ -233,4 +236,26 @@ This work builds upon contributions from the hydrological modeling community and
 
 <p align="center">
 <em>CONFLUENCE is research software under active development</em>
+</p>
+
+
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+This work is intended to fuse a collection of community assets in an integrated workflow framework. 
+
+This work primarily builds on the work presented in the [Community Workflows to Advance Reproducibility in Hydrological Modelling, CWARHM, Knoben et al., 2023](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2021WR031753) and later advances on those workflows in the [Model Agnostic Framework, Keshavarz et al., 2025](https://github.com/CH-Earth/agnostic-orchestrator). 
+
+This work was supported by NOAA (grant no. NA22NWS4320003). Computational resources provided by the Digital Research Alliance of Canada and the University of Calgary.
+
+---
+
+<p align="center">
+  Developed at the University of Calgary<br>
+  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Report Bug</a> ·
+  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Request Feature</a>
 </p>
