@@ -1844,6 +1844,74 @@ class CLIArgumentManager:
             action='store_true',
             help='Show what would be executed without actually running'
         )
+        # slurm group 
+        slurm_group = self.parser.add_argument_group('SLURM Job Submission')
+        slurm_group.add_argument(
+            '--submit_job',
+            action='store_true',
+            help='Submit the execution plan as a SLURM job instead of running locally'
+        )
+        slurm_group.add_argument(
+            '--job_name',
+            type=str,
+            help='SLURM job name (default: auto-generated from domain and steps)'
+        )
+        slurm_group.add_argument(
+            '--job_time',
+            type=str,
+            default='48:00:00',
+            help='SLURM job time limit (default: 48:00:00)'
+        )
+        slurm_group.add_argument(
+            '--job_nodes',
+            type=int,
+            default=1,
+            help='Number of nodes for SLURM job (default: 1)'
+        )
+        slurm_group.add_argument(
+            '--job_ntasks',
+            type=int,
+            default=1,
+            help='Number of tasks for SLURM job (default: 1 for workflow, auto for calibration)'
+        )
+        slurm_group.add_argument(
+            '--job_memory',
+            type=str,
+            default='50G',
+            help='Memory requirement for SLURM job (default: 50G)'
+        )
+        slurm_group.add_argument(
+            '--job_account',
+            type=str,
+            help='SLURM account to charge job to (required for most systems)'
+        )
+        slurm_group.add_argument(
+            '--job_partition',
+            type=str,
+            help='SLURM partition/queue to submit to'
+        )
+        slurm_group.add_argument(
+            '--job_modules',
+            type=str,
+            default='confluence_modules',
+            help='Module to restore in SLURM job (default: confluence_modules)'
+        )
+        slurm_group.add_argument(
+            '--conda_env',
+            type=str,
+            default='confluence',
+            help='Conda environment to activate (default: confluence)'
+        )
+        slurm_group.add_argument(
+            '--submit_and_wait',
+            action='store_true',
+            help='Submit job and wait for completion (monitors job status)'
+        )
+        slurm_group.add_argument(
+            '--slurm_template',
+            type=str,
+            help='Custom SLURM script template file to use'
+        )
             
     def _get_examples_text(self) -> str:
         """Generate examples text for help output including new binary management commands."""
@@ -2023,6 +2091,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 'bounding_box_coords': getattr(args, 'bounding_box_coords', None)
             }
         
+        
         # Check for individual step execution
         individual_steps = []
         for step_name in self.workflow_steps.keys():
@@ -2054,9 +2123,352 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         if args.force_rerun:
             plan['config_overrides']['FORCE_RUN_ALL_STEPS'] = True
         
+            # Handle SLURM job submission
+        if args.submit_job:
+            plan['mode'] = 'slurm_job'
+            plan['slurm_options'] = {
+                'job_name': args.job_name,
+                'job_time': args.job_time,
+                'job_nodes': args.job_nodes,
+                'job_ntasks': args.job_ntasks,
+                'job_memory': args.job_memory,
+                'job_account': args.job_account,
+                'job_partition': args.job_partition,
+                'job_modules': args.job_modules,
+                'conda_env': args.conda_env,
+                'submit_and_wait': args.submit_and_wait,
+                'slurm_template': args.slurm_template
+            }
+            # Preserve the original execution plan for the job
+            if individual_steps:
+                plan['job_mode'] = 'individual_steps'
+                plan['job_steps'] = individual_steps
+            elif args.pour_point:
+                plan['job_mode'] = 'pour_point_setup'
+            else:
+                plan['job_mode'] = 'workflow'
+        
         return plan
 
+    def submit_slurm_job(self, execution_plan: Dict[str, Any], confluence_instance=None) -> Dict[str, Any]:
+        """
+        Submit a SLURM job based on the execution plan.
+        
+        Args:
+            execution_plan: Execution plan from CLI manager
+            confluence_instance: CONFLUENCE instance (optional)
+            
+        Returns:
+            Dictionary with job submission results
+        """
+        import subprocess
+        import tempfile
+        from datetime import datetime
+        
+        print("\n🚀 Submitting CONFLUENCE SLURM Job")
+        print("=" * 50)
+        
+        slurm_options = execution_plan.get('slurm_options', {})
+        job_mode = execution_plan.get('job_mode', 'workflow')
+        job_steps = execution_plan.get('job_steps', [])
+        config_file = execution_plan.get('config_file', './0_config_files/config_active.yaml')
+        
+        # Generate job name if not provided
+        if not slurm_options.get('job_name'):
+            domain_name = "CONFLUENCE"
+            if confluence_instance and hasattr(confluence_instance, 'config'):
+                domain_name = confluence_instance.config.get('DOMAIN_NAME', 'CONFLUENCE')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            slurm_options['job_name'] = f"{domain_name}_{job_mode}_{timestamp}"
+        
+        # Auto-adjust resources based on job type
+        if 'calibrate_model' in job_steps or job_mode == 'workflow':
+            # Calibration jobs need more resources
+            if slurm_options.get('job_ntasks') == 1:  # If not explicitly set
+                slurm_options['job_ntasks'] = min(100, slurm_options.get('job_ntasks', 50))
+            if slurm_options.get('job_memory') == '50G':  # If using default
+                slurm_options['job_memory'] = '100G'
+            if slurm_options.get('job_time') == '48:00:00':  # If using default
+                slurm_options['job_time'] = '72:00:00'
+        
+        # Create SLURM script
+        script_content = self._create_confluence_slurm_script(
+            execution_plan, slurm_options, config_file
+        )
+        
+        # Write script to temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as script_file:
+            script_file.write(script_content)
+            script_path = script_file.name
+        
+        # Make script executable
+        import os
+        os.chmod(script_path, 0o755)
+        
+        print(f"📝 Created SLURM script: {script_path}")
+        print(f"💼 Job name: {slurm_options['job_name']}")
+        print(f"⏰ Time limit: {slurm_options['job_time']}")
+        print(f"🖥️  Resources: {slurm_options['job_ntasks']} tasks, {slurm_options['job_memory']} memory")
+        
+        if execution_plan.get('settings', {}).get('dry_run', False):
+            print("\n🔍 DRY RUN - SLURM script content:")
+            print("-" * 40)
+            print(script_content)
+            print("-" * 40)
+            return {
+                'dry_run': True,
+                'script_path': script_path,
+                'script_content': script_content,
+                'job_name': slurm_options['job_name']
+            }
+        
+        # Check if sbatch is available
+        if not self._check_slurm_available():
+            raise RuntimeError("SLURM 'sbatch' command not found. Is SLURM installed?")
+        
+        # Submit job
+        try:
+            cmd = ['sbatch', script_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            # Extract job ID
+            job_id = None
+            for line in result.stdout.split('\n'):
+                if 'Submitted batch job' in line:
+                    job_id = line.split()[-1].strip()
+                    break
+            
+            if not job_id:
+                raise RuntimeError("Could not extract job ID from sbatch output")
+            
+            print(f"✅ Job submitted successfully!")
+            print(f"🆔 Job ID: {job_id}")
+            print(f"📋 Check status: squeue -j {job_id}")
+            print(f"📊 Monitor logs: tail -f CONFLUENCE_*_{job_id}.{{'out','err'}}")
+            
+            submission_result = {
+                'success': True,
+                'job_id': job_id,
+                'script_path': script_path,
+                'job_name': slurm_options['job_name'],
+                'submission_time': datetime.now().isoformat()
+            }
+            
+            # Wait for job completion if requested
+            if slurm_options.get('submit_and_wait', False):
+                print(f"\n⏳ Waiting for job {job_id} to complete...")
+                self._monitor_slurm_job(job_id)
+            
+            return submission_result
+            
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error submitting job: {e}")
+            print(f"stderr: {e.stderr}")
+            raise RuntimeError(f"Failed to submit SLURM job: {e}")
+        
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            raise
 
+    def _create_confluence_slurm_script(self, execution_plan: Dict[str, Any], 
+                                    slurm_options: Dict[str, Any], 
+                                    config_file: str) -> str:
+        """Create SLURM script content for CONFLUENCE workflow."""
+        
+        job_mode = execution_plan.get('job_mode', 'workflow')
+        job_steps = execution_plan.get('job_steps', [])
+        config_overrides = execution_plan.get('config_overrides', {})
+        
+        # Build CONFLUENCE command
+        if job_mode == 'individual_steps':
+            # Individual steps
+            confluence_cmd = f"python CONFLUENCE.py --config {config_file}"
+            for step in job_steps:
+                confluence_cmd += f" --{step}"
+        elif job_mode == 'pour_point_setup':
+            # Pour point setup
+            pour_point_info = execution_plan.get('pour_point', {})
+            confluence_cmd = (
+                f"python CONFLUENCE.py "
+                f"--pour_point {pour_point_info.get('coordinates')} "
+                f"--domain_def {pour_point_info.get('domain_definition_method')} "
+                f"--domain_name '{pour_point_info.get('domain_name')}'"
+            )
+            if pour_point_info.get('bounding_box_coords'):
+                confluence_cmd += f" --bounding_box_coords {pour_point_info['bounding_box_coords']}"
+        else:
+            # Full workflow
+            confluence_cmd = f"python CONFLUENCE.py --config {config_file}"
+        
+        # Add common options
+        settings = execution_plan.get('settings', {})
+        if settings.get('force_rerun', False):
+            confluence_cmd += " --force_rerun"
+        if settings.get('debug', False):
+            confluence_cmd += " --debug"
+        if settings.get('continue_on_error', False):
+            confluence_cmd += " --continue_on_error"
+        
+        # Create SLURM script
+        script = f"""#!/bin/bash
+    #SBATCH --job-name={slurm_options['job_name']}
+    #SBATCH --output=CONFLUENCE_{slurm_options['job_name']}_%j.out
+    #SBATCH --error=CONFLUENCE_{slurm_options['job_name']}_%j.err
+    #SBATCH --time={slurm_options['job_time']}
+    #SBATCH --ntasks={slurm_options['job_ntasks']}
+    #SBATCH --mem={slurm_options['job_memory']}"""
+
+        # Add optional SLURM directives
+        if slurm_options.get('job_account'):
+            script += f"\n#SBATCH --account={slurm_options['job_account']}"
+        if slurm_options.get('job_partition'):
+            script += f"\n#SBATCH --partition={slurm_options['job_partition']}"
+        if slurm_options.get('job_nodes') and slurm_options['job_nodes'] > 1:
+            script += f"\n#SBATCH --nodes={slurm_options['job_nodes']}"
+
+        script += f"""
+
+    # Job information
+    echo "=========================================="
+    echo "CONFLUENCE SLURM Job Started"
+    echo "Job ID: $SLURM_JOB_ID"
+    echo "Job Name: {slurm_options['job_name']}"
+    echo "Node: $HOSTNAME"
+    echo "Started: $(date)"
+    echo "Working Directory: $(pwd)"
+    echo "=========================================="
+
+    # Load modules and environment
+    echo "Loading environment..."
+    """
+        
+        # Add module loading
+        if slurm_options.get('job_modules'):
+            script += f"module restore {slurm_options['job_modules']}\n"
+        
+        # Add conda environment activation
+        if slurm_options.get('conda_env'):
+            script += f"conda activate {slurm_options['conda_env']}\n"
+        
+        script += f"""
+    echo "Python environment: $(which python)"
+    echo "CONFLUENCE directory: $(pwd)"
+    echo ""
+
+    # Run CONFLUENCE workflow
+    echo "Starting CONFLUENCE workflow..."
+    echo "Command: {confluence_cmd}"
+    echo ""
+
+    {confluence_cmd}
+
+    exit_code=$?
+
+    echo ""
+    echo "=========================================="
+    echo "CONFLUENCE Job Completed"
+    echo "Exit code: $exit_code"
+    echo "Finished: $(date)"
+    echo "=========================================="
+
+    exit $exit_code
+    """
+    
+        return script
+
+    def _check_slurm_available(self) -> bool:
+        """Check if SLURM commands are available."""
+        import shutil
+        return shutil.which('sbatch') is not None
+
+    def _monitor_slurm_job(self, job_id: str) -> None:
+        """Monitor SLURM job until completion."""
+        import subprocess
+        import time
+        
+        print(f"🔄 Monitoring job {job_id}...")
+        
+        while True:
+            try:
+                # Check if job is still in queue
+                result = subprocess.run(
+                    ['squeue', '-j', job_id, '-h'], 
+                    capture_output=True, text=True
+                )
+                
+                if not result.stdout.strip():
+                    # Job no longer in queue
+                    print(f"✅ Job {job_id} completed!")
+                    
+                    # Check final status
+                    try:
+                        status_result = subprocess.run(
+                            ['sacct', '-j', job_id, '-o', 'State', '-n'],
+                            capture_output=True, text=True
+                        )
+                        final_status = status_result.stdout.strip().split('\n')[0]
+                        print(f"📊 Final status: {final_status}")
+                        
+                        if 'COMPLETED' not in final_status:
+                            print(f"⚠️ Job may have failed. Check logs for details.")
+                    
+                    except subprocess.SubprocessError:
+                        pass
+                    
+                    break
+                else:
+                    # Parse queue status
+                    lines = result.stdout.strip().split('\n')
+                    if lines:
+                        status_info = lines[0].split()
+                        if len(status_info) >= 5:
+                            status = status_info[4]  # Job state
+                            print(f"⏳ Job status: {status}")
+                    
+            except subprocess.SubprocessError as e:
+                print(f"⚠️ Error checking job status: {e}")
+            
+            # Wait before next check
+            time.sleep(60)  # Check every minute
+
+    def handle_slurm_job_submission(self, execution_plan: Dict[str, Any], 
+                                confluence_instance=None) -> bool:
+        """
+        Handle SLURM job submission workflow.
+        
+        Args:
+            execution_plan: Execution plan from CLI manager
+            confluence_instance: CONFLUENCE instance (optional)
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Validate SLURM options
+            slurm_options = execution_plan.get('slurm_options', {})
+            
+            # Check for required options on some systems
+            if not slurm_options.get('job_account'):
+                print("⚠️ Warning: No SLURM account specified. This may be required on your system.")
+                print("   Use --job_account to specify an account if job submission fails.")
+            
+            # Submit the job
+            result = self.submit_slurm_job(execution_plan, confluence_instance)
+            
+            if result.get('success', False):
+                print(f"\n🎉 SLURM job submission successful!")
+                if not slurm_options.get('submit_and_wait', False):
+                    print(f"💡 Job is running in background. Monitor with:")
+                    print(f"   squeue -j {result['job_id']}")
+                    print(f"   tail -f CONFLUENCE_*_{result['job_id']}.out")
+                return True
+            else:
+                print(f"❌ Job submission failed")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error in SLURM job submission: {str(e)}")
+            return False
 
     def validate_arguments(self, args: argparse.Namespace) -> Tuple[bool, List[str]]:
         """

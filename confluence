@@ -1,17 +1,12 @@
 #!/bin/bash
 #
-# CONFLUENCE Shell Wrapper
+# CONFLUENCE Shell Wrapper with Python Environment Management
 # 
 # This script provides a convenient command-line interface for CONFLUENCE
 # without requiring users to type "python CONFLUENCE.py" each time.
 #
 # Usage: confluence [options]
 # Example: confluence --calibrate_model --debug
-#
-# Installation:
-#   1. Save this file as "confluence" (no extension)
-#   2. Make it executable: chmod +x confluence  
-#   3. Place in your PATH or create symlink: ln -s /path/to/confluence /usr/local/bin/confluence
 #
 
 set -e  # Exit on any error
@@ -38,24 +33,24 @@ fi
 
 # Function to print colored output
 print_error() {
-    echo -e "${RED}❌ Error:${NC} $1" >&2
+    echo -e "${RED}Error:${NC} $1" >&2
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  Warning:${NC} $1" >&2
+    echo -e "${YELLOW}Warning:${NC} $1" >&2
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ️  Info:${NC} $1"
+    echo -e "${BLUE}Info:${NC} $1"
 }
 
 print_success() {
-    echo -e "${GREEN}✅${NC} $1"
+    echo -e "${GREEN}Success:${NC} $1"
 }
 
 # Function to find CONFLUENCE.py
 find_confluence_script() {
-    local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+    local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
     local search_paths=(
         "${script_dir}/${CONFLUENCE_SCRIPT}"
         "${script_dir}/../${CONFLUENCE_SCRIPT}"
@@ -110,6 +105,29 @@ sys.exit(0 if current >= required else 1)
     return 0
 }
 
+# Function to check if Python dependencies are satisfied
+check_python_dependencies() {
+    local python_cmd="$1"
+    
+    # Try to import required packages
+    if ! $python_cmd -c "
+import sys
+required_packages = ['yaml', 'numpy', 'pandas', 'geopandas', 'rasterio', 'netCDF4']
+missing = []
+for pkg in required_packages:
+    try:
+        __import__(pkg)
+    except ImportError:
+        missing.append(pkg)
+if missing:
+    print(f'Missing packages: {missing}')
+    sys.exit(1)
+" 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
 # Function to check and activate virtual environment
 check_virtual_env() {
     local confluence_dir=$(dirname "$1")
@@ -141,28 +159,58 @@ check_virtual_env() {
     return 0
 }
 
-# Function to check dependencies
-check_dependencies() {
-    local python_cmd="$1"
-    local confluence_script="$2"
+# Function to create virtual environment if needed
+setup_python_env() {
+    local confluence_dir="$1"
+    local python_cmd="$2"
     
-    # Try to import required packages
-    if ! $python_cmd -c "
-import sys
-required_packages = ['yaml', 'pathlib', 'numpy', 'pandas']
-missing = []
-for pkg in required_packages:
-    try:
-        __import__(pkg)
-    except ImportError:
-        missing.append(pkg)
-if missing:
-    print(f'Missing packages: {missing}')
-    sys.exit(1)
-" 2>/dev/null; then
-        print_warning "Some Python dependencies may be missing"
-        print_info "Run 'confluence --validate_environment' to check dependencies"
+    # Check if dependencies are already satisfied
+    if check_python_dependencies "$python_cmd"; then
+        return 0  # All good
     fi
+    
+    print_warning "Some Python dependencies are missing"
+    
+    # Check if we can create a virtual environment
+    if [[ -n "${VIRTUAL_ENV}" ]] || [[ -n "${CONDA_DEFAULT_ENV}" ]]; then
+        print_info "In a virtual environment - you may need to install packages manually:"
+        print_info "pip install numpy pandas geopandas rasterio netCDF4 PyYAML"
+        return 1
+    fi
+    
+    # Offer to create virtual environment
+    read -p "Create Python virtual environment and install dependencies? [y/N]: " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local venv_path="${confluence_dir}/venv"
+        
+        print_info "Creating virtual environment: $venv_path"
+        if ! $python_cmd -m venv "$venv_path"; then
+            print_error "Failed to create virtual environment"
+            return 1
+        fi
+        
+        # Activate environment
+        source "${venv_path}/bin/activate"
+        
+        # Install dependencies
+        print_info "Installing Python dependencies..."
+        pip install --upgrade pip
+        if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil; then
+            print_error "Failed to install dependencies"
+            return 1
+        fi
+        
+        print_success "Python environment setup complete"
+        
+        # Save activation command for future reference
+        echo "# To activate CONFLUENCE environment:" > "${confluence_dir}/.confluence_env"
+        echo "source ${venv_path}/bin/activate" >> "${confluence_dir}/.confluence_env"
+        
+        return 0
+    fi
+    
+    return 1
 }
 
 # Function to show help if CONFLUENCE.py is not found
@@ -171,7 +219,8 @@ show_confluence_help() {
 ${SCRIPT_NAME}: CONFLUENCE Python script not found
 
 This wrapper script looks for CONFLUENCE.py in the following locations:
-$(find_confluence_script 2>&1 || echo "  - Current directory and parent directories")
+  - Current directory and parent directories
+  - Path specified by CONFLUENCE_CODE_DIR environment variable
 
 To fix this issue:
 1. Run this script from the CONFLUENCE project directory, or
@@ -197,6 +246,7 @@ Wrapper-specific options:
   --wrapper-help     Show this help message
   --wrapper-info     Show wrapper and environment information
   --wrapper-debug    Run wrapper in debug mode
+  --install          Set up Python environment and install external tools
 
 All other options are passed directly to CONFLUENCE.py.
 See 'confluence --help' for CONFLUENCE-specific options.
@@ -209,7 +259,7 @@ EOF
             
             echo "CONFLUENCE Wrapper Information"
             echo "============================="
-            echo "Wrapper script: $(readlink -f "${BASH_SOURCE[0]}")"
+            echo "Wrapper script: $(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
             echo "CONFLUENCE.py: ${confluence_script:-'Not found'}"
             echo "Python command: ${python_cmd:-'Not found'}"
             echo "Python version: $(${python_cmd} --version 2>/dev/null || echo 'Unknown')"
@@ -222,6 +272,9 @@ EOF
             set -x  # Enable debug mode
             return 1  # Continue processing
             ;;
+        --install)
+            return 1  # Let main() handle this
+            ;;
         *)
             return 1  # Not a wrapper flag, continue processing
             ;;
@@ -230,11 +283,16 @@ EOF
 
 # Main execution function
 main() {
+    local run_install=false
+    
     # Handle wrapper-specific flags
     for arg in "$@"; do
         if handle_wrapper_flags "$arg"; then
             # Flag was handled, exit
             return 0
+        fi
+        if [[ "$arg" == "--install" ]]; then
+            run_install=true
         fi
     done
     
@@ -264,8 +322,39 @@ main() {
         exit 1
     fi
     
+    # Handle installation mode
+    if [[ "$run_install" == "true" ]]; then
+        print_info "CONFLUENCE installation mode"
+        
+        # Set up Python environment
+        confluence_dir=$(dirname "$confluence_script")
+        if ! setup_python_env "$confluence_dir" "$python_cmd"; then
+            print_warning "Python environment setup incomplete"
+        fi
+        
+        # Update python command after environment setup
+        if ! python_cmd=$(find_python); then
+            print_error "Python not found after environment setup"
+            exit 1
+        fi
+        
+        # Run CONFLUENCE installation
+        cd "$confluence_dir"
+        print_info "Running CONFLUENCE external tool installation..."
+        $python_cmd "$CONFLUENCE_SCRIPT" --get_executables
+        
+        print_info "Validating installation..."
+        $python_cmd "$CONFLUENCE_SCRIPT" --validate_binaries
+        
+        print_success "Installation complete!"
+        exit 0
+    fi
+    
     # Check dependencies (non-fatal)
-    check_dependencies "$python_cmd" "$confluence_script"
+    if ! check_python_dependencies "$python_cmd"; then
+        print_warning "Some Python dependencies may be missing"
+        print_info "Run 'confluence --install' to set up environment"
+    fi
     
     # Change to the CONFLUENCE directory
     local confluence_dir=$(dirname "$confluence_script")
@@ -278,7 +367,7 @@ main() {
 }
 
 # Trap Ctrl+C and other signals
-trap 'echo -e "\n⚠️  Interrupted"; exit 130' INT TERM
+trap 'echo -e "\nInterrupted"; exit 130' INT TERM
 
 # Run main function
 main "$@"

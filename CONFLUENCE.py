@@ -11,6 +11,7 @@ CONFLUENCE provides an integrated framework for:
 - Workflow management
 - Individual workflow step execution
 - Pour point-based domain setup
+- SLURM job submission for HPC environments
 
 Usage:
     # Run complete workflow
@@ -21,6 +22,9 @@ Usage:
     
     # Set up for a specific pour point
     python CONFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate
+    
+    # Submit as SLURM job
+    python CONFLUENCE.py --calibrate_model --submit_job --job_account ees250064
     
     # Check status
     python CONFLUENCE.py --status
@@ -37,7 +41,6 @@ import sys
 import yaml
 from datetime import datetime
 from typing import Dict, Any, List
-import warnings
 
 # Add the parent directory to the path to enable imports
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -51,15 +54,7 @@ from utils.geospatial.domain_manager import DomainManager
 from utils.models.model_manager import ModelManager
 from utils.evaluation.analysis_manager import AnalysisManager
 from utils.optimization.optimization_manager import OptimizationManager
-
-# Import the new CLI argument manager
 from utils.cli.cli_argument_manager import CLIArgumentManager
-
-# Suppress pyogrio field width warnings (non-fatal - data is still written)
-warnings.filterwarnings('ignore', 
-                       message='.*not successfully written.*field width.*',
-                       category=RuntimeWarning,
-                       module='pyogrio.raw')
 
 class CONFLUENCE:
     """
@@ -67,7 +62,7 @@ class CONFLUENCE:
     
     This class serves as the central coordinator for all CONFLUENCE operations,
     now with enhanced CLI capabilities including individual step execution,
-    pour point setup, and comprehensive workflow management.
+    pour point setup, SLURM job submission, and comprehensive workflow management.
     """
     
     def __init__(self, config_path: Path, config_overrides: Dict[str, Any] = None, debug_mode: bool = False):
@@ -205,7 +200,8 @@ class CONFLUENCE:
                 # Additional mappings for data processing steps
                 'process_observed_data': 'process_observed_data',
                 'acquire_forcings': 'acquire_forcings',
-                'run_model_agnostic_preprocessing': 'run_model_agnostic_preprocessing',
+                'model_agnostic_preprocessing': 'run_model_agnostic_preprocessing',
+                'model_specific_preprocessing': 'preprocess_models',
             }
             
             self.logger.info(f"Available workflow functions: {list(step_name_to_function.keys())}")
@@ -299,12 +295,9 @@ class CONFLUENCE:
         }
 
 
-# Fix for the execute_confluence_plan function in CONFLUENCE.py
-# Replace the existing execute_confluence_plan function with this corrected version:
-
 def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
     """
-    Execute CONFLUENCE based on the CLI execution plan.
+    Execute CONFLUENCE based on the CLI execution plan including SLURM job submission.
     
     Args:
         plan: Execution plan from CLI argument manager
@@ -316,8 +309,39 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
     
     cli_manager = CLIArgumentManager()
     
-    # Handle binary management operations FIRST
-    if mode == 'binary_management':
+    # Handle SLURM job submission mode FIRST
+    if mode == 'slurm_job':
+        print("SLURM job submission mode detected")
+        
+        # For SLURM jobs, we might need minimal CONFLUENCE instance for config validation
+        confluence_instance = None
+        if not settings.get('dry_run', False):
+            try:
+                # Initialize minimal CONFLUENCE instance for config access
+                confluence_instance = CONFLUENCE(
+                    config_path=config_path,
+                    config_overrides=config_overrides,
+                    debug_mode=settings.get('debug', False)
+                )
+                print(f"Loaded configuration from: {config_path}")
+                
+                # Update execution plan with config file path
+                plan['config_file'] = str(config_path)
+                
+            except Exception as e:
+                print(f"Warning: Could not initialize CONFLUENCE instance: {e}")
+                print("Continuing with SLURM job submission anyway...")
+                # Still set config file path for the job
+                plan['config_file'] = str(config_path)
+        else:
+            plan['config_file'] = str(config_path)
+        
+        # Submit SLURM job
+        success = cli_manager.handle_slurm_job_submission(plan, confluence_instance)
+        sys.exit(0 if success else 1)
+    
+    # Handle binary management operations
+    elif mode == 'binary_management':
         binary_ops = plan.get('binary_operations', {})
         
         # For binary operations, we may or may not need a CONFLUENCE instance
@@ -329,7 +353,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
                 debug_mode=settings.get('debug', False)
             )
         except Exception as e:
-            print(f"⚠️  Could not initialize CONFLUENCE instance: {str(e)}")
+            print(f"Could not initialize CONFLUENCE instance: {str(e)}")
             print("   Proceeding with binary operations without CONFLUENCE instance...")
         
         if binary_ops.get('validate_binaries', False):
@@ -351,7 +375,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
                 dry_run=dry_run
             )
         
-        print("✅ Binary management completed successfully")
+        print("Binary management completed successfully")
         return
 
     # Handle management operations
@@ -378,7 +402,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
                     debug_mode=settings.get('debug', False)
                 )
             except Exception as e:
-                print(f"⚠️  Could not initialize CONFLUENCE: {str(e)}")
+                print(f"Could not initialize CONFLUENCE: {str(e)}")
                 if ops['workflow_status'] or ops['resume_from']:
                     print("Cannot perform workflow operations without valid configuration")
                     return
@@ -390,11 +414,11 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
         if ops['resume_from']:
             steps = cli_manager.resume_workflow_from_step(ops['resume_from'], confluence)
             if steps:
-                confirm = input(f"\n🚀 Execute {len(steps)} steps? (y/N): ").strip().lower()
+                confirm = input(f"\nExecute {len(steps)} steps? (y/N): ").strip().lower()
                 if confirm in ['y', 'yes']:
                     confluence.run_individual_steps(steps)
                 else:
-                    print("❌ Workflow resume cancelled")
+                    print("Workflow resume cancelled")
         
         if ops['clean']:
             cli_manager.clean_workflow_files(
@@ -415,7 +439,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
             )
             cli_manager.print_status_information(confluence, plan['status_operations'])
         except:
-            print("⚠️  Could not initialize CONFLUENCE for status check")
+            print("Could not initialize CONFLUENCE for status check")
             cli_manager.print_status_information(None, plan['status_operations'])
         return
     
@@ -448,7 +472,7 @@ def execute_confluence_plan(plan: Dict[str, Any], config_path: Path) -> None:
 
 def print_dry_run_plan(plan: Dict[str, Any], confluence) -> None:
     """Print what would be executed in a dry run."""
-    print("\n🔍 Dry Run - Execution Plan:")
+    print("\nDry Run - Execution Plan:")
     print("=" * 40)
     print(f"Mode: {plan['mode']}")
     
@@ -468,6 +492,25 @@ def print_dry_run_plan(plan: Dict[str, Any], confluence) -> None:
     elif plan['mode'] == 'workflow':
         print("Complete workflow would be executed")
     
+    elif plan['mode'] == 'slurm_job':
+        print("SLURM job that would be submitted:")
+        slurm_options = plan.get('slurm_options', {})
+        print(f"  Job name: {slurm_options.get('job_name', 'auto-generated')}")
+        print(f"  Time limit: {slurm_options.get('job_time', '48:00:00')}")
+        print(f"  Resources: {slurm_options.get('job_ntasks', 1)} tasks, {slurm_options.get('job_memory', '50G')} memory")
+        if slurm_options.get('job_account'):
+            print(f"  Account: {slurm_options['job_account']}")
+        
+        job_mode = plan.get('job_mode', 'workflow')
+        if job_mode == 'individual_steps':
+            print("  Job would execute steps:")
+            for step in plan.get('job_steps', []):
+                print(f"    - {step}")
+        elif job_mode == 'pour_point_setup':
+            print("  Job would execute pour point setup")
+        else:
+            print("  Job would execute full workflow")
+    
     if plan.get('config_overrides'):
         print("\nConfiguration overrides:")
         for key, value in plan['config_overrides'].items():
@@ -482,7 +525,7 @@ def print_dry_run_plan(plan: Dict[str, Any], confluence) -> None:
 
 def main() -> None:
     """
-    Enhanced main entry point for CONFLUENCE with comprehensive CLI support.
+    Enhanced main entry point for CONFLUENCE with comprehensive CLI support including SLURM jobs.
     """
     try:
         # Initialize CLI argument manager
@@ -494,7 +537,7 @@ def main() -> None:
         # Validate arguments
         is_valid, errors = cli_manager.validate_arguments(args)
         if not is_valid:
-            print("❌ Argument validation errors:")
+            print("Argument validation errors:")
             for error in errors:
                 print(f"   {error}")
             sys.exit(1)
@@ -517,32 +560,54 @@ def main() -> None:
             
             # Use the newly created config file
             config_path = Path(setup_result['config_file'])
+            
+        # Handle SLURM job submission for pour point setup
+        elif plan['mode'] == 'slurm_job' and plan.get('job_mode') == 'pour_point_setup':
+            pour_point_info = plan['pour_point']
+            
+            # Create config file using CLI manager (same as above)
+            setup_result = cli_manager.setup_pour_point_workflow(
+                coordinates=pour_point_info['coordinates'],
+                domain_def_method=pour_point_info['domain_definition_method'],
+                domain_name=pour_point_info['domain_name'],
+                bounding_box_coords=pour_point_info.get('bounding_box_coords'),
+                confluence_code_dir=None
+            )
+            
+            # Use the newly created config file for the SLURM job
+            config_path = Path(setup_result['config_file'])
+            
         else:
             # Use the specified config file for other modes
             config_path = Path(args.config)
         
         # Display startup message
-        if not plan.get('settings', {}).get('dry_run') and plan['mode'] != 'status_only':
+        if not plan.get('settings', {}).get('dry_run') and plan['mode'] not in ['status_only', 'slurm_job']:
             debug_message = " (DEBUG MODE)" if args.debug else ""
-            print(f"🚀 Starting CONFLUENCE with configuration: {config_path}{debug_message}")
+            print(f"Starting CONFLUENCE with configuration: {config_path}{debug_message}")
             if plan['mode'] != 'workflow':
                 print(f"   Execution mode: {plan['mode']}")
+        elif plan['mode'] == 'slurm_job' and not plan.get('settings', {}).get('dry_run'):
+            print(f"Preparing SLURM job with configuration: {config_path}")
         
         # Execute the plan
         execute_confluence_plan(plan, config_path)
         
         # Success message
-        if plan['mode'] != 'status_only' and not plan.get('settings', {}).get('dry_run'):
-            print("✅ CONFLUENCE completed successfully")
+        if plan['mode'] not in ['status_only', 'slurm_job'] and not plan.get('settings', {}).get('dry_run'):
+            print("CONFLUENCE completed successfully")
         
         sys.exit(0)
         
     except KeyboardInterrupt:
-        print("\n⚠️  Workflow interrupted by user")
+        print("\nWorkflow interrupted by user")
         sys.exit(130)
     
     except Exception as e:
-        print(f"❌ Error running CONFLUENCE: {str(e)}")
+        print(f"Error running CONFLUENCE: {str(e)}")
+        if hasattr(args, 'debug') and args.debug:
+            import traceback
+            traceback.print_exc()
         sys.exit(2)
 
 if __name__ == "__main__":

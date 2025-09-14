@@ -7,7 +7,13 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import json
 import yaml
+import warnings
 
+# Suppress pyogrio field width warnings (non-fatal - data is still written)
+warnings.filterwarnings('ignore', 
+                       message='.*not successfully written.*field width.*',
+                       category=RuntimeWarning,
+                       module='pyogrio.raw')
 
 class LoggingManager:
     """
