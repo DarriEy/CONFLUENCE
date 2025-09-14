@@ -162,8 +162,6 @@ confluence = CONFLUENCE(config_path)
 # Execute specific workflow components
 confluence.run_individual_steps(['setup_project', 'calibrate_model'])
 
-# Access results
-results = confluence.get_results()
 ```
 
 ## Configuration
@@ -237,25 +235,4 @@ This work builds upon contributions from the hydrological modeling community and
 <p align="center">
 <em>CONFLUENCE is research software under active development</em>
 </p>
-
-
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-This work is intended to fuse a collection of community assets in an integrated workflow framework. 
-
-This work primarily builds on the work presented in the [Community Workflows to Advance Reproducibility in Hydrological Modelling, CWARHM, Knoben et al., 2023](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2021WR031753) and later advances on those workflows in the [Model Agnostic Framework, Keshavarz et al., 2025](https://github.com/CH-Earth/agnostic-orchestrator). 
-
-This work was supported by NOAA (grant no. NA22NWS4320003). Computational resources provided by the Digital Research Alliance of Canada and the University of Calgary.
-
----
-
-<p align="center">
-  Developed at the University of Calgary<br>
-  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Report Bug</a> ·
-  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Request Feature</a>
-</p>
+s
