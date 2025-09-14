@@ -27,9 +27,8 @@ The framework aims to reduce technical barriers in hydrological modeling by prov
 ## Features
 
 - **Workflow Integration**: Coordinates data preprocessing, model setup, execution, and analysis
-- **Multi-Model Support**: Interfaces with SUMMA, FUSE, HYPE, GR models and mizuRoute routing
+- **Multi-Model Support**: Interfaces with SUMMA, FUSE, GR models and mizuRoute routing
 - **Domain Processing**: Tools for watershed delineation and spatial discretization
-- **Installation Management**: Automated setup of dependencies and external modeling tools
 - **Analysis Tools**: Built-in capabilities for benchmarking, sensitivity analysis, and visualization
 - **Flexible Execution**: Support for local and high-performance computing environments
 - **Configuration-Based**: YAML-driven configuration for reproducible workflows
@@ -177,19 +176,32 @@ The template configuration file `0_config_files/config_template.yaml` provides d
 ## Project Structure
 
 ```
-CONFLUENCE/
-├── CONFLUENCE.py           # Main application entry point
-├── confluence              # Command-line wrapper script
-├── utils/                  # Core framework modules
+CONFLUENCE_CODE_DIR/
+├── CONFLUENCE.py          # Main application entry point
+├── confluence             # Command-line wrapper script
+├── utils/                 # Core framework modules
 │   ├── project/           # Project and workflow management
 │   ├── geospatial/        # Spatial processing utilities
 │   ├── models/            # Model interface modules
+│   ├── cli/               # Command line interface modules
+│   ├── data/              # Data processing modules
+│   ├── reporting/         # Reporting and vizualisation modules
 │   ├── optimization/      # Calibration and optimization algorithms
 │   └── evaluation/        # Analysis and evaluation tools
 ├── 0_config_files/        # Configuration templates and examples
+├── 0_base_settings/       # Default external tool configurations 
 ├── examples/              # Example workflows and case studies
 ├── docs/                  # Documentation source files
-└── installs/              # External tool installations (auto-generated)
+CONFLUENCE_DATA_DIR/
+├── installs/              # External tool installations 
+│   ├── summa/             # See https://github.com/CH-Earth/summa
+│   ├── mizuRoute/         # See https://github.com/ESCOMP/mizuRoute 
+│   ├── gistool/           # See https://github.com/CH-Earth/gistool.git
+│   ├── datatool/          # See https://github.com/CH-Earth/datatool.git
+│   ├── taudem/            # Se https://github.com/dtarb/TauDEM.git
+│   └── fuse/              # See https://github.com/CyrilThebault/fuse.git
+└── domain_directories     # Data directories for confluence modelling domains
+
 ```
 
 ## Contributing
