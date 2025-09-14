@@ -33,6 +33,8 @@ env/
 
 # But keep config_template.yaml
 !0_config_files/config_template.yaml
+!0_config_files/README.md
+
 
 # IDE
 .idea/
