@@ -1,8 +1,12 @@
 # CONFLUENCE
 
 <p align="center">
+  <img src="https://github.com/DarriEy/CONFLUENCE/blob/main/docs/source/_static/Conf.jpg" alt="CONFLUENCE Logo" width="600">
+</p>
+
+<p align="center">
   <a href="https://github.com/DarriEy/CONFLUENCE/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
+    <img src="https://img.shields.io/badge/license-GPL%20v3-blue.svg" alt="License">
   </a>
   <a href="https://github.com/DarriEy/CONFLUENCE/issues">
     <img src="https://img.shields.io/github/issues/DarriEy/CONFLUENCE.svg" alt="Issues">
@@ -12,208 +16,119 @@
   </a>
 </p>
 
-<p align="center">
-<strong>Community Optimization Nexus for Leveraging Understanding of<br>Environmental Networks in Computational Exploration</strong>
-</p>
-
 ---
 
 ## Overview
 
-CONFLUENCE is a computational framework designed to support hydrological modeling workflows from domain conceptualization through model evaluation. The platform integrates multiple modeling approaches and provides tools for parameter optimization, sensitivity analysis, and model comparison across various spatial scales.
+CONFLUENCE is a  hydrological modeling platform designed to streamline the  modeling workflow—from conceptualization to evaluation. It provides a unified framework for running multiple hydrological models, handling data preprocessing, model calibration, and result visualization across various scales and regions.
 
-The framework aims to reduce technical barriers in hydrological modeling by providing standardized workflows while maintaining flexibility for research applications. CONFLUENCE is actively developed and should be considered experimental software.
+> **Note**: CONFLUENCE is currently under active development. Features and interfaces may change.
 
-## Features
+## Quick Start
 
-- **Workflow Integration**: Coordinates data preprocessing, model setup, execution, and analysis
-- **Multi-Model Support**: Interfaces with SUMMA, FUSE, GR models and mizuRoute routing
-- **Domain Processing**: Tools for watershed delineation and spatial discretization
-- **Analysis Tools**: Built-in capabilities for benchmarking, sensitivity analysis, and visualization
-- **Flexible Execution**: Support for local and high-performance computing environments
-- **Configuration-Based**: YAML-driven configuration for reproducible workflows
+### Running on Shared Infrastructure
 
-## Installation
-
-### Prerequisites
-
-- Python 3.8 or later
-- Git for repository access
-- Internet connection for downloading external dependencies
-
-### Setup
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/DarriEy/CONFLUENCE.git
-   cd CONFLUENCE
-   ```
-
-2. **Run the installation script:**
-   ```bash
-   ./confluence --install
-   ```
-
-   This command will:
-   - Create a Python virtual environment if needed
-   - Install required Python packages
-   - Download and configure external modeling tools
-   - Validate the installation
-
-3. **Verify the installation:**
-   ```bash
-   ./confluence --wrapper-info
-   ./confluence --validate_binaries
-   ```
-
-## Usage
-
-CONFLUENCE provides a command-line interface through the `confluence` shell wrapper:
+CONFLUENCE is designed to run on HPC environments. Use the provided batch script for easy execution:
 
 ```bash
-# Display available options
-./confluence --help
+# Clone the repository
+git clone https://github.com/DarriEy/CONFLUENCE.git
+cd CONFLUENCE
 
-# Run complete workflow with default settings
-./confluence
+# Edit your configuration
+cp config_template.yaml config_active.yaml
+# Modify config_active.yaml with your settings
 
-# Execute specific workflow components
-./confluence --calibrate_model --run_benchmarking
-
-# Configure domain from coordinates
-./confluence --pour_point 51.1722/-115.5717 --domain_def delineate
-
-# Check current workflow status
-./confluence --status
-
-# Use custom configuration file
-./confluence --config /path/to/config.yaml
+# Submit the job
+sbatch run_CONFLUENCE_batch.sh
 ```
 
-### Basic Workflow
+The `run_CONFLUENCE_batch.sh` script is pre-configured for the shared University of Calgary ARC infrastructure with:
+- Appropriate SLURM settings
+- Module loading for required dependencies
 
-1. **Prepare configuration:**
-   ```bash
-   cp 0_config_files/config_template.yaml my_config.yaml
-   # Edit configuration file with project-specific settings
-   ```
+### Interactive Development
 
-2. **Initialize project:**
-   ```bash
-   ./confluence --config my_config.yaml --setup_project
-   ```
+For development and testing, you can use the provided Jupyter notebooks:
 
-3. **Execute workflow:**
-   ```bash
-   ./confluence --config my_config.yaml
-   ```
+## Prerequisites
 
-## Documentation
-
-- **Installation Guide**: Detailed setup instructions for various environments
-- **Configuration Reference**: Complete documentation of configuration parameters
-- **User Guide**: Step-by-step workflow tutorials
-- **API Reference**: Documentation for developers and advanced users
-- **Examples**: Sample configurations and case studies
-
-## Examples
-
-The `examples/` directory contains example workflows demonstrating various modeling applications:
-
-- Basic catchment modeling workflows
-- Multi-model comparison studies
-- Parameter calibration and optimization
-- Sensitivity analysis procedures
-- Large-scale domain processing
-
-Each example includes documentation and sample datasets for reproducibility.
-
-## Advanced Usage
-
-### Command Line Options
-
-```bash
-# Run individual workflow steps
-./confluence --setup_project --define_domain --calibrate_model
-
-# Enable debug output
-./confluence --debug --force_rerun
-
-# Preview workflow without execution
-./confluence --dry_run
-
-# Domain setup with specific parameters
-./confluence --pour_point "lat/lon" --domain_def delineate --domain_name "StudyArea"
-```
-
-### Python Interface
-
-For programmatic access and integration:
-
-```python
-from pathlib import Path
-from CONFLUENCE import CONFLUENCE
-
-# Initialize framework
-config_path = Path('config.yaml')
-confluence = CONFLUENCE(config_path)
-
-# Execute specific workflow components
-confluence.run_individual_steps(['setup_project', 'calibrate_model'])
-
-```
+### Required Models and tools (compile separately)
+- [SUMMA](https://github.com/CH-Earth/summa.git)
+- [FUSE](https://github.com/CyrilThebault/fuse)
+- [MESH](https://github.com/MESH-Model/MESH-Dev)
+- [mizuRoute](https://github.com/ESCOMP/mizuRoute.git)
+- [TauDEM](https://github.com/dtarb/TauDEM.git)
 
 ## Configuration
 
-CONFLUENCE uses YAML configuration files to specify:
-- Spatial domain boundaries and discretization parameters
-- Model selection and parameterization
-- Optimization targets and constraints
-- Output formatting and analysis options
+CONFLUENCE uses YAML configuration files to control all aspects of the workflow:
 
-The template configuration file `0_config_files/config_template.yaml` provides detailed documentation of all available parameters.
+```yaml
+# Example configuration structure
+CONFLUENCE_DATA_DIR: "/path/to/data"
+DOMAIN_NAME: "my_watershed"
+EXPERIMENT_ID: "test_run"
+HYDROLOGICAL_MODEL: "SUMMA"
+ROUTING_MODEL: "mizuRoute"
+```
+
+Key configuration sections:
+- **Global Settings**: Paths, domain names, experiment IDs
+- **Geospatial Settings**: Domain definition, discretization methods
+- **Model Settings**: Model-specific parameters
+- **Optimization Settings**: Calibration algorithms and metrics
+
+See `config_template.yaml` for a complete example.
 
 ## Project Structure
 
 ```
-CONFLUENCE_CODE_DIR/
-├── CONFLUENCE.py          # Main application entry point
-├── confluence             # Command-line wrapper script
-├── utils/                 # Core framework modules
-│   ├── project/           # Project and workflow management
-│   ├── geospatial/        # Spatial processing utilities
-│   ├── models/            # Model interface modules
-│   ├── cli/               # Command line interface modules
-│   ├── data/              # Data processing modules
-│   ├── reporting/         # Reporting and vizualisation modules
-│   ├── optimization/      # Calibration and optimization algorithms
-│   └── evaluation/        # Analysis and evaluation tools
-├── 0_config_files/        # Configuration templates and examples
-├── 0_base_settings/       # Default external tool configurations 
-├── examples/              # Example workflows and case studies
-├── docs/                  # Documentation source files
-CONFLUENCE_DATA_DIR/
-├── installs/              # External tool installations 
-│   ├── summa/             # See https://github.com/CH-Earth/summa
-│   ├── mizuRoute/         # See https://github.com/ESCOMP/mizuRoute 
-│   ├── gistool/           # See https://github.com/CH-Earth/gistool.git
-│   ├── datatool/          # See https://github.com/CH-Earth/datatool.git
-│   ├── taudem/            # Se https://github.com/dtarb/TauDEM.git
-│   └── fuse/              # See https://github.com/CyrilThebault/fuse.git
-└── domain_directories     # Data directories for confluence modelling domains
-
+CONFLUENCE/
+├── 0_config_files/          # Configuration templates
+├── examples/                # Jupyter notebook examples
+├── utils/                   # Core utility modules
+│   ├── configHandling_utils/    # Configuration management
+│   ├── dataHandling_utils/      # Data processing
+│   ├── models_utils/            # Model-specific utilities
+│   ├── geospatial_utils/        # Domain processing
+│   └── optimization_utils/      # Calibration tools
+├── CONFLUENCE.py            # Main execution script
+├── run_CONFLUENCE_batch.sh  # HPC batch submission script
+└── requirements.txt         # Python dependencies
 ```
+
+
+## Example Workflows
+
+Browse the `jupyter_notebooks/` directory for comprehensive tutorials.
+
+Each notebook includes step-by-step instructions and can be run interactively.
+
+### Getting Started with Examples
+
+```bash
+# Navigate to the notebooks directory
+cd examples/
+
+# Start Jupyter
+jupyter notebook
+```
+
+> **Note**: University of Calgary ARC users can get quick started using the **[OpenOnDemand Service](https://ood-arc.rcs.ucalgary.ca/pun/sys/dashboard/batch_connect/sys/uc_jupyter/session_contexts/new)** Please use the following script path /work/comphyd_lab/data/CONFLUENCE_data/installs/jupyter-conf.sh as the Jupyter initialization batch script
+
+
+## Documentation
+
+📚 **Documentation is available at [confluence.readthedocs.io](https://confluence.readthedocs.io/)**
 
 ## Contributing
 
-Contributions are welcome through GitHub issues and pull requests. Please refer to the contributing guidelines for information on:
-- Code formatting and documentation standards
-- Testing procedures
-- Issue reporting protocols
-
-## License
-
-This project is released under the MIT License. See the [LICENSE](LICENSE) file for complete terms.
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on:
+- Code style and standards
+- Submitting pull requests
+- Reporting issues
+- Adding new features
 
 ## Citation
 
@@ -232,19 +147,22 @@ If you use CONFLUENCE in your research, please cite:
 }
 ```
 
-## Support
+## License
 
-- **Documentation**: Available in the `docs/` directory and online
-- **Issues**: Report bugs and request features through GitHub Issues
-- **Community**: Join discussions through GitHub Discussions
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-This work builds upon contributions from the hydrological modeling community and integrates tools developed by numerous researchers and institutions. We acknowledge the developers of the underlying modeling frameworks and the broader scientific software ecosystem that enables this work.
+This work is intended to fuse a collection of community assets in an integrated workflow framework. 
+
+This work primarily builds on the work presented in the [Community Workflows to Advance Reproducibility in Hydrological Modelling, CWARHM, Knoben et al., 2023](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2021WR031753) and later advances on those workflows in the [Model Agnostic Framework, Keshavarz et al., 2025](https://github.com/CH-Earth/agnostic-orchestrator). 
+
+This work was supported by NOAA (grant no. NA22NWS4320003). Computational resources provided by the Digital Research Alliance of Canada and the University of Calgary.
 
 ---
 
 <p align="center">
-<em>CONFLUENCE is research software under active development</em>
+  Developed at the University of Calgary<br>
+  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Report Bug</a> ·
+  <a href="https://github.com/DarriEy/CONFLUENCE/issues">Request Feature</a>
 </p>
-s
