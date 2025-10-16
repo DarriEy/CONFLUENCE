@@ -650,53 +650,32 @@ fi
             },
             'gistool': {
                 'description': 'Geospatial data extraction and processing tool',
-                'config_path_key': 'GISTOOL_PATH',
-                'config_exe_key': 'GISTOOL_SCRIPT',
+                'config_path_key': 'INSTALL_PATH_GISTOOL',
+                'config_exe_key': 'EXE_NAME_GISTOOL',
                 'default_path_suffix': 'installs/gistool',
                 'default_exe': 'extract-gis.sh',
                 'repository': 'https://github.com/kasra-keshavarz/gistool.git',
                 'branch': None,
                 'install_dir': 'gistool',
                 'build_commands': [
-    '''
-mkdir -p build
-cd build
-
-echo "Configuring TauDEM with CMake..."
-cmake .. -DCMAKE_BUILD_TYPE=Release
-
-echo "Building TauDEM..."
-make -j 4
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Build failed"
-    exit 1
-fi
-
-echo "Copying executables to bin directory..."
-mkdir -p ../bin
-cp src/pitremove src/dinfdistdown src/d8flowpathextremeup src/catchhydrogeo \
-   src/dinfflowdir src/flowdircond src/d8flowdir src/inundepth src/twi \
-   src/slopeavedown src/dinftranslimaccum src/retlimflow src/areadinf \
-   src/editraster src/threshold src/lengtharea src/dinfupdependence \
-   src/dinfdecayaccum src/dinfavalanche src/gagewatershed src/slopearea \
-   src/streamnet src/dinfconclimaccum src/slopearearatio src/dinfrevaccum \
-   src/dinfdistup src/peukerdouglas src/aread8 src/gridnet src/dropanalysis \
-   src/connectdown src/setregion src/sinmapsi src/moveoutletstostreams \
-   src/catchoutlets src/d8hdisttostrm ../bin/
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to copy executables"
-    exit 1
-fi
-
-echo "✅ TauDEM executables installed to: $(realpath ../bin)"
-ls -la ../bin/ | head -10
-    '''
-    ],
-                'dependencies': ['bash', 'gdal', 'R'],
-                'test_command': '--help',
-                'order': 6
+                    '''
+            echo "✅ gistool cloned successfully - no compilation needed"
+            # Verify the main script exists
+            if [ -f extract-gis.sh ]; then
+                chmod +x extract-gis.sh
+                echo "✅ extract-gis.sh found and made executable"
+            else
+                echo "ERROR: extract-gis.sh not found"
+                exit 1
+            fi
+                    '''
+                ],
+                'verify_install': {
+                    'file_paths': ['extract-gis.sh'],
+                    'check_type': 'exists'
+                },
+                'dependencies': ['gdal'],
+                'order': 5
             },
             'datatool': {
                 'description': 'Meteorological data extraction and processing tool',
