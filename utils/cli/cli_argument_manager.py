@@ -160,7 +160,7 @@ class CLIArgumentManager:
                 'function_name': 'postprocess_results'
             }
         }
-
+        
     def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
         """
         Define external tools/binaries required by CONFLUENCE.
@@ -260,8 +260,7 @@ class CLIArgumentManager:
                 'requires': ['sundials'],  # Dependency on SUNDIALS
                 'build_commands': [
                     '''
-    # Build SUMMA with SUNDIALS
-    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
+    # Build SUMMA with SUNDIALS using the cluster build script
     export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 
     echo "Using SUNDIALS from: $SUNDIALS_DIR"
@@ -269,37 +268,36 @@ class CLIArgumentManager:
     # Verify SUNDIALS installation exists (check both lib and lib64)
     if [ -d "$SUNDIALS_DIR/lib64" ]; then
         echo "✅ Found SUNDIALS libraries in lib64/"
-        ls -la "$SUNDIALS_DIR/lib64/" | head -5
+        SUNDIALS_LIB="$SUNDIALS_DIR/lib64"
     elif [ -d "$SUNDIALS_DIR/lib" ]; then
         echo "✅ Found SUNDIALS libraries in lib/"
-        ls -la "$SUNDIALS_DIR/lib/" | head -5
+        SUNDIALS_LIB="$SUNDIALS_DIR/lib"
     else
         echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
-        echo "Contents of SUNDIALS directory:"
-        ls -la "$SUNDIALS_DIR/"
         exit 1
     fi
 
-    # SUMMA's CMakeLists.txt is in build/cmake/
-    echo "Checking SUMMA directory structure..."
-    if [ ! -d build/cmake ]; then
-        echo "ERROR: build/cmake directory not found"
-        echo "Directory contents:"
-        ls -la
-        exit 1
-    fi
-
-    # Navigate to build/cmake and build from there
+    # Navigate to build/cmake where the build script is
     cd build/cmake
 
-    if [ ! -f CMakeLists.txt ]; then
-        echo "ERROR: CMakeLists.txt not found in build/cmake/"
+    if [ ! -f build.cluster.bash ]; then
+        echo "ERROR: build.cluster.bash not found"
         ls -la
         exit 1
     fi
 
-    # Build SUMMA
-    echo "Configuring SUMMA with CMake from build/cmake..."
+    echo "Found build.cluster.bash - adapting for our environment..."
+
+    # Create a modified build script for our setup
+    cat > build_summa_sundials.sh << 'EOFBUILD'
+    #!/bin/bash
+    # Adapted cluster build script for SUMMA with SUNDIALS
+
+    # Modules are already loaded from parent environment
+    # Using environment variables for SUNDIALS
+    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
+
+    # Configure with CMake
     cmake -B ../../cmake_build -S ../.. \
         -DUSE_SUNDIALS=ON \
         -DCMAKE_BUILD_TYPE=Release \
@@ -311,7 +309,7 @@ class CLIArgumentManager:
         exit 1
     fi
 
-    echo "Building SUMMA..."
+    # Build
     cmake --build ../../cmake_build --target all -j 4
 
     if [ $? -ne 0 ]; then
@@ -319,20 +317,33 @@ class CLIArgumentManager:
         exit 1
     fi
 
-    # Go back to root and create bin directory
+    echo "Build completed successfully"
+    EOFBUILD
+
+    chmod +x build_summa_sundials.sh
+
+    echo "Running adapted build script..."
+    ./build_summa_sundials.sh
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Build script failed"
+        exit 1
+    fi
+
+    # Go back to root and copy executable
     cd ../..
     mkdir -p bin
 
-    # Check for various possible executable names
+    # Check for executable in various locations
     if [ -f cmake_build/bin/summa.exe ]; then
         cp cmake_build/bin/summa.exe bin/
-        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
-    elif [ -f cmake_build/bin/summa_sundials.exe ]; then
-        cp cmake_build/bin/summa_sundials.exe bin/summa.exe
-        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+        echo "✅ SUMMA executable (summa.exe) installed"
     elif [ -f cmake_build/bin/summa ]; then
         cp cmake_build/bin/summa bin/summa.exe
-        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+        echo "✅ SUMMA executable (summa) installed as summa.exe"
+    elif [ -f cmake_build/summa.exe ]; then
+        cp cmake_build/summa.exe bin/
+        echo "✅ SUMMA executable found in cmake_build root"
     else
         echo "ERROR: SUMMA executable not found"
         echo "Contents of cmake_build/:"
@@ -341,8 +352,12 @@ class CLIArgumentManager:
             echo "Contents of cmake_build/bin/:"
             ls -la cmake_build/bin/
         fi
+        echo "Full cmake_build tree:"
+        find cmake_build -name "summa*" -type f 2>/dev/null || true
         exit 1
     fi
+
+    echo "✅ SUMMA with SUNDIALS installed to: $(pwd)/bin/summa.exe"
     '''
                 ],
                 'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
