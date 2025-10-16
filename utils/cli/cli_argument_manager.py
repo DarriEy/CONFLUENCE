@@ -640,6 +640,7 @@ fi
     make -j 4
 
     # TauDEM installs to build/bin
+    cp ../src/bin ../bin
     echo "TauDEM executables in: $(pwd)/bin/"
     ls -la bin/ || echo "No bin directory created"
     '''
