@@ -296,13 +296,17 @@ echo "Build directory: $(pwd)"
 export CMAKE_PREFIX_PATH="$SUNDIALS_DIR:$CMAKE_PREFIX_PATH"
 export SUNDIALS_ROOT="$SUNDIALS_DIR"
 
+# Set Fortran flags for free-form source format
+export FFLAGS="-ffree-form -ffree-line-length-none"
+export FCFLAGS="-ffree-form -ffree-line-length-none"
+
 cmake ../build \
     -DUSE_SUNDIALS=ON \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
     -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
     -DSUNDIALS_DIR="$SUNDIALS_DIR" \
-    -DSUNDIALS_PATH="$SUNDIALS_DIR"
+    -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
 if [ $? -ne 0 ]; then
     echo ""
