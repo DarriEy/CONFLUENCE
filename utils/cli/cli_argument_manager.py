@@ -244,7 +244,7 @@ else
 fi
     '''
     ],
-                'dependencies': ['cmake', 'gfortran', 'wget'],
+                'dependencies': [],
                 'test_command': None,
                 'verify_install': {
                     'file_paths': [
@@ -372,7 +372,7 @@ else
 fi
     '''
     ],
-                'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
+                'dependencies': [],
                 'test_command': '--version',
                 'order': 2  # Install after SUNDIALS
             },
@@ -429,7 +429,7 @@ else
 fi
     '''
     ],
-            'dependencies': ['gfortran', 'netcdf-fortran'],
+            'dependencies': [],
             'test_command': '--version',
             'order': 3
         },
@@ -626,7 +626,7 @@ else
 fi
     '''
     ],
-                'dependencies': ['gfortran', 'netcdf-fortran'],
+                'dependencies': [],
                 'test_command': '--version',
                 'order': 4
             },
@@ -655,7 +655,7 @@ fi
             ls -la src/ | head -10
             '''
                 ],
-                'dependencies': ['cmake', 'gcc', 'openmpi', 'gdal'],
+                'dependencies': [],
                 'test_command': '--help',
                 'order': 5
             },
