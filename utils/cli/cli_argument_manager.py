@@ -674,7 +674,7 @@ fi
                     'file_paths': ['extract-gis.sh'],
                     'check_type': 'exists'
                 },
-                'dependencies': ['gdal'],
+                'dependencies': [],
                 'order': 5
             },
             'datatool': {
@@ -693,7 +693,7 @@ fi
     echo "datatool script is now executable"
     '''
                 ],
-                'dependencies': ['bash', 'python3'],
+                'dependencies': [],
                 'test_command': '--help',
                 'order': 7
             }
