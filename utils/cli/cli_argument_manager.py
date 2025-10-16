@@ -478,9 +478,7 @@ mkdir -p build
 cd build
 
 echo "Configuring TauDEM with CMake..."
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=../install
+cmake .. -DCMAKE_BUILD_TYPE=Release
 
 echo "Building TauDEM..."
 make -j 4
@@ -490,25 +488,25 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "Installing TauDEM..."
-make install
+echo "Copying executables to bin directory..."
+mkdir -p ../bin
+cp src/pitremove src/dinfdistdown src/d8flowpathextremeup src/catchhydrogeo \
+   src/dinfflowdir src/flowdircond src/d8flowdir src/inundepth src/twi \
+   src/slopeavedown src/dinftranslimaccum src/retlimflow src/areadinf \
+   src/editraster src/threshold src/lengtharea src/dinfupdependence \
+   src/dinfdecayaccum src/dinfavalanche src/gagewatershed src/slopearea \
+   src/streamnet src/dinfconclimaccum src/slopearearatio src/dinfrevaccum \
+   src/dinfdistup src/peukerdouglas src/aread8 src/gridnet src/dropanalysis \
+   src/connectdown src/setregion src/sinmapsi src/moveoutletstostreams \
+   src/catchoutlets src/d8hdisttostrm ../bin/
 
 if [ $? -ne 0 ]; then
-    echo "ERROR: Install failed"
+    echo "ERROR: Failed to copy executables"
     exit 1
 fi
 
-# Check where executables ended up
-if [ -d "../install/bin" ]; then
-    echo "✅ TauDEM executables installed to: $(realpath ../install/bin)"
-    ls -la ../install/bin/ | head -10
-elif [ -d "bin" ]; then
-    echo "✅ TauDEM executables in build/bin:"
-    ls -la bin/ | head -10
-elif [ -d "src" ]; then
-    echo "⚠️  Executables may be in build/src:"
-    find src -type f -executable | head -10
-fi
+echo "✅ TauDEM executables installed to: $(realpath ../bin)"
+ls -la ../bin/ | head -10
     '''
     ],
                 'dependencies': ['bash', 'gdal', 'R'],
