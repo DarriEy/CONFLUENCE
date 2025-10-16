@@ -373,6 +373,7 @@ fi
     'repo_url': 'https://github.com/ESCOMP/mizuRoute.git',
     'branch': 'serial',  # Use the serial branch - designed for standalone builds
     'system_dependencies': ['netcdf-fortran'],
+    'install_dir': 'mizuRoute',
     'build_commands': [
         '''
 # Get NetCDF paths
