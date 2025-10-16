@@ -277,22 +277,30 @@ class CLIArgumentManager:
         echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
         echo "Contents of SUNDIALS directory:"
         ls -la "$SUNDIALS_DIR/"
-        echo "Contents of parent directory:"
-        ls -la ../sundials/
         exit 1
     fi
 
-    # Verify CMakeLists.txt exists
-    if [ ! -f CMakeLists.txt ]; then
-        echo "ERROR: CMakeLists.txt not found in $(pwd)"
+    # SUMMA's CMakeLists.txt is in build/cmake/
+    echo "Checking SUMMA directory structure..."
+    if [ ! -d build/cmake ]; then
+        echo "ERROR: build/cmake directory not found"
         echo "Directory contents:"
         ls -la
         exit 1
     fi
 
+    # Navigate to build/cmake and build from there
+    cd build/cmake
+
+    if [ ! -f CMakeLists.txt ]; then
+        echo "ERROR: CMakeLists.txt not found in build/cmake/"
+        ls -la
+        exit 1
+    fi
+
     # Build SUMMA
-    echo "Configuring SUMMA with CMake..."
-    cmake -B ./cmake_build -S . \
+    echo "Configuring SUMMA with CMake from build/cmake..."
+    cmake -B ../../cmake_build -S ../.. \
         -DUSE_SUNDIALS=ON \
         -DCMAKE_BUILD_TYPE=Release \
         -DSPECIFY_LAPACK_LINKS=OFF \
@@ -304,14 +312,15 @@ class CLIArgumentManager:
     fi
 
     echo "Building SUMMA..."
-    cmake --build ./cmake_build --target all -j 4
+    cmake --build ../../cmake_build --target all -j 4
 
     if [ $? -ne 0 ]; then
         echo "ERROR: Build failed"
         exit 1
     fi
 
-    # Create bin directory and copy executable
+    # Go back to root and create bin directory
+    cd ../..
     mkdir -p bin
 
     # Check for various possible executable names
@@ -326,8 +335,12 @@ class CLIArgumentManager:
         echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
     else
         echo "ERROR: SUMMA executable not found"
-        echo "Contents of cmake_build/bin/:"
-        ls -la cmake_build/bin/ 2>/dev/null || echo "cmake_build/bin/ does not exist"
+        echo "Contents of cmake_build/:"
+        ls -la cmake_build/ 2>/dev/null || echo "cmake_build/ does not exist"
+        if [ -d cmake_build/bin ]; then
+            echo "Contents of cmake_build/bin/:"
+            ls -la cmake_build/bin/
+        fi
         exit 1
     fi
     '''
