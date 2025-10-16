@@ -128,6 +128,64 @@ if missing:
     return 0
 }
 
+# Function to verify all dependencies from requirements.txt
+verify_all_dependencies() {
+    local python_cmd="$1"
+    local requirements_file="$2"
+    
+    if [[ ! -f "$requirements_file" ]]; then
+        # No requirements.txt, just do basic check
+        check_python_dependencies "$python_cmd"
+        return $?
+    fi
+    
+    print_info "Verifying all dependencies from requirements.txt..."
+    
+    # Use pip check to verify installation
+    if ! $python_cmd -m pip check >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    # Try to import packages from requirements.txt
+    if ! $python_cmd -c "
+import sys
+import re
+
+# Read requirements
+with open('$requirements_file', 'r') as f:
+    requirements = f.readlines()
+
+missing = []
+for line in requirements:
+    line = line.strip()
+    # Skip empty lines and comments
+    if not line or line.startswith('#'):
+        continue
+    # Extract package name (handle package==version, package>=version, etc.)
+    pkg = re.split(r'[=<>!]', line)[0].strip()
+    # Skip git URLs and other special requirements
+    if pkg.startswith('git+') or pkg.startswith('http'):
+        continue
+    # Handle package name normalization (e.g., PyYAML -> yaml)
+    try:
+        __import__(pkg)
+    except ImportError:
+        # Try lowercase version
+        try:
+            __import__(pkg.lower())
+        except ImportError:
+            missing.append(pkg)
+
+if missing:
+    print(f'Missing packages: {missing}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null; then
+        return 1
+    fi
+    
+    return 0
+}
+
 # Function to check and activate virtual environment
 check_virtual_env() {
     local confluence_dir=$(dirname "$1")
@@ -159,7 +217,119 @@ check_virtual_env() {
     return 0
 }
 
-# Function to create virtual environment if needed
+# Function to setup and verify Python environment for install mode
+setup_install_env() {
+    local confluence_dir="$1"
+    local python_cmd="$2"
+    local venv_path="${confluence_dir}/venv"
+    local requirements_file="${confluence_dir}/requirements.txt"
+    
+    print_info "Setting up Python environment for installation..."
+    
+    # Check if we're in a conda environment
+    if [[ -n "${CONDA_DEFAULT_ENV}" ]]; then
+        print_warning "Running in conda environment: ${CONDA_DEFAULT_ENV}"
+        print_warning "Will attempt to install dependencies in current environment"
+        
+        if [[ -f "$requirements_file" ]]; then
+            print_info "Installing dependencies from requirements.txt..."
+            if ! pip install -r "$requirements_file"; then
+                print_error "Failed to install dependencies"
+                return 1
+            fi
+        else
+            print_warning "requirements.txt not found at: $requirements_file"
+            return 1
+        fi
+        
+        return 0
+    fi
+    
+    # Check if venv exists
+    if [[ -d "$venv_path" ]]; then
+        print_info "Virtual environment exists at: $venv_path"
+        
+        # Activate it
+        if [[ -f "${venv_path}/bin/activate" ]]; then
+            print_info "Activating existing virtual environment..."
+            source "${venv_path}/bin/activate"
+            
+            # Update python_cmd to use venv python
+            python_cmd=$(which python3 || which python)
+            
+            # Verify all dependencies
+            if verify_all_dependencies "$python_cmd" "$requirements_file"; then
+                print_success "All dependencies verified in existing environment"
+                return 0
+            else
+                print_warning "Dependencies missing or outdated in existing environment"
+                print_info "Reinstalling dependencies..."
+                
+                pip install --upgrade pip
+                
+                if [[ -f "$requirements_file" ]]; then
+                    if ! pip install -r "$requirements_file"; then
+                        print_error "Failed to install dependencies"
+                        return 1
+                    fi
+                else
+                    print_warning "requirements.txt not found - installing basic dependencies..."
+                    if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+                        print_error "Failed to install dependencies"
+                        return 1
+                    fi
+                fi
+                
+                print_success "Dependencies installed successfully"
+                return 0
+            fi
+        else
+            print_error "Virtual environment exists but activation script not found"
+            return 1
+        fi
+    else
+        # Create new venv
+        print_info "Creating new virtual environment: $venv_path"
+        if ! $python_cmd -m venv "$venv_path"; then
+            print_error "Failed to create virtual environment"
+            return 1
+        fi
+        
+        # Activate it
+        source "${venv_path}/bin/activate"
+        
+        # Update python_cmd to use venv python
+        python_cmd=$(which python3 || which python)
+        
+        # Install dependencies
+        print_info "Installing Python dependencies..."
+        pip install --upgrade pip
+        
+        if [[ -f "$requirements_file" ]]; then
+            print_info "Installing from requirements.txt..."
+            if ! pip install -r "$requirements_file"; then
+                print_error "Failed to install dependencies from requirements.txt"
+                return 1
+            fi
+        else
+            print_warning "requirements.txt not found - installing basic dependencies..."
+            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+                print_error "Failed to install dependencies"
+                return 1
+            fi
+        fi
+        
+        print_success "Python environment setup complete"
+        
+        # Save activation command for future reference
+        echo "# To activate CONFLUENCE environment:" > "${confluence_dir}/.confluence_env"
+        echo "source ${venv_path}/bin/activate" >> "${confluence_dir}/.confluence_env"
+        
+        return 0
+    fi
+}
+
+# Function to create virtual environment if needed (for non-install mode)
 setup_python_env() {
     local confluence_dir="$1"
     local python_cmd="$2"
@@ -197,7 +367,7 @@ setup_python_env() {
         print_info "Installing Python dependencies..."
         pip install --upgrade pip
         
-        # Check if requirements.txt exists and use it, otherwise install basic packages
+        # Check if requirements.txt exists and use it
         local requirements_file="${confluence_dir}/requirements.txt"
         if [[ -f "$requirements_file" ]]; then
             print_info "Found requirements.txt - installing all dependencies..."
@@ -325,41 +495,50 @@ main() {
         exit 1
     fi
     
-    # Check and activate virtual environment
-    check_virtual_env "$confluence_script"
+    local confluence_dir=$(dirname "$confluence_script")
     
-    # Update python_cmd after potential venv activation
-    if ! python_cmd=$(find_python); then
-        print_error "Python ${MIN_PYTHON_VERSION}+ not found after environment setup"
-        exit 1
-    fi
-    
-    # Handle installation mode
+    # Handle installation mode - use special setup
     if [[ "$run_install" == "true" ]]; then
         print_info "CONFLUENCE installation mode"
+        echo ""
         
-        # Set up Python environment
-        confluence_dir=$(dirname "$confluence_script")
-        if ! setup_python_env "$confluence_dir" "$python_cmd"; then
-            print_warning "Python environment setup incomplete"
+        # Set up Python environment specifically for install
+        if ! setup_install_env "$confluence_dir" "$python_cmd"; then
+            print_error "Failed to set up Python environment"
+            exit 1
         fi
         
-        # Update python command after environment setup
+        # Update python_cmd to use the activated environment
         if ! python_cmd=$(find_python); then
             print_error "Python not found after environment setup"
             exit 1
         fi
+        
+        echo ""
+        print_info "Python environment ready - proceeding to external tools..."
+        echo ""
         
         # Run CONFLUENCE installation
         cd "$confluence_dir"
         print_info "Running CONFLUENCE external tool installation..."
         $python_cmd "$CONFLUENCE_SCRIPT" --get_executables
         
+        echo ""
         print_info "Validating installation..."
         $python_cmd "$CONFLUENCE_SCRIPT" --validate_binaries
         
+        echo ""
         print_success "Installation complete!"
         exit 0
+    fi
+    
+    # For normal execution, check and activate virtual environment
+    check_virtual_env "$confluence_script"
+    
+    # Update python_cmd after potential venv activation
+    if ! python_cmd=$(find_python); then
+        print_error "Python ${MIN_PYTHON_VERSION}+ not found after environment setup"
+        exit 1
     fi
     
     # Check dependencies (non-fatal)
@@ -369,7 +548,6 @@ main() {
     fi
     
     # Change to the CONFLUENCE directory
-    local confluence_dir=$(dirname "$confluence_script")
     if [[ "$confluence_dir" != "." ]]; then
         cd "$confluence_dir"
     fi
@@ -382,4 +560,4 @@ main() {
 trap 'echo -e "\nInterrupted"; exit 130' INT TERM
 
 # Run main function
-main "$@"
+main
