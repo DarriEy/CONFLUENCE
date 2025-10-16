@@ -378,7 +378,7 @@ fi
     'branch': 'serial',  # Use the serial branch instead of None
     'install_dir': 'mizuRoute',
     'build_commands': [
-        '''
+    '''
 # Get NetCDF paths
 NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
 NCDF_PATH="$EBROOTNETCDF"
@@ -390,39 +390,37 @@ echo "Using NetCDF from: $NCDF_PATH"
 
 cd route/build
 
-# Get Git version info
-VERSION=$(git describe --tags 2>/dev/null || echo "serial")
-GITBRCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "serial")
-GITHASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-
 echo "Building mizuRoute from serial branch..."
 
-# Check if there's an existing Makefile
-if [ -f Makefile ]; then
-    echo "Found existing Makefile in serial branch"
-    
-    # Build using existing Makefile
-    make FC=gnu \
-         FC_EXE=gfortran \
-         F_MASTER=$MIZUROUTE_INSTALL_DIR/ \
-         NCDF_PATH=$NCDF_PATH \
-         NCDFF_PATH=$NCDFF_PATH \
-         MODE=fast \
-         -j 4
-else
-    echo "No Makefile found - will need to create one"
+# Build with proper variable names
+make FC=gnu \
+     FC_EXE=gfortran \
+     F_MASTER=$MIZUROUTE_INSTALL_DIR/ \
+     NCDF_PATH=$NCDF_PATH \
+     NCDFF_PATH=$NCDFF_PATH \
+     EXE=mizuRoute.exe \
+     MODE=fast
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Build failed"
     exit 1
 fi
 
-# Check for executable
-if [ -f ../bin/mizuRoute.exe ] || [ -f ../bin/mizuroute.exe ]; then
-    echo "✅ mizuRoute build successful"
+# The binary should be in the build directory
+if [ -f mizuRoute.exe ]; then
+    mkdir -p ../../bin
+    mv mizuRoute.exe ../../bin/
+    echo "✅ mizuRoute installed to: $MIZUROUTE_INSTALL_DIR/bin/mizuRoute.exe"
+elif [ -f ../../bin/mizuRoute.exe ]; then
+    echo "✅ mizuRoute already in bin: $MIZUROUTE_INSTALL_DIR/bin/mizuRoute.exe"
 else
     echo "ERROR: Executable not found"
+    ls -la *.exe 2>/dev/null || echo "No .exe files found"
+    ls -la ../../bin/ 2>/dev/null || echo "bin directory doesn't exist"
     exit 1
 fi
-        '''
-            ],
+    '''
+    ],
             'dependencies': ['gfortran', 'netcdf-fortran'],
             'test_command': '--version',
             'order': 3
