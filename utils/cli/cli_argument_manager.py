@@ -392,12 +392,14 @@ cd route/build
 
 echo "Building mizuRoute from serial branch..."
 
-# F_MASTER should point to the route/ directory, not the mizuRoute/ directory
+# Override both library and include paths to use NetCDF-Fortran
 make FC=gnu \
      FC_EXE=gfortran \
      F_MASTER=$MIZUROUTE_INSTALL_DIR/route/ \
      NCDF_PATH=$NCDF_PATH \
      NCDFF_PATH=$NCDFF_PATH \
+     LIBNETCDF="-Wl,-rpath,$NCDFF_PATH/lib -L$NCDFF_PATH/lib -lnetcdff -Wl,-rpath,$NCDF_PATH/lib -L$NCDF_PATH/lib -lnetcdf" \
+     INCNETCDF="-I$NCDFF_PATH/include -I$NCDF_PATH/include" \
      EXE=mizuRoute.exe \
      MODE=fast
 
@@ -412,10 +414,9 @@ if [ -f mizuRoute.exe ]; then
     mv mizuRoute.exe ../bin/
     echo "✅ mizuRoute installed to: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
 elif [ -f ../bin/mizuRoute.exe ]; then
-    echo "✅ mizuRoute already in bin: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
+    echo "✅ mizuRoute already in bin"
 else
     echo "ERROR: Executable not found"
-    find . -name "*.exe" 2>/dev/null || echo "No .exe files found"
     exit 1
 fi
     '''
