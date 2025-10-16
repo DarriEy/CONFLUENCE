@@ -259,66 +259,83 @@ class CLIArgumentManager:
                 'install_dir': 'summa',
                 'requires': ['sundials'],  # Dependency on SUNDIALS
                 'build_commands': [
-                    '''
-    # Build SUMMA with SUNDIALS - run commands directly
-    export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
-    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
-
-    echo "Using SUNDIALS from: $SUNDIALS_DIR"
-
-    # Verify SUNDIALS installation exists (check both lib and lib64)
-    if [ -d "$SUNDIALS_DIR/lib64" ]; then
-        echo "✅ Found SUNDIALS libraries in lib64/"
-        SUNDIALS_LIB="$SUNDIALS_DIR/lib64"
-    elif [ -d "$SUNDIALS_DIR/lib" ]; then
-        echo "✅ Found SUNDIALS libraries in lib/"
-        SUNDIALS_LIB="$SUNDIALS_DIR/lib"
-    else
-        echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
-        exit 1
-    fi
-
-    # Navigate to build/cmake where CMakeLists.txt is
-    cd build/cmake
-
-    echo "Configuring SUMMA with CMake..."
-    cmake -B ../../cmake_build -S ../.. \
-        -DUSE_SUNDIALS=ON \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DSPECIFY_LAPACK_LINKS=OFF \
-        -DSUNDIALS_PATH="$SUNDIALS_DIR"
-
-    echo ""
-    echo "Building SUMMA (this may take a few minutes)..."
-    cmake --build ../../cmake_build --target all -j 4
-
-    echo ""
-    echo "Checking for SUMMA executable..."
-
-    # Go back to root
-    cd ../..
-
-    # Check for executable in various locations
-    if [ -f cmake_build/bin/summa.exe ]; then
-        mkdir -p bin
-        cp cmake_build/bin/summa.exe bin/
-        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
-    elif [ -f cmake_build/bin/summa ]; then
-        mkdir -p bin
-        cp cmake_build/bin/summa bin/summa.exe
-        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
-    else
-        echo "ERROR: SUMMA executable not found"
-        echo ""
-        echo "Searching for summa executables..."
-        find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
-        echo ""
-        echo "cmake_build directory structure:"
-        ls -R cmake_build/ | head -50
-        exit 1
-    fi
     '''
-                ],
+# Build SUMMA with SUNDIALS - simplified approach
+export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+
+echo "Using SUNDIALS from: $SUNDIALS_DIR"
+
+# Verify SUNDIALS installation exists (check both lib and lib64)
+if [ -d "$SUNDIALS_DIR/lib64" ]; then
+    echo "✅ Found SUNDIALS libraries in lib64/"
+    SUNDIALS_LIB="$SUNDIALS_DIR/lib64"
+elif [ -d "$SUNDIALS_DIR/lib" ]; then
+    echo "✅ Found SUNDIALS libraries in lib/"
+    SUNDIALS_LIB="$SUNDIALS_DIR/lib"
+else
+    echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
+    exit 1
+fi
+
+# Check if CMakeLists.txt exists in root
+if [ ! -f CMakeLists.txt ]; then
+    echo "ERROR: CMakeLists.txt not found in SUMMA root directory"
+    echo "Current directory: $(pwd)"
+    echo "Directory contents:"
+    ls -la
+    exit 1
+fi
+
+# Create build directory at root level
+mkdir -p cmake_build
+cd cmake_build
+
+echo "Configuring SUMMA with CMake from: $(pwd)"
+cmake .. \
+    -DUSE_SUNDIALS=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DSPECIFY_LAPACK_LINKS=OFF \
+    -DSUNDIALS_PATH="$SUNDIALS_DIR"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: CMake configuration failed"
+    exit 1
+fi
+
+echo ""
+echo "Building SUMMA (this may take a few minutes)..."
+cmake --build . --target all -j 4
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Build failed"
+    exit 1
+fi
+
+echo ""
+echo "Checking for SUMMA executable..."
+cd ..
+
+# Check for executable in various locations
+if [ -f cmake_build/bin/summa.exe ]; then
+    mkdir -p bin
+    cp cmake_build/bin/summa.exe bin/
+    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+elif [ -f cmake_build/bin/summa ]; then
+    mkdir -p bin
+    cp cmake_build/bin/summa bin/summa.exe
+    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+elif [ -f cmake_build/summa.exe ]; then
+    mkdir -p bin
+    cp cmake_build/summa.exe bin/
+    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+else
+    echo "ERROR: SUMMA executable not found"
+    echo "Searching for summa files in cmake_build..."
+    find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
+    exit 1
+fi
+    '''
+],
                 'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
                 'test_command': '--version',
                 'order': 2  # Install after SUNDIALS
