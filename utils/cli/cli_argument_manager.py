@@ -373,7 +373,7 @@ fi
             'config_path_key': 'INSTALL_PATH_MIZUROUTE',
             'config_exe_key': 'EXE_NAME_MIZUROUTE',
             'default_path_suffix': 'installs/mizuRoute/route/bin',
-            'default_exe': 'mizuroute.exe',
+            'default_exe': 'mizuRoute.exe',
             'repository': 'https://github.com/ESCOMP/mizuRoute.git',  # Keep as 'repository'
             'branch': 'serial',  # Use the serial branch instead of None
             'install_dir': 'mizuRoute',
