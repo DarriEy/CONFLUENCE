@@ -174,7 +174,7 @@ class CLIArgumentManager:
                 'config_path_key': 'SUNDIALS_INSTALL_PATH',
                 'config_exe_key': 'SUNDIALS_DIR',
                 'default_path_suffix': 'installs/sundials/install/sundials',
-                'default_exe': 'lib/libsundials_core.a',  # Check for library file
+                'default_exe': 'lib64/libsundials_core.a',  # Check in lib64 (common on many systems)
                 'repository': None,  # Use wget instead of git
                 'branch': None,
                 'install_dir': 'sundials',
@@ -231,7 +231,17 @@ class CLIArgumentManager:
     fi
 
     echo "✅ SUNDIALS v${SUNDIALS_VER} installed to: $SUNDIALSDIR"
-    ls -la "$SUNDIALSDIR/lib/" | head -10
+
+    # Check which lib directory was created
+    if [ -d "$SUNDIALSDIR/lib64" ]; then
+        echo "Libraries installed to lib64:"
+        ls -la "$SUNDIALSDIR/lib64/" | head -10
+    elif [ -d "$SUNDIALSDIR/lib" ]; then
+        echo "Libraries installed to lib:"
+        ls -la "$SUNDIALSDIR/lib/" | head -10
+    else
+        echo "WARNING: No lib or lib64 directory found"
+    fi
     '''
                 ],
                 'dependencies': ['cmake', 'gfortran', 'wget'],
@@ -256,16 +266,21 @@ class CLIArgumentManager:
 
     echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
-    # Verify SUNDIALS installation exists
-    if [ ! -d "$SUNDIALS_DIR/lib" ]; then
-        echo "ERROR: SUNDIALS not found at $SUNDIALS_DIR"
+    # Verify SUNDIALS installation exists (check both lib and lib64)
+    if [ -d "$SUNDIALS_DIR/lib64" ]; then
+        echo "✅ Found SUNDIALS libraries in lib64/"
+        ls -la "$SUNDIALS_DIR/lib64/" | head -5
+    elif [ -d "$SUNDIALS_DIR/lib" ]; then
+        echo "✅ Found SUNDIALS libraries in lib/"
+        ls -la "$SUNDIALS_DIR/lib/" | head -5
+    else
+        echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
+        echo "Contents of SUNDIALS directory:"
+        ls -la "$SUNDIALS_DIR/"
         echo "Contents of parent directory:"
         ls -la ../sundials/
         exit 1
     fi
-
-    echo "SUNDIALS library directory contents:"
-    ls -la "$SUNDIALS_DIR/lib/" | head -5
 
     # Verify CMakeLists.txt exists
     if [ ! -f CMakeLists.txt ]; then
