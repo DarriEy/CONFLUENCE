@@ -26,7 +26,7 @@ pvlib
 cdo
 seaborn
 plotly
-r2py
+rpy2
 
 # Hydrological modeling libraries
 netCDF4
