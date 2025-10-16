@@ -169,19 +169,84 @@ class CLIArgumentManager:
             Dictionary with tool definitions including config keys, executables, and repositories
         """
         return {
+            'sundials': {
+                'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
+                'config_path_key': 'SUNDIALS_INSTALL_PATH',
+                'config_exe_key': 'SUNDIALS_DIR',
+                'default_path_suffix': 'installs/sundials/instdir',
+                'default_exe': 'lib/libsundials_core.a',  # Check for library file
+                'repository': 'https://github.com/LLNL/sundials.git',
+                'branch': 'v7.3.1',  # Stable release
+                'install_dir': 'sundials',
+                'build_commands': [
+                    '''
+    # Build SUNDIALS
+    mkdir -p build instdir
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=../instdir \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DEXAMPLES_ENABLE=OFF \
+        -DBUILD_TESTING=OFF \
+        ..
+    make -j 4
+    make install
+    echo "SUNDIALS installed to: $(pwd)/../instdir"
+    '''
+                ],
+                'dependencies': ['cmake', 'gcc'],
+                'test_command': None,
+                'order': 1  # Install first
+            },
             'summa': {
-                'description': 'Structure for Unifying Multiple Modeling Alternatives',
+                'description': 'Structure for Unifying Multiple Modeling Alternatives (with SUNDIALS)',
                 'config_path_key': 'SUMMA_INSTALL_PATH',
                 'config_exe_key': 'SUMMA_EXE',
                 'default_path_suffix': 'installs/summa/bin',
                 'default_exe': 'summa.exe',
                 'repository': 'https://github.com/NCAR/summa.git',
+                'branch': 'develop_sundials',  # Specify branch
                 'install_dir': 'summa',
+                'requires': ['sundials'],  # Dependency on SUNDIALS
                 'build_commands': [
-                    'cd build && make -f Makefile'
+                    '''
+    # Build SUMMA with SUNDIALS
+    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
+    export SUNDIALS_DIR="$(realpath ../sundials/instdir)"
+    echo "Using SUNDIALS from: $SUNDIALS_DIR"
+
+    # Verify SUNDIALS installation
+    if [ ! -d "$SUNDIALS_DIR/lib" ]; then
+        echo "ERROR: SUNDIALS not found at $SUNDIALS_DIR"
+        exit 1
+    fi
+
+    # Build SUMMA
+    cmake -B ./cmake_build -S . \
+        -DUSE_SUNDIALS=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSPECIFY_LAPACK_LINKS=OFF \
+        -DSUNDIALS_PATH="$SUNDIALS_DIR"
+
+    cmake --build ./cmake_build --target all -j 4
+
+    # Create bin directory and copy executable
+    mkdir -p bin
+    if [ -f cmake_build/bin/summa.exe ]; then
+        cp cmake_build/bin/summa.exe bin/
+    elif [ -f cmake_build/bin/summa_sundials.exe ]; then
+        cp cmake_build/bin/summa_sundials.exe bin/summa.exe
+    else
+        echo "ERROR: SUMMA executable not found"
+        ls -la cmake_build/bin/
+        exit 1
+    fi
+    echo "SUMMA executable installed to: $(pwd)/bin/summa.exe"
+    '''
                 ],
-                'dependencies': ['gfortran', 'netcdf-fortran'],
-                'test_command': '--version'
+                'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
+                'test_command': '--version',
+                'order': 2  # Install after SUNDIALS
             },
             'mizuroute': {
                 'description': 'Mizukami routing model for river network routing',
@@ -190,12 +255,35 @@ class CLIArgumentManager:
                 'default_path_suffix': 'installs/mizuRoute/route/bin',
                 'default_exe': 'mizuroute.exe',
                 'repository': 'https://github.com/ESCOMP/mizuRoute.git',
+                'branch': None,  # Use default branch
                 'install_dir': 'mizuRoute',
                 'build_commands': [
-                    'cd route/build && make -f Makefile'
+                    '''
+    # Build mizuRoute
+    export FC=gnu
+    cd route/build
+
+    # Check if Makefile exists
+    if [ ! -f Makefile ]; then
+        echo "ERROR: Makefile not found in route/build"
+        ls -la
+        exit 1
+    fi
+
+    make -f Makefile -j 4
+
+    # Verify executable was created
+    if [ ! -f ../bin/mizuroute.exe ]; then
+        echo "ERROR: mizuroute.exe not created"
+        ls -la ../bin/
+        exit 1
+    fi
+    echo "mizuRoute executable installed to: $(pwd)/../bin/mizuroute.exe"
+    '''
                 ],
                 'dependencies': ['gfortran', 'netcdf-fortran'],
-                'test_command': '--version'
+                'test_command': '--version',
+                'order': 3
             },
             'fuse': {
                 'description': 'Framework for Understanding Structural Errors',
@@ -204,12 +292,30 @@ class CLIArgumentManager:
                 'default_path_suffix': 'installs/fuse/bin',
                 'default_exe': 'fuse.exe',
                 'repository': 'https://github.com/naddor/fuse.git',
+                'branch': None,
                 'install_dir': 'fuse',
                 'build_commands': [
-                    'cd build && make -f Makefile'
+                    '''
+    # Build FUSE
+    export FC=gfortran
+    export FUSE_MASTER="$(pwd)"
+    cd build
+
+    # Check Makefile exists
+    if [ ! -f Makefile ]; then
+        echo "ERROR: Makefile not found in build directory"
+        ls -la
+        exit 1
+    fi
+
+    make -f Makefile -j 4
+
+    echo "FUSE build complete"
+    '''
                 ],
                 'dependencies': ['gfortran', 'netcdf-fortran'],
-                'test_command': '--version'
+                'test_command': '--version',
+                'order': 4
             },
             'taudem': {
                 'description': 'Terrain Analysis Using Digital Elevation Models',
@@ -218,12 +324,24 @@ class CLIArgumentManager:
                 'default_path_suffix': 'installs/taudem/bin',
                 'default_exe': 'pitremove',
                 'repository': 'https://github.com/dtarb/TauDEM.git',
+                'branch': None,
                 'install_dir': 'taudem',
                 'build_commands': [
-                    'mkdir -p build && cd build && cmake .. && make'
+                    '''
+    # Build TauDEM
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    make -j 4
+
+    # TauDEM installs to build/bin
+    echo "TauDEM executables in: $(pwd)/bin/"
+    ls -la bin/ || echo "No bin directory created"
+    '''
                 ],
-                'dependencies': ['cmake', 'gcc', 'openmpi-dev', 'gdal-dev'],
-                'test_command': '--help'
+                'dependencies': ['cmake', 'gcc', 'openmpi', 'gdal'],
+                'test_command': '--help',
+                'order': 5
             },
             'gistool': {
                 'description': 'Geospatial data extraction and processing tool',
@@ -232,12 +350,21 @@ class CLIArgumentManager:
                 'default_path_suffix': 'installs/gistool',
                 'default_exe': 'extract-gis.sh',
                 'repository': 'https://github.com/kasra-keshavarz/gistool.git',
+                'branch': None,
                 'install_dir': 'gistool',
                 'build_commands': [
-                    'chmod +x scripts/*.sh'
+                    '''
+    # Make gistool scripts executable
+    chmod +x extract-gis.sh
+    if [ -d scripts ]; then
+        chmod +x scripts/*.sh 2>/dev/null || true
+    fi
+    echo "gistool scripts are now executable"
+    '''
                 ],
-                'dependencies': ['bash', 'gdal-bin', 'R'],
-                'test_command': '--help'
+                'dependencies': ['bash', 'gdal', 'R'],
+                'test_command': '--help',
+                'order': 6
             },
             'datatool': {
                 'description': 'Meteorological data extraction and processing tool',
@@ -246,13 +373,18 @@ class CLIArgumentManager:
                 'default_path_suffix': 'installs/datatool',
                 'default_exe': 'extract-dataset.sh',
                 'repository': 'https://github.com/kasra-keshavarz/datatool.git',
+                'branch': None,
                 'install_dir': 'datatool',
                 'build_commands': [
-                    # The script is already executable, no build needed
-                    'chmod +x extract-dataset.sh'  # Just ensure it's executable
+                    '''
+    # Make datatool script executable
+    chmod +x extract-dataset.sh
+    echo "datatool script is now executable"
+    '''
                 ],
-                'dependencies': ['bash', 'python3'],  # Removed netcdf-bin, added python3
-                'test_command': '--help'
+                'dependencies': ['bash', 'python3'],
+                'test_command': '--help',
+                'order': 7
             }
         }
 
@@ -298,7 +430,7 @@ class CLIArgumentManager:
     def get_executables(self, specific_tools: List[str] = None, confluence_instance=None, 
                     force: bool = False, dry_run: bool = False) -> Dict[str, Any]:
         """
-        Clone and install external tool repositories.
+        Clone and install external tool repositories with dependency resolution.
         
         Args:
             specific_tools: List of specific tools to install, or None for all
@@ -329,7 +461,6 @@ class CLIArgumentManager:
         if confluence_instance and hasattr(confluence_instance, 'config'):
             config = confluence_instance.config
         else:
-            # Try to load default config
             try:
                 config_path = Path('./0_config_files/config_active.yaml')
                 if not config_path.exists():
@@ -353,7 +484,6 @@ class CLIArgumentManager:
         # Determine which tools to install
         if specific_tools is None:
             tools_to_install = list(self.external_tools.keys())
-            print(f"🎯 Installing all tools: {', '.join(tools_to_install)}")
         else:
             tools_to_install = []
             for tool in specific_tools:
@@ -362,7 +492,11 @@ class CLIArgumentManager:
                 else:
                     print(f"⚠️  Unknown tool: {tool}")
                     installation_results['errors'].append(f"Unknown tool: {tool}")
-            print(f"🎯 Installing specific tools: {', '.join(tools_to_install)}")
+        
+        # Resolve dependencies and sort by install order
+        tools_to_install = self._resolve_tool_dependencies(tools_to_install)
+        
+        print(f"🎯 Installing tools in order: {', '.join(tools_to_install)}")
         
         # Install each tool
         for tool_name in tools_to_install:
@@ -372,6 +506,7 @@ class CLIArgumentManager:
             
             tool_install_dir = install_base_dir / tool_info['install_dir']
             repository_url = tool_info['repository']
+            branch = tool_info.get('branch')
             
             try:
                 # Check if already exists
@@ -383,8 +518,12 @@ class CLIArgumentManager:
                 
                 if dry_run:
                     print(f"   🔍 Would clone: {repository_url}")
+                    if branch:
+                        print(f"   🌿 Would checkout branch: {branch}")
                     print(f"   🔍 Target directory: {tool_install_dir}")
-                    print(f"   🔍 Would run build commands: {tool_info['build_commands']}")
+                    print(f"   🔍 Would run build commands:")
+                    for cmd in tool_info['build_commands']:
+                        print(f"      {cmd[:100]}...")
                     installation_results['successful'].append(f"{tool_name} (dry run)")
                     continue
                 
@@ -393,10 +532,16 @@ class CLIArgumentManager:
                     print(f"   🗑️  Removing existing installation: {tool_install_dir}")
                     shutil.rmtree(tool_install_dir)
                 
-                # Clone repository
+                # Clone repository with optional branch
                 print(f"   📥 Cloning from: {repository_url}")
+                if branch:
+                    print(f"   🌿 Checking out branch: {branch}")
+                    clone_cmd = ['git', 'clone', '-b', branch, repository_url, str(tool_install_dir)]
+                else:
+                    clone_cmd = ['git', 'clone', repository_url, str(tool_install_dir)]
+                
                 clone_result = subprocess.run(
-                    ['git', 'clone', repository_url, str(tool_install_dir)],
+                    clone_cmd,
                     capture_output=True, text=True, check=True
                 )
                 
@@ -405,9 +550,21 @@ class CLIArgumentManager:
                 # Check dependencies
                 missing_deps = self._check_dependencies(tool_info['dependencies'])
                 if missing_deps:
-                    print(f"   ⚠️  Missing dependencies: {', '.join(missing_deps)}")
-                    print(f"   💡 Install with your package manager before building")
-                    installation_results['errors'].append(f"{tool_name}: missing dependencies {missing_deps}")
+                    print(f"   ⚠️  Missing system dependencies: {', '.join(missing_deps)}")
+                    print(f"   💡 These may be available as modules - check with 'module avail'")
+                    installation_results['errors'].append(f"{tool_name}: missing system dependencies {missing_deps}")
+                
+                # Check if tool dependencies (requires) are satisfied
+                if 'requires' in tool_info:
+                    required_tools = tool_info['requires']
+                    for req_tool in required_tools:
+                        req_tool_dir = install_base_dir / self.external_tools[req_tool]['install_dir']
+                        if not req_tool_dir.exists():
+                            error_msg = f"{tool_name} requires {req_tool} but it's not installed"
+                            print(f"   ❌ {error_msg}")
+                            installation_results['errors'].append(error_msg)
+                            installation_results['failed'].append(tool_name)
+                            continue
                 
                 # Run build commands
                 if tool_info['build_commands']:
@@ -418,11 +575,21 @@ class CLIArgumentManager:
                     
                     try:
                         for i, cmd in enumerate(tool_info['build_commands'], 1):
-                            print(f"      {i}. {cmd}")
+                            print(f"      Building step {i}...")
+                            # Run as shell script to handle multi-line commands
                             build_result = subprocess.run(
-                                cmd, shell=True, check=True, 
-                                capture_output=True, text=True
+                                cmd, 
+                                shell=True, 
+                                check=True, 
+                                capture_output=True, 
+                                text=True,
+                                executable='/bin/bash'
                             )
+                            if build_result.stdout:
+                                # Print last few lines of output
+                                lines = build_result.stdout.strip().split('\n')
+                                for line in lines[-5:]:
+                                    print(f"         {line}")
                             print(f"         ✅ Build step {i} completed")
                         
                         print(f"   ✅ Build successful")
@@ -430,9 +597,16 @@ class CLIArgumentManager:
                         
                     except subprocess.CalledProcessError as build_error:
                         print(f"   ❌ Build failed: {build_error}")
-                        print(f"      Error output: {build_error.stderr[:200]}")
+                        if build_error.stdout:
+                            print(f"      Output (last 10 lines):")
+                            for line in build_error.stdout.strip().split('\n')[-10:]:
+                                print(f"         {line}")
+                        if build_error.stderr:
+                            print(f"      Error (last 10 lines):")
+                            for line in build_error.stderr.strip().split('\n')[-10:]:
+                                print(f"         {line}")
                         installation_results['failed'].append(tool_name)
-                        installation_results['errors'].append(f"{tool_name} build failed: {build_error.stderr}")
+                        installation_results['errors'].append(f"{tool_name} build failed")
                     
                     finally:
                         os.chdir(original_dir)
@@ -444,7 +618,7 @@ class CLIArgumentManager:
                 self._verify_installation(tool_name, tool_info, tool_install_dir)
                 
             except subprocess.CalledProcessError as e:
-                error_msg = f"Failed to clone {repository_url}: {e.stderr}"
+                error_msg = f"Failed to clone {repository_url}: {e.stderr if e.stderr else str(e)}"
                 print(f"   ❌ {error_msg}")
                 installation_results['failed'].append(tool_name)
                 installation_results['errors'].append(f"{tool_name}: {error_msg}")
@@ -456,9 +630,47 @@ class CLIArgumentManager:
                 installation_results['errors'].append(f"{tool_name}: {error_msg}")
         
         # Print summary
-        successful_count = len(installation_results['successful'])
-        failed_count = len(installation_results['failed'])
-        skipped_count = len(installation_results['skipped'])
+        self._print_installation_summary(installation_results, dry_run)
+        
+        return installation_results
+
+
+    def _resolve_tool_dependencies(self, tools: List[str]) -> List[str]:
+        """
+        Resolve dependencies between tools and return sorted list.
+        
+        Args:
+            tools: List of tool names to install
+            
+        Returns:
+            Sorted list of tools with dependencies resolved
+        """
+        # Build dependency graph
+        tools_with_deps = set(tools)
+        
+        # Add required dependencies
+        for tool in tools:
+            if tool in self.external_tools and 'requires' in self.external_tools[tool]:
+                required = self.external_tools[tool]['requires']
+                tools_with_deps.update(required)
+        
+        # Sort by order field, then alphabetically
+        sorted_tools = sorted(
+            tools_with_deps,
+            key=lambda t: (
+                self.external_tools.get(t, {}).get('order', 999),
+                t
+            )
+        )
+        
+        return sorted_tools
+
+
+    def _print_installation_summary(self, results: Dict[str, Any], dry_run: bool) -> None:
+        """Print installation summary."""
+        successful_count = len(results['successful'])
+        failed_count = len(results['failed'])
+        skipped_count = len(results['skipped'])
         
         print(f"\n📊 Installation Summary:")
         if dry_run:
@@ -469,16 +681,14 @@ class CLIArgumentManager:
             print(f"   ❌ Failed: {failed_count} tools")
             print(f"   ⏭️  Skipped: {skipped_count} tools")
         
-        if installation_results['errors']:
+        if results['errors']:
             print(f"\n❌ Errors encountered:")
-            for error in installation_results['errors']:
+            for error in results['errors']:
                 print(f"   • {error}")
         
         if successful_count > 0 and not dry_run:
             print(f"\n✅ Installation complete!")
-            print(f"💡 Run 'python CONFLUENCE.py --validate_environment' to verify")
-        
-        return installation_results
+            print(f"💡 Run 'python CONFLUENCE.py --validate_binaries' to verify")
 
     def handle_binary_management(cli_manager, execution_plan, confluence_instance=None):
         """
