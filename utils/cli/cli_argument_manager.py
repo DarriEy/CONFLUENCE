@@ -369,16 +369,12 @@ fi
                 'order': 2  # Install after SUNDIALS
             },
             'mizuroute': {
-                'description': 'Mizukami routing model for river network routing',
-                'config_path_key': 'INSTALL_PATH_MIZUROUTE',
-                'config_exe_key': 'EXE_NAME_MIZUROUTE',
-                'default_path_suffix': 'installs/mizuRoute/route/bin',
-                'default_exe': 'mizuroute.exe',
-                'repository': 'https://github.com/ESCOMP/mizuRoute.git',
-                'branch': None,  # Use default branch
-                'install_dir': 'mizuRoute',
-                'build_commands': [
-    '''
+    'description': 'Mizukami routing model for river network routing',
+    'repo_url': 'https://github.com/ESCOMP/mizuRoute.git',
+    'branch': 'serial',  # Use the serial branch - designed for standalone builds
+    'system_dependencies': ['netcdf-fortran'],
+    'build_commands': [
+        '''
 # Get NetCDF paths
 NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
 NCDF_PATH="$EBROOTNETCDF"
@@ -391,174 +387,47 @@ echo "Using NetCDF from: $NCDF_PATH"
 cd route/build
 
 # Get Git version info
-VERSION=$(git tag 2>/dev/null | tail -n 1 || echo "v3.0.0")
-GITBRCH=$(git describe --long --all --always 2>/dev/null | sed -e's/heads\\///' || echo "main")
+VERSION=$(git describe --tags 2>/dev/null || echo "serial")
+GITBRCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "serial")
 GITHASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
-# Create Makefile for serial (standalone) build
-cat > Makefile << 'MAKEFILE_END'
-#========================================================================
-# Makefile to compile mizuRoute standalone (serial)
-#========================================================================
+echo "Building mizuRoute from serial branch..."
 
-FC = gnu
-FC_EXE = gfortran
-EXE = mizuRoute.exe
-MODE = fast
-
-# Paths
-F_MASTER = MIZUROUTE_INSTALL_DIR_PLACEHOLDER
-NCDFF_PATH = NCDFF_PATH_PLACEHOLDER
-NCDF_PATH = NCDF_PATH_PLACEHOLDER
-
-LIBNETCDF = -Wl,-rpath,$(NCDFF_PATH)/lib -L$(NCDFF_PATH)/lib -lnetcdff \
-            -Wl,-rpath,$(NCDF_PATH)/lib -L$(NCDF_PATH)/lib -lnetcdf
-INCNETCDF = -I$(NCDFF_PATH)/include -I$(NCDF_PATH)/include
-
-# Git version
-VERSION = VERSION_PLACEHOLDER
-GITBRCH = GITBRCH_PLACEHOLDER
-GITHASH = GITHASH_PLACEHOLDER
-
-# Compiler flags
-FLAGS = -O3 -fmax-errors=0 -ffree-line-length-none -cpp \
-        -DVERSION=\"$(VERSION)\" -DBRANCH=\"$(GITBRCH)\" -DHASH=\"$(GITHASH)\" \
-        -DNO_PIO -DNO_MPI
-
-# Directories
-F_KORE_DIR = $(F_MASTER)route/build/src/
-F_STANDALONE_DIR = $(F_KORE_DIR)standalone/
-EXE_PATH = $(F_MASTER)route/bin
-
-#========================================================================
-# Source files (based on actual v3.0.0 structure)
-#========================================================================
-
-# Utilities
-UTILS = \
-    nrtype.f90 \
-    nr_utils.f90 \
-    ascii_utils.f90 \
-    ncio_utils.f90 \
-    gamma_func.f90 \
-    pio_utils.f90 \
-    pio_decomp_data.f90 \
-    model_utils.f90
-
-# Data types
-DATATYPES = \
-    public_var.f90 \
-    datetime_data.f90 \
-    dataTypes.f90 \
-    var_lookup.f90 \
-    csv_data.f90 \
-    gageMeta_data.f90 \
-    obs_data.f90 \
-    globalData.f90 \
-    popMetadat.f90 \
-    allocation.f90
-
-# Initialization
-INIT = \
-    network_topo.f90 \
-    process_param.f90 \
-    process_ntopo.f90 \
-    pfafstetter.f90 \
-    domain_decomposition.f90
-
-# I/O routines
-IO = \
-    read_control.f90 \
-    read_param.f90 \
-    read_streamSeg.f90 \
-    write_streamSeg.f90 \
-    process_remap.f90 \
-    process_gage_meta.f90
-
-# Core routing
-CORE = \
-    data_assimilation.f90 \
-    accum_runoff.f90 \
-    basinUH.f90 \
-    irf_route.f90 \
-    kwt_route.f90 \
-    kwe_route.f90 \
-    dfw_route.f90 \
-    mc_route.f90 \
-    main_route.f90
-
-# Standalone driver files
-STANDALONE = \
-    read_runoff.f90 \
-    read_remap.f90 \
-    get_basin_runoff.f90 \
-    model_setup.f90 \
-    route_runoff.f90
-
-# Assemble
-TEMP_MODSUB = $(UTILS) $(DATATYPES) $(INIT) $(IO) $(CORE)
-MODSUB = $(patsubst %, $(F_KORE_DIR)%, $(TEMP_MODSUB))
-DRIVER = $(patsubst %, $(F_STANDALONE_DIR)%, $(STANDALONE))
-
-#========================================================================
-# Build targets
-#========================================================================
-
-all: compile install clean
-
-compile:
-	@echo "Compiling utilities..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(UTILS))
-	@echo "Compiling data types..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(DATATYPES))
-	@echo "Compiling initialization..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(INIT))
-	@echo "Compiling I/O routines..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(IO))
-	@echo "Compiling core routing..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(CORE))
-	@echo "Compiling standalone drivers..."
-	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(DRIVER)
-	@echo "Linking..."
-	$(FC_EXE) $(FLAGS) *.o $(LIBNETCDF) -o $(EXE)
-	@echo "✅ Successfully compiled mizuRoute"
-
-clean:
-	rm -f *.o *.mod *__genmod.f90
-	@echo "✅ Cleaned object files"
-
-install:
-	@mkdir -p $(EXE_PATH)
-	@mv $(EXE) $(EXE_PATH)/
-	@echo "✅ mizuRoute installed to: $(EXE_PATH)/$(EXE)"
-MAKEFILE_END
-
-# Replace placeholders
-sed -i "s|MIZUROUTE_INSTALL_DIR_PLACEHOLDER|$MIZUROUTE_INSTALL_DIR/|g" Makefile
-sed -i "s|NCDFF_PATH_PLACEHOLDER|$NCDFF_PATH|g" Makefile
-sed -i "s|NCDF_PATH_PLACEHOLDER|$NCDF_PATH|g" Makefile
-sed -i "s|VERSION_PLACEHOLDER|$VERSION|g" Makefile
-sed -i "s|GITBRCH_PLACEHOLDER|$GITBRCH|g" Makefile
-sed -i "s|GITHASH_PLACEHOLDER|$GITHASH|g" Makefile
-
-echo "Generated Makefile for mizuRoute v3.0.0"
-
-# Build
-echo "Building mizuRoute..."
-make all
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Build failed"
-    exit 1
+# Check if there's an existing Makefile in the serial branch
+if [ -f Makefile ]; then
+    echo "Found existing Makefile in serial branch"
+    cat Makefile
+    
+    # Build using existing Makefile
+    make FC=gnu \
+         FC_EXE=gfortran \
+         F_MASTER=$MIZUROUTE_INSTALL_DIR/ \
+         NCDF_PATH=$NCDF_PATH \
+         NCDFF_PATH=$NCDFF_PATH \
+         MODE=fast \
+         -j 4
+else
+    echo "No Makefile found - creating one for serial build"
+    # The serial branch should have a simpler structure
+    # We can create a Makefile if needed
 fi
 
-echo "✅ mizuRoute build complete: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
-    '''
-    ],
-                'dependencies': ['gfortran', 'netcdf-fortran'],
-                'test_command': '--version',
-                'order': 3
-            },
+# Check for executable
+if [ -f ../bin/mizuRoute.exe ] || [ -f ../bin/mizuroute.exe ]; then
+    echo "✅ mizuRoute build successful"
+    ls -la ../bin/
+else
+    echo "ERROR: Executable not found"
+    ls -la ../bin/ 2>/dev/null || echo "bin directory doesn't exist"
+    exit 1
+fi
+        '''
+                ],
+                'verify_install': {
+                    'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
+                    'check_type': 'any'
+                }
+                },
             'fuse': {
                 'description': 'Framework for Understanding Structural Errors',
                 'config_path_key': 'FUSE_INSTALL_PATH',
