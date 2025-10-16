@@ -909,7 +909,7 @@ class SummaPreProcessor:
         ifcToto = len(iLayerHeight)
         midSoil = midToto
         nSoil   = midToto
-
+        MatricHead = self.config.get('SUMMA_INIT_MATRIC_HEAD', -1.0)
         # States
         states = {
             'scalarCanopyIce': 0,
@@ -924,7 +924,7 @@ class SummaPreProcessor:
             'mLayerTemp': 283.16,
             'mLayerVolFracIce': 0,
             'mLayerVolFracLiq': 0.2,
-            'mLayerMatricHead': -1.0
+            'mLayerMatricHead': MatricHead
         }
 
         coldstate_path = self.settings_path / self.coldstate_name

@@ -39,6 +39,18 @@ class CalibrationTarget(ABC):
         # Parse time periods
         self.calibration_period = self._parse_date_range(config.get('CALIBRATION_PERIOD', ''))
         self.evaluation_period = self._parse_date_range(config.get('EVALUATION_PERIOD', ''))
+        
+        # Parse calibration timestep
+        self.calibration_timestep = config.get('CALIBRATION_TIMESTEP', 'native').lower()
+        if self.calibration_timestep not in ['native', 'hourly', 'daily']:
+            self.logger.warning(
+                f"Invalid CALIBRATION_TIMESTEP '{self.calibration_timestep}'. "
+                "Using 'native'. Valid options: 'native', 'hourly', 'daily'"
+            )
+            self.calibration_timestep = 'native'
+        
+        if self.calibration_timestep != 'native':
+            self.logger.info(f"Calibration will use {self.calibration_timestep} timestep")
     
     def calculate_metrics(self, sim_dir: Path, mizuroute_dir: Optional[Path] = None, 
                          calibration_only: bool = True) -> Optional[Dict[str, float]]:
@@ -183,6 +195,14 @@ class CalibrationTarget(ABC):
                 sim_period = sim_data
                 sim_period.index = sim_period.index.round('h')
             
+            # Resample to calibration timestep if specified in config
+            if self.calibration_timestep != 'native':
+                self.logger.info(f"Resampling data to {self.calibration_timestep} timestep")
+                obs_period = self._resample_to_timestep(obs_period, self.calibration_timestep)
+                sim_period = self._resample_to_timestep(sim_period, self.calibration_timestep)
+                
+                self.logger.debug(f"After resampling - obs points: {len(obs_period)}, sim points: {len(sim_period)}")
+            
             # Find common time indices
             common_idx = obs_period.index.intersection(sim_period.index)
             
@@ -211,6 +231,91 @@ class CalibrationTarget(ABC):
             self.logger.error(f"Error calculating period metrics: {str(e)}")
             return {}
     
+    def _resample_to_timestep(self, data: pd.Series, target_timestep: str) -> pd.Series:
+        """
+        Resample time series data to target timestep
+        
+        Args:
+            data: Time series data with DatetimeIndex
+            target_timestep: Target timestep ('hourly' or 'daily')
+            
+        Returns:
+            Resampled time series
+        """
+        if target_timestep == 'native' or data is None or len(data) == 0:
+            return data
+        
+        try:
+            # Infer current frequency
+            inferred_freq = pd.infer_freq(data.index)
+            if inferred_freq is None:
+                # Try to infer from first few differences
+                if len(data) > 1:
+                    time_diff = data.index[1] - data.index[0]
+                    self.logger.debug(f"Inferred time difference: {time_diff}")
+                else:
+                    self.logger.warning("Cannot infer frequency from single data point")
+                    return data
+            else:
+                self.logger.debug(f"Inferred frequency: {inferred_freq}")
+            
+            # Determine current timestep
+            time_diff = data.index[1] - data.index[0] if len(data) > 1 else pd.Timedelta(hours=1)
+            
+            # Check if already at target timestep
+            if target_timestep == 'hourly' and pd.Timedelta(minutes=45) <= time_diff <= pd.Timedelta(minutes=75):
+                self.logger.debug("Data already at hourly timestep")
+                return data
+            elif target_timestep == 'daily' and pd.Timedelta(hours=20) <= time_diff <= pd.Timedelta(hours=28):
+                self.logger.debug("Data already at daily timestep")
+                return data
+            
+            # Perform resampling
+            if target_timestep == 'hourly':
+                if time_diff < pd.Timedelta(hours=1):
+                    # Upsampling: sub-hourly to hourly (mean aggregation)
+                    self.logger.info(f"Aggregating {time_diff} data to hourly using mean")
+                    resampled = data.resample('H').mean()
+                elif time_diff > pd.Timedelta(hours=1):
+                    # Downsampling: daily/coarser to hourly (interpolation)
+                    self.logger.info(f"Interpolating {time_diff} data to hourly")
+                    # First resample to hourly (creates NaNs)
+                    resampled = data.resample('H').asfreq()
+                    # Then interpolate
+                    resampled = resampled.interpolate(method='time', limit_direction='both')
+                else:
+                    resampled = data
+                    
+            elif target_timestep == 'daily':
+                if time_diff < pd.Timedelta(days=1):
+                    # Upsampling: hourly/sub-daily to daily (mean aggregation)
+                    self.logger.info(f"Aggregating {time_diff} data to daily using mean")
+                    resampled = data.resample('D').mean()
+                elif time_diff > pd.Timedelta(days=1):
+                    # Downsampling: weekly/monthly to daily (interpolation)
+                    self.logger.info(f"Interpolating {time_diff} data to daily")
+                    resampled = data.resample('D').asfreq()
+                    resampled = resampled.interpolate(method='time', limit_direction='both')
+                else:
+                    resampled = data
+            else:
+                resampled = data
+            
+            # Remove any NaN values introduced by resampling at edges
+            resampled = resampled.dropna()
+            
+            self.logger.info(
+                f"Resampled from {len(data)} to {len(resampled)} points "
+                f"(target: {target_timestep})"
+            )
+            
+            return resampled
+            
+        except Exception as e:
+            self.logger.error(f"Error resampling to {target_timestep}: {str(e)}")
+            self.logger.warning("Returning original data without resampling")
+            return data
+
     def _calculate_performance_metrics(self, observed: pd.Series, simulated: pd.Series) -> Dict[str, float]:
         """Calculate performance metrics between observed and simulated data"""
         try:

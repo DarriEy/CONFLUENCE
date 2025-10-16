@@ -31,6 +31,75 @@ import netCDF4 as nc
 import xarray as xr
 
 
+def resample_to_timestep(data: pd.Series, target_timestep: str, logger) -> pd.Series:
+    """
+    Resample time series data to target timestep
+    
+    Args:
+        data: Time series data with DatetimeIndex
+        target_timestep: Target timestep ('native', 'hourly', or 'daily')
+        logger: Logger instance
+        
+    Returns:
+        Resampled time series
+    """
+    if target_timestep == 'native' or data is None or len(data) == 0:
+        return data
+    
+    try:
+        # Determine current timestep
+        time_diff = data.index[1] - data.index[0] if len(data) > 1 else pd.Timedelta(hours=1)
+        
+        # Check if already at target timestep
+        if target_timestep == 'hourly' and pd.Timedelta(minutes=45) <= time_diff <= pd.Timedelta(minutes=75):
+            logger.debug("DEBUG: Data already at hourly timestep")
+            return data
+        elif target_timestep == 'daily' and pd.Timedelta(hours=20) <= time_diff <= pd.Timedelta(hours=28):
+            logger.debug("DEBUG: Data already at daily timestep")
+            return data
+        
+        # Perform resampling
+        if target_timestep == 'hourly':
+            if time_diff < pd.Timedelta(hours=1):
+                # Upsampling: sub-hourly to hourly (mean aggregation)
+                logger.info(f"DEBUG: Aggregating {time_diff} data to hourly using mean")
+                resampled = data.resample('H').mean()
+            elif time_diff > pd.Timedelta(hours=1):
+                # Downsampling: daily/coarser to hourly (interpolation)
+                logger.info(f"DEBUG: Interpolating {time_diff} data to hourly")
+                resampled = data.resample('H').asfreq()
+                resampled = resampled.interpolate(method='time', limit_direction='both')
+            else:
+                resampled = data
+                
+        elif target_timestep == 'daily':
+            if time_diff < pd.Timedelta(days=1):
+                # Upsampling: hourly/sub-daily to daily (mean aggregation)
+                logger.info(f"DEBUG: Aggregating {time_diff} data to daily using mean")
+                resampled = data.resample('D').mean()
+            elif time_diff > pd.Timedelta(days=1):
+                # Downsampling: weekly/monthly to daily (interpolation)
+                logger.info(f"DEBUG: Interpolating {time_diff} data to daily")
+                resampled = data.resample('D').asfreq()
+                resampled = resampled.interpolate(method='time', limit_direction='both')
+            else:
+                resampled = data
+        else:
+            resampled = data
+        
+        # Remove any NaN values introduced by resampling at edges
+        resampled = resampled.dropna()
+        
+        logger.info(f"DEBUG: Resampled from {len(data)} to {len(resampled)} points (target: {target_timestep})")
+        
+        return resampled
+        
+    except Exception as e:
+        logger.error(f"DEBUG: Error resampling to {target_timestep}: {str(e)}")
+        logger.warning("DEBUG: Returning original data without resampling")
+        return data
+
+
 def _evaluate_parameters_worker_safe(task_data: Dict) -> Dict:
     """Safe wrapper for parameter evaluation with error handling and retries"""
     worker_seed = task_data.get('random_seed')
@@ -1210,9 +1279,7 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
             sim_time_diff = sim_data.index[1] - sim_data.index[0] if len(sim_data) > 1 else pd.Timedelta(hours=1)
             if pd.Timedelta(minutes=45) <= sim_time_diff <= pd.Timedelta(minutes=75):
                 sim_period.index = sim_period.index.round('h')
-        
-        # ENHANCED: Detailed alignment analysis
-        logger.info("DEBUG: Analyzing time alignment...")
+
         
         # Check for timezone mismatches and try to fix
         if obs_period.index.tz is not None and sim_period.index.tz is None:
@@ -1229,6 +1296,23 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
         logger.info(f"DEBUG: Obs sample times: {obs_period.index[::max(1,len(obs_period)//5)][:5].tolist()}")
         logger.info(f"DEBUG: Sim sample times: {sim_period.index[::max(1,len(sim_period)//5)][:5].tolist()}")
         
+        calibration_timestep = config.get('CALIBRATION_TIMESTEP', 'native').lower()
+        
+
+        # Apply timestep resampling if specified in config
+        if calibration_timestep != 'native':
+            logger.info(f"DEBUG: Resampling to {calibration_timestep} timestep for calibration")
+            obs_period = resample_to_timestep(obs_period, calibration_timestep, logger)
+            sim_period = resample_to_timestep(sim_period, calibration_timestep, logger)
+            
+            logger.info(f"DEBUG: After resampling - obs points: {len(obs_period)}, sim points: {len(sim_period)}")
+            
+            # Log sample of resampled times
+            if len(obs_period) > 0:
+                logger.info(f"DEBUG: Resampled obs sample times: {obs_period.index[::max(1,len(obs_period)//5)][:5].tolist()}")
+            if len(sim_period) > 0:
+                logger.info(f"DEBUG: Resampled sim sample times: {sim_period.index[::max(1,len(sim_period)//5)][:5].tolist()}")
+
         # Find intersection
         common_idx = obs_period.index.intersection(sim_period.index)
         logger.info(f"DEBUG: Common time indices: {len(common_idx)}")

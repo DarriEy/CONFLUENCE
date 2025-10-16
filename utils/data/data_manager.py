@@ -1441,7 +1441,6 @@ class DataManager:
                             # Interpolate EM-Earth data to forcing time grid
                             em_data_interp = em_combined[em_var].interp(time=forcing_ds.time)
                             
-                            # CRITICAL FIX: Handle unit conversions more carefully
                             if em_var in ['prcp', 'prcp_corrected']:
                                 # EM-Earth is in mm/hour
                                 current_units = str(updated_ds[forcing_var].attrs.get('units', ''))
@@ -1514,7 +1513,6 @@ class DataManager:
                             })
                             
                             break
-            # Add global attributes about EM-Earth replacement
             # Convert boolean to integer for NetCDF compatibility
             updated_ds.attrs.update({
                 'em_earth_replacement': 1,  # Use integer instead of boolean
