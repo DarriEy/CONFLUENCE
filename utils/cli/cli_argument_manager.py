@@ -160,7 +160,7 @@ class CLIArgumentManager:
                 'function_name': 'postprocess_results'
             }
         }
-        
+
     def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
         """
         Define external tools/binaries required by CONFLUENCE.
@@ -552,7 +552,6 @@ class CLIArgumentManager:
             print(f"   ⚠️  Verification error: {str(e)}")
             return False
 
-
     def get_executables(self, specific_tools: List[str] = None, confluence_instance=None, 
                     force: bool = False, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -718,11 +717,19 @@ class CLIArgumentManager:
                                 text=True,
                                 executable='/bin/bash'
                             )
-                            if build_result.stdout:
-                                # Print last few lines of output
-                                lines = build_result.stdout.strip().split('\n')
-                                for line in lines[-5:]:
-                                    print(f"         {line}")
+                            # For important builds, show more output
+                            if tool_name in ['summa', 'sundials', 'mizuroute']:
+                                # Show all output for critical tools
+                                if build_result.stdout:
+                                    print(f"         === Build Output ===")
+                                    for line in build_result.stdout.strip().split('\n'):
+                                        print(f"         {line}")
+                            else:
+                                # Show last few lines for other tools
+                                if build_result.stdout:
+                                    lines = build_result.stdout.strip().split('\n')
+                                    for line in lines[-5:]:
+                                        print(f"         {line}")
                             print(f"         ✅ Build step {i} completed")
                         
                         print(f"   ✅ Build successful")
@@ -731,12 +738,12 @@ class CLIArgumentManager:
                     except subprocess.CalledProcessError as build_error:
                         print(f"   ❌ Build failed: {build_error}")
                         if build_error.stdout:
-                            print(f"      Output (last 10 lines):")
-                            for line in build_error.stdout.strip().split('\n')[-10:]:
+                            print(f"      === Build Output ===")
+                            for line in build_error.stdout.strip().split('\n'):
                                 print(f"         {line}")
                         if build_error.stderr:
-                            print(f"      Error (last 10 lines):")
-                            for line in build_error.stderr.strip().split('\n')[-10:]:
+                            print(f"      === Error Output ===")
+                            for line in build_error.stderr.strip().split('\n'):
                                 print(f"         {line}")
                         installation_results['failed'].append(tool_name)
                         installation_results['errors'].append(f"{tool_name} build failed")
