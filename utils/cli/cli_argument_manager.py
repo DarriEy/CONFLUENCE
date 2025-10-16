@@ -546,7 +546,7 @@ FLAGS = -O3 -ffree-line-length-none -fmax-errors=0 -cpp -fallow-argument-mismatc
 
 # Compile SCE code written in Fortran 77
 sce_16plus.o: $(SCE_DIR)/sce_16plus.f
-	$(FC) -O2 -c -ffixed-form -o $@ $
+	$(FC) -O2 -c -ffixed-form -o $@ $(SCE_DIR)/sce_16plus.f
 
 # Compile
 all: compile install clean
