@@ -378,29 +378,214 @@ fi
                 'branch': None,  # Use default branch
                 'install_dir': 'mizuRoute',
                 'build_commands': [
-                    '''
-    # Build mizuRoute
-    export FC=gnu
-    cd route/build
-
-    # Check if Makefile exists
-    if [ ! -f Makefile ]; then
-        echo "ERROR: Makefile not found in route/build"
-        ls -la
-        exit 1
-    fi
-
-    make -f Makefile -j 4
-
-    # Verify executable was created
-    if [ ! -f ../bin/mizuroute.exe ]; then
-        echo "ERROR: mizuroute.exe not created"
-        ls -la ../bin/
-        exit 1
-    fi
-    echo "mizuRoute executable installed to: $(pwd)/../bin/mizuroute.exe"
     '''
-                ],
+# Get absolute path to mizuRoute installation directory
+MIZUROUTE_INSTALL_DIR="$(realpath .)"
+echo "mizuRoute installation directory: $MIZUROUTE_INSTALL_DIR"
+
+# Find NetCDF paths from loaded modules
+if [ -z "$EBROOTNETCDFMINFORTRAN" ] || [ -z "$EBROOTNETCDF" ]; then
+    echo "ERROR: NetCDF modules not loaded"
+    echo "Please load required modules:"
+    echo "  module load netcdf-fortran"
+    echo "  module load netcdf"
+    exit 1
+fi
+
+NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
+NCDF_PATH="$EBROOTNETCDF"
+
+echo "Using NetCDF-Fortran from: $NCDFF_PATH"
+echo "Using NetCDF from: $NCDF_PATH"
+
+# Navigate to build directory
+cd route/build
+
+# Get Git version info
+VERSION=$(git tag 2>/dev/null | tail -n 1 || echo "unknown")
+GITBRCH=$(git describe --long --all --always 2>/dev/null | sed -e's/heads\\///' || echo "unknown")
+GITHASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+echo "Version: $VERSION"
+echo "Branch: $GITBRCH"
+echo "Hash: $GITHASH"
+
+# Create Makefile with correct paths
+cat > Makefile << 'MAKEFILE_END'
+#========================================================================
+# Makefile to compile mizuRoute - Auto-generated for Linux cluster
+#========================================================================
+
+# Define fortran compiler
+FC = gnu
+
+# Define the compiler executable
+FC_EXE = gfortran
+
+# Define the executable
+EXE = mizuRoute.exe
+
+# Define optional setting
+MODE = fast
+
+# Define open MP option
+isOpenMP = no
+
+# Define core directory
+F_MASTER = MIZUROUTE_INSTALL_DIR_PLACEHOLDER
+
+# Define the NetCDF libraries and path
+NCDFF_PATH = NCDFF_PATH_PLACEHOLDER
+NCDF_PATH = NCDF_PATH_PLACEHOLDER
+
+LIBNETCDF = -Wl,-rpath,$(NCDFF_PATH)/lib -L$(NCDFF_PATH)/lib -lnetcdff \
+            -Wl,-rpath,$(NCDF_PATH)/lib -L$(NCDF_PATH)/lib -lnetcdf
+INCNETCDF = -I$(NCDFF_PATH)/include -I$(NCDF_PATH)/include
+
+#========================================================================
+# Git version info
+#========================================================================
+VERSION = VERSION_PLACEHOLDER
+GITBRCH = GITBRCH_PLACEHOLDER
+GITHASH = GITHASH_PLACEHOLDER
+
+#========================================================================
+# Define flags
+#========================================================================
+FLAGS_OMP =
+ifeq "$(isOpenMP)" "yes"
+  FLAGS_OMP = -fopenmp
+endif
+
+ifeq "$(MODE)" "fast"
+  FLAGS = -O3 -fmax-errors=0 -ffree-line-length-none $(FLAGS_OMP) -cpp -DVERSION=\"$(VERSION)\" -DBRANCH=\"$(GITBRCH)\" -DHASH=\"$(GITHASH)\"
+endif
+ifeq "$(MODE)" "debug"
+  FLAGS = -g -Wall -fmax-errors=0 -fbacktrace -fcheck=all -ffpe-trap=zero -ffree-line-length-none $(FLAGS_OMP) -cpp -DVERSION=\"$(VERSION)\" -DBRANCH=\"$(GITBRCH)\" -DHASH=\"$(GITHASH)\"
+endif
+
+#========================================================================
+# Define directory paths
+#========================================================================
+F_KORE_DIR = $(F_MASTER)route/build/src/
+MOD_PATH = $(F_MASTER)route/build/
+EXE_PATH = $(F_MASTER)route/bin
+
+#========================================================================
+# Assemble all of the sub-routines
+#========================================================================
+UTILS = \
+    nrtype.f90 \
+    nr_utility.f90 \
+    ascii_util.f90 \
+    ncio_utils.f90 \
+    gamma_func.f90
+
+DATATYPES = \
+    public_var.f90 \
+    dataTypes.f90 \
+    var_lookup.f90 \
+    time_utils.f90 \
+    datetime_data.f90 \
+    csv_data.f90 \
+    gageMeta_data.f90 \
+    obs_data.f90 \
+    globalData.f90 \
+    popMetadat.f90 \
+    allocation.f90
+
+INIT = \
+    network_topo.f90 \
+    process_param.f90 \
+    process_ntopo.f90 \
+    pfafstetter.f90 \
+    domain_decomposition.f90
+
+IO = \
+    remap.f90 \
+    read_control.f90 \
+    read_param.f90 \
+    read_streamSeg.f90 \
+    write_streamSeg.f90 \
+    read_runoff.f90 \
+    get_basin_runoff.f90 \
+    read_remap.f90 \
+    read_restart.f90 \
+    write_restart.f90 \
+    write_simoutput.f90
+
+CORE = \
+    model_finalize.f90 \
+    data_assimilation.f90 \
+    accum_runoff.f90 \
+    basinUH.f90 \
+    irf_route.f90 \
+    kwt_route.f90 \
+    dfw_route.f90 \
+    kw_route.f90 \
+    mc_route.f90 \
+    main_route.f90 \
+    model_setup.f90
+
+TEMP_MODSUB = $(UTILS) $(DATATYPES) $(INIT) $(IO) $(CORE)
+MODSUB = $(patsubst %, $(F_KORE_DIR)%, $(TEMP_MODSUB))
+
+#========================================================================
+# Define driver programs
+#========================================================================
+DRIVER = $(F_KORE_DIR)route_runoff.f90
+
+#========================================================================
+# Compile
+#========================================================================
+all: compile install clean
+
+compile:
+	$(FC_EXE) $(FLAGS) $(MODSUB) $(DRIVER) $(LIBNETCDF) $(INCNETCDF) -o $(EXE)
+	@echo "Successfully compiled mizuRoute"
+
+clean:
+	rm -f *.o
+	rm -f *.lst
+	rm -f *.mod
+	rm -f *__genmod.f90
+	@echo "Successfully cleaned object files"
+
+install:
+	@mkdir -p $(EXE_PATH)
+	@mv $(EXE) $(EXE_PATH)
+	@echo "✅ mizuRoute executable installed to: $(EXE_PATH)"
+MAKEFILE_END
+
+# Replace placeholders with actual paths
+sed -i "s|MIZUROUTE_INSTALL_DIR_PLACEHOLDER|$MIZUROUTE_INSTALL_DIR/|g" Makefile
+sed -i "s|NCDFF_PATH_PLACEHOLDER|$NCDFF_PATH|g" Makefile
+sed -i "s|NCDF_PATH_PLACEHOLDER|$NCDF_PATH|g" Makefile
+sed -i "s|VERSION_PLACEHOLDER|$VERSION|g" Makefile
+sed -i "s|GITBRCH_PLACEHOLDER|$GITBRCH|g" Makefile
+sed -i "s|GITHASH_PLACEHOLDER|$GITHASH|g" Makefile
+
+echo "Generated Makefile with cluster-specific paths"
+
+# Build mizuRoute
+echo "Building mizuRoute..."
+make all
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: mizuRoute build failed"
+    exit 1
+fi
+
+# Verify executable was created
+if [ -f "../bin/mizuRoute.exe" ]; then
+    echo "✅ mizuRoute executable successfully created at: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
+else
+    echo "ERROR: mizuRoute.exe not found after build"
+    ls -la ../bin/ 2>/dev/null || echo "bin directory not created"
+    exit 1
+fi
+    '''
+    ],
                 'dependencies': ['gfortran', 'netcdf-fortran'],
                 'test_command': '--version',
                 'order': 3
@@ -557,7 +742,7 @@ all: compile install clean
 # compile FUSE
 compile: sce_16plus.o
 	$(FC) $(FLAGS) $(INCLUDE) sce_16plus.o $(UTILMS) $(NRUTIL) $(DATAMS) $(TIMUTILS) $(INFOMS) $(NR_SUB) $(MODGUT) $(SOLVER) $(PRELIM) $(MODRUN) $(NETCDF) $(DRIVER_MODULES) $(DRIVER) $(LIBRARIES) -o $(DRIVER_EX)
-    
+
 # Remove object files
 clean:
 	rm -f *.o
