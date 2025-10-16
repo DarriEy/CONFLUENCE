@@ -473,8 +473,11 @@ HDF_LIB_PATH = HDF5_PATH_PLACEHOLDER
 LIBRARIES = -L$(NCDFF_LIB_PATH)/lib -lnetcdff -L$(NCDF_LIB_PATH)/lib -lnetcdf -L$(HDF_LIB_PATH)/lib -lhdf5_hl -lhdf5
 INCLUDE = -I$(NCDFF_LIB_PATH)/include -I$(NCDF_LIB_PATH)/include -I$(HDF_LIB_PATH)/include
 
-# Define the driver program
-FUSE_DRIVER = sobol.f90 fuse_metric.f90 functn.f90 fuse_driver.f90
+FUSE_DRIVER_MODULES = fuse_rmse.f90
+DRIVER_MODULES = $(patsubst %, $(DRIVER_DIR)/%, $(FUSE_DRIVER_MODULES))
+
+# Define the driver program  
+FUSE_DRIVER = sobol.f90 functn.f90 fuse_driver.f90
 DRIVER = $(patsubst %, $(DRIVER_DIR)/%, $(FUSE_DRIVER))
 
 # Define the executable
@@ -529,7 +532,7 @@ SOLVER = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_SOLVER))
 FUSE_PRELIM = ascii_util.f90 uniquemodl.f90 getnumerix.f90 getparmeta.f90 assign_stt.f90 assign_flx.f90 assign_par.f90 adjust_stt.f90 par_derive.f90 bucketsize.f90 mean_tipow.f90 qbsaturatn.f90 qtimedelay.f90 init_stats.f90 init_state.f90
 PRELIM = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_PRELIM))
 
-FUSE_MODRUN = metrics.f90 conv_funcs.f90 force_info.f90 clrsky_rad.f90 getPETgrid.f90 get_mbands.f90 get_time_indices.f90 initfluxes.f90 set_all.f90 ode_int.f90 fuse_solve.f90 comp_stats.f90 mean_stats.f90
+FUSE_MODRUN = conv_funcs.f90 force_info.f90 clrsky_rad.f90 getPETgrid.f90 get_mbands.f90 get_time_indices.f90 initfluxes.f90 set_all.f90 ode_int.f90 fuse_solve.f90 comp_stats.f90 mean_stats.f90
 MODRUN = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_MODRUN))
 
 # Define NetCDF routines
@@ -553,8 +556,8 @@ all: compile install clean
 
 # compile FUSE
 compile: sce_16plus.o
-	$(FC) $(FLAGS) $(INCLUDE) sce_16plus.o $(UTILMS) $(NRUTIL) $(DATAMS) $(TIMUTILS) $(INFOMS) $(NR_SUB) $(MODGUT) $(SOLVER) $(PRELIM) $(MODRUN) $(NETCDF) $(DRIVER) $(LIBRARIES) -o $(DRIVER_EX)
-		
+	$(FC) $(FLAGS) $(INCLUDE) sce_16plus.o $(UTILMS) $(NRUTIL) $(DATAMS) $(TIMUTILS) $(INFOMS) $(NR_SUB) $(MODGUT) $(SOLVER) $(PRELIM) $(MODRUN) $(NETCDF) $(DRIVER_MODULES) $(DRIVER) $(LIBRARIES) -o $(DRIVER_EX)
+    
 # Remove object files
 clean:
 	rm -f *.o
