@@ -265,31 +265,26 @@ export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
-# Verify SUNDIALS installation exists (check both lib and lib64)
+# Verify SUNDIALS installation exists
 if [ -d "$SUNDIALS_DIR/lib64" ]; then
     echo "✅ Found SUNDIALS libraries in lib64/"
-    SUNDIALS_LIB="$SUNDIALS_DIR/lib64"
+    SUNDIALS_LIB_DIR="$SUNDIALS_DIR/lib64"
 elif [ -d "$SUNDIALS_DIR/lib" ]; then
     echo "✅ Found SUNDIALS libraries in lib/"
-    SUNDIALS_LIB="$SUNDIALS_DIR/lib"
+    SUNDIALS_LIB_DIR="$SUNDIALS_DIR/lib"
 else
     echo "ERROR: SUNDIALS libraries not found at $SUNDIALS_DIR"
     exit 1
 fi
 
-# Check if build directory and CMakeLists.txt exist
-if [ ! -d build ]; then
-    echo "ERROR: build directory not found"
-    exit 1
+# Check for Fortran module interface
+if [ ! -f "$SUNDIALS_LIB_DIR/libsundials_fida_mod.a" ] && [ ! -f "$SUNDIALS_LIB_DIR/libsundials_fida_mod.so" ]; then
+    echo "⚠️  Warning: SUNDIALS Fortran module interface may not be installed"
+    echo "   Looking for libsundials_fida_mod in: $SUNDIALS_LIB_DIR"
+    ls -la "$SUNDIALS_LIB_DIR/" | grep sundials | head -10
 fi
 
-if [ ! -f build/CMakeLists.txt ]; then
-    echo "ERROR: CMakeLists.txt not found in build directory"
-    ls -la build/
-    exit 1
-fi
-
-# Create cmake_build directory at root level (not inside build/)
+# Create cmake_build directory
 mkdir -p cmake_build
 cd cmake_build
 
@@ -297,14 +292,26 @@ echo "Configuring SUMMA with CMake..."
 echo "Source directory: ../build"
 echo "Build directory: $(pwd)"
 
+# Try multiple approaches to help CMake find SUNDIALS
+export CMAKE_PREFIX_PATH="$SUNDIALS_DIR:$CMAKE_PREFIX_PATH"
+export SUNDIALS_ROOT="$SUNDIALS_DIR"
+
 cmake ../build \
     -DUSE_SUNDIALS=ON \
     -DCMAKE_BUILD_TYPE=Release \
-    -DSPECIFY_LAPACK_LINKS=OFF \
+    -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
+    -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
+    -DSUNDIALS_DIR="$SUNDIALS_DIR" \
     -DSUNDIALS_PATH="$SUNDIALS_DIR"
 
 if [ $? -ne 0 ]; then
+    echo ""
     echo "ERROR: CMake configuration failed"
+    echo ""
+    echo "🔍 Debugging information:"
+    echo "   SUNDIALS location: $SUNDIALS_DIR"
+    echo "   Checking for CMake config files:"
+    find "$SUNDIALS_DIR" -name "*.cmake" 2>/dev/null | head -10
     exit 1
 fi
 
@@ -335,12 +342,9 @@ elif [ -f cmake_build/summa.exe ]; then
     cp cmake_build/summa.exe bin/
     echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
 else
-    echo "ERROR: SUMMA executable not found"
-    echo "Searching in cmake_build..."
+    echo "ERROR: SUMMA executable not found after build"
+    echo "Searching for summa files..."
     find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
-    echo ""
-    echo "cmake_build contents:"
-    ls -R cmake_build/ | head -30
     exit 1
 fi
     '''
