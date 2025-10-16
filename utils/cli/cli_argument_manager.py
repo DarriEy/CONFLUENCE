@@ -260,7 +260,7 @@ class CLIArgumentManager:
                 'requires': ['sundials'],  # Dependency on SUNDIALS
                 'build_commands': [
     '''
-# Build SUMMA with SUNDIALS - simplified approach
+# Build SUMMA with SUNDIALS
 export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
@@ -277,21 +277,27 @@ else
     exit 1
 fi
 
-# Check if CMakeLists.txt exists in root
-if [ ! -f CMakeLists.txt ]; then
-    echo "ERROR: CMakeLists.txt not found in SUMMA root directory"
-    echo "Current directory: $(pwd)"
-    echo "Directory contents:"
-    ls -la
+# Check if build directory and CMakeLists.txt exist
+if [ ! -d build ]; then
+    echo "ERROR: build directory not found"
     exit 1
 fi
 
-# Create build directory at root level
+if [ ! -f build/CMakeLists.txt ]; then
+    echo "ERROR: CMakeLists.txt not found in build directory"
+    ls -la build/
+    exit 1
+fi
+
+# Create cmake_build directory at root level (not inside build/)
 mkdir -p cmake_build
 cd cmake_build
 
-echo "Configuring SUMMA with CMake from: $(pwd)"
-cmake .. \
+echo "Configuring SUMMA with CMake..."
+echo "Source directory: ../build"
+echo "Build directory: $(pwd)"
+
+cmake ../build \
     -DUSE_SUNDIALS=ON \
     -DCMAKE_BUILD_TYPE=Release \
     -DSPECIFY_LAPACK_LINKS=OFF \
@@ -330,12 +336,15 @@ elif [ -f cmake_build/summa.exe ]; then
     echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
 else
     echo "ERROR: SUMMA executable not found"
-    echo "Searching for summa files in cmake_build..."
+    echo "Searching in cmake_build..."
     find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
+    echo ""
+    echo "cmake_build contents:"
+    ls -R cmake_build/ | head -30
     exit 1
 fi
     '''
-],
+    ],
                 'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
                 'test_command': '--version',
                 'order': 2  # Install after SUNDIALS
