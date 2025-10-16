@@ -439,7 +439,10 @@ UTILS = \
     nr_utils.f90 \
     ascii_utils.f90 \
     ncio_utils.f90 \
-    gamma_func.f90
+    gamma_func.f90 \
+    pio_utils.f90 \
+    pio_decomp_data.f90 \
+    model_utils.f90
 
 # Data types
 DATATYPES = \
@@ -503,7 +506,20 @@ DRIVER = $(patsubst %, $(F_STANDALONE_DIR)%, $(STANDALONE))
 all: compile install clean
 
 compile:
-	$(FC_EXE) $(FLAGS) $(MODSUB) $(DRIVER) $(LIBNETCDF) $(INCNETCDF) -o $(EXE)
+	@echo "Compiling utilities..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(UTILS))
+	@echo "Compiling data types..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(DATATYPES))
+	@echo "Compiling initialization..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(INIT))
+	@echo "Compiling I/O routines..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(IO))
+	@echo "Compiling core routing..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(patsubst %, $(F_KORE_DIR)%, $(CORE))
+	@echo "Compiling standalone drivers..."
+	$(FC_EXE) $(FLAGS) -c $(INCNETCDF) $(DRIVER)
+	@echo "Linking..."
+	$(FC_EXE) $(FLAGS) *.o $(LIBNETCDF) -o $(EXE)
 	@echo "✅ Successfully compiled mizuRoute"
 
 clean:
