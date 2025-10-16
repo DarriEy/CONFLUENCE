@@ -499,6 +499,9 @@ main() {
     
     # Handle installation mode - use special setup
     if [[ "$run_install" == "true" ]]; then
+        echo "DEBUG: Install mode detected" >&2
+        echo "DEBUG: confluence_dir=$confluence_dir" >&2
+        echo "DEBUG: python_cmd=$python_cmd" >&2
         print_info "CONFLUENCE installation mode"
         echo ""
         
