@@ -297,6 +297,7 @@ export CMAKE_PREFIX_PATH="$SUNDIALS_DIR:$CMAKE_PREFIX_PATH"
 export SUNDIALS_ROOT="$SUNDIALS_DIR"
 
 # Set Fortran flags for free-form source format
+# Explicitly avoid C++ flags that might leak to Fortran
 export FFLAGS="-ffree-form -ffree-line-length-none"
 export FCFLAGS="-ffree-form -ffree-line-length-none"
 
@@ -306,7 +307,8 @@ cmake ../build \
     -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
     -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
     -DSUNDIALS_DIR="$SUNDIALS_DIR" \
-    -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
+    -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none" \
+    -DCMAKE_Fortran_COMPILER=gfortran
 
 if [ $? -ne 0 ]; then
     echo ""
@@ -318,6 +320,12 @@ if [ $? -ne 0 ]; then
     find "$SUNDIALS_DIR" -name "*.cmake" 2>/dev/null | head -10
     exit 1
 fi
+
+echo ""
+echo "Fixing CMake build files to remove C++ flags from Fortran compilation..."
+# Remove -cxxlib and other C++ flags from Fortran compile commands
+find . -name "*.make" -type f -exec sed -i 's/-cxxlib//g' {} \;
+find . -name "flags.make" -type f -exec sed -i 's/-cxxlib//g' {} \;
 
 echo ""
 echo "Building SUMMA (this may take a few minutes)..."
