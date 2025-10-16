@@ -174,7 +174,7 @@ setup_python_env() {
     # Check if we can create a virtual environment
     if [[ -n "${VIRTUAL_ENV}" ]] || [[ -n "${CONDA_DEFAULT_ENV}" ]]; then
         print_info "In a virtual environment - you may need to install packages manually:"
-        print_info "pip install numpy pandas geopandas rasterio netCDF4 PyYAML"
+        print_info "pip install -r requirements.txt"
         return 1
     fi
     
@@ -196,9 +196,21 @@ setup_python_env() {
         # Install dependencies
         print_info "Installing Python dependencies..."
         pip install --upgrade pip
-        if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil; then
-            print_error "Failed to install dependencies"
-            return 1
+        
+        # Check if requirements.txt exists and use it, otherwise install basic packages
+        local requirements_file="${confluence_dir}/requirements.txt"
+        if [[ -f "$requirements_file" ]]; then
+            print_info "Found requirements.txt - installing all dependencies..."
+            if ! pip install -r "$requirements_file"; then
+                print_error "Failed to install dependencies from requirements.txt"
+                return 1
+            fi
+        else
+            print_warning "requirements.txt not found - installing basic dependencies..."
+            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+                print_error "Failed to install dependencies"
+                return 1
+            fi
         fi
         
         print_success "Python environment setup complete"
