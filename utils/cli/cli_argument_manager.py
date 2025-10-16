@@ -473,15 +473,44 @@ fi
                 'branch': None,
                 'install_dir': 'gistool',
                 'build_commands': [
-                    '''
-    # Make gistool scripts executable
-    chmod +x extract-gis.sh
-    if [ -d scripts ]; then
-        chmod +x scripts/*.sh 2>/dev/null || true
-    fi
-    echo "gistool scripts are now executable"
     '''
-                ],
+mkdir -p build
+cd build
+
+echo "Configuring TauDEM with CMake..."
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=../install
+
+echo "Building TauDEM..."
+make -j 4
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Build failed"
+    exit 1
+fi
+
+echo "Installing TauDEM..."
+make install
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Install failed"
+    exit 1
+fi
+
+# Check where executables ended up
+if [ -d "../install/bin" ]; then
+    echo "✅ TauDEM executables installed to: $(realpath ../install/bin)"
+    ls -la ../install/bin/ | head -10
+elif [ -d "bin" ]; then
+    echo "✅ TauDEM executables in build/bin:"
+    ls -la bin/ | head -10
+elif [ -d "src" ]; then
+    echo "⚠️  Executables may be in build/src:"
+    find src -type f -executable | head -10
+fi
+    '''
+    ],
                 'dependencies': ['bash', 'gdal', 'R'],
                 'test_command': '--help',
                 'order': 6
