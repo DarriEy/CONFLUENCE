@@ -369,15 +369,15 @@ fi
                 'order': 2  # Install after SUNDIALS
             },
             'mizuroute': {
-    'description': 'Mizukami routing model for river network routing',
-    'config_path_key': 'INSTALL_PATH_MIZUROUTE',
-    'config_exe_key': 'EXE_NAME_MIZUROUTE',
-    'default_path_suffix': 'installs/mizuRoute/route/bin',
-    'default_exe': 'mizuroute.exe',
-    'repository': 'https://github.com/ESCOMP/mizuRoute.git',  # Keep as 'repository'
-    'branch': 'serial',  # Use the serial branch instead of None
-    'install_dir': 'mizuRoute',
-    'build_commands': [
+            'description': 'Mizukami routing model for river network routing',
+            'config_path_key': 'INSTALL_PATH_MIZUROUTE',
+            'config_exe_key': 'EXE_NAME_MIZUROUTE',
+            'default_path_suffix': 'installs/mizuRoute/route/bin',
+            'default_exe': 'mizuroute.exe',
+            'repository': 'https://github.com/ESCOMP/mizuRoute.git',  # Keep as 'repository'
+            'branch': 'serial',  # Use the serial branch instead of None
+            'install_dir': 'mizuRoute',
+            'build_commands': [
     '''
 # Get NetCDF paths
 NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
@@ -392,10 +392,10 @@ cd route/build
 
 echo "Building mizuRoute from serial branch..."
 
-# Build with proper variable names
+# F_MASTER should point to the route/ directory, not the mizuRoute/ directory
 make FC=gnu \
      FC_EXE=gfortran \
-     F_MASTER=$MIZUROUTE_INSTALL_DIR/ \
+     F_MASTER=$MIZUROUTE_INSTALL_DIR/route/ \
      NCDF_PATH=$NCDF_PATH \
      NCDFF_PATH=$NCDFF_PATH \
      EXE=mizuRoute.exe \
@@ -406,17 +406,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# The binary should be in the build directory
+# Check where the executable ended up
 if [ -f mizuRoute.exe ]; then
-    mkdir -p ../../bin
-    mv mizuRoute.exe ../../bin/
-    echo "✅ mizuRoute installed to: $MIZUROUTE_INSTALL_DIR/bin/mizuRoute.exe"
-elif [ -f ../../bin/mizuRoute.exe ]; then
-    echo "✅ mizuRoute already in bin: $MIZUROUTE_INSTALL_DIR/bin/mizuRoute.exe"
+    mkdir -p ../bin
+    mv mizuRoute.exe ../bin/
+    echo "✅ mizuRoute installed to: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
+elif [ -f ../bin/mizuRoute.exe ]; then
+    echo "✅ mizuRoute already in bin: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
 else
     echo "ERROR: Executable not found"
-    ls -la *.exe 2>/dev/null || echo "No .exe files found"
-    ls -la ../../bin/ 2>/dev/null || echo "bin directory doesn't exist"
+    find . -name "*.exe" 2>/dev/null || echo "No .exe files found"
     exit 1
 fi
     '''
