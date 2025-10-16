@@ -370,9 +370,12 @@ fi
             },
             'mizuroute': {
     'description': 'Mizukami routing model for river network routing',
-    'repo_url': 'https://github.com/ESCOMP/mizuRoute.git',
-    'branch': 'serial',  # Use the serial branch - designed for standalone builds
-    'system_dependencies': ['netcdf-fortran'],
+    'config_path_key': 'INSTALL_PATH_MIZUROUTE',
+    'config_exe_key': 'EXE_NAME_MIZUROUTE',
+    'default_path_suffix': 'installs/mizuRoute/route/bin',
+    'default_exe': 'mizuroute.exe',
+    'repository': 'https://github.com/ESCOMP/mizuRoute.git',  # Keep as 'repository'
+    'branch': 'serial',  # Use the serial branch instead of None
     'install_dir': 'mizuRoute',
     'build_commands': [
         '''
@@ -394,10 +397,9 @@ GITHASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
 echo "Building mizuRoute from serial branch..."
 
-# Check if there's an existing Makefile in the serial branch
+# Check if there's an existing Makefile
 if [ -f Makefile ]; then
     echo "Found existing Makefile in serial branch"
-    cat Makefile
     
     # Build using existing Makefile
     make FC=gnu \
@@ -408,27 +410,23 @@ if [ -f Makefile ]; then
          MODE=fast \
          -j 4
 else
-    echo "No Makefile found - creating one for serial build"
-    # The serial branch should have a simpler structure
-    # We can create a Makefile if needed
+    echo "No Makefile found - will need to create one"
+    exit 1
 fi
 
 # Check for executable
 if [ -f ../bin/mizuRoute.exe ] || [ -f ../bin/mizuroute.exe ]; then
     echo "✅ mizuRoute build successful"
-    ls -la ../bin/
 else
     echo "ERROR: Executable not found"
-    ls -la ../bin/ 2>/dev/null || echo "bin directory doesn't exist"
     exit 1
 fi
         '''
-                ],
-                'verify_install': {
-                    'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
-                    'check_type': 'any'
-                }
-                },
+            ],
+            'dependencies': ['gfortran', 'netcdf-fortran'],
+            'test_command': '--version',
+            'order': 3
+        },
             'fuse': {
                 'description': 'Framework for Understanding Structural Errors',
                 'config_path_key': 'FUSE_INSTALL_PATH',
