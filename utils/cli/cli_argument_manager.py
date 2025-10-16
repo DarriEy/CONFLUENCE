@@ -179,71 +179,71 @@ class CLIArgumentManager:
                 'branch': None,
                 'install_dir': 'sundials',
                 'build_commands': [
-                    '''
-    # Build SUNDIALS using release tarball
-    SUNDIALS_VER=7.4.0
-    SUNDIALSDIR="$(pwd)/install/sundials"
-
-    echo "Downloading SUNDIALS v${SUNDIALS_VER}..."
-    wget -q https://github.com/LLNL/sundials/archive/refs/tags/v${SUNDIALS_VER}.tar.gz
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to download SUNDIALS"
-        exit 1
-    fi
-
-    echo "Extracting SUNDIALS..."
-    tar -xzf v${SUNDIALS_VER}.tar.gz
-
-    cd sundials-${SUNDIALS_VER}
-    mkdir -p build
-    cd build
-
-    echo "Configuring SUNDIALS with CMake..."
-    cmake .. \
-        -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
-        -DCMAKE_Fortran_COMPILER=gfortran \
-        -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DEXAMPLES_ENABLE=OFF \
-        -DBUILD_TESTING=OFF
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: CMake configuration failed"
-        exit 1
-    fi
-
-    echo "Building SUNDIALS..."
-    make -j 4
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Build failed"
-        exit 1
-    fi
-
-    echo "Installing SUNDIALS..."
-    make install
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Installation failed"
-        exit 1
-    fi
-
-    echo "✅ SUNDIALS v${SUNDIALS_VER} installed to: $SUNDIALSDIR"
-
-    # Check which lib directory was created
-    if [ -d "$SUNDIALSDIR/lib64" ]; then
-        echo "Libraries installed to lib64:"
-        ls -la "$SUNDIALSDIR/lib64/" | head -10
-    elif [ -d "$SUNDIALSDIR/lib" ]; then
-        echo "Libraries installed to lib:"
-        ls -la "$SUNDIALSDIR/lib/" | head -10
-    else
-        echo "WARNING: No lib or lib64 directory found"
-    fi
     '''
-                ],
+# Build SUNDIALS using release tarball with SHARED libraries
+SUNDIALS_VER=7.4.0
+SUNDIALSDIR="$(pwd)/install/sundials"
+
+echo "Downloading SUNDIALS v${SUNDIALS_VER}..."
+wget -q https://github.com/LLNL/sundials/archive/refs/tags/v${SUNDIALS_VER}.tar.gz
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to download SUNDIALS"
+    exit 1
+fi
+
+echo "Extracting SUNDIALS..."
+tar -xzf v${SUNDIALS_VER}.tar.gz
+
+cd sundials-${SUNDIALS_VER}
+mkdir -p build
+cd build
+
+echo "Configuring SUNDIALS with CMake (with shared libraries)..."
+cmake .. \
+    -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
+    -DCMAKE_Fortran_COMPILER=gfortran \
+    -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
+    -DEXAMPLES_ENABLE=OFF \
+    -DBUILD_TESTING=OFF
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: CMake configuration failed"
+    exit 1
+fi
+
+echo "Building SUNDIALS..."
+make -j 4
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Build failed"
+    exit 1
+fi
+
+echo "Installing SUNDIALS..."
+make install
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Installation failed"
+    exit 1
+fi
+
+echo "✅ SUNDIALS v${SUNDIALS_VER} installed to: $SUNDIALSDIR"
+
+# Check which lib directory was created
+if [ -d "$SUNDIALSDIR/lib64" ]; then
+    echo "Libraries installed to lib64:"
+    ls -la "$SUNDIALSDIR/lib64/" | head -10
+elif [ -d "$SUNDIALSDIR/lib" ]; then
+    echo "Libraries installed to lib:"
+    ls -la "$SUNDIALSDIR/lib/" | head -10
+else
+    echo "WARNING: No lib or lib64 directory found"
+fi
+    '''
+    ],
                 'dependencies': ['cmake', 'gfortran', 'wget'],
                 'test_command': None,
                 'order': 1  # Install first
