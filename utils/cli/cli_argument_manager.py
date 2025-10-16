@@ -626,7 +626,7 @@ fi
                 'description': 'Terrain Analysis Using Digital Elevation Models',
                 'config_path_key': 'TAUDEM_INSTALL_PATH',
                 'config_exe_key': 'TAUDEM_EXE',
-                'default_path_suffix': 'installs/taudem/bin',
+                'default_path_suffix': 'installs/taudem/src',
                 'default_exe': 'pitremove',
                 'repository': 'https://github.com/dtarb/TauDEM.git',
                 'branch': None,
@@ -639,9 +639,9 @@ fi
     cmake -DCMAKE_BUILD_TYPE=Release ..
     make -j 4
 
-    # TauDEM installs to build/bin
-    cp ../src/bin ../bin
-    echo "TauDEM executables in: $(pwd)/bin/"
+    # TauDEM installs to build/src
+    cp -r ../src/* ../bin/
+    echo "TauDEM executables in: $(pwd)/src/"
     ls -la bin/ || echo "No bin directory created"
     '''
                 ],
@@ -783,10 +783,7 @@ fi
             config = confluence_instance.config
         else:
             try:
-                config_path = Path('./0_config_files/config_active.yaml')
-                if not config_path.exists():
-                    config_path = Path('./0_config_files/config_template.yaml')
-                
+                config_path = Path('./0_config_files/config_template.yaml')                
                 if config_path.exists():
                     with open(config_path, 'r') as f:
                         config = yaml.safe_load(f)
@@ -1108,9 +1105,7 @@ fi
         # If no config available, try to load default
         if not config:
             try:
-                config_path = Path('./0_config_files/config_active.yaml')
-                if not config_path.exists():
-                    config_path = Path('./0_config_files/config_template.yaml')
+                config_path = Path('./0_config_files/config_template.yaml')
                 
                 if config_path.exists():
                     with open(config_path, 'r') as f:
@@ -2229,7 +2224,7 @@ fi
         config_group.add_argument(
             '--config', 
             type=str,
-            default='./0_config_files/config_active.yaml',
+            default='./0_config_files/config_template.yaml',
             help='Path to YAML configuration file (default: ./0_config_files/config_active.yaml)'
         )
         config_group.add_argument(
@@ -2720,7 +2715,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         slurm_options = execution_plan.get('slurm_options', {})
         job_mode = execution_plan.get('job_mode', 'workflow')
         job_steps = execution_plan.get('job_steps', [])
-        config_file = execution_plan.get('config_file', './0_config_files/config_active.yaml')
+        config_file = execution_plan.get('config_file', './0_config_files/config_template.yaml')
         
         # Generate job name if not provided
         if not slurm_options.get('job_name'):
