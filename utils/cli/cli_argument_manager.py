@@ -297,7 +297,6 @@ export CMAKE_PREFIX_PATH="$SUNDIALS_DIR:$CMAKE_PREFIX_PATH"
 export SUNDIALS_ROOT="$SUNDIALS_DIR"
 
 # Set Fortran flags for free-form source format
-# Explicitly avoid C++ flags that might leak to Fortran
 export FFLAGS="-ffree-form -ffree-line-length-none"
 export FCFLAGS="-ffree-form -ffree-line-length-none"
 
@@ -323,7 +322,6 @@ fi
 
 echo ""
 echo "Fixing CMake build files to remove C++ flags from Fortran compilation..."
-# Remove -cxxlib and other C++ flags from Fortran compile commands
 find . -name "*.make" -type f -exec sed -i 's/-cxxlib//g' {} \;
 find . -name "flags.make" -type f -exec sed -i 's/-cxxlib//g' {} \;
 
@@ -340,23 +338,28 @@ echo ""
 echo "Checking for SUMMA executable..."
 cd ..
 
-# Check for executable in various locations
-if [ -f cmake_build/bin/summa.exe ]; then
+# Check for executable in various locations with both possible names
+if [ -f "bin/summa_sundials.exe" ]; then
+    echo "✅ SUMMA executable found at: $(pwd)/bin/summa_sundials.exe"
+    # Create symlink for compatibility
+    ln -sf summa_sundials.exe bin/summa.exe
+    echo "✅ Created symlink: bin/summa.exe -> bin/summa_sundials.exe"
+elif [ -f "bin/summa.exe" ]; then
+    echo "✅ SUMMA executable found at: $(pwd)/bin/summa.exe"
+elif [ -f "cmake_build/bin/summa_sundials.exe" ]; then
+    mkdir -p bin
+    cp cmake_build/bin/summa_sundials.exe bin/
+    ln -sf summa_sundials.exe bin/summa.exe
+    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa_sundials.exe"
+    echo "✅ Created symlink: bin/summa.exe -> bin/summa_sundials.exe"
+elif [ -f "cmake_build/bin/summa.exe" ]; then
     mkdir -p bin
     cp cmake_build/bin/summa.exe bin/
-    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
-elif [ -f cmake_build/bin/summa ]; then
-    mkdir -p bin
-    cp cmake_build/bin/summa bin/summa.exe
-    echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
-elif [ -f cmake_build/summa.exe ]; then
-    mkdir -p bin
-    cp cmake_build/summa.exe bin/
     echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
 else
     echo "ERROR: SUMMA executable not found after build"
     echo "Searching for summa files..."
-    find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
+    find . -name "summa*.exe" -o -name "summa" -type f 2>/dev/null || echo "No summa executables found"
     exit 1
 fi
     '''
