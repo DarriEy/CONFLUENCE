@@ -422,7 +422,8 @@ GITHASH = GITHASH_PLACEHOLDER
 
 # Compiler flags
 FLAGS = -O3 -fmax-errors=0 -ffree-line-length-none -cpp \
-        -DVERSION=\"$(VERSION)\" -DBRANCH=\"$(GITBRCH)\" -DHASH=\"$(GITHASH)\"
+        -DVERSION=\"$(VERSION)\" -DBRANCH=\"$(GITBRCH)\" -DHASH=\"$(GITHASH)\" \
+        -DNO_PIO -DNO_MPI
 
 # Directories
 F_KORE_DIR = $(F_MASTER)route/build/src/
