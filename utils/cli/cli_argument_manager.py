@@ -173,28 +173,68 @@ class CLIArgumentManager:
                 'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
                 'config_path_key': 'SUNDIALS_INSTALL_PATH',
                 'config_exe_key': 'SUNDIALS_DIR',
-                'default_path_suffix': 'installs/sundials/instdir',
+                'default_path_suffix': 'installs/sundials/install/sundials',
                 'default_exe': 'lib/libsundials_core.a',  # Check for library file
-                'repository': 'https://github.com/LLNL/sundials.git',
-                'branch': 'v7.3.1',  # Stable release
+                'repository': None,  # Use wget instead of git
+                'branch': None,
                 'install_dir': 'sundials',
                 'build_commands': [
                     '''
-    # Build SUNDIALS
-    mkdir -p build instdir
+    # Build SUNDIALS using release tarball
+    SUNDIALS_VER=7.4.0
+    SUNDIALSDIR="$(pwd)/install/sundials"
+
+    echo "Downloading SUNDIALS v${SUNDIALS_VER}..."
+    wget -q https://github.com/LLNL/sundials/archive/refs/tags/v${SUNDIALS_VER}.tar.gz
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to download SUNDIALS"
+        exit 1
+    fi
+
+    echo "Extracting SUNDIALS..."
+    tar -xzf v${SUNDIALS_VER}.tar.gz
+
+    cd sundials-${SUNDIALS_VER}
+    mkdir -p build
     cd build
-    cmake -DCMAKE_INSTALL_PREFIX=../instdir \
+
+    echo "Configuring SUNDIALS with CMake..."
+    cmake .. \
+        -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
+        -DCMAKE_Fortran_COMPILER=gfortran \
+        -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DEXAMPLES_ENABLE=OFF \
-        -DBUILD_TESTING=OFF \
-        ..
+        -DBUILD_TESTING=OFF
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: CMake configuration failed"
+        exit 1
+    fi
+
+    echo "Building SUNDIALS..."
     make -j 4
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Build failed"
+        exit 1
+    fi
+
+    echo "Installing SUNDIALS..."
     make install
-    echo "SUNDIALS installed to: $(pwd)/../instdir"
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Installation failed"
+        exit 1
+    fi
+
+    echo "✅ SUNDIALS v${SUNDIALS_VER} installed to: $SUNDIALSDIR"
+    ls -la "$SUNDIALSDIR/lib/" | head -10
     '''
                 ],
-                'dependencies': ['cmake', 'gcc'],
+                'dependencies': ['cmake', 'gfortran', 'wget'],
                 'test_command': None,
                 'order': 1  # Install first
             },
@@ -212,36 +252,69 @@ class CLIArgumentManager:
                     '''
     # Build SUMMA with SUNDIALS
     export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
-    export SUNDIALS_DIR="$(realpath ../sundials/instdir)"
+    export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+
     echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
-    # Verify SUNDIALS installation
+    # Verify SUNDIALS installation exists
     if [ ! -d "$SUNDIALS_DIR/lib" ]; then
         echo "ERROR: SUNDIALS not found at $SUNDIALS_DIR"
+        echo "Contents of parent directory:"
+        ls -la ../sundials/
+        exit 1
+    fi
+
+    echo "SUNDIALS library directory contents:"
+    ls -la "$SUNDIALS_DIR/lib/" | head -5
+
+    # Verify CMakeLists.txt exists
+    if [ ! -f CMakeLists.txt ]; then
+        echo "ERROR: CMakeLists.txt not found in $(pwd)"
+        echo "Directory contents:"
+        ls -la
         exit 1
     fi
 
     # Build SUMMA
+    echo "Configuring SUMMA with CMake..."
     cmake -B ./cmake_build -S . \
         -DUSE_SUNDIALS=ON \
         -DCMAKE_BUILD_TYPE=Release \
         -DSPECIFY_LAPACK_LINKS=OFF \
         -DSUNDIALS_PATH="$SUNDIALS_DIR"
 
+    if [ $? -ne 0 ]; then
+        echo "ERROR: CMake configuration failed"
+        exit 1
+    fi
+
+    echo "Building SUMMA..."
     cmake --build ./cmake_build --target all -j 4
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Build failed"
+        exit 1
+    fi
 
     # Create bin directory and copy executable
     mkdir -p bin
+
+    # Check for various possible executable names
     if [ -f cmake_build/bin/summa.exe ]; then
         cp cmake_build/bin/summa.exe bin/
+        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
     elif [ -f cmake_build/bin/summa_sundials.exe ]; then
         cp cmake_build/bin/summa_sundials.exe bin/summa.exe
+        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
+    elif [ -f cmake_build/bin/summa ]; then
+        cp cmake_build/bin/summa bin/summa.exe
+        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
     else
         echo "ERROR: SUMMA executable not found"
-        ls -la cmake_build/bin/
+        echo "Contents of cmake_build/bin/:"
+        ls -la cmake_build/bin/ 2>/dev/null || echo "cmake_build/bin/ does not exist"
         exit 1
     fi
-    echo "SUMMA executable installed to: $(pwd)/bin/summa.exe"
     '''
                 ],
                 'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
@@ -402,7 +475,7 @@ class CLIArgumentManager:
                         install_dir: Path) -> bool:
         """Verify that a tool was installed correctly."""
         try:
-            # Look for expected executable
+            # Look for expected executable or library
             exe_name = tool_info['default_exe']
             
             # Common locations to check
@@ -412,14 +485,24 @@ class CLIArgumentManager:
                 install_dir / 'build' / exe_name,
                 install_dir / 'route' / 'bin' / exe_name,  # mizuRoute specific
                 install_dir / exe_name.replace('.exe', ''),  # Linux version
+                install_dir / 'install' / 'sundials' / exe_name,  # SUNDIALS specific
             ]
             
             for exe_path in possible_paths:
                 if exe_path.exists():
-                    print(f"   ✅ Executable found: {exe_path}")
+                    print(f"   ✅ Executable/library found: {exe_path}")
                     return True
             
-            print(f"   ⚠️  Executable not found in expected locations")
+            print(f"   ⚠️  Executable/library not found in expected locations")
+            print(f"      Searched for: {exe_name}")
+            print(f"      In directory: {install_dir}")
+            
+            # Show what actually exists
+            if install_dir.exists():
+                print(f"      Directory contents:")
+                for item in sorted(install_dir.iterdir())[:10]:
+                    print(f"         {item.name}")
+            
             return False
             
         except Exception as e:
@@ -532,20 +615,27 @@ class CLIArgumentManager:
                     print(f"   🗑️  Removing existing installation: {tool_install_dir}")
                     shutil.rmtree(tool_install_dir)
                 
-                # Clone repository with optional branch
-                print(f"   📥 Cloning from: {repository_url}")
-                if branch:
-                    print(f"   🌿 Checking out branch: {branch}")
-                    clone_cmd = ['git', 'clone', '-b', branch, repository_url, str(tool_install_dir)]
+                # Clone repository or create directory for non-git tools
+                if repository_url:
+                    # Git-based installation
+                    print(f"   📥 Cloning from: {repository_url}")
+                    if branch:
+                        print(f"   🌿 Checking out branch: {branch}")
+                        clone_cmd = ['git', 'clone', '-b', branch, repository_url, str(tool_install_dir)]
+                    else:
+                        clone_cmd = ['git', 'clone', repository_url, str(tool_install_dir)]
+                    
+                    clone_result = subprocess.run(
+                        clone_cmd,
+                        capture_output=True, text=True, check=True
+                    )
+                    
+                    print(f"   ✅ Clone successful")
                 else:
-                    clone_cmd = ['git', 'clone', repository_url, str(tool_install_dir)]
-                
-                clone_result = subprocess.run(
-                    clone_cmd,
-                    capture_output=True, text=True, check=True
-                )
-                
-                print(f"   ✅ Clone successful")
+                    # Non-git installation (e.g., wget-based like SUNDIALS)
+                    print(f"   📁 Creating installation directory")
+                    tool_install_dir.mkdir(parents=True, exist_ok=True)
+                    print(f"   ✅ Directory created: {tool_install_dir}")
                 
                 # Check dependencies
                 missing_deps = self._check_dependencies(tool_info['dependencies'])
@@ -618,7 +708,10 @@ class CLIArgumentManager:
                 self._verify_installation(tool_name, tool_info, tool_install_dir)
                 
             except subprocess.CalledProcessError as e:
-                error_msg = f"Failed to clone {repository_url}: {e.stderr if e.stderr else str(e)}"
+                if repository_url:
+                    error_msg = f"Failed to clone {repository_url}: {e.stderr if e.stderr else str(e)}"
+                else:
+                    error_msg = f"Failed during installation: {e.stderr if e.stderr else str(e)}"
                 print(f"   ❌ {error_msg}")
                 installation_results['failed'].append(tool_name)
                 installation_results['errors'].append(f"{tool_name}: {error_msg}")
