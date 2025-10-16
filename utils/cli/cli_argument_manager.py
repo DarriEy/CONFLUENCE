@@ -246,6 +246,14 @@ fi
     ],
                 'dependencies': ['cmake', 'gfortran', 'wget'],
                 'test_command': None,
+                'verify_install': {
+                    'file_paths': [
+                        'lib64/libsundials_core.a',
+                        'lib/libsundials_core.a',  # Fallback
+                        'include/sundials/sundials_config.h'
+                    ],
+                    'check_type': 'exists'
+                },
                 'order': 1  # Install first
             },
             'summa': {
@@ -633,17 +641,19 @@ fi
                 'install_dir': 'taudem',
                 'build_commands': [
                     '''
-    # Build TauDEM
-    mkdir -p build
-    cd build
-    cmake -DCMAKE_BUILD_TYPE=Release ..
-    make -j 4
+            # Build TauDEM
+            mkdir -p build
+            cd build
+            cmake -DCMAKE_BUILD_TYPE=Release ..
+            make -j 4
 
-    # TauDEM installs to build/src
-    cp -r ../src/* ../bin/
-    echo "TauDEM executables in: $(pwd)/src/"
-    ls -la bin/ || echo "No bin directory created"
-    '''
+            # Create bin directory and copy executables
+            mkdir -p ../bin
+            cp src/* ../bin/ 2>/dev/null || true
+
+            echo "✅ TauDEM executables in: $(pwd)/src/"
+            ls -la src/ | head -10
+            '''
                 ],
                 'dependencies': ['cmake', 'gcc', 'openmpi', 'gdal'],
                 'test_command': '--help',
