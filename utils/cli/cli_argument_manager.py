@@ -260,8 +260,9 @@ class CLIArgumentManager:
                 'requires': ['sundials'],  # Dependency on SUNDIALS
                 'build_commands': [
                     '''
-    # Build SUMMA with SUNDIALS using the cluster build script
+    # Build SUMMA with SUNDIALS - run commands directly
     export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
 
     echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
@@ -277,87 +278,45 @@ class CLIArgumentManager:
         exit 1
     fi
 
-    # Navigate to build/cmake where the build script is
+    # Navigate to build/cmake where CMakeLists.txt is
     cd build/cmake
 
-    if [ ! -f build.cluster.bash ]; then
-        echo "ERROR: build.cluster.bash not found"
-        ls -la
-        exit 1
-    fi
-
-    echo "Found build.cluster.bash - adapting for our environment..."
-
-    # Create a modified build script for our setup
-    cat > build_summa_sundials.sh << 'EOFBUILD'
-    #!/bin/bash
-    # Adapted cluster build script for SUMMA with SUNDIALS
-
-    # Modules are already loaded from parent environment
-    # Using environment variables for SUNDIALS
-    export FLAGS_OPT="-flto=1;-fuse-linker-plugin"
-
-    # Configure with CMake
+    echo "Configuring SUMMA with CMake..."
     cmake -B ../../cmake_build -S ../.. \
         -DUSE_SUNDIALS=ON \
         -DCMAKE_BUILD_TYPE=Release \
         -DSPECIFY_LAPACK_LINKS=OFF \
         -DSUNDIALS_PATH="$SUNDIALS_DIR"
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: CMake configuration failed"
-        exit 1
-    fi
-
-    # Build
+    echo ""
+    echo "Building SUMMA (this may take a few minutes)..."
     cmake --build ../../cmake_build --target all -j 4
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Build failed"
-        exit 1
-    fi
+    echo ""
+    echo "Checking for SUMMA executable..."
 
-    echo "Build completed successfully"
-    EOFBUILD
-
-    chmod +x build_summa_sundials.sh
-
-    echo "Running adapted build script..."
-    ./build_summa_sundials.sh
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Build script failed"
-        exit 1
-    fi
-
-    # Go back to root and copy executable
+    # Go back to root
     cd ../..
-    mkdir -p bin
 
     # Check for executable in various locations
     if [ -f cmake_build/bin/summa.exe ]; then
+        mkdir -p bin
         cp cmake_build/bin/summa.exe bin/
-        echo "✅ SUMMA executable (summa.exe) installed"
+        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
     elif [ -f cmake_build/bin/summa ]; then
+        mkdir -p bin
         cp cmake_build/bin/summa bin/summa.exe
-        echo "✅ SUMMA executable (summa) installed as summa.exe"
-    elif [ -f cmake_build/summa.exe ]; then
-        cp cmake_build/summa.exe bin/
-        echo "✅ SUMMA executable found in cmake_build root"
+        echo "✅ SUMMA executable installed to: $(pwd)/bin/summa.exe"
     else
         echo "ERROR: SUMMA executable not found"
-        echo "Contents of cmake_build/:"
-        ls -la cmake_build/ 2>/dev/null || echo "cmake_build/ does not exist"
-        if [ -d cmake_build/bin ]; then
-            echo "Contents of cmake_build/bin/:"
-            ls -la cmake_build/bin/
-        fi
-        echo "Full cmake_build tree:"
-        find cmake_build -name "summa*" -type f 2>/dev/null || true
+        echo ""
+        echo "Searching for summa executables..."
+        find cmake_build -name "summa*" -type f 2>/dev/null || echo "No summa files found"
+        echo ""
+        echo "cmake_build directory structure:"
+        ls -R cmake_build/ | head -50
         exit 1
     fi
-
-    echo "✅ SUMMA with SUNDIALS installed to: $(pwd)/bin/summa.exe"
     '''
                 ],
                 'dependencies': ['gfortran', 'netcdf-fortran', 'cmake'],
