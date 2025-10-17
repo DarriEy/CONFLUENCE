@@ -87,31 +87,18 @@ CONFLUENCE provides a convenient shell wrapper for easy execution:
    ./confluence --config my_project_config.yaml
    ```
 
-## 📖 Documentation
 
-- **[Installation Guide](docs/installation.md)** - Detailed setup instructions
-- **[Configuration Reference](docs/configuration.md)** - Complete parameter documentation  
-- **[User Guide](docs/user_guide.md)** - Step-by-step tutorials
-- **[API Reference](docs/api.md)** - Developer documentation
-- **[Examples](examples/)** - Example workflows and case studies
-
-## 📚 Example Workflows
+## Example Workflows
 
 Explore the `examples/` directory for comprehensive tutorials:
 
-- **Basic watershed modeling** - Complete workflow for a single catchment
-- **Multi-model comparison** - Comparing different model structures
-- **Parameter calibration** - Automated optimization workflows  
-- **Sensitivity analysis** - Understanding parameter importance
-- **Regional modeling** - Large-scale domain processing
-
 Each example includes step-by-step instructions and sample datasets.
 
-## 🛠️ Advanced Usage
+## Advanced Usage
 
 ### Command Line Interface
 
-The `confluence` wrapper provides extensive CLI options:
+The `confluence` wrapper provides CLI options:
 
 ```bash
 # Individual workflow steps
@@ -129,7 +116,7 @@ The `confluence` wrapper provides extensive CLI options:
 
 ### Python API
 
-For advanced users and integration with other tools:
+For python users and integration with other tools:
 
 ```python
 from pathlib import Path
@@ -142,8 +129,6 @@ confluence = CONFLUENCE(config_path)
 # Run specific workflow components
 confluence.run_individual_steps(['setup_project', 'calibrate_model'])
 
-# Access workflow results
-results = confluence.get_results()
 ```
 
 ## 🔧 Configuration
@@ -156,7 +141,7 @@ CONFLUENCE uses YAML configuration files to define:
 
 See `0_config_files/config_template.yaml` for a complete configuration template with detailed comments.
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 CONFLUENCE/
