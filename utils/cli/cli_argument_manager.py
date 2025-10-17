@@ -634,7 +634,7 @@ fi
                 'description': 'Terrain Analysis Using Digital Elevation Models',
                 'config_path_key': 'TAUDEM_INSTALL_PATH',
                 'config_exe_key': 'TAUDEM_EXE',
-                'default_path_suffix': 'installs/TauDEM/src',
+                'default_path_suffix': 'installs/TauDEM/bin',
                 'default_exe': 'pitremove',
                 'repository': 'https://github.com/dtarb/TauDEM.git',
                 'branch': None,

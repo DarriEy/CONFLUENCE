@@ -211,7 +211,7 @@ FLASH_USE_SNOW: False                                          # Use snow data
 
 ###  4.a Model Specific settings: MizuRoute 
 
-EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
+EXE_NAME_MIZUROUTE: mizuRoute.exe                              # Name of mizuroute executable
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
 SETTINGS_MIZU_ROUTING_DT: 3600                                 # Duration of the routing time step [s].
 SETTINGS_MIZU_ROUTING_UNITS: m/s                               # Units of the variable to be routed.
