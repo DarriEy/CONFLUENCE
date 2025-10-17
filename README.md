@@ -24,30 +24,7 @@
 
 CONFLUENCE is a comprehensive computational environmental modeling platform that streamlines the entire hydrological modeling workflow—from domain conceptualization to model evaluation. It provides an integrated framework for multi-model comparison, parameter optimization, and automated workflow management across various spatial scales.
 
-**Key Capabilities:**
-- Unified workflow management for complex environmental modeling
-- Multi-model integration and comparison
-- Automated domain setup and discretization  
-- Advanced parameter optimization and calibration
-- Comprehensive result analysis and visualization
-
-## ✨ Key Features
-
-- **🔄 Complete Workflow Integration**: End-to-end pipeline from data acquisition to evaluation
-- **🎯 Multi-Model Framework**: Support for SUMMA, FUSE, HYPE, GR models with mizuRoute routing
-- **🗺️ Automated Domain Processing**: Intelligent watershed delineation and discretization
-- **⚙️ Smart Installation**: Automated environment setup and dependency management
-- **📊 Advanced Analytics**: Built-in benchmarking, sensitivity analysis, and visualization tools
-- **⚡ Scalable Execution**: Support for local, cluster, and cloud computing environments
-- **🤖 AI Integration**: Optional INDRA system for intelligent workflow assistance
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Python 3.8+** 
-- **Git** for cloning the repository
-- **Network access** for downloading external tools and datasets
+## Quick Start
 
 ### Installation
 
@@ -67,12 +44,6 @@ CONFLUENCE is a comprehensive computational environmental modeling platform that
    - Install all required dependencies
    - Download and install external modeling tools
    - Validate the installation
-
-3. **Verify installation:**
-   ```bash
-   ./confluence --wrapper-info
-   ./confluence --validate_binaries
-   ```
 
 ### Basic Usage
 
