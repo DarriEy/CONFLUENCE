@@ -797,6 +797,9 @@ fi
                 if config_path.exists():
                     with open(config_path, 'r') as f:
                         config = yaml.safe_load(f)
+                    
+                    # Check if paths exist and fix them if needed
+                    config = self._ensure_valid_config_paths(config, config_path)
             except:
                 pass
         
@@ -848,8 +851,8 @@ fi
                     print(f"   🔍 Would clone: {repository_url}")
                     if branch:
                         print(f"   🌿 Would checkout branch: {branch}")
-                    print(f"   🔍 Target directory: {tool_install_dir}")
-                    print(f"   🔍 Would run build commands:")
+                    print(f"   📂 Target directory: {tool_install_dir}")
+                    print(f"   🔨 Would run build commands:")
                     for cmd in tool_info['build_commands']:
                         print(f"      {cmd[:100]}...")
                     installation_results['successful'].append(f"{tool_name} (dry run)")
@@ -878,7 +881,7 @@ fi
                     print(f"   ✅ Clone successful")
                 else:
                     # Non-git installation (e.g., wget-based like SUNDIALS)
-                    print(f"   📁 Creating installation directory")
+                    print(f"   📂 Creating installation directory")
                     tool_install_dir.mkdir(parents=True, exist_ok=True)
                     print(f"   ✅ Directory created: {tool_install_dir}")
                 
@@ -980,6 +983,99 @@ fi
         
         return installation_results
 
+    def _ensure_valid_config_paths(self, config: Dict[str, Any], config_path: Path) -> Dict[str, Any]:
+        """
+        Ensure CONFLUENCE_DATA_DIR and CONFLUENCE_CODE_DIR paths exist and are valid.
+        If they don't exist or are inaccessible, update them to sensible defaults.
+        
+        Args:
+            config: Configuration dictionary
+            config_path: Path to the config file
+            
+        Returns:
+            Updated configuration dictionary
+        """
+        import os
+        
+        data_dir = config.get('CONFLUENCE_DATA_DIR')
+        code_dir = config.get('CONFLUENCE_CODE_DIR')
+        
+        data_dir_valid = False
+        code_dir_valid = False
+        
+        # Check if CONFLUENCE_DATA_DIR exists and is accessible
+        if data_dir:
+            try:
+                data_path = Path(data_dir)
+                # Try to check if path exists and is writable
+                if data_path.exists():
+                    # Test write access
+                    test_file = data_path / '.confluence_test'
+                    try:
+                        test_file.touch()
+                        test_file.unlink()
+                        data_dir_valid = True
+                    except (PermissionError, OSError):
+                        pass
+                else:
+                    # Try to create the directory
+                    try:
+                        data_path.mkdir(parents=True, exist_ok=True)
+                        data_dir_valid = True
+                    except (PermissionError, OSError):
+                        pass
+            except Exception:
+                pass
+        
+        # Check if CONFLUENCE_CODE_DIR exists and is accessible
+        if code_dir:
+            try:
+                code_path = Path(code_dir)
+                if code_path.exists() and os.access(code_path, os.R_OK):
+                    code_dir_valid = True
+            except Exception:
+                pass
+        
+        # If either path is invalid, update config
+        if not data_dir_valid or not code_dir_valid:
+            print(f"\n⚠️  Detected invalid or inaccessible paths in config template:")
+            
+            if not code_dir_valid:
+                print(f"   📂 CONFLUENCE_CODE_DIR: {code_dir} (inaccessible)")
+            
+            if not data_dir_valid:
+                print(f"   📂 CONFLUENCE_DATA_DIR: {data_dir} (inaccessible)")
+            
+            print(f"\n🔧 Auto-configuring paths for fresh installation...")
+            
+            # Set CONFLUENCE_CODE_DIR to current directory
+            if not code_dir_valid:
+                new_code_dir = Path.cwd().resolve()
+                config['CONFLUENCE_CODE_DIR'] = str(new_code_dir)
+                print(f"   ✅ CONFLUENCE_CODE_DIR set to: {new_code_dir}")
+            
+            # Set CONFLUENCE_DATA_DIR to ../CONFLUENCE_data
+            if not data_dir_valid:
+                new_data_dir = (Path.cwd().parent / 'CONFLUENCE_data').resolve()
+                config['CONFLUENCE_DATA_DIR'] = str(new_data_dir)
+                
+                # Create the data directory if it doesn't exist
+                try:
+                    new_data_dir.mkdir(parents=True, exist_ok=True)
+                    print(f"   ✅ CONFLUENCE_DATA_DIR set to: {new_data_dir}")
+                    print(f"   📁 Created data directory")
+                except Exception as e:
+                    print(f"   ⚠️  Could not create data directory: {e}")
+            
+            # Save updated config back to file
+            try:
+                with open(config_path, 'w') as f:
+                    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+                print(f"   💾 Updated config template saved to: {config_path}")
+            except Exception as e:
+                print(f"   ⚠️  Could not save updated config: {e}")
+        
+        return config
 
     def _resolve_tool_dependencies(self, tools: List[str]) -> List[str]:
         """
@@ -3247,6 +3343,9 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             # Load template config
             with open(template_path, 'r') as f:
                 config = yaml.safe_load(f)
+            
+            # Ensure paths are valid before proceeding
+            config = self._ensure_valid_config_paths(config, template_path)
             
             # Update config with pour point settings
             config['DOMAIN_NAME'] = domain_name
