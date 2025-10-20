@@ -64,6 +64,8 @@ APPLY_LAPSE_RATE: True                                         # Flag for applyi
 LAPSE_RATE: 0.0065                                             # [K m-1]
 FORCING_SHAPE_LAT_NAME: lat                                    # Name of the latitude field that contains the latitude of forcing.
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
+PET_METHOD: 'oudin'                                            # Method for PET estimation, options: 'oudin', 'hamon', 'hargreaves'
+
 
 # EM-Earth forcing supplementation settings
 SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH

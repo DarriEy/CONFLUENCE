@@ -127,12 +127,110 @@ class FUSEPreProcessor:
             self.logger.error(f"Error copying base settings: {e}")
             raise
 
+    def calculate_pet_hargreaves(self, temp_data: xr.DataArray, lat: float) -> xr.DataArray:
+        """
+        Calculate PET using Hargreaves method.
+        Requires mean temperature only (simplified version without min/max temps).
+        
+        Args:
+            temp_data (xr.DataArray): Temperature data (auto-detects K or C)
+            lat (float): Latitude of the catchment centroid
+            
+        Returns:
+            xr.DataArray: Calculated PET in mm/day
+        """
+        self.logger.info("Calculating PET using Hargreaves method (simplified)")
+        
+        # Load data if needed
+        if hasattr(temp_data.data, 'compute'):
+            temp_data = temp_data.load()
+        
+        # Check and convert temperature
+        temp_mean = float(temp_data.mean())
+        self.logger.debug(f"Input temperature: Mean={temp_mean:.2f}")
+        
+        # Auto-detect units
+        if temp_mean > 100:  # Kelvin
+            self.logger.info("Temperature in Kelvin, converting to Celsius")
+            temp_C = temp_data - 273.15
+        elif -100 < temp_mean < 60:  # Celsius
+            self.logger.info("Temperature in Celsius, using as-is")
+            temp_C = temp_data
+        else:
+            self.logger.error(f"Cannot determine temperature units. Mean={temp_mean:.2f}")
+            raise ValueError(f"Temperature has unexpected range: mean={temp_mean:.2f}")
+        
+        # Verify reasonable range
+        temp_mean_C = float(temp_C.mean())
+        self.logger.debug(f"Temperature (°C): Mean={temp_mean_C:.2f}")
+        
+        if temp_mean_C < -60 or temp_mean_C > 60:
+            raise ValueError(f"Temperature unrealistic: {temp_mean_C:.2f}°C")
+        
+        # Get time information
+        time_values = pd.to_datetime(temp_data.time.values)
+        doy = xr.DataArray(time_values.dayofyear, coords={'time': temp_data.time}, dims=['time'])
+        
+        # Calculate extraterrestrial radiation (Ra)
+        lat_rad = np.deg2rad(lat)
+        
+        # Solar declination
+        solar_decl = 0.409 * np.sin((2.0 * np.pi / 365.0) * doy - 1.39)
+        
+        # Sunset hour angle
+        cos_arg = -np.tan(lat_rad) * np.tan(solar_decl)
+        cos_arg = cos_arg.clip(-1.0, 1.0)
+        sunset_angle = np.arccos(cos_arg)
+        
+        # Inverse relative distance Earth-Sun
+        dr = 1.0 + 0.033 * np.cos((2.0 * np.pi / 365.0) * doy)
+        
+        # Extraterrestrial radiation (MJ/m²/day)
+        Ra = ((24.0 * 60.0 / np.pi) * 0.082 * dr * 
+            (sunset_angle * np.sin(lat_rad) * np.sin(solar_decl) +
+            np.cos(lat_rad) * np.cos(solar_decl) * np.sin(sunset_angle)))
+        
+        self.logger.debug(f"Solar radiation Ra: Mean={float(Ra.mean()):.2f} MJ/m²/day")
+        
+        # Broadcast Ra if needed for multi-HRU
+        if 'hru' in temp_C.dims:
+            Ra = Ra.broadcast_like(temp_C)
+        
+        # Hargreaves formula (simplified without Tmin/Tmax)
+        # PET = 0.0023 * Ra * (Tmean + 17.8) * TD^0.5
+        # Without Tmin/Tmax, we use a typical diurnal range of 10°C
+        # This makes it: PET = 0.0023 * Ra * (Tmean + 17.8) * sqrt(10)
+        # Converting Ra from MJ/m²/day to equivalent: multiply by 0.408 to get mm/day
+        
+        TD = 10.0  # Assumed temperature range (°C) when min/max not available
+        pet = 0.0023 * (Ra * 0.408) * (temp_C + 17.8) * np.sqrt(TD)
+        
+        # Ensure non-negative
+        pet = xr.where(pet > 0, pet, 0.0)
+        
+        pet.attrs = {
+            'units': 'mm/day',
+            'long_name': 'Potential evapotranspiration',
+            'standard_name': 'water_potential_evaporation_flux',
+            'method': 'Hargreaves (simplified)',
+            'latitude': lat,
+            'note': 'Simplified version using assumed diurnal temperature range of 10°C'
+        }
+        
+        pet_mean = float(pet.mean())
+        self.logger.info(f"PET calculation complete: Mean={pet_mean:.3f} mm/day, "
+                        f"Min={float(pet.min()):.3f} mm/day, Max={float(pet.max()):.3f} mm/day")
+        
+        return pet
+
+
     def calculate_pet_oudin(self, temp_data: xr.DataArray, lat: float) -> xr.DataArray:
         """
         Calculate potential evapotranspiration using Oudin's formula.
+        Handles temperature in either Kelvin or Celsius.
         
         Args:
-            temp_data (xr.DataArray): Temperature data in Kelvin
+            temp_data (xr.DataArray): Temperature data (auto-detects K or C)
             lat (float): Latitude of the catchment centroid
             
         Returns:
@@ -140,43 +238,170 @@ class FUSEPreProcessor:
         """
         self.logger.info("Calculating PET using Oudin's formula")
         
-        # Convert temperature to Celsius
-        temp_C = temp_data - 273.15
+        # Check if data needs loading (if using dask)
+        if hasattr(temp_data.data, 'compute'):
+            self.logger.debug("Loading temperature data from dask array...")
+            temp_data = temp_data.load()
         
-        # Get dates for solar radiation calculation
-        dates = pd.DatetimeIndex(temp_data.time.values)
+        # Check input temperature and determine if it's Kelvin or Celsius
+        temp_mean = float(temp_data.mean())
+        temp_min = float(temp_data.min())
+        temp_max = float(temp_data.max())
         
-        # Calculate day of year
-        doy = dates.dayofyear
+        self.logger.debug(f"Input temperature: Mean={temp_mean:.2f}, Min={temp_min:.2f}, Max={temp_max:.2f}")
         
-        # Calculate solar declination
-        solar_decl = 0.409 * np.sin(2 * np.pi / 365 * doy - 1.39)
+        # Auto-detect units and convert to Celsius if needed
+        if temp_mean > 100:  # Likely Kelvin (>100K = -173°C, unrealistic for Earth)
+            self.logger.info("Temperature appears to be in Kelvin, converting to Celsius")
+            temp_C = temp_data - 273.15
+        elif -100 < temp_mean < 60:  # Likely Celsius (reasonable range)
+            self.logger.info("Temperature appears to be in Celsius, using as-is")
+            temp_C = temp_data
+        else:
+            self.logger.error(f"Cannot determine temperature units. Mean={temp_mean:.2f}")
+            raise ValueError(f"Temperature data has unexpected range. Mean={temp_mean:.2f}")
         
-        # Convert latitude to radians
+        # Verify final temperature is reasonable
+        temp_mean_C = float(temp_C.mean())
+        self.logger.debug(f"Temperature in Celsius: Mean={temp_mean_C:.2f}°C, "
+                        f"Min={float(temp_C.min()):.2f}°C, Max={float(temp_C.max()):.2f}°C")
+        
+        if temp_mean_C < -60 or temp_mean_C > 60:
+            self.logger.error(f"Temperature is unrealistic: {temp_mean_C:.2f}°C")
+            raise ValueError(f"Unrealistic temperature after conversion: {temp_mean_C:.2f}°C")
+        
+        # Get time information
+        time_values = pd.to_datetime(temp_data.time.values)
+        doy = xr.DataArray(time_values.dayofyear, coords={'time': temp_data.time}, dims=['time'])
+        
+        # Solar calculations (vectorized)
         lat_rad = np.deg2rad(lat)
         
-        # Calculate sunset hour angle
-        sunset_angle = np.arccos(-np.tan(lat_rad) * np.tan(solar_decl))
+        # Solar declination (radians)
+        solar_decl = 0.409 * np.sin((2.0 * np.pi / 365.0) * doy - 1.39)
         
-        # Calculate extraterrestrial radiation (Ra)
-        dr = 1 + 0.033 * np.cos(2 * np.pi / 365 * doy)
-        Ra = (24 * 60 / np.pi) * 0.082 * dr * (
-            sunset_angle * np.sin(lat_rad) * np.sin(solar_decl) +
-            np.cos(lat_rad) * np.cos(solar_decl) * np.sin(sunset_angle)
-        )
+        # Sunset hour angle with numerical stability
+        cos_arg = -np.tan(lat_rad) * np.tan(solar_decl)
+        cos_arg = cos_arg.clip(-1.0, 1.0)
+        sunset_angle = np.arccos(cos_arg)
         
-        # Calculate PET using Oudin's formula
-        # PET = Ra * (T + 5) / 100 if T + 5 > 0, else 0
-        pet = xr.where(temp_C + 5 > 0,
-                      Ra * (temp_C + 5) / 100,
-                      0)
+        # Inverse relative distance Earth-Sun
+        dr = 1.0 + 0.033 * np.cos((2.0 * np.pi / 365.0) * doy)
         
-        # Convert to proper units (mm/day) and add metadata
-        pet = pet.assign_attrs({
+        # Extraterrestrial radiation (MJ/m²/day)
+        Ra = ((24.0 * 60.0 / np.pi) * 0.082 * dr * 
+            (sunset_angle * np.sin(lat_rad) * np.sin(solar_decl) +
+            np.cos(lat_rad) * np.cos(solar_decl) * np.sin(sunset_angle)))
+        
+        self.logger.debug(f"Solar radiation Ra: Mean={float(Ra.mean()):.2f} MJ/m²/day")
+        
+        # Broadcast Ra if needed for multi-HRU
+        if 'hru' in temp_C.dims:
+            Ra = Ra.broadcast_like(temp_C)
+        
+        # Oudin's formula: PET = Ra * (T + 5) / 100 when T + 5 > 0
+        pet = xr.where(temp_C + 5.0 > 0.0, Ra * (temp_C + 5.0) / 100.0, 0.0)
+        
+        pet.attrs = {
             'units': 'mm/day',
             'long_name': 'Potential evapotranspiration',
-            'standard_name': 'water_potential_evaporation_flux'
-        })
+            'standard_name': 'water_potential_evaporation_flux',
+            'method': 'Oudin et al. (2005)',
+            'latitude': lat
+        }
+        
+        pet_mean = float(pet.mean())
+        self.logger.info(f"PET calculation complete: Mean={pet_mean:.3f} mm/day, "
+                        f"Min={float(pet.min()):.3f} mm/day, Max={float(pet.max()):.3f} mm/day")
+        
+        if pet_mean < 0.1:
+            n_valid = int((temp_C + 5.0 > 0.0).sum())
+            self.logger.warning(f"Very low PET! Days with T>-5°C: {n_valid}/{len(temp_C.time)}")
+        
+        return pet
+
+
+    def calculate_pet_hamon(self, temp_data: xr.DataArray, lat: float) -> xr.DataArray:
+        """
+        Calculate PET using Hamon's method.
+        Handles temperature in either Kelvin or Celsius.
+        
+        Args:
+            temp_data (xr.DataArray): Temperature data (auto-detects K or C)
+            lat (float): Latitude of the catchment centroid
+            
+        Returns:
+            xr.DataArray: Calculated PET in mm/day
+        """
+        self.logger.info("Calculating PET using Hamon's method")
+        
+        # Load data if needed
+        if hasattr(temp_data.data, 'compute'):
+            temp_data = temp_data.load()
+        
+        # Check and convert temperature
+        temp_mean = float(temp_data.mean())
+        
+        self.logger.debug(f"Input temperature: Mean={temp_mean:.2f}")
+        
+        # Auto-detect units
+        if temp_mean > 100:  # Kelvin
+            self.logger.info("Temperature in Kelvin, converting to Celsius")
+            temp_C = temp_data - 273.15
+        elif -100 < temp_mean < 60:  # Celsius
+            self.logger.info("Temperature in Celsius, using as-is")
+            temp_C = temp_data
+        else:
+            self.logger.error(f"Cannot determine temperature units. Mean={temp_mean:.2f}")
+            raise ValueError(f"Temperature has unexpected range: mean={temp_mean:.2f}")
+        
+        # Get values for computation
+        temp_C_vals = temp_C.values
+        
+        # Verify reasonable range
+        temp_mean_C = np.nanmean(temp_C_vals)
+        self.logger.debug(f"Temperature (°C): Mean={temp_mean_C:.2f}, "
+                        f"Min={np.nanmin(temp_C_vals):.2f}, Max={np.nanmax(temp_C_vals):.2f}")
+        
+        if temp_mean_C < -60 or temp_mean_C > 60:
+            raise ValueError(f"Temperature unrealistic: {temp_mean_C:.2f}°C")
+        
+        # Day of year
+        dates = pd.to_datetime(temp_data.time.values)
+        doy = dates.dayofyear.values
+        
+        # Solar calculations
+        lat_rad = np.deg2rad(lat)
+        decl = 0.409 * np.sin(2.0 * np.pi / 365.0 * doy - 1.39)
+        cos_arg = np.clip(-np.tan(lat_rad) * np.tan(decl), -1.0, 1.0)
+        sunset_angle = np.arccos(cos_arg)
+        daylight_hours = 24.0 * sunset_angle / np.pi
+        
+        # Saturated vapor pressure (kPa)
+        e_sat = 0.6108 * np.exp(17.27 * temp_C_vals / (temp_C_vals + 237.3))
+        
+        # Hamon PET (mm/day)
+        if len(temp_C_vals.shape) > 1:
+            daylight_hours = daylight_hours.reshape(-1, 1)
+        
+        pet_values = 0.1651 * daylight_hours * e_sat * 2.54
+        pet_values = np.maximum(pet_values, 0.0)
+        
+        # Create DataArray
+        if 'hru' in temp_data.dims:
+            pet = xr.DataArray(pet_values, coords=temp_data.coords, dims=temp_data.dims)
+        else:
+            pet = xr.DataArray(pet_values, coords={'time': temp_data.time}, dims=['time'])
+        
+        pet.attrs = {
+            'units': 'mm/day',
+            'long_name': 'Potential evapotranspiration',
+            'method': 'Hamon',
+            'latitude': lat
+        }
+        
+        self.logger.info(f"PET calculation complete: Mean={np.nanmean(pet_values):.3f} mm/day, "
+                        f"Max={np.nanmax(pet_values):.3f} mm/day")
         
         return pet
 
@@ -311,14 +536,18 @@ class FUSEPreProcessor:
             # Handle streamflow observations
             obs_ds = self._load_streamflow_observations(spatial_mode)
             
+            # Get PET method from config (default to 'oudin')
+            pet_method = self.config.get('PET_METHOD', 'oudin').lower()
+            self.logger.info(f"Using PET method: {pet_method}")
+            
             # Calculate PET for the correct spatial configuration
             if spatial_mode == 'lumped':
                 catchment = gpd.read_file(self.catchment_path / self.catchment_name)
                 mean_lon, mean_lat = self._get_catchment_centroid(catchment)
-                pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
+                pet = self._calculate_pet(ds['temp'], mean_lat, pet_method)
             else:
                 # For distributed modes, calculate PET after spatial organization and resampling
-                pet = self._calculate_distributed_pet(ds, spatial_mode)
+                pet = self._calculate_distributed_pet(ds, spatial_mode, pet_method)
             
             # Ensure PET is also daily resolution by checking if resampling is needed
             pet_daily_check = pet.resample(time='D').mean()
@@ -344,6 +573,31 @@ class FUSEPreProcessor:
             self.logger.error(f"Error preparing forcing data: {str(e)}")
             raise
         
+            
+    def _calculate_pet(self, temp_data: xr.DataArray, lat: float, method: str = 'oudin') -> xr.DataArray:
+        """
+        Calculate PET using the specified method.
+        
+        Args:
+            temp_data (xr.DataArray): Temperature data
+            lat (float): Latitude of the catchment centroid
+            method (str): PET method ('oudin', 'hamon', or 'hargreaves')
+            
+        Returns:
+            xr.DataArray: Calculated PET in mm/day
+        """
+        method = method.lower()
+        
+        if method == 'oudin':
+            return self.calculate_pet_oudin(temp_data, lat)
+        elif method == 'hamon':
+            return self.calculate_pet_hamon(temp_data, lat)
+        elif method == 'hargreaves':
+            return self.calculate_pet_hargreaves(temp_data, lat)
+        else:
+            self.logger.warning(f"Unknown PET method '{method}', defaulting to Oudin")
+            return self.calculate_pet_oudin(temp_data, lat)
+
     def _add_forcing_variables(self, fuse_forcing, ds, pet, obs_ds, spatial_dims, n_subcatchments):
         """Add forcing variables to the dataset with proper dimension handling"""
         
@@ -1014,18 +1268,19 @@ class FUSEPreProcessor:
             self.logger.error(f"Error creating lumped elevation bands: {str(e)}")
             raise
 
-    def _calculate_distributed_pet(self, ds, spatial_mode):
+    def _calculate_distributed_pet(self, ds, spatial_mode, pet_method='oudin'):
         """
         Calculate PET for distributed/semi-distributed modes.
         
         Args:
             ds: xarray dataset with temperature data
             spatial_mode (str): Spatial mode ('semi_distributed', 'distributed')
+            pet_method (str): PET calculation method
             
         Returns:
             xr.DataArray: Calculated PET data
         """
-        self.logger.info(f"Calculating distributed PET for {spatial_mode} mode")
+        self.logger.info(f"Calculating distributed PET for {spatial_mode} mode using {pet_method}")
         
         try:
             # Get catchment for reference latitude
@@ -1033,11 +1288,10 @@ class FUSEPreProcessor:
             mean_lon, mean_lat = self._get_catchment_centroid(catchment)
             
             # For distributed modes, use the same latitude for all subcatchments/HRUs
-            # but calculate once and replicate to avoid dimension issues
             if 'hru' in ds.dims:
                 # Use the mean temperature across all HRUs to calculate PET once
                 temp_mean = ds['temp'].mean(dim='hru')
-                pet_base = self.calculate_pet_oudin(temp_mean, mean_lat)
+                pet_base = self._calculate_pet(temp_mean, mean_lat, pet_method)
                 
                 # Replicate the PET calculation for each HRU with correct dimension order
                 n_hrus = ds.sizes['hru']
@@ -1055,7 +1309,7 @@ class FUSEPreProcessor:
                 self.logger.info(f"Calculated distributed PET with shape: {pet.shape}")
             else:
                 # Use lumped calculation as fallback
-                pet = self.calculate_pet_oudin(ds['temp'], mean_lat)
+                pet = self._calculate_pet(ds['temp'], mean_lat, pet_method)
             
             return pet
             
@@ -1064,7 +1318,7 @@ class FUSEPreProcessor:
             # Fallback to lumped calculation
             catchment = gpd.read_file(self.catchment_path / self.catchment_name)
             mean_lon, mean_lat = self._get_catchment_centroid(catchment)
-            return self.calculate_pet_oudin(ds['temp'], mean_lat)
+            return self._calculate_pet(ds['temp'], mean_lat, pet_method)
 
     def _get_encoding_dict(self, fuse_forcing):
         """

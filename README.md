@@ -22,7 +22,7 @@
 
 ## 🌊 Overview
 
-CONFLUENCE is a comprehensive computational environmental modeling platform that streamlines the entire hydrological modeling workflow—from domain conceptualization to model evaluation. It provides an integrated framework for multi-model comparison, parameter optimization, and automated workflow management across various spatial scales.
+CONFLUENCE is a computational environmental modeling platform that streamlines the entire hydrological modeling workflow—from domain conceptualization to model evaluation. It provides an integrated framework for multi-model comparison, parameter optimization, and automated workflow management across various spatial scales.
 
 ## Quick Start
 
