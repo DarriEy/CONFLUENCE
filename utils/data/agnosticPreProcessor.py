@@ -1025,6 +1025,8 @@ class forcingResampler:
         
         # Create output directories if they don't exist
         self.forcing_basin_path.mkdir(parents=True, exist_ok=True)
+        intersect_path = self.project_dir / 'shapefiles' / 'catchment_intersection' / 'with_forcing'
+        intersect_path.mkdir(parents=True, exist_ok=True)
         
         # Get list of forcing files
         forcing_path = self.merged_forcing_path
@@ -1036,24 +1038,46 @@ class forcingResampler:
         
         self.logger.info(f"Found {len(forcing_files)} forcing files to process")
         
-        # Get number of CPUs to use
+        # STEP 1: Create remapping weights ONCE (not per file)
+        remap_file = self._create_remapping_weights_once(forcing_files[0], intersect_path)
+        
+        # STEP 2: Filter out already processed files
+        remaining_files = self._filter_processed_files(forcing_files)
+        
+        if not remaining_files:
+            self.logger.info("All files have already been processed")
+            return
+        
+        # STEP 3: Apply remapping weights to all files
         requested_cpus = int(self.config.get('MPI_PROCESSES', 1))
         max_available_cpus = mp.cpu_count()
-        
-        # Determine if we should run in serial or parallel
         use_parallel = requested_cpus > 1 and max_available_cpus > 1
         
         if use_parallel:
+            # Remove the artificial 4-core limit
             num_cpus = min(requested_cpus, max_available_cpus)
-            # Reduce CPU count on HPC to avoid resource conflicts
-            if num_cpus > 4:  # Limit to 4 CPUs max to reduce memory pressure
-                num_cpus = 4
+            
+            # Practical limit based on I/O
+            if num_cpus > 20:
+                num_cpus = 20
+                self.logger.warning(f"Limiting to {num_cpus} CPUs to avoid I/O bottleneck")
+            
+            # Don't spawn more workers than files
+            num_cpus = min(num_cpus, len(remaining_files))
+            
             self.logger.info(f"Using parallel processing with {num_cpus} CPUs")
+            success_count = self._process_files_parallel(remaining_files, num_cpus, remap_file)
         else:
-            num_cpus = 1
             self.logger.info("Using serial processing (no multiprocessing)")
+            success_count = self._process_files_serial(remaining_files, remap_file)
         
-        # Filter out already processed files
+        # Report final results
+        already_processed = len(forcing_files) - len(remaining_files)
+        self.logger.info(f"Processing complete: {success_count} files processed successfully out of {len(remaining_files)}")
+        self.logger.info(f"Total files processed or skipped: {success_count + already_processed} out of {len(forcing_files)}")
+
+    def _filter_processed_files(self, forcing_files):
+        """Filter out already processed files"""
         remaining_files = []
         already_processed = 0
         
@@ -1063,7 +1087,7 @@ class forcingResampler:
             if output_file.exists():
                 try:
                     file_size = output_file.stat().st_size
-                    if file_size > 1000:  # Basic size check
+                    if file_size > 1000:
                         self.logger.debug(f"Skipping already processed file: {file.name}")
                         already_processed += 1
                         continue
@@ -1077,22 +1101,116 @@ class forcingResampler:
         self.logger.info(f"Found {already_processed} already processed files")
         self.logger.info(f"Found {len(remaining_files)} files that need processing")
         
-        if not remaining_files:
-            self.logger.info("All files have already been processed")
-            return
-        
-        # Process files based on serial vs parallel mode
-        if use_parallel:
-            success_count = self._process_files_parallel(remaining_files, num_cpus)
-        else:
-            success_count = self._process_files_serial(remaining_files)
-        
-        # Report final results
-        self.logger.info(f"Processing complete: {success_count} files processed successfully out of {len(remaining_files)}")
-        self.logger.info(f"Total files processed or skipped: {success_count + already_processed} out of {len(forcing_files)}")
+        return remaining_files
 
-    def _process_files_serial(self, files):
-        """Process files in serial mode (no multiprocessing)"""
+
+    def _create_remapping_weights_once(self, sample_forcing_file, intersect_path):
+        """
+        Create the remapping weights file once using a sample forcing file.
+        This is the expensive GIS operation that only needs to be done once.
+        
+        Returns:
+            Path to the remapping netCDF file
+        """
+        # Ensure shapefiles are in WGS84
+        source_shp_path = self.project_dir / 'shapefiles' / 'forcing' / f"forcing_{self.config['FORCING_DATASET']}.shp"
+        target_shp_path = self.catchment_path / self.catchment_name
+        
+        source_shp_wgs84 = self._ensure_shapefile_wgs84(source_shp_path, "_wgs84")
+        target_result = self._ensure_shapefile_wgs84(target_shp_path, "_wgs84")
+        
+        # Handle tuple return from target shapefile
+        if isinstance(target_result, tuple):
+            target_shp_wgs84, actual_hru_field = target_result
+        else:
+            target_shp_wgs84 = target_result
+            actual_hru_field = self.config.get('CATCHMENT_SHP_HRUID')
+        
+        # Define remap file path
+        case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
+        remap_file = intersect_path / f"{case_name}_{actual_hru_field}_remapping.nc"
+        
+        # Check if remap file already exists
+        if remap_file.exists():
+            self.logger.info(f"Remapping weights file already exists: {remap_file}")
+            return remap_file
+        
+        self.logger.info("Creating remapping weights (this is done only once)...")
+        
+        # Create temporary directory for this operation
+        temp_dir = self.project_dir / 'forcing' / 'temp_easymore_weights'
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Setup easymore for weight creation only
+            esmr = easymore.Easymore()
+            
+            esmr.author_name = 'SUMMA public workflow scripts'
+            esmr.license = 'Copernicus data use license: https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf'
+            esmr.case_name = case_name
+            
+            # Shapefile configuration
+            esmr.source_shp = str(source_shp_wgs84)
+            esmr.source_shp_lat = self.config.get('FORCING_SHAPE_LAT_NAME')
+            esmr.source_shp_lon = self.config.get('FORCING_SHAPE_LON_NAME')
+            
+            esmr.target_shp = str(target_shp_wgs84)
+            esmr.target_shp_ID = actual_hru_field
+            esmr.target_shp_lat = self.config.get('CATCHMENT_SHP_LAT')
+            esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
+            
+            # NetCDF configuration - use sample file
+            if self.forcing_dataset in ['rdrs', 'casr']:
+                var_lat, var_lon = 'lat', 'lon'
+            else:
+                var_lat, var_lon = 'latitude', 'longitude'
+            
+            esmr.source_nc = str(sample_forcing_file)
+            esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
+            esmr.var_lat = var_lat
+            esmr.var_lon = var_lon
+            esmr.var_time = 'time'
+            
+            # Directories
+            esmr.temp_dir = str(temp_dir) + '/'
+            esmr.output_dir = str(self.forcing_basin_path) + '/'
+            
+            # Output configuration
+            esmr.remapped_dim_id = 'hru'
+            esmr.remapped_var_id = 'hruId'
+            esmr.format_list = ['f4']
+            esmr.fill_value_list = ['-9999']
+            
+            # Critical: Tell easymore to ONLY create the remapping weights
+            esmr.only_create_remap_nc = True
+            esmr.save_csv = False
+            esmr.sort_ID = False
+            
+            # Create the weights
+            self.logger.info("Running easymore to create remapping weights...")
+            esmr.nc_remapper()
+            
+            # Move the remap file to the final location
+            temp_remap = temp_dir / f"{case_name}_remapping.nc"
+            if temp_remap.exists():
+                shutil.move(str(temp_remap), str(remap_file))
+                self.logger.info(f"Remapping weights created: {remap_file}")
+            else:
+                raise FileNotFoundError(f"Expected remapping file not created: {temp_remap}")
+            
+            # Move shapefile files
+            for shp_file in temp_dir.glob(f"{case_name}_intersected_shapefile.*"):
+                shutil.move(str(shp_file), str(intersect_path / shp_file.name))
+            
+            return remap_file
+            
+        finally:
+            # Clean up temp directory
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _process_files_serial(self, files, remap_file):
+        """Process files in serial mode applying pre-computed weights"""
         self.logger.info(f"Processing {len(files)} files in serial mode")
         
         success_count = 0
@@ -1102,7 +1220,7 @@ class forcingResampler:
             self.logger.info(f"Processing file {idx+1}/{total_files}: {file.name}")
             
             try:
-                success = self._process_single_forcing_file_serial(file)
+                success = self._apply_remapping_weights(file, remap_file)
                 if success:
                     success_count += 1
                     self.logger.info(f"✓ Successfully processed {file.name} ({idx+1}/{total_files})")
@@ -1111,17 +1229,118 @@ class forcingResampler:
             except Exception as e:
                 self.logger.error(f"✗ Error processing {file.name}: {str(e)}")
             
-            # Progress update every 10 files
             if (idx + 1) % 10 == 0:
                 self.logger.info(f"Progress: {idx+1}/{total_files} files processed ({success_count} successful)")
         
         return success_count
 
-    def _process_files_parallel(self, files, num_cpus):
-        """Process files in parallel mode using multiprocessing"""
+    def _apply_remapping_weights_worker(self, file, remap_file, worker_id):
+        """Worker function for parallel processing"""
+        try:
+            return self._apply_remapping_weights(file, remap_file, worker_id)
+        except Exception as e:
+            self.logger.error(f"Worker {worker_id}: Error processing {file.name}: {str(e)}")
+            return False
+
+    def _apply_remapping_weights(self, file, remap_file, worker_id=None):
+        """
+        Apply pre-computed remapping weights to a forcing file.
+        This is the fast operation that reads weights and applies them.
+        
+        Args:
+            file: Path to forcing file to process
+            remap_file: Path to pre-computed remapping weights netCDF
+            worker_id: Optional worker ID for logging
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        start_time = time.time()
+        worker_str = f"Worker {worker_id}: " if worker_id is not None else ""
+        
+        try:
+            output_file = self._determine_output_filename(file)
+            
+            # Double-check output doesn't already exist
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size > 1000:
+                    self.logger.debug(f"{worker_str}Output already exists: {file.name}")
+                    return True
+            
+            # Create unique temp directory
+            unique_id = str(uuid.uuid4())[:8]
+            temp_dir = self.project_dir / 'forcing' / f'temp_apply_{unique_id}'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                # Setup easymore to APPLY weights only
+                esmr = easymore.Easymore()
+                
+                esmr.author_name = 'SUMMA public workflow scripts'
+                esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
+                
+                # Coordinate variables
+                if self.forcing_dataset in ['rdrs', 'casr']:
+                    var_lat, var_lon = 'lat', 'lon'
+                else:
+                    var_lat, var_lon = 'latitude', 'longitude'
+                
+                # NetCDF file configuration
+                esmr.source_nc = str(file)
+                esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
+                esmr.var_lat = var_lat
+                esmr.var_lon = var_lon
+                esmr.var_time = 'time'
+                
+                # Directories
+                esmr.temp_dir = str(temp_dir) + '/'
+                esmr.output_dir = str(self.forcing_basin_path) + '/'
+                
+                # Output configuration
+                esmr.remapped_dim_id = 'hru'
+                esmr.remapped_var_id = 'hruId'
+                esmr.format_list = ['f4']
+                esmr.fill_value_list = ['-9999']
+                
+                # Critical: Point to pre-computed weights file
+                esmr.remap_nc = str(remap_file)
+                esmr.save_csv = False
+                esmr.sort_ID = False
+                
+                # Apply the remapping
+                self.logger.debug(f"{worker_str}Applying remapping weights to {file.name}")
+                esmr.nc_remapper()
+                
+            finally:
+                # Clean up temp directory
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # Verify output
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size > 1000:
+                    elapsed_time = time.time() - start_time
+                    self.logger.debug(f"{worker_str}Successfully processed {file.name} in {elapsed_time:.2f} seconds")
+                    return True
+                else:
+                    self.logger.error(f"{worker_str}Output file corrupted (size: {file_size})")
+                    return False
+            else:
+                self.logger.error(f"{worker_str}Output file not created: {output_file}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"{worker_str}Error processing {file.name}: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+
+    def _process_files_parallel(self, files, num_cpus, remap_file):
+        """Process files in parallel mode applying pre-computed weights"""
         self.logger.info(f"Processing {len(files)} files in parallel with {num_cpus} CPUs")
         
-        # Process in smaller batches to avoid memory issues
         batch_size = min(10, len(files))
         total_batches = (len(files) + batch_size - 1) // batch_size
         
@@ -1136,16 +1355,12 @@ class forcingResampler:
             
             self.logger.info(f"Processing batch {batch_num+1}/{total_batches} with {len(batch_files)} files")
             
-            # Process files in parallel using Pool
             try:
                 with mp.Pool(processes=num_cpus) as pool:
-                    # Create a list of (file, worker_id) tuples
-                    worker_assignments = [(file, i % num_cpus) for i, file in enumerate(batch_files)]
-                    
-                    # Map the processing function to each file with its worker ID
-                    results = pool.starmap(self._process_forcing_file, worker_assignments)
+                    # Pass remap_file to each worker
+                    worker_args = [(file, remap_file, i % num_cpus) for i, file in enumerate(batch_files)]
+                    results = pool.starmap(self._apply_remapping_weights_worker, worker_args)
                 
-                # Count successes in this batch
                 batch_success = sum(1 for r in results if r)
                 success_count += batch_success
                 
@@ -1153,9 +1368,7 @@ class forcingResampler:
                 
             except Exception as e:
                 self.logger.error(f"Error processing batch {batch_num+1}: {str(e)}")
-                # Continue with next batch
             
-            # Force garbage collection between batches
             import gc
             gc.collect()
         
