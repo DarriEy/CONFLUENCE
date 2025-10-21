@@ -439,7 +439,7 @@ fi
                 'config_exe_key': 'FUSE_EXE',
                 'default_path_suffix': 'installs/fuse/bin',
                 'default_exe': 'fuse.exe',
-                'repository': 'https://github.com/naddor/fuse.git',
+                'repository': 'https://github.com/CH-Earth/fuse.git',
                 'branch': None,
                 'install_dir': 'fuse',
                 'build_commands': [

@@ -206,7 +206,7 @@ SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
 INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path. If "default", self.code_dir / installs / mizuRoute / route / bin
-EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
+EXE_NAME_MIZUROUTE: mizuRoute.exe                              # Name of mizuroute executable
 SETTINGS_MIZU_TOPOLOGY: topology.nc                            # Name of the river network topology file.
 SETTINGS_MIZU_PARAMETERS: param.nml.default                    # Mizuroute parameter file
 SETTINGS_MIZU_CONTROL_FILE: mizuroute.control                  # Name of the control file.
