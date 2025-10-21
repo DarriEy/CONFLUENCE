@@ -1,17 +1,18 @@
 ### ==================================== CONFLUENCE template configuration file ============================================================
+#
 # This configuration file contains all settings required to run the CONFLUENCE workflow, from conceptualisation to evaluation.
 # The configuration settings are organized based on modules and can be populated as the user moves through the individual components
-# of the hydrological modelling exercise. CONFLUENCE is comprised of the following modules:
+# of the hydrological modelling exercise. This configuration file is comprised of the following sections:
 # 
 # 1. Global settings: Underlying configuration of each CONFLUENCE initation which are used throughout the workflow, e.g. root path etc. 
-# 2. Geopsatial settings: Configurations required to define the geospatial domain of the project and prepare geospatial input files
-# 3. Model Agnostic settings: Configurations required for running the model agnostic data preprocessings
-# 4. Model Specific settings: Configurations required for running model specific data preprocessing and input file generation 
+# 2. Geospatial settings: Configurations required to define the geospatial domain of the project and prepare geospatial input files
+# 3. Model Agnostic settings: Configurations required for data pre-processing that is common to all models
+# 4. Model Specific settings: Configurations required for data preprocessing that is specific depending on model selection
 # 5. Evaluation settings: Configurations required to evaluate the model output
 # 6. Optimisation settings: Configurations required for calibrating the hydrological model setup, including sensitivity and decision analysis
-
+# 7. Data and path settings: Configurations for data characteristics and path specifications. Note: if deviating from default paths, an absolute path must be defined
+#
 ### ============================================= 1. Global settings: =======================================================================
-
 
 CONFLUENCE_DATA_DIR: /path/to/CONFLUENCE_data/                 # Directory with the confluence data directories, including the external installations
 CONFLUENCE_CODE_DIR: /path/to/CONFLUENCE                       # Directory with the confluence code repository
@@ -28,6 +29,11 @@ SPINUP_PERIOD: 1980-01-02, 1981-12-31                          # start_date, end
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
+
+# Logging settings
+LOG_LEVEL: INFO                                                # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_TO_FILE: True                                              # Save logs to file
+LOG_FORMAT: detailed                                           # Log format: simple, detailed
 
 ### ============================================= 2. Geospatial settings: =================================================================
 
@@ -53,6 +59,7 @@ DROP_ANALYSIS_NUM_THRESHOLDS: 10                               # Number of thres
 DROP_ANALYSIS_LOG_SPACING: True                                # Use logarithmic spacing (recommended)
 LUMPED_WATERSHED_METHOD: TauDEM                                # TauDEM for lumped delineation
 CLEANUP_INTERMEDIATE_FILES: False                              # Remove temporary files from delieation
+DELINEATE_COASTAL_WATERSHEDS: False                            # Delineate coastal hillslopes
 DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
 MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size, in km^2. Smaller GRUs will be merged 
@@ -101,76 +108,47 @@ SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in pa
 SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
 SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
 SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
-SETTINGS_SUMMA_GRU_COUNT: 85                                  # Number of GRUs in SUMMA shapefile
-SETTINGS_SUMMA_GRU_PER_JOB: 5                                 # Number of GRUs per job
+SETTINGS_SUMMA_GRU_COUNT: 85                                   # Number of GRUs in SUMMA shapefile
+SETTINGS_SUMMA_GRU_PER_JOB: 5                                  # Number of GRUs per job
 SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
-SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA binary
+SETTINGS_SUMMA_PARALLEL_EXE: summa_actors.exe                  # Name of parallel SUMMA binary
 
-# Calibration settings 
-PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
-BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
-
-SUMMA_DECISION_OPTIONS:                                        # Select which SUMMA model decisions to use and analyse
-  snowIncept:                                                  # Snow interception, Options: lightSnow (f(new snow density)), stickySnow (f(temperature))
-    - lightSnow
-  compaction:                                                  # Snow compaction, Options: consettl (constant settlement rate), anderson (semi-empirical Anderson 1976)
-    - anderson
-  snowLayers:                                                  # Snow layer combination/subdivision, Options: CLM_2010 (CLM rules by layer index), jrdn1991 (SNTHERM uniform rules)
-    - CLM_2010
-  alb_method:                                                  # Albedo evolution, Options: conDecay (constant decay rate), varDecay (variable decay with metamorphism)
-    - conDecay
-  thCondSnow:                                                  # Thermal conductivity of snow, Options: tyen1965 (Yen 1965), melr1977 (Mellor 1977), jrdn1991 (Jordan 1991), smnv2000 (Smirnova et al. 2000)
-    - jrdn1991
-    - smnv2000
-  vegeParTbl:                                                  # Vegetation parameter table, Options: USGS (24/27 categories), MODIFIED_IGBP_MODIS_NOAH (20 MODIS categories)
-    - MODIFIED_IGBP_MODIS_NOAH
-  soilStress:                                                  # Soil moisture control on stomatal resistance, Options: NoahType (f(volumetric water)), CLM_Type (f(matric head)), SiB_Type (exp log matric head)
-    - NoahType
-  stomResist:                                                  # Stomatal resistance formulation, Options: BallBerry (Ball-Berry model), Jarvis (Jarvis model)
-    - BallBerry
-  LAI_method:                                                  # LAI determination method, Options: monTable (monthly lookup table), specified (from green veg fraction)
-    - monTable
-  veg_traits:                                                  # Vegetation roughness length/displacement height, Options: Raupach_BLM1994 (Raupach 1994), CM_QJRMS1998 (Choudhury-Monteith 1998), vegTypeTable (table by veg type)
-    - Raupach_BLM1994
-  canopyEmis:                                                  # Canopy emissivity, Options: simplExp (simple exponential), difTrans (f(diffuse transmissivity))
-    - difTrans
-  windPrfile:                                                  # Wind profile through canopy, Options: exponential (exp to surface), logBelowCanopy (log profile below canopy)
-    - logBelowCanopy
-  canopySrad:                                                  # Canopy shortwave radiation, Options: noah_mp (Noah-MP with albedo), CLM_2stream (CLM 2-stream), UEB_2stream (UEB Mahat-Tarboton), NL_scatter (Nijssen-Lettenmaier), BeersLaw (Beer's Law VIC-style)
-    - BeersLaw
-  soilCatTbl:                                                  # Soil category dataset, Options: STAS (STATSGO), STAS-RUC (STATSGO-RUC blend), ROSETTA (Rosetta pedotransfer)
-    - ROSETTA
-  f_Richards:                                                  # Form of Richards' equation, Options: moisture (moisture-based), mixdform (mixed formulation)
-    - mixdform
-  groundwatr:                                                  # Groundwater parameterization, Options: qTopmodl (TOPMODEL exponential), bigBuckt (lumped aquifer), noXplict (no groundwater)
-    - bigBuckt
-  hc_profile:                                                  # Hydraulic conductivity profile, Options: constant (uniform with depth), pow_prof (power-law decay)
-    - constant
-  bcLowrSoiH:                                                  # Lower boundary condition for soil hydrology, Options: drainage (free drainage), presHead (prescribed head), bottmPsi (f(bottom matric head)), zeroFlux (no flow)
-    - drainage
-  thCondSoil:                                                  # Thermal conductivity of soil, Options: funcSoilWet (f(soil moisture)), mixConstit (weighted constituents), hanssonVZJ (Hansson et al. 2004)
-    - funcSoilWet
-  spatial_gw:                                                  # Spatial representation of groundwater, Options: localColumn (column independent), singleBasin (single basin store)
-    - localColumn
-  subRouting:                                                  # Sub-grid routing method, Options: timeDlay (time-delay histogram), qInstant (instantaneous)
-    - timeDlay
-  num_method:                                                  # Numerical solution method, Options: itertive (iterative Newton-Raphson), non_iter (non-iterative), itersurf (iterate surface only)
-    - itertive
-  fDerivMeth:                                                  # Flux derivative method, Options: numericl (numerical finite diff), analytic (analytical derivatives)
-    - analytic
-  bcUpprTdyn:                                                  # Upper boundary for thermodynamics, Options: presTemp (prescribed temperature), nrg_flux (energy flux)
-    - nrg_flux
-  bcLowrTdyn:                                                  # Lower boundary for thermodynamics, Options: presTemp (prescribed temperature), zeroFlux (zero heat flux)
-    - zeroFlux
-  bcUpprSoiH:                                                  # Upper boundary for soil hydrology, Options: presHead (prescribed head/moisture), liq_flux (liquid water flux)
-    - liq_flux
-  astability:                                                  # Atmospheric stability function, Options: standard (Monin-Obukhov), louisinv (Louis 1979 inverse), mahrtexp (Mahrt 1987 exponential)
-    - louisinv
+# SUMMA optimisation settings 
+PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat       # Local parameters to calibrate
+BASIN_PARAMS_TO_CALIBRATE: routingGammaScale                   # Basin parameters to calibrate                       
+SUMMA_DECISION_OPTIONS:                                        # SUMMA model decisions to analyse in decision analysis, if more than 1 options are selected per category, all permuations will be evaluated
+  snowIncept: [lightSnow]                                      # Snow interception, Options: lightSnow (f(new snow density)), stickySnow (f(temperature))
+  compaction: [anderson]                                       # Snow compaction, Options: consettl (constant settlement rate), anderson (semi-empirical Anderson 1976)
+  snowLayers: [CLM_2010]                                       # Snow layer combination/subdivision, Options: CLM_2010 (CLM rules by layer index), jrdn1991 (SNTHERM uniform rules)
+  alb_method: [conDecay]                                       # Albedo evolution, Options: conDecay (constant decay rate), varDecay (variable decay with metamorphism)
+  thCondSnow: [smnv2000, jrdn1991]                             # Thermal conductivity of snow, Options: tyen1965 (Yen 1965), melr1977 (Mellor 1977), jrdn1991 (Jordan 1991), smnv2000 (Smirnova et al. 2000)
+  vegeParTbl: [MODIFIED_IGBP_MODIS_NOAH]                       # Vegetation parameter table, Options: USGS (24/27 categories), MODIFIED_IGBP_MODIS_NOAH (20 MODIS categories)
+  soilStress: [NoahType]                                       # Soil moisture control on stomatal resistance, Options: NoahType (f(volumetric water)), CLM_Type (f(matric head)), SiB_Type (exp log matric head)
+  stomResist: [BallBerry]                                      # Stomatal resistance formulation, Options: BallBerry (Ball-Berry model), Jarvis (Jarvis model)
+  LAI_method: [monTable]                                       # LAI determination method, Options: monTable (monthly lookup table), specified (from green veg fraction)
+  veg_traits: [Raupach_BLM1994]                                # Vegetation roughness length/displacement height, Options: Raupach_BLM1994 (Raupach 1994), CM_QJRMS1998 (Choudhury-Monteith 1998), vegTypeTable (table by veg type)
+  canopyEmis: [difTrans]                                       # Canopy emissivity, Options: simplExp (simple exponential), difTrans (f(diffuse transmissivity))
+  windPrfile: [logBelowCanopy]                                 # Wind profile through canopy, Options: exponential (exp to surface), logBelowCanopy (log profile below canopy)
+  canopySrad: [BeersLaw]                                       # Canopy shortwave radiation, Options: noah_mp (Noah-MP with albedo), CLM_2stream (CLM 2-stream), UEB_2stream (UEB Mahat-Tarboton), NL_scatter (Nijssen-Lettenmaier), BeersLaw (Beer's Law VIC-style)
+  soilCatTbl: [ROSETTA]                                        # Soil category dataset, Options: STAS (STATSGO), STAS-RUC (STATSGO-RUC blend), ROSETTA (Rosetta pedotransfer)
+  f_Richards: [mixdform]                                       # Form of Richards' equation, Options: moisture (moisture-based), mixdform (mixed formulation)
+  groundwatr: [bigBuckt]                                       # Groundwater parameterization, Options: qTopmodl (TOPMODEL exponential), bigBuckt (lumped aquifer), noXplict (no groundwater)
+  hc_profile: [constant]                                       # Hydraulic conductivity profile, Options: constant (uniform with depth), pow_prof (power-law decay)
+  bcLowrSoiH: [drainage]                                       # Lower boundary condition for soil hydrology, Options: drainage (free drainage), presHead (prescribed head), bottmPsi (f(bottom matric head)), zeroFlux (no flow)
+  thCondSoil: [funcSoilWet]                                    # Thermal conductivity of soil, Options: funcSoilWet (f(soil moisture)), mixConstit (weighted constituents), hanssonVZJ (Hansson et al. 2004)
+  spatial_gw: [localColumn]                                    # Spatial representation of groundwater, Options: localColumn (column independent), singleBasin (single basin store)
+  subRouting: [timeDlay]                                       # Sub-grid routing method, Options: timeDlay (time-delay histogram), qInstant (instantaneous)
+  num_method: [itertive]                                       # Numerical solution method, Options: itertive (iterative Newton-Raphson), non_iter (non-iterative), itersurf (iterate surface only)
+  fDerivMeth: [analytic]                                       # Flux derivative method, Options: numericl (numerical finite diff), analytic (analytical derivatives)
+  bcUpprTdyn: [nrg_flux]                                       # Upper boundary for thermodynamics, Options: presTemp (prescribed temperature), nrg_flux (energy flux)
+  bcLowrTdyn: [zeroFlux]                                       # Lower boundary for thermodynamics, Options: presTemp (prescribed temperature), zeroFlux (zero heat flux)
+  bcUpprSoiH: [liq_flux]                                       # Upper boundary for soil hydrology, Options: presHead (prescribed head/moisture), liq_flux (liquid water flux)
+  astability: [louisinv]                                       # Atmospheric stability function, Options: standard (Monin-Obukhov), louisinv (Louis 1979 inverse), mahrtexp (Mahrt 1987 exponential)
 
 # Soil depth calibration settings
-CALIBRATE_DEPTH: False                                       # Enable soil depth profile calibration (True/False)
-DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total depth multiplier [min, max]
-DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
+CALIBRATE_DEPTH: False                                         # Enable soil depth profile calibration (True/False)
+DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                            # Bounds for total depth multiplier [min, max]
+DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                          # Bounds for shape factor [min, max]
 
 ###  4.2 Model Specific settings: FUSE 
 FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
@@ -178,33 +156,21 @@ FUSE_EXE: fuse.exe                                             # Name of FUSE ex
 FUSE_ROUTING_INTEGRATION: mizuRoute                            # Routing method for distributed FUSE
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
 SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
-FUSE_SPATIAL_MODE: distributed                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+FUSE_SPATIAL_MODE: distributed                                 # Spatial discretisation of FUSE, options: lumped or semi-distributed
 EXPERIMENT_OUTPUT_FUSE: default                                # Directory for FUSE experiment output
 
 # FUSE optimisation settings
 SETTINGS_FUSE_PARAMS_TO_CALIBRATE: MAXWATR_1,MAXWATR_2,BASERTE,QB_POWR,TIMEDELAY,PERCRTE,FRACTEN,RTFRAC1,MBASE,MFMAX,MFMIN,PXTEMP,LAPSE
-FUSE_DECISION_OPTIONS:
-    RFERR:                                                     # Rainfall error model, Options: additive_e (additive error), multiplc_e (multiplicative error)
-      - additive_e
-      - multiplc_e
-    ARCH1:                                                     # Upper soil layer architecture, Options: tension1_1 (single tension storage), tension2_1 (two tension stores), onestate_1 (single state no tension)
-      - tension1_1
-    ARCH2:                                                     # Lower soil layer architecture, Options: tens2pll_2 (tension storage two parallel tanks), unlimfrc_2 (unlimited fraction rate), unlimpow_2 (unlimited power recession), fixedsiz_2 (fixed size tanks)
-      - tens2pll_2
-    QSURF:                                                     # Surface runoff generation, Options: arno_x_vic (ARNO/VIC parameterization), prms_varnt (PRMS variant), tmdl_param (TOPMODEL parameterization)
-      - arno_x_vic
-      - prms_varnt
-    QPERC:                                                     # Percolation between soil layers, Options: perc_f2sat (field capacity to saturation), perc_w2sat (wilting point to saturation), perc_lower (percolation to lower layer)
-      - perc_f2sat
-    ESOIL:                                                     # Evaporation from soil, Options: sequential (sequential evaporation), rootweight (root-weighted evaporation)
-      - sequential
-    QINTF:                                                     # Interflow from soil layers, Options: intflwnone (no interflow), intflwsome (interflow present)
-      - intflwnone
-    Q_TDH:                                                     # Routing scheme, Options: rout_gamma (gamma distribution routing), no_routing (no routing)
-      - rout_gamma
-    SNOWM:                                                     # Snow module, Options: temp_index (temperature index method), no_snowmod (no snow module)
-      - temp_index
-      - no_snowmod
+FUSE_DECISION_OPTIONS:                                         # Model decisions to analyse in decision analysis, if more than 1 options are selected per category, all permuations will be evaluated
+    RFERR: [additive_e, multiplc_e]                            # Rainfall error model, Options: additive_e (additive error), multiplc_e (multiplicative error)
+    ARCH1: [tension1_1]                                        # Upper soil layer architecture, Options: tension1_1 (single tension storage), tension2_1 (two tension stores), onestate_1 (single state no tension)
+    ARCH2: [tens2pll_2]                                        # Lower soil layer architecture, Options: tens2pll_2 (tension storage two parallel tanks), unlimfrc_2 (unlimited fraction rate), unlimpow_2 (unlimited power recession), fixedsiz_2 (fixed size tanks)
+    QSURF: [arno_x_vic, prms_varnt]                            # Surface runoff generation, Options: arno_x_vic (ARNO/VIC parameterization), prms_varnt (PRMS variant), tmdl_param (TOPMODEL parameterization)
+    QPERC: [perc_f2sat]                                        # Percolation between soil layers, Options: perc_f2sat (field capacity to saturation), perc_w2sat (wilting point to saturation), perc_lower (percolation to lower layer)
+    ESOIL: [sequential]                                        # Evaporation from soil, Options: sequential (sequential evaporation), rootweight (root-weighted evaporation)
+    QINTF: [intflwnone]                                        # Interflow from soil layers, Options: intflwnone (no interflow), intflwsome (interflow present)
+    Q_TDH: [rout_gamma]                                        # Routing scheme, Options: rout_gamma (gamma distribution routing), no_routing (no routing)
+    SNOWM: [temp_index, no_snowmod]                            # Snow module, Options: temp_index (temperature index method), no_snowmod (no snow module)
 
 ###  4.3 Model Specific settings: GR 
 SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
@@ -214,7 +180,7 @@ GR_EXE: GR.r                                                   # Name of GR exec
 GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
 
 ###  4.4 Model Specific settings: LSTM 
-FLASH_LOAD: False                                               # Load existing flash model from storage. If false creates and trains new model.
+FLASH_LOAD: False                                              # Load existing flash model from storage. If false creates and trains new model.
 FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
 FLASH_NUM_LAYERS: 3                                            # Number of active layers
 FLASH_EPOCHS: 300                                              # Number of training epochs
@@ -250,7 +216,7 @@ SETTINGS_MIZU_REMAP: routing_remap.nc                          # Name of the opt
 
 # Analysis types to run
 EVALUATION_DATA: [streamflow]                                  # Evaluation data to acquire. Options: streamflow, snow, ground_water, fluxnet
-ANALYSES: [benchmarking]                                       # Options: sensitivity, decision, benchmarking, attributes
+ANALYSES: [benchmarking, attributes]                           # Options: sensitivity, decision, benchmarking, attributes
 SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 
 # Streamflow data settings
@@ -260,18 +226,48 @@ DOWNLOAD_WSC_DATA: True                                        # Download HYDAT 
 STATION_ID: 05BB001                                            # Station ID from provider
 
 # SNOTEL data settings
-DOWNLOAD_SNOTEL: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
-SNOTEL_STATION: '602'                                          # SNOTEL station ID (numeric)
+DOWNLOAD_SNOTEL: false                                         # Download SNOTEL data, options: 'true' or 'false'
+SNOTEL_STATION:                                                # SNOTEL station ID (numeric)
 SNOTEL_PATH: '/path/to/data/geospatial-data/SNOTEL'            # Path to directory containing SNOTEL data files
 
 # FLUXNET data settings
-DOWNLOAD_FLUXNET: 'false'                                      # Download FLUXNET data, options: 'true' or 'false'
-FLUXNET_STATION: 'CA-NS7'                                      # FLUXNET station ID (numeric)
+DOWNLOAD_FLUXNET: false                                        # Download FLUXNET data, options: 'true' or 'false'
+FLUXNET_STATION:                                               # FLUXNET station ID (numeric)
 FLUXNET_PATH: '/path/to/data/data/geospatial-data/fluxnet'     # Path to directory containing FLUXNET data files
 
 # USGS GW data settings
-DOWNLOAD_USGS_GW: 'true'                                       # Download USGS groundwater data, options: 'true' or 'false'
-USGS_STATION: '06306300'                                       # USGS   station ID (numeric)
+DOWNLOAD_USGS_GW: false                                        # Download USGS groundwater data, options: 'true' or 'false'
+USGS_STATION:  06306300                                        # USGS   station ID (numeric)
+
+# Remote sensing data settings 
+DOWNLOAD_SMAP: false                                           # Download SMAP soil moisture data
+SMAP_PRODUCT: SPL4SMGP                                         # SMAP product version
+SMAP_PATH: default                                             # Path to SMAP data directory
+
+DOWNLOAD_GRACE: false                                          # Download GRACE groundwater storage data
+GRACE_PRODUCT: RL06                                            # GRACE product release
+GRACE_PATH: default                                            # Path to GRACE data directory
+
+DOWNLOAD_MODIS_SNOW: false                                     # Download MODIS snow cover data (beyond landcover)
+MODIS_SNOW_PRODUCT: MOD10A1.006                                # MODIS snow product
+MODIS_SNOW_PATH: default                                       # Path to MODIS snow data
+
+# Attribute Processing settings
+ATTRIBUTES_DATA_DIR: default                                   # Base directory for attribute data, if default uses data_dir/geospatial-data
+ATTRIBUTES_SOILGRIDS_PATH: default                             # Will use {data_dir}/geospatial-data/soilgrids
+ATTRIBUTES_PELLETIER_PATH: default                             # Will use {data_dir}/geospatial-data/pelletier
+ATTRIBUTES_MERIT_PATH: default                                 # Will use {data_dir}/geospatial-data/merit
+ATTRIBUTES_MODIS_PATH: default                                 # Will use {data_dir}/geospatial-data/modis
+ATTRIBUTES_GLCLU_PATH: default                                 # Will use {data_dir}/geospatial-data/glclu2019
+ATTRIBUTES_FOREST_HEIGHT_PATH: default                         # Will use {data_dir}/geospatial-data/forest_height
+ATTRIBUTES_WORLDCLIM_PATH: default                             # Will use {data_dir}/geospatial-data/worldclim
+ATTRIBUTES_GLIM_PATH: default                                  # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
+ATTRIBUTES_GROUNDWATER_PATH: default                           # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
+ATTRIBUTES_STREAMFLOW_PATH: default                            # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
+HRU_GAUGE_MAPPING: {}                                          # Mapping between HRU IDs and gauge IDs for distributed domains
+ATTRIBUTES_GLWD_PATH: default                                  # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
+ATTRIBUTES_HYDROLAKES_PATH: default                            # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
+ATTRIBUTES_OUTPUT_DIR: default                                 # Output directory for processed attributes, if default uses project_dir/attributes
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
@@ -383,7 +379,6 @@ EMULATION_SKIP_MIZUROUTE: false                                # Skip running mi
 EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
 
-
 ### ============================================= 7. Data and Path Settings: =====================================================================
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
@@ -424,23 +419,6 @@ STREAMFLOW_RAW_NAME: default                                   # Name of streamf
 STREAMFLOW_PROCESSED_PATH: default                             # Path to streamflow processed dataset. If default, uses self.data_dir / observations / streamflow / preprocessed / config['DOMAIN_NAME']_streamflow_processed.csv
 HYDAT_PATH: default                                            # Path to HYDAT database      
 SIMULATIONS_PATH: default                                      # Path to streamflow simulation results, if default, uses self.data_dir / simulations / config['EXPERIMENT_ID'] / mizuRoute / 
-
-# Attribute Processing data path settings
-ATTRIBUTES_DATA_DIR: "/work/comphyd_lab/data/_to-be-moved/NorthAmerica_geospatial/"  # Base directory for attribute data, if default uses data_dir/geospatial-data
-ATTRIBUTES_SOILGRIDS_PATH: default                             # Will use {data_dir}/geospatial-data/soilgrids
-ATTRIBUTES_PELLETIER_PATH: default                             # Will use {data_dir}/geospatial-data/pelletier
-ATTRIBUTES_MERIT_PATH: default                                 # Will use {data_dir}/geospatial-data/merit
-ATTRIBUTES_MODIS_PATH: default                                 # Will use {data_dir}/geospatial-data/modis
-ATTRIBUTES_GLCLU_PATH: default                                 # Will use {data_dir}/geospatial-data/glclu2019
-ATTRIBUTES_FOREST_HEIGHT_PATH: default                         # Will use {data_dir}/geospatial-data/forest_height
-ATTRIBUTES_WORLDCLIM_PATH: default                             # Will use {data_dir}/geospatial-data/worldclim
-ATTRIBUTES_GLIM_PATH: default                                  # Path to GLiM geological data, if default uses ATTRIBUTES_DATA_DIR/glim
-ATTRIBUTES_GROUNDWATER_PATH: default                           # Path to groundwater data, if default uses ATTRIBUTES_DATA_DIR/groundwater
-ATTRIBUTES_STREAMFLOW_PATH: default                            # Path to streamflow data/metrics, if default uses project_dir/observations/streamflow
-HRU_GAUGE_MAPPING: {}                                          # Mapping between HRU IDs and gauge IDs for distributed domains
-ATTRIBUTES_GLWD_PATH: default                                  # Path to Global Lakes and Wetlands Database, if default uses ATTRIBUTES_DATA_DIR/glwd
-ATTRIBUTES_HYDROLAKES_PATH: default                            # Path to HydroLAKES data, if default uses ATTRIBUTES_DATA_DIR/hydrolakes
-ATTRIBUTES_OUTPUT_DIR: default                                 # Output directory for processed attributes, if default uses project_dir/attributes
 
 # Model path settings
 # Hype paths
@@ -509,18 +487,18 @@ LAND_CLASS_PATH: default                                       # Path to land cl
 LAND_CLASS_NAME: default                                       # Name of land classification raster
 RADIATION_PATH: default                                        # Path to radiation classification raster. If 'default', uses root_path/domain_[name]/attributes/radiation 
 
-# Tool paths
+# MAF Tool paths
 DATATOOL_PATH: default                                         # Path to datatool executable 
 GISTOOL_PATH: default                                          # Path to gistool executable
 EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
-DATATOOL_DATASET_ROOT: /work/comphyd_lab/data/meteorological-data/    # Path to datatool datasets root directory
-DATATOOL_CACHE: /home/darri.eythorsson                         # Cache directory used in datatool
-GISTOOL_DATASET_ROOT: /work/comphyd_lab/data/geospatial-data/  # Path to gistool datasets root directory
-GISTOOL_LIB_PATH: /work/comphyd_lab/envs/r-env/                # Path to gistool libraries
-TOOL_CACHE: /home/darri.eythorsson/cache                       # Path to gistool cache directory
-EASYMORE_CACHE: /home/darri.eythorsson/easymore/               # Path to easymore cache directory
-EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" # Path to easymore job config
-CLUSTER_JSON: /work/comphyd_lab/users/darri/data/CONFLUENCE_data/installs/datatool/etc/clusters/ucalgary-arc.json # Path to cluster json config
+DATATOOL_DATASET_ROOT: /path/to/meteorological-data/           # Path to datatool datasets root directory
+DATATOOL_CACHE: /path/to/cache/dir                             # Cache directory used in datatool
+GISTOOL_DATASET_ROOT: /path/to/geospatial-data/                # Path to gistool datasets root directory
+GISTOOL_LIB_PATH: /path/to/r-env/                              # Path to gistool libraries
+TOOL_CACHE: /path/to/cache/dir                                 # Path to gistool cache directory
+EASYMORE_CACHE: /path/to/cache/dir                             # Path to easymore cache directory
+EASYMORE_JOB_CONF: /path/to/esmr/job_config                    # Path to easymore job config
+CLUSTER_JSON: /path/to/cluster.json                            # Path to cluster json config
 
 
 
