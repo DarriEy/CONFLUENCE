@@ -51,6 +51,22 @@ class GeofabricDelineator:
         self.taudem_dir = self.config.get('TAUDEM_DIR')
         if self.taudem_dir == "default":
             self.taudem_dir = str(self.data_dir / 'installs' / 'TauDEM' / 'bin')
+        
+        # Get delineation method from config (default to stream_threshold for backward compatibility)
+        self.delineation_method = self.config.get('DELINEATION_METHOD', 'stream_threshold').lower()
+        
+        # Validate delineation method
+        valid_methods = ['stream_threshold', 'curvature', 'slope_area', 'multi_scale']
+        if self.delineation_method not in valid_methods:
+            self.logger.warning(f"Unknown delineation method '{self.delineation_method}'. Using 'stream_threshold'.")
+            self.delineation_method = 'stream_threshold'
+        
+        # Check if drop analysis should be performed for threshold optimization
+        self.use_drop_analysis = self.config.get('USE_DROP_ANALYSIS', False)
+        if self.use_drop_analysis:
+            self.logger.info("Drop analysis enabled for threshold optimization")
+        
+        self.logger.info(f"Using delineation method: {self.delineation_method}")
 
     def _get_dem_path(self) -> Path:
         dem_path = self.config.get('DEM_PATH')
@@ -66,25 +82,9 @@ class GeofabricDelineator:
         taudem_dir = self.config['TAUDEM_DIR']
         os.environ['PATH'] = f"{os.environ['PATH']}:{taudem_dir}"
 
-    def run_command(self, command: str, retry: bool = True) -> None:
-        for attempt in range(self.max_retries if retry else 1):
-            try:
-                self.logger.info(f"Running command: {command}")
-                result = subprocess.run(command, check=True, shell=True, capture_output=True, text=True)
-                self.logger.info(f"Command output: {result.stdout}")
-                return
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Error executing command: {command}")
-                self.logger.error(f"Error details: {e.stderr}")
-                if attempt < self.max_retries - 1 and retry:
-                    self.logger.info(f"Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    raise
-
     def delineate_geofabric(self) -> Tuple[Optional[Path], Optional[Path]]:
         try:
-            self.logger.info(f"Starting geofabric delineation for {self.domain_name}")
+            self.logger.info(f"Starting geofabric delineation for {self.domain_name} using method: {self.delineation_method}")
             self._validate_inputs()
             self.create_directories()
             self.pour_point_path = self._get_pour_point_path()
@@ -153,9 +153,9 @@ class GeofabricDelineator:
                 else:
                     full_command = command
 
-                self.logger.info(f"Running command: {full_command}")
+                self.logger.debug(f"Running command: {full_command}")
                 result = subprocess.run(full_command, check=True, shell=True, capture_output=True, text=True)
-                self.logger.info(f"Command output: {result.stdout}")
+                self.logger.debug(f"Command output: {result.stdout}")
                 return
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"Error executing command: {full_command}")
@@ -169,41 +169,8 @@ class GeofabricDelineator:
                 else:
                     raise
                 
-    def run_taudem_steps(self, dem_path: Path, pour_point_path: Path):
-        threshold = self.config.get('STREAM_THRESHOLD')
-        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
 
-        # Determine the correct MPI command
-        def get_run_command():
-            if shutil.which("srun"):
-                return "mpirun"
-            elif shutil.which("mpirun"):
-                return "mpirun"
-            else:
-                return ""  # Empty string for no MPI launcher
-                
-        mpi_cmd = get_run_command()
-        if mpi_cmd:
-            mpi_prefix = f"{mpi_cmd} -n {self.mpi_processes} "
-        else:
-            mpi_prefix = ""
-            
-        mpi_prefix = ""
-        # Build the TauDEM commands with module loading
-        steps = [
-            f"{mpi_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
-            f"{mpi_prefix}{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
-            f"{mpi_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
-            f"{mpi_prefix}{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
-            f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
-            f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
-            f"{mpi_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
-        ]
 
-        for step in steps:
-            # Pass the command directly without adding the MPI processes here
-            self.run_command(step)
-            self.logger.info(f"Completed TauDEM step")
 
     def _clean_geometries(self, geometry):
         """Clean and validate geometry."""
@@ -397,6 +364,493 @@ class GeofabricDelineator:
             import traceback
             self.logger.error(traceback.format_exc())
             return river_network_path, river_basins_path
+
+
+
+    def run_taudem_steps(self, dem_path: Path, pour_point_path: Path):
+        """
+        Run TauDEM processing steps based on the selected delineation method.
+        
+        Args:
+            dem_path: Path to the DEM file
+            pour_point_path: Path to the pour point shapefile
+        """
+        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
+
+        # Determine the correct MPI command
+        def get_run_command():
+            if shutil.which("srun"):
+                return "mpirun"
+            elif shutil.which("mpirun"):
+                return "mpirun"
+            else:
+                return ""  # Empty string for no MPI launcher
+                
+        mpi_cmd = get_run_command()
+        if mpi_cmd:
+            mpi_prefix = f"{mpi_cmd} -n {self.mpi_processes} "
+        else:
+            mpi_prefix = ""
+            
+        mpi_prefix = ""
+        
+        # Common initial steps (same for all methods)
+        common_steps = [
+            f"{mpi_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
+            f"{mpi_prefix}{self.taudem_dir}/d8flowdir -fel {self.interim_dir}/elv-fel.tif -sd8 {self.interim_dir}/elv-sd8.tif -p {self.interim_dir}/elv-fdir.tif",
+            f"{mpi_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -nc",
+        ]
+        
+        # Run common steps
+        for step in common_steps:
+            self.run_command(step)
+            self.logger.info(f"Completed TauDEM common step")
+        
+        # Method-specific stream identification
+        if self.delineation_method == 'curvature':
+            self.logger.info("Using curvature-based (Peuker-Douglas) stream identification")
+            self._run_curvature_method(dem_path, pour_point_path, mpi_prefix)
+        elif self.delineation_method == 'slope_area':
+            self.logger.info("Using slope-area based stream identification")
+            self._run_slope_area_method(dem_path, pour_point_path, mpi_prefix)
+        elif self.delineation_method == 'multi_scale':
+            self.logger.info("Using multi-scale hierarchical stream identification")
+            self._run_multi_scale_method(dem_path, pour_point_path, mpi_prefix)
+        else:  # stream_threshold (default)
+            self.logger.info("Using threshold-based stream identification")
+            self._run_threshold_method(dem_path, pour_point_path, mpi_prefix)
+        
+        self.logger.info("Completed all TauDEM steps")
+
+    def _run_threshold_method(self, dem_path: Path, pour_point_path: Path, mpi_prefix: str):
+        """
+        Run threshold-based stream identification (original method).
+        
+        Optionally performs drop analysis to objectively determine the optimal threshold.
+        
+        Args:
+            dem_path: Path to the DEM file
+            pour_point_path: Path to the pour point shapefile
+            mpi_prefix: MPI command prefix
+        """
+        # Run drop analysis if requested
+        if self.use_drop_analysis:
+            optimal_threshold = self._run_drop_analysis(mpi_prefix)
+            if optimal_threshold is not None:
+                threshold = optimal_threshold
+                self.logger.info(f"Using threshold from drop analysis: {threshold}")
+            else:
+                threshold = self.config.get('STREAM_THRESHOLD')
+                self.logger.warning(f"Drop analysis failed. Using configured threshold: {threshold}")
+        else:
+            threshold = self.config.get('STREAM_THRESHOLD')
+        
+        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
+        
+        steps = [
+            f"{mpi_prefix}{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
+            f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -thresh {threshold}",
+            f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            f"{mpi_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+        ]
+        
+        for step in steps:
+            self.run_command(step)
+            self.logger.info(f"Completed threshold method step")
+
+    def _run_curvature_method(self, dem_path: Path, pour_point_path: Path, mpi_prefix: str):
+        """
+        Run curvature-based (Peuker-Douglas) stream identification.
+        
+        This method identifies streams based on topographic curvature rather than 
+        contributing area threshold. It's particularly effective in low-relief terrain
+        and regions where drainage density varies spatially.
+        
+        Args:
+            dem_path: Path to the DEM file
+            pour_point_path: Path to the pour point shapefile
+            mpi_prefix: MPI command prefix
+        """
+        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
+        
+        # Get curvature parameters from config (with sensible defaults)
+        # These control the sensitivity of the curvature-based stream detection
+        curvature_threshold = self.config.get('CURVATURE_THRESHOLD', 0.0)  # Profile curvature threshold
+        min_source_threshold = self.config.get('MIN_SOURCE_THRESHOLD', 100)  # Minimum contributing area for stream sources
+        
+        steps = [
+            # Step 1: Calculate slope (needed for curvature calculation)
+            f"{mpi_prefix}{self.taudem_dir}/dinfflowdir -fel {self.interim_dir}/elv-fel.tif -ang {self.interim_dir}/elv-ang.tif -slp {self.interim_dir}/elv-slp.tif",
+            
+            # Step 2: Run Peuker-Douglas algorithm to identify stream sources based on curvature
+            # This identifies convergent topography (valleys) where streams are likely to form
+            f"{mpi_prefix}{self.taudem_dir}/peukerdouglas -fel {self.interim_dir}/elv-fel.tif -ss {self.interim_dir}/elv-ss.tif",
+            
+            # Step 3: Threshold the stream source grid
+            # This removes spurious stream sources in flat areas
+            f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src-temp.tif -thresh {min_source_threshold}",
+            
+            # Step 4: Combine curvature-based sources with area threshold
+            # This ensures streams have minimum drainage area while respecting topographic features
+            f"{mpi_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -o {self.interim_dir}/elv-ss.tif -wg {self.interim_dir}/elv-src.tif -nc",
+            
+            # Step 5: Move outlets to the identified stream network
+            f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            
+            # Step 6: Generate stream network and watersheds
+            f"{mpi_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+        ]
+        
+        for step in steps:
+            self.run_command(step)
+            self.logger.info(f"Completed curvature method step")
+        
+        self.logger.info("Curvature-based stream identification completed")
+        self.logger.info("This method identifies streams based on topographic convergence rather than area threshold alone")
+
+    def _run_slope_area_method(self, dem_path: Path, pour_point_path: Path, mpi_prefix: str):
+        """
+        Run slope-area based stream identification.
+        
+        This method uses the relationship between local slope and contributing area
+        to identify stream initiation points. It's based on the geomorphological
+        principle that streams form where: S = k * A^(-θ), where S is slope, 
+        A is contributing area, k is a coefficient, and θ is typically ~0.5.
+        
+        This method is more physically-based than simple thresholding and can
+        adapt to varying terrain characteristics across the domain.
+        
+        Args:
+            dem_path: Path to the DEM file
+            pour_point_path: Path to the pour point shapefile
+            mpi_prefix: MPI command prefix
+        """
+        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
+        
+        # Get slope-area parameters from config
+        slope_area_threshold = self.config.get('SLOPE_AREA_THRESHOLD', 100.0)  # Combined S*A threshold
+        slope_exponent = self.config.get('SLOPE_AREA_EXPONENT', 2.0)  # Exponent for slope in S*A^n
+        area_exponent = self.config.get('AREA_EXPONENT', 1.0)  # Exponent for area
+        
+        steps = [
+            # Step 1: Calculate D-infinity flow direction and slope
+            # D-infinity provides more accurate slope estimates than D8
+            f"{mpi_prefix}{self.taudem_dir}/dinfflowdir -fel {self.interim_dir}/elv-fel.tif -ang {self.interim_dir}/elv-ang.tif -slp {self.interim_dir}/elv-slp.tif",
+            
+            # Step 2: Calculate D-infinity contributing area
+            f"{mpi_prefix}{self.taudem_dir}/areadinf -ang {self.interim_dir}/elv-ang.tif -sca {self.interim_dir}/elv-sca.tif -nc",
+            
+            # Step 3: Calculate slope-area product for stream source identification
+            # Using slopearea function which computes S^m * A^n
+            f"{mpi_prefix}{self.taudem_dir}/slopearea -slp {self.interim_dir}/elv-slp.tif -sca {self.interim_dir}/elv-sca.tif -sa {self.interim_dir}/elv-sa.tif -par {slope_exponent} {area_exponent}",
+            
+            # Step 4: Threshold the slope-area grid to identify stream sources
+            f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-sa.tif -src {self.interim_dir}/elv-src-sa.tif -thresh {slope_area_threshold}",
+            
+            # Step 5: Use D8 for final stream network delineation (more stable than D-infinity for networks)
+            # Weight the D8 contributing area by the slope-area sources
+            f"{mpi_prefix}{self.taudem_dir}/aread8 -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -o {self.interim_dir}/elv-src-sa.tif -wg {self.interim_dir}/elv-src.tif -nc",
+            
+            # Step 6: Move outlets to stream network
+            f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            
+            # Step 7: Generate final stream network and watersheds
+            f"{mpi_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+        ]
+        
+        for step in steps:
+            self.run_command(step)
+            self.logger.info(f"Completed slope-area method step")
+        
+        self.logger.info("Slope-area based stream identification completed")
+        self.logger.info(f"Used slope^{slope_exponent} * area^{area_exponent} >= {slope_area_threshold} criterion")
+
+    def _run_multi_scale_method(self, dem_path: Path, pour_point_path: Path, mpi_prefix: str):
+        """
+        Run multi-scale hierarchical stream identification.
+        
+        This method delineates streams at multiple threshold scales and combines them
+        to create a hierarchical stream network. It captures both high-order main stems
+        and fine-scale headwater channels, allowing for variable source area concepts
+        and better representation of drainage density variations.
+        
+        Particularly useful for:
+        - Large domains with varying terrain characteristics
+        - Studies requiring multi-resolution stream networks
+        - Capturing both perennial and ephemeral streams
+        
+        Args:
+            dem_path: Path to the DEM file
+            pour_point_path: Path to the pour point shapefile
+            mpi_prefix: MPI command prefix
+        """
+        max_distance = self.config.get('MOVE_OUTLETS_MAX_DISTANCE', 200)
+        
+        # Get multi-scale parameters from config
+        # Default: [10000, 5000, 2500, 1000, 500] creates 5 scales from large rivers to headwaters
+        thresholds = self.config.get('MULTI_SCALE_THRESHOLDS', [10000, 5000, 2500, 1000, 500])
+        if isinstance(thresholds, str):
+            thresholds = [int(x.strip()) for x in thresholds.split(',')]
+        
+        self.logger.info(f"Delineating streams at {len(thresholds)} scales: {thresholds}")
+        
+        # Common preprocessing steps
+        steps = [
+            f"{mpi_prefix}{self.taudem_dir}/gridnet -p {self.interim_dir}/elv-fdir.tif -plen {self.interim_dir}/elv-plen.tif -tlen {self.interim_dir}/elv-tlen.tif -gord {self.interim_dir}/elv-gord.tif",
+        ]
+        
+        for step in steps:
+            self.run_command(step)
+        
+        # Delineate at each threshold scale
+        src_files = []
+        for i, threshold in enumerate(thresholds):
+            self.logger.info(f"Processing scale {i+1}/{len(thresholds)} with threshold {threshold}")
+            
+            src_file = self.interim_dir / f"elv-src-scale{i}.tif"
+            src_files.append(src_file)
+            
+            # Create stream source at this threshold
+            cmd = f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {src_file} -thresh {threshold}"
+            self.run_command(cmd)
+        
+        # Combine all scales into a single stream source grid
+        # Lower thresholds (finer scales) take precedence over higher thresholds
+        self.logger.info("Combining multi-scale stream sources")
+        self._combine_multi_scale_sources(src_files)
+        
+        # Continue with standard streamnet workflow
+        steps = [
+            f"{mpi_prefix}{self.taudem_dir}/moveoutletstostrm -p {self.interim_dir}/elv-fdir.tif -src {self.interim_dir}/elv-src.tif -o {pour_point_path} -om {self.interim_dir}/gauges.shp -md {max_distance}",
+            f"{mpi_prefix}{self.taudem_dir}/streamnet -fel {self.interim_dir}/elv-fel.tif -p {self.interim_dir}/elv-fdir.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {self.interim_dir}/elv-src.tif -ord {self.interim_dir}/elv-ord.tif -tree {self.interim_dir}/basin-tree.dat -coord {self.interim_dir}/basin-coord.dat -net {self.interim_dir}/basin-streams.shp -o {self.interim_dir}/gauges.shp -w {self.interim_dir}/elv-watersheds.tif"
+        ]
+        
+        for step in steps:
+            self.run_command(step)
+            self.logger.info(f"Completed multi-scale method step")
+        
+        self.logger.info("Multi-scale hierarchical stream identification completed")
+        self.logger.info(f"Combined {len(thresholds)} scales to create variable-density stream network")
+
+    def _combine_multi_scale_sources(self, src_files: list):
+        """
+        Combine multiple stream source grids from different threshold scales.
+        
+        The combination uses a hierarchical approach where finer-scale streams
+        (lower thresholds) are added to coarser-scale streams, preserving the
+        complete drainage network structure.
+        
+        Args:
+            src_files: List of paths to stream source raster files
+        """
+        try:
+            import rasterio
+            from rasterio.merge import merge
+            
+            # Read all source files
+            src_arrays = []
+            profile = None
+            
+            for src_file in src_files:
+                with rasterio.open(src_file) as src:
+                    if profile is None:
+                        profile = src.profile
+                    data = src.read(1)
+                    src_arrays.append(data)
+            
+            # Combine: any cell marked as stream in any scale becomes a stream
+            # Use logical OR across all scales
+            combined = np.zeros_like(src_arrays[0])
+            for arr in src_arrays:
+                combined = np.logical_or(combined, arr > 0)
+            
+            # Convert back to integer
+            combined = combined.astype(profile['dtype'])
+            
+            # Write combined source grid
+            output_path = self.interim_dir / "elv-src.tif"
+            with rasterio.open(output_path, 'w', **profile) as dst:
+                dst.write(combined, 1)
+            
+            self.logger.info(f"Combined {len(src_files)} scales into unified stream source grid")
+            
+        except Exception as e:
+            self.logger.error(f"Error combining multi-scale sources: {str(e)}")
+            # Fallback: use the finest scale (last threshold)
+            self.logger.warning("Using finest scale as fallback")
+            import shutil
+            shutil.copy(src_files[-1], self.interim_dir / "elv-src.tif")
+
+
+    def _run_drop_analysis(self, mpi_prefix: str) -> Optional[float]:
+        """
+        Perform drop analysis to objectively determine optimal stream threshold.
+        
+        Drop analysis (Tarboton et al., 1991) examines the relationship between
+        drainage area and stream drop (change in elevation) to identify where
+        streams objectively begin based on geomorphological principles. The method
+        plots drainage area vs. stream drop and looks for a characteristic break
+        or "elbow" in the curve that indicates the transition from hillslope to
+        channel processes.
+        
+        This provides an objective, data-driven way to select stream thresholds
+        rather than using arbitrary values.
+        
+        Args:
+            mpi_prefix: MPI command prefix
+            
+        Returns:
+            Optimal threshold value if analysis succeeds, None otherwise
+        """
+        try:
+            self.logger.info("Running drop analysis to optimize stream threshold")
+            
+            # Get drop analysis parameters from config
+            min_threshold = self.config.get('DROP_ANALYSIS_MIN_THRESHOLD', 100)
+            max_threshold = self.config.get('DROP_ANALYSIS_MAX_THRESHOLD', 10000)
+            num_thresholds = self.config.get('DROP_ANALYSIS_NUM_THRESHOLDS', 10)
+            use_log_spacing = self.config.get('DROP_ANALYSIS_LOG_SPACING', True)
+            
+            # Generate threshold values to test
+            if use_log_spacing:
+                thresholds = np.logspace(
+                    np.log10(min_threshold),
+                    np.log10(max_threshold),
+                    num_thresholds
+                )
+            else:
+                thresholds = np.linspace(min_threshold, max_threshold, num_thresholds)
+            
+            drop_data = []
+            
+            # Test each threshold and compute statistics
+            for threshold in thresholds:
+                self.logger.info(f"Testing threshold: {threshold:.0f}")
+                
+                # Create stream source at this threshold
+                src_file = self.interim_dir / f"elv-src-drop{int(threshold)}.tif"
+                cmd = f"{mpi_prefix}{self.taudem_dir}/threshold -ssa {self.interim_dir}/elv-ad8.tif -src {src_file} -thresh {threshold}"
+                self.run_command(cmd)
+                
+                # Calculate drop statistics using TauDEM's dropanalysis tool
+                drop_file = self.interim_dir / f"drop-stats-{int(threshold)}.txt"
+                cmd = f"{mpi_prefix}{self.taudem_dir}/dropanalysis -p {self.interim_dir}/elv-fdir.tif -fel {self.interim_dir}/elv-fel.tif -ad8 {self.interim_dir}/elv-ad8.tif -src {src_file} -par {threshold} 0 -o {drop_file}"
+                
+                try:
+                    self.run_command(cmd)
+                    
+                    # Read drop analysis results
+                    if drop_file.exists():
+                        with open(drop_file, 'r') as f:
+                            lines = f.readlines()
+                            # Parse the drop analysis output
+                            # Format typically: threshold, num_sources, mean_drop, std_drop
+                            if len(lines) > 1:  # Skip header
+                                parts = lines[-1].strip().split()
+                                if len(parts) >= 3:
+                                    drop_data.append({
+                                        'threshold': threshold,
+                                        'num_sources': float(parts[1]),
+                                        'mean_drop': float(parts[2])
+                                    })
+                except Exception as e:
+                    self.logger.warning(f"Drop analysis failed for threshold {threshold}: {str(e)}")
+                    continue
+            
+            if len(drop_data) < 3:
+                self.logger.warning("Insufficient data for drop analysis. Using default threshold.")
+                return None
+            
+            # Analyze the drop curve to find the optimal threshold
+            optimal_threshold = self._find_optimal_threshold_from_drops(drop_data)
+            
+            # Save drop analysis plot
+            self._plot_drop_analysis(drop_data, optimal_threshold)
+            
+            return optimal_threshold
+            
+        except Exception as e:
+            self.logger.error(f"Error in drop analysis: {str(e)}")
+            return None
+    
+    def _find_optimal_threshold_from_drops(self, drop_data: list) -> float:
+        """
+        Find the optimal threshold from drop analysis data.
+        
+        Uses the "elbow method" to identify where the curve transitions from
+        steep (hillslope) to gradual (channel) processes.
+        
+        Args:
+            drop_data: List of dictionaries with threshold and drop statistics
+            
+        Returns:
+            Optimal threshold value
+        """
+        import numpy as np
+        
+        thresholds = np.array([d['threshold'] for d in drop_data])
+        mean_drops = np.array([d['mean_drop'] for d in drop_data])
+        
+        # Log transform for better analysis
+        log_thresh = np.log10(thresholds)
+        log_drops = np.log10(mean_drops + 1)  # Add 1 to avoid log(0)
+        
+        # Find the point of maximum curvature (elbow)
+        # Using second derivative approach
+        if len(log_thresh) >= 3:
+            # Calculate finite differences for second derivative
+            first_deriv = np.diff(log_drops) / np.diff(log_thresh)
+            second_deriv = np.diff(first_deriv) / np.diff(log_thresh[:-1])
+            
+            # Find maximum absolute second derivative
+            max_curvature_idx = np.argmax(np.abs(second_deriv))
+            optimal_threshold = thresholds[max_curvature_idx + 1]  # +1 due to diff operations
+        else:
+            # Fallback: use median threshold
+            optimal_threshold = np.median(thresholds)
+        
+        self.logger.info(f"Optimal threshold from drop analysis: {optimal_threshold:.0f}")
+        
+        return optimal_threshold
+    
+    def _plot_drop_analysis(self, drop_data: list, optimal_threshold: float):
+        """
+        Create and save a plot of the drop analysis results.
+        
+        Args:
+            drop_data: List of dictionaries with threshold and drop statistics
+            optimal_threshold: The selected optimal threshold
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            thresholds = [d['threshold'] for d in drop_data]
+            mean_drops = [d['mean_drop'] for d in drop_data]
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.loglog(thresholds, mean_drops, 'bo-', linewidth=2, markersize=8, label='Mean Drop')
+            ax.axvline(optimal_threshold, color='r', linestyle='--', linewidth=2, 
+                      label=f'Optimal Threshold = {optimal_threshold:.0f}')
+            
+            ax.set_xlabel('Contributing Area Threshold (cells)', fontsize=12)
+            ax.set_ylabel('Mean Stream Drop (m)', fontsize=12)
+            ax.set_title('Drop Analysis for Stream Threshold Selection', fontsize=14)
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            
+            # Save plot
+            plot_path = self.project_dir / "plots" / "drop_analysis.png"
+            plot_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            self.logger.info(f"Drop analysis plot saved to: {plot_path}")
+            
+        except ImportError:
+            self.logger.warning("Matplotlib not available. Skipping drop analysis plot.")
+        except Exception as e:
+            self.logger.warning(f"Could not create drop analysis plot: {str(e)}")
+
 
     def _create_land_polygon_from_dem(self) -> gpd.GeoDataFrame:
         """Create a polygon representing land areas based on the DEM."""
