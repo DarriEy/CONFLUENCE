@@ -30,7 +30,6 @@ from shapely.ops import unary_union # type: ignore
 import time
 import shapely # type: ignore
 import pandas as pd # type: ignore
-from pysheds.grid import Grid  # type: ignore
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
@@ -1953,7 +1952,7 @@ class LumpedWatershedDelineator:
 
     def delineate_lumped_watershed(self) -> Tuple[Optional[Path], Optional[Path]]:
         """
-        Delineate a lumped watershed using either TauDEM or pysheds.
+        Delineate a lumped watershed.
         
         Returns:
             Tuple[Optional[Path], Optional[Path]]: Paths to the delineated river network and river basins shapefiles
@@ -1980,11 +1979,8 @@ class LumpedWatershedDelineator:
         river_basins_path.parent.mkdir(parents=True, exist_ok=True)
         river_network_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Delineate watershed based on selected method
-        if self.delineation_method.lower() == 'pysheds':
-            watershed_path = self.delineate_with_pysheds()
-        else:  # default to TauDEM
-            watershed_path = self.delineate_with_taudem()
+        # Delineate watershed
+        watershed_path = self.delineate_with_taudem()
         
         # Create river network shapefile from pour point
         self.create_river_network(self.pour_point_path, river_network_path)
@@ -2087,83 +2083,6 @@ class LumpedWatershedDelineator:
             import traceback
             self.logger.error(traceback.format_exc())
 
-    def delineate_with_pysheds(self) -> Optional[Path]:
-        """
-        Delineate a lumped watershed using pysheds.
-        
-        Returns:
-            Optional[Path]: Path to the delineated watershed shapefile, or None if delineation fails.
-        """
-        try:
-            
-            self.logger.info(f"Delineating watershed using pysheds for {self.domain_name}")
-            
-            # Initialize grid from raster
-            grid = Grid.from_raster(str(self.dem_path))
-            
-            # Read the DEM
-            dem = grid.read_raster(str(self.dem_path))
-            
-            # Read the pour point
-            pour_point = gpd.read_file(self.pour_point_path)
-            pour_point = pour_point.to_crs(grid.crs)
-            x, y = pour_point.geometry.iloc[0].coords[0]
-            
-            # Condition DEM
-            pit_filled_dem = grid.fill_pits(dem)
-            flooded_dem = grid.fill_depressions(pit_filled_dem)
-            inflated_dem = grid.resolve_flats(flooded_dem)
-            
-            # Compute flow direction
-            fdir = grid.flowdir(inflated_dem)
-            
-            # Delineate the catchment
-            catch = grid.catchment(x, y, fdir, xytype='coordinate')
-            
-            # Create a binary mask of the catchment
-            mask = np.where(catch, 1, 0).astype(np.uint8)
-            
-            # Convert the mask to a polygon
-            shapes = rasterio.features.shapes(mask, transform=grid.affine)
-            polygons = [Polygon(shape[0]['coordinates'][0]) for shape in shapes if shape[1] == 1]
-            
-            if not polygons:
-                self.logger.error("No watershed polygon generated.")
-                return None
-                
-            # Create a GeoDataFrame
-            gdf = gpd.GeoDataFrame({'geometry': polygons}, crs=grid.crs)
-            gdf = gdf.dissolve()  # Merge all polygons into one
-            gdf = gdf.reset_index(drop=True)
-            
-            # Add required attributes
-            gdf['GRU_ID'] = 1
-            gdf['gru_to_seg'] = 1
-            
-            # Calculate area in square meters
-            utm_crs = gdf.estimate_utm_crs()
-            gdf_utm = gdf.to_crs(utm_crs)
-            gdf['GRU_area'] = gdf_utm.geometry.area
-            
-            # Convert back to geographic coordinates
-            gdf = gdf.to_crs('EPSG:4326')
-            
-            # Save the watershed shapefile
-            watershed_shp_path = self.project_dir / "shapefiles" / "river_basins" / f"{self.domain_name}_riverBasins_lumped.shp"
-            watershed_shp_path.parent.mkdir(parents=True, exist_ok=True)
-            gdf.to_file(watershed_shp_path)
-            
-            self.logger.info(f"Watershed shapefile created at: {watershed_shp_path}")
-            return watershed_shp_path
-            
-        except ImportError:
-            self.logger.error("pysheds not installed. Please install it with 'pip install pysheds'")
-            return None
-        except Exception as e:
-            self.logger.error(f"Error during pysheds watershed delineation: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
 
     def delineate_with_taudem(self) -> Optional[Path]:
         """
