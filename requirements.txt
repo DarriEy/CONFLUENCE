@@ -30,7 +30,6 @@ rpy2
 
 # Hydrological modeling libraries
 netCDF4
-pysheds
 hydrobm
 baseflow 
 

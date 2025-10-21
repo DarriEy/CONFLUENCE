@@ -1,4 +1,4 @@
-### ============================================= CONFLUENCE configuration file ============================================================
+### ==================================== CONFLUENCE template configuration file ============================================================
 # This configuration file contains all settings required to run the CONFLUENCE workflow, from conceptualisation to evaluation.
 # The configuration settings are organized based on modules and can be populated as the user moves through the individual components
 # of the hydrological modelling exercise. CONFLUENCE is comprised of the following modules:
@@ -9,20 +9,15 @@
 # 4. Model Specific settings: Configurations required for running model specific data preprocessing and input file generation 
 # 5. Evaluation settings: Configurations required to evaluate the model output
 # 6. Optimisation settings: Configurations required for calibrating the hydrological model setup, including sensitivity and decision analysis
-# 
-# The global configuration settings are used in several parts of the workflow and configurations from previous steps can be used in subsequent 
-# steps of the workflow, but never the other way around. Note on path specification if deviating from default paths, a full path must be specified. 
-#E.g. '/home/user/non-default/path'
 
-## ================================================= 0. Global Paths: =====================================================================
+### ============================================= 1. Global settings: =======================================================================
 
-CONFLUENCE_DATA_DIR: "/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/"
-CONFLUENCE_CODE_DIR: "/Users/darrieythorsson/compHydro/code/CONFLUENCE"
 
-### ============================================= 1. Experiment settings: =====================================================================
+CONFLUENCE_DATA_DIR: /path/to/CONFLUENCE_data/                 # Directory with the confluence data directories, including the external installations
+CONFLUENCE_CODE_DIR: /path/to/CONFLUENCE                       # Directory with the confluence code repository
 
 # Experiment settings
-DOMAIN_NAME: "Bow_at_Banff"                                    # Name of experimental domain
+DOMAIN_NAME: Bow_at_Banff                                      # Name of modeled domain
 EXPERIMENT_ID: run_1                                           # Name of experiment
 EXPERIMENT_TIME_START: 1980-01-02 01:00                        # Start time of experiment e.g. '2010-01-01 00:00'
 EXPERIMENT_TIME_END: 2023-12-30 23:00                          # End time of experiment e.g. '2010-12-31 23:00'
@@ -39,26 +34,42 @@ FORCE_RUN_ALL_STEPS: False                                     # Run all steps i
 POUR_POINT_COORDS: 51.1722/-115.5717                           # Pour point coordinates lat/lon, if default use user provided shapefile. 
 BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5                # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
 
-# Domain delineation settings
-DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method,  options: lumped, point, subset, delineate,
-GEOFABRIC_TYPE: TDX                                            # If subsetting select source geofabric to subset from, options: Merit, TDX, NWS
-STREAM_THRESHOLD: 2500                                         # Threshold flow accumulation for stream vectorisation
-CLEANUP_INTERMEDIATE_FILES: True                               # Remove temporary files after delineation
-DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point, otherwise whole area within bounding box is delineated 
+# Domain delineation settings (GRU level)
+DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+ROUTING_DELINEATION: lumped                                    # Spatial discretisation of river network for routing
+GEOFABRIC_TYPE: na                                             # Source geofabric to subset from, current options: Merit, TDX, NWS
+DELINEATION_METHOD: slope_area                                 # Method for stream identification, options: stream_threshold, curvature, slope_area, multi_scale 
+CURVATURE_THRESHOLD: 0.0                                       # Profile curvature threshold for curvature method
+MIN_SOURCE_THRESHOLD: 100                                      # Minimum contributing area for stream sources in curvature method
+STREAM_THRESHOLD: 5000                                         # Threshold flow accumulation for stream vectorisation
+SLOPE_AREA_THRESHOLD: 100.0                                    # Combined slope-area threshold
+SLOPE_AREA_EXPONENT: 2.0                                       # Exponent for slope (m in S^m * A^n)
+AREA_EXPONENT: 1.0                                             # Exponent for area (n in S^m * A^n)
+MULTI_SCALE_THRESHOLDS: 10000,5000,2500,1000,500               # Comma-separated thresholds (coarse to fine)
+USE_DROP_ANALYSIS: True                                        # Enable drop analysis to automatically determine optimal threshold
+DROP_ANALYSIS_MIN_THRESHOLD: 100                               # Minimum threshold to test
+DROP_ANALYSIS_MAX_THRESHOLD: 10000                             # Maximum threshold to test
+DROP_ANALYSIS_NUM_THRESHOLDS: 10                               # Number of thresholds to test
+DROP_ANALYSIS_LOG_SPACING: True                                # Use logarithmic spacing (recommended)
+LUMPED_WATERSHED_METHOD: TauDEM                                # TauDEM for lumped delineation
+CLEANUP_INTERMEDIATE_FILES: False                              # Remove temporary files from delieation
+DELINEATE_BY_POURPOINT: True                                   # Delineate watershed from pour point
 MOVE_OUTLETS_MAX_DISTANCE: 200                                 # Maximum distance to move outlets to stream
 MIN_GRU_SIZE: 0                                                # Minimum HRU size, in km^2. Smaller GRUs will be merged 
 
-# Domain discretization settings
+# Domain discretization settings (HRU level)
 DOMAIN_DISCRETIZATION: GRUs                                    # Method to discretize modelling domain, options: elevation, soilclass, landclass, radiation, GRUs
 ELEVATION_BAND_SIZE: 200                                       # Elevation band size in meters
 MIN_HRU_SIZE: 4                                                # Minimum HRU size in km^2. Smaller HRUs will be merged
 RADIATION_CLASS_NUMBER: 5                                      # Number of radiation classes for discretisation
+ASPECT_CLASS_NUMBER: 8                                         # Number of aspect classes for discretisation (4, 8, or custom number)
+ASPECT_PATH: default                                           # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
 
-### ============================================= 3. Forcing data settings: =============================================================
+### ============================================= 3. Model Agnostic settings: =============================================================
 
-FORCING_DATASET: CASR                                          # Forcing dataset to use
+FORCING_DATASET: ERA5                                          # Forcing dataset to use
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
-FORCING_MEASUREMENT_HEIGHT: 1.5                                # Reference height for forcing measurements [m].
+FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
 APPLY_LAPSE_RATE: True                                         # Flag for applying lapse rate options: True or False
 LAPSE_RATE: 0.0065                                             # [K m-1]
@@ -66,34 +77,40 @@ FORCING_SHAPE_LAT_NAME: lat                                    # Name of the lat
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
 PET_METHOD: 'oudin'                                            # Method for PET estimation, options: 'oudin', 'hamon', 'hargreaves'
 
-
 # EM-Earth forcing supplementation settings
 SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
-EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
-EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
-EM_EARTH_MIN_BBOX_SIZE: 0.1                                   # Minimum bounding box size in degrees for EM-Earth extraction (~10km)
-EM_EARTH_MAX_EXPANSION: 0.2                                   # Maximum expansion for small watersheds in degrees (~20km)
+EM_EARTH_PRCP_DIR: /path/to/EM-EARTH/prcp/data                 # Path to EM-Earth precipitation data
+EM_EARTH_TMEAN_DIR: /path/to/EM-EARTH/tmean/data               # Path to EM-Earth temperature data
+EM_EARTH_MIN_BBOX_SIZE: 0.1                                    # Minimum bounding box size in degrees for EM-Earth extraction (~10km)
+EM_EARTH_MAX_EXPANSION: 0.2                                    # Maximum expansion for small watersheds in degrees (~20km)
+EM_PRCP: prcp                                                  # EM-EARTH precip variable to use
 
 ### ============================================= 4. Model Specific settings: =============================================================
 
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, HYPE, FLASH, MESH 
+HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH 
 ROUTING_MODEL: mizuRoute                                       # Routing model, options: mizuRoute
 
 ### 4.1 Model Specific settings: SUMMA 
-
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
-SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
-SETTINGS_SUMMA_PARALLEL_EXE: summa_actors.exe                  # Name of parallel SUMMA binary
 SETTINGS_SUMMA_CONNECT_HRUS: yes                               # Attribute setting: "no" or "yes". If no; all HRUs modeled as independent columns 
 SETTINGS_SUMMA_TRIALPARAM_N: 0                                 # Number of trial parameter specifications in inital setup. Specify 0 if none are wanted (they can still be included in this file but won't be read).
 SETTINGS_SUMMA_TRIALPARAM_1:                                   # Name of trial parameter and value to assign. Value assumed to be float.
+
+# Parallel SUMMA settings
+SETTINGS_SUMMA_USE_PARALLEL_SUMMA: false                       # Run SUMMA in parallel
+SETTINGS_SUMMA_CPUS_PER_TASK: 32                               # Number of cpus to use per task in parallel SUMMA run
+SETTINGS_SUMMA_TIME_LIMIT: 01:00:00                            # Time limit for parallel SUMMA run
+SETTINGS_SUMMA_MEM: 5                                          # Requested memory for parallel SUMMA run
+SETTINGS_SUMMA_GRU_COUNT: 85                                  # Number of GRUs in SUMMA shapefile
+SETTINGS_SUMMA_GRU_PER_JOB: 5                                 # Number of GRUs per job
+SETTINGS_SUMMA_PARALLEL_PATH: default                          # Path to parallel SUMMA binary, if default self.data_dir / installs / summa / bin
+SETTINGS_SUMMA_PARALLEL_EXE: summa.exe                  # Name of parallel SUMMA binary
 
 # Calibration settings 
 PARAMS_TO_CALIBRATE: tempCritRain,k_soil,vGn_n,theta_sat,theta_res,rootingDepth,zScale_TOPMODEL,k_macropore # Local parameters to calibrate
 BASIN_PARAMS_TO_CALIBRATE: routingGammaScale # Basin parameters to calibrate                       
 
 SUMMA_DECISION_OPTIONS:                                        # Select which SUMMA model decisions to use and analyse
-  # Snow process decisions
   snowIncept:                                                  # Snow interception, Options: lightSnow (f(new snow density)), stickySnow (f(temperature))
     - lightSnow
   compaction:                                                  # Snow compaction, Options: consettl (constant settlement rate), anderson (semi-empirical Anderson 1976)
@@ -105,7 +122,6 @@ SUMMA_DECISION_OPTIONS:                                        # Select which SU
   thCondSnow:                                                  # Thermal conductivity of snow, Options: tyen1965 (Yen 1965), melr1977 (Mellor 1977), jrdn1991 (Jordan 1991), smnv2000 (Smirnova et al. 2000)
     - jrdn1991
     - smnv2000
-  # Vegetation and canopy decisions
   vegeParTbl:                                                  # Vegetation parameter table, Options: USGS (24/27 categories), MODIFIED_IGBP_MODIS_NOAH (20 MODIS categories)
     - MODIFIED_IGBP_MODIS_NOAH
   soilStress:                                                  # Soil moisture control on stomatal resistance, Options: NoahType (f(volumetric water)), CLM_Type (f(matric head)), SiB_Type (exp log matric head)
@@ -122,7 +138,6 @@ SUMMA_DECISION_OPTIONS:                                        # Select which SU
     - logBelowCanopy
   canopySrad:                                                  # Canopy shortwave radiation, Options: noah_mp (Noah-MP with albedo), CLM_2stream (CLM 2-stream), UEB_2stream (UEB Mahat-Tarboton), NL_scatter (Nijssen-Lettenmaier), BeersLaw (Beer's Law VIC-style)
     - BeersLaw
-  # Soil hydrology decisions
   soilCatTbl:                                                  # Soil category dataset, Options: STAS (STATSGO), STAS-RUC (STATSGO-RUC blend), ROSETTA (Rosetta pedotransfer)
     - ROSETTA
   f_Richards:                                                  # Form of Richards' equation, Options: moisture (moisture-based), mixdform (mixed formulation)
@@ -139,7 +154,6 @@ SUMMA_DECISION_OPTIONS:                                        # Select which SU
     - localColumn
   subRouting:                                                  # Sub-grid routing method, Options: timeDlay (time-delay histogram), qInstant (instantaneous)
     - timeDlay
-  # Numerical and boundary condition decisions
   num_method:                                                  # Numerical solution method, Options: itertive (iterative Newton-Raphson), non_iter (non-iterative), itersurf (iterate surface only)
     - itertive
   fDerivMeth:                                                  # Flux derivative method, Options: numericl (numerical finite diff), analytic (analytical derivatives)
@@ -159,8 +173,16 @@ DEPTH_TOTAL_MULT_BOUNDS: [0.1, 5.0]                       # Bounds for total dep
 DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                     # Bounds for shape factor [min, max]
 
 ###  4.2 Model Specific settings: FUSE 
-
+FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
+FUSE_ROUTING_INTEGRATION: mizuRoute                            # Routing method for distributed FUSE
+SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
+SETTINGS_FUSE_FILEMANAGER: fm_catch.txt                        # Name of FUSE file manager
+FUSE_SPATIAL_MODE: distributed                                           # Spatial discretisation of FUSE, options: lumped or semi-distributed
+EXPERIMENT_OUTPUT_FUSE: default                                # Directory for FUSE experiment output
+
+# FUSE optimisation settings
+SETTINGS_FUSE_PARAMS_TO_CALIBRATE: MAXWATR_1,MAXWATR_2,BASERTE,QB_POWR,TIMEDELAY,PERCRTE,FRACTEN,RTFRAC1,MBASE,MFMAX,MFMIN,PXTEMP,LAPSE
 FUSE_DECISION_OPTIONS:
     RFERR:                                                     # Rainfall error model, Options: additive_e (additive error), multiplc_e (multiplicative error)
       - additive_e
@@ -185,20 +207,14 @@ FUSE_DECISION_OPTIONS:
       - no_snowmod
 
 ###  4.3 Model Specific settings: GR 
-
+SETTINGS_GR_PATH: default                                      # Path to GR run settings, if default self.project_dir / settings / GR
+SETTINGS_GR_CONTROL: default                                   # Path to GR control file
+GR_INSTALL_PATH: default                                       # Path to GR installation, if default uses self.data_dir / installs / GR
 GR_EXE: GR.r                                                   # Name of GR executable script
+GR_spatial: lumped                                             # Spatial discretisation of GR, options: lumped or semi-distributed
 
-###  4.4 Model Specific settings: HYPE 
-
-HYPE_EXE: hype                                                 # Name of HYPE executable
-
-###  4.5 Model Specific settings: MESH 
-
-MESH_EXE: mesh.exe                                             # Name of MESH executable
-
-###  4.6 Model Specific settings: LSTM 
-
-FLASH_LOAD: False                                              # Load existing flash model from storage. If false creates and trains new model.
+###  4.4 Model Specific settings: LSTM 
+FLASH_LOAD: False                                               # Load existing flash model from storage. If false creates and trains new model.
 FLASH_HIDDEN_SIZE: 128                                         # Number of hidden layer
 FLASH_NUM_LAYERS: 3                                            # Number of active layers
 FLASH_EPOCHS: 300                                              # Number of training epochs
@@ -211,24 +227,30 @@ FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularizati
 FLASH_USE_ATTENTION: True                                      # Use attention
 FLASH_USE_SNOW: False                                          # Use snow data
 
-###  4.a Model Specific settings: MizuRoute 
-
-EXE_NAME_MIZUROUTE: mizuRoute.exe                              # Name of mizuroute executable
+###  4.5 Model Specific settings: MizuRoute 
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
-SETTINGS_MIZU_ROUTING_DT: 3600                                 # Duration of the routing time step [s].
-SETTINGS_MIZU_ROUTING_UNITS: m/s                               # Units of the variable to be routed.
-SETTINGS_MIZU_ROUTING_VAR: averageRoutedRunoff                 # Name of output variable to use for routing.
+SETTINGS_MIZU_ROUTING_DT: 86400                                # Duration of the routing time step [s].
+SETTINGS_MIZU_ROUTING_UNITS: mm/d                              # Units of the variable to be routed.
+SETTINGS_MIZU_ROUTING_VAR: q_routed                            # Name of output variable to use for routing.
 SETTINGS_MIZU_OUTPUT_FREQ: single                              # Frequency with which mizuRoute generates new output files. Must be one of 'single', 'daily', 'monthly', 'yearly'.
 SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output. '0' for both KWT and IRF; '1' IRF only; '2' KWT only.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
 SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
 
+# Mizuroute Paths and filenames
+SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
+INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path. If "default", self.code_dir / installs / mizuRoute / route / bin
+EXE_NAME_MIZUROUTE: mizuroute.exe                              # Name of mizuroute executable
+SETTINGS_MIZU_TOPOLOGY: topology.nc                            # Name of the river network topology file.
+SETTINGS_MIZU_PARAMETERS: param.nml.default                    # Mizuroute parameter file
+SETTINGS_MIZU_CONTROL_FILE: mizuroute.control                  # Name of the control file.
+SETTINGS_MIZU_REMAP: routing_remap.nc                          # Name of the optional catchment remapping file, for cases when SUMMA uses different catchments than mizuRoute.
+                           
 ### ============================================= 5. Evaluation settings: =================================================================
 
 # Analysis types to run
 EVALUATION_DATA: [streamflow]                                  # Evaluation data to acquire. Options: streamflow, snow, ground_water, fluxnet
 ANALYSES: [benchmarking]                                       # Options: sensitivity, decision, benchmarking, attributes
-
 SIM_REACH_ID: 123                                              # River reach ID used for streamflow evaluation and optimization
 
 # Streamflow data settings
@@ -240,12 +262,12 @@ STATION_ID: 05BB001                                            # Station ID from
 # SNOTEL data settings
 DOWNLOAD_SNOTEL: 'false'                                       # Download SNOTEL data, options: 'true' or 'false'
 SNOTEL_STATION: '602'                                          # SNOTEL station ID (numeric)
-SNOTEL_PATH: '/work/comphyd_lab/data/geospatial-data/SNOTEL'   # Path to directory containing SNOTEL data files
+SNOTEL_PATH: '/path/to/data/geospatial-data/SNOTEL'            # Path to directory containing SNOTEL data files
 
 # FLUXNET data settings
 DOWNLOAD_FLUXNET: 'false'                                      # Download FLUXNET data, options: 'true' or 'false'
 FLUXNET_STATION: 'CA-NS7'                                      # FLUXNET station ID (numeric)
-FLUXNET_PATH: '/work/comphyd_lab/data/geospatial-data/fluxnet' # Path to directory containing FLUXNET data files
+FLUXNET_PATH: '/path/to/data/data/geospatial-data/fluxnet'     # Path to directory containing FLUXNET data files
 
 # USGS GW data settings
 DOWNLOAD_USGS_GW: 'true'                                       # Download USGS groundwater data, options: 'true' or 'false'
@@ -253,9 +275,105 @@ USGS_STATION: '06306300'                                       # USGS   station 
 
 ### ============================================= 6. Optimisation settings: ===============================================================
 
-OPTIMISATION_METHODS: [iteration,emulation]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+CALIBRATION_TIMESTEP: hourly                                   # Timestep to use for calibration, options: 'native', 'hourly', 'daily'
 
-# Single Site Emulation settings
+# Iterative optimisation settings
+ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE, PSO, NSGA-II, ADAM or SCE-UA
+NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
+POPULATION_SIZE: 30                                            # Population size for genetic algorithms
+OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
+TARGET_METRIC: KGE                                             # Ensure consistency
+
+  # -- DE specific settings
+DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
+DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
+POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
+
+  # -- DDS specific settings
+DDS_R:  0.4                                                    # DDS perturbation parameter
+ASYNC_DDS_POOL_SIZE: 10                                        # Size of shared solution pool
+ASYNC_DDS_BATCH_SIZE: 10                                       # Evaluations per batch  
+MAX_STAGNATION_BATCHES: 10                                     # Stop after N batches without improvement
+
+  # -- SCE-UA specific settings
+NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
+POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
+NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
+EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
+PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
+  
+  # -- PSO specific settings 
+SWRMSIZE: 20                                                   # Number of particles in the swarm
+PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
+PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
+PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
+PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
+INERTIA_SCHEDULE: LINEAR                                       # MULTIPLICATIVE or LINEAR
+
+  # -- NSGA-II specific settings
+NSGA2_CROSSOVER_RATE: 0.9                                      # Crossover probability
+NSGA2_MUTATION_RATE: 0.1                                       # Mutation probability  
+NSGA2_ETA_C: 20                                                # Crossover distribution index
+NSGA2_ETA_M: 20                                                # Mutation distribution index
+
+# Emulator optimisation settings
+DPE_TRAINING_CACHE: default                                    # Path to training cache
+DPE_HIDDEN_DIMS: [256, 128, 64]                                # Size of hidden dimensions 
+DPE_TRAINING_SAMPLES: 500                                      # Number of training samples used for emulator training
+DPE_VALIDATION_SAMPLES: 100                                    # Number of samples used for emulator evaluation 
+DPE_EPOCHS: 300                                                # Epochs used for training
+DPE_LEARNING_RATE: 1e-3                                        # NN learning rate
+DPE_OPTIMIZATION_LR: 1e-2                                      # Optimisation learning rate
+DPE_OPTIMIZATION_STEPS: 200                                    # Number of steps in optimisation 
+DPE_OPTIMIZER: "ADAM"                                          # ADAM or L-BFGS
+DPE_OBJECTIVE_WEIGHTS:                                         # Objective function weights 
+  KGE: 1.0
+
+# Iterative Emulator Configuration (NEW)
+DPE_EMULATOR_ITERATE: true                                     # Enable iterative emulator refinement
+DPE_ITERATE_MAX_ITERATIONS: 5                                  # Maximum number of iterative cycles
+DPE_ITERATE_SAMPLES_PER_CYCLE: 100                             # New samples to generate per iteration
+DPE_ITERATE_SAMPLING_RADIUS: 0.1                               # Radius around optimum for sampling (0-1 normalized space)
+DPE_ITERATE_CONVERGENCE_TOL: 1e-4                              # Convergence tolerance for parameter changes
+DPE_ITERATE_MIN_IMPROVEMENT: 1e-6                              # Minimum objective improvement to continue
+DPE_ITERATE_SAMPLING_METHOD: "gaussian"                        # "gaussian" | "uniform" | "adaptive"
+
+# Autodiff/FD controls
+DPE_USE_NN_HEAD: true                                          # Use a neural network for autodiff optimisation 
+DPE_PRETRAIN_NN_HEAD: false                                    # Pretrain NN head with emulator data
+DPE_USE_SUNDIALS: true                                         # Ignored if EMULATOR_SETTING == SUMMA_AUTODIFF_FD
+DPE_AUTODIFF_STEPS: 100                                        # Steps in differential optimisation 
+DPE_AUTODIFF_LR: 0.001                                         # Learning rate for autodiff
+DPE_FD_STEP: 0.005                                             # FD step size
+DPE_GD_STEP_SIZE: 0.1                                          # GD step size
+
+# Large Domain Emulation settings
+LARGE_DOMAIN_EMULATION_ENABLED: True                           # Enable large domain emulation
+EMULATOR_SETTING: SUMMA_AUTODIFF_FD                            # Options: "EMULATOR" : train NN emulator;  backprop through NN only- "FD" : optimize parameters using finite-difference gradients on SUMMA- "SUMMA_AUTODIFF" : end-to-end autograd using SUMMA sensitivities (Sundials) when available, - "SUMMA_AUTODIFF_FD" : same autograd wrapper but forcing FD Jacobian (no Sundials)
+LARGE_DOMAIN_EMULATOR_MODE: "SUMMA_AUTODIFF"                   # Options: FD, SUMMA_AUTODIFF, SUMMA_AUTODIFF_FD
+LARGE_DOMAIN_EMULATOR_OPTIMIZER: "Adam"                        # Options: Adam or L-BFGS
+LARGE_DOMAIN_TRAINING_EPOCHS: 100                              # Number of training epochs
+LARGE_DOMAIN_PARAMETER_ENSEMBLE_SIZE: 1000                     # Parameter ensemble size
+LARGE_DOMAIN_BATCH_SIZE: 32                                    # Batch size for processing
+LARGE_DOMAIN_VALIDATION_SPLIT:                                 # Split in eval and calibration data
+LARGE_DOMAIN_EMULATOR_PRETRAIN_NN_HEAD: true                   # Enable pretraining
+LARGE_DOMAIN_EMULATOR_USE_NN_HEAD: true                        # Must be true for pretraining
+LARGE_DOMAIN_EMULATOR_TRAINING_SAMPLES: 200                    # Samples for pretraining
+LARGE_DOMAIN_EMULATOR_EPOCHS: 30                               # Graph transformer training epochs 
+LARGE_DOMAIN_EMULATOR_AUTODIFF_STEPS: 100                      # Autodiff optimization steps
+
+# Multiobjective weights
+LARGE_DOMAIN_EMULATOR_STREAMFLOW_WEIGHT: 0.5                   # Streamflow relevance
+LARGE_DOMAIN_EMULATOR_SMAP_WEIGHT: 0.2                         # Soil moisture relevance
+LARGE_DOMAIN_EMULATOR_GRACE_WEIGHT: 0.15                       # Storage relevance
+LARGE_DOMAIN_EMULATOR_MODIS_WEIGHT: 0.15                       # Snow relevance
+
+# Training configuration
+LARGE_DOMAIN_EMULATOR_TRAINING_SAMPLES: 500                    # LDE training samples
+LARGE_DOMAIN_EMULATOR_EPOCHS: 50                               # LDE training epochs
+
+# Single Sample Emulation settings
 EMULATION_NUM_SAMPLES: 100                                     # Number of parameter sets to generate (default: 100)
 EMULATION_SEED: 22                                             # Random seed for emulation to ensure reproducibility 
 EMULATION_SAMPLING_METHOD: lhs                                 # Sampling method (uniform, lhs, sobol)
@@ -264,52 +382,9 @@ EMULATION_MAX_PARALLEL_JOBS: 100                               # Maximum number 
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
 EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
-RUN_RANDOM_FOREST_EMULATION: False                             # Iterative refinement
-RUN_NEURAL_NETWORK_EMULATION: True                             # Iterative refinement
-EMULATION_TARGET_METRIC: 'KGE'                                 # Iterative refinement
-EMULATOR_IMPROVEMENT_THRESHOLD: 0.01                           # Only update if improvement > 1%
-
-# Strategic Gap Filling settings
-ENABLE_GAP_FILLING: True
-GAP_FILLING_SAMPLES: 50                                        # Total samples to add
-GAP_FILLING_METHODS: ['density', 'boundary', 'uncertainty', 'diversity']
-RUN_GAP_FILLING_SIMULATIONS: True                              # Set True for actual SUMMA runs
-GAP_DENSITY_THRESHOLD: 0.1                                     # Density percentile threshold
-GAP_BOUNDARY_MARGIN: 0.1                                       # Fraction of range for boundary sampling
-GAP_UNCERTAINTY_PERCENTILE: 90                                 # Uncertainty percentile for sampling
-
-# Neural Network settings  
-NN_HIDDEN_LAYERS: [100, 50]                                    # Uncertainty percentile for sampling
-NN_MAX_ITERATIONS: 1000                                        # Uncertainty percentile for sampling
-NN_LEARNING_RATE: 0.001                                        # Uncertainty percentile for sampling
-NN_VALIDATION_SPLIT: 0.2                                       # Uncertainty percentile for sampling 
-
-# Iterative optimisation settings
-ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE, PSO or SCE-UA
-NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
-POPULATION_SIZE: 30                                            # Population size for genetic algorithms
-OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-  # -- DE specific settings
-DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
-DE_CROSSOVER_RATE: 0.9                                         # CR parameter (crossover probability)  
-POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
-# -- DDS specific settings
-DDS_R:  0.4                                                    # DDS perturbation parameter
-  # -- SCE-UA specific settings
-NUMBER_OF_COMPLEXES: 2                                         # Number of complexes in SCE-UA
-POINTS_PER_SUBCOMPLEX: 5                                       # Number of points per subcomplex in SCE-UA
-NUMBER_OF_EVOLUTION_STEPS: 20                                  # Number of evolution steps per complex in SCE-UA
-EVOLUTION_STAGNATION: 5                                        # Number of iterations with minimal improvement before convergence
-PERCENT_CHANGE_THRESHOLD: 0.01                                 # Threshold for percent change in objective function
-  # -- PSO specific settings 
-SWRMSIZE: 20                                                   # Number of particles in the swarm
-PSO_COGNITIVE_PARAM: 1.5                                       # Personal best influence
-PSO_SOCIAL_PARAM: 1.5                                          # Global best influence 
-PSO_INERTIA_WEIGHT: 0.7                                        # Inertia weight
-PSO_INERTIA_REDUCTION_RATE: 0.99                               # Rate at which inertia reduces
 
 
-### ============================================= 8. Data and Path Settings: =====================================================================
+### ============================================= 7. Data and Path Settings: =====================================================================
 
 # Shapefile settings - Catchment shape (with HRU sub-basins)
 CATCHMENT_SHP_LAT: center_lat                                  # Name of the latitude column. Should be a value representative for the HRU. Typically the centroid
