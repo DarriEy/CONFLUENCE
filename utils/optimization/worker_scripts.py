@@ -625,7 +625,7 @@ def fix_summa_time_precision_inplace(input_file: Path, logger=None) -> None:
             logger.error(f"Error fixing time precision in-place: {e}")
         # Fall back to original method if in-place modification fails
         from utils.optimization.worker_scripts import fix_summa_time_precision
-        fix_summa_time_precision(input_file, None, logger)
+        fix_summa_time_precision(input_file, None)
 
 def fix_summa_time_precision(input_file, output_file=None):
     """
