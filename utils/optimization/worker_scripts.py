@@ -923,7 +923,7 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             logger.info(f"Successfully converted SUMMA file: single lumped GRU for distributed routing")
             
             # CRITICAL: Now fix time precision for mizuRoute compatibility
-            fix_summa_time_precision_inplace(summa_file)
+            fix_summa_time_precision(summa_file)
             logger.info("Fixed SUMMA time precision for mizuRoute compatibility")
             
             return True
@@ -1900,7 +1900,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
         # Fix SUMMA time precision with better error handling
         try:
             logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
-            fix_summa_time_precision_inplace(expected_files[0])
+            fix_summa_time_precision(expected_files[0])
             logger.info("SUMMA time precision fixed successfully")
         except Exception as e:
             error_msg = f"Failed to fix SUMMA time precision: {str(e)}"
