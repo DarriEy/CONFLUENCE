@@ -1705,10 +1705,9 @@ fi
         
         # Output files (results that can be regenerated)
         output_dirs = [
-            'simulations/*/tmp*',
-            'forcing/*/intermediate*', 
-            'optimisation/*/iteration_*',
-            'plots/*/temp*'
+            'simulations/*', 
+            'optimisation/*',
+            'plots/*'
         ]
         
         if clean_level in ['intermediate', 'all']:
