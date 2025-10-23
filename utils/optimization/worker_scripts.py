@@ -579,6 +579,54 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         }
 
 
+def fix_summa_time_precision_inplace(input_file: Path, logger=None) -> None:
+    """Fix time precision in-place without temp files"""
+    import netCDF4 as nc4
+    import pandas as pd
+    
+    try:
+        # Open in read-write mode (not read-only)
+        with nc4.Dataset(input_file, 'r+') as ds:
+            if 'time' not in ds.variables:
+                return
+            
+            # Read time values
+            time_var = ds.variables['time']
+            time_values = time_var[:]
+            
+            # Parse and round timestamps
+            units_str = time_var.units
+            calendar = time_var.calendar if hasattr(time_var, 'calendar') else 'standard'
+            timestamps = pd.to_datetime(
+                nc4.num2date(time_values, units=units_str, calendar=calendar)
+            )
+            rounded_timestamps = timestamps.round('H')
+            
+            if rounded_timestamps.tz is not None:
+                rounded_timestamps = rounded_timestamps.tz_localize(None)
+            
+            # Convert back to hours since reference
+            ref_time_calc = pd.Timestamp('1990-01-01')
+            rounded_hours = (rounded_timestamps - ref_time_calc).total_seconds() / 3600.0
+            
+            # Update in-place
+            time_var[:] = rounded_hours
+            time_var.units = 'hours since 1990-01-01 00:00:00'
+            time_var.calendar = 'standard'
+            time_var.long_name = 'time'
+            
+            # File is automatically closed and changes are saved
+        
+        if logger:
+            logger.info(f"Fixed time precision in-place: {input_file.name}")
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Error fixing time precision in-place: {e}")
+        # Fall back to original method if in-place modification fails
+        from utils.optimization.worker_scripts import fix_summa_time_precision
+        fix_summa_time_precision(input_file, None, logger)
+
 def fix_summa_time_precision(input_file, output_file=None):
     """
     Round SUMMA time dimension to nearest hour to fix mizuRoute compatibility
@@ -875,7 +923,7 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             logger.info(f"Successfully converted SUMMA file: single lumped GRU for distributed routing")
             
             # CRITICAL: Now fix time precision for mizuRoute compatibility
-            fix_summa_time_precision(summa_file)
+            fix_summa_time_precision_inplace(summa_file)
             logger.info("Fixed SUMMA time precision for mizuRoute compatibility")
             
             return True
@@ -1852,7 +1900,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
         # Fix SUMMA time precision with better error handling
         try:
             logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
-            fix_summa_time_precision(expected_files[0])
+            fix_summa_time_precision_inplace(expected_files[0])
             logger.info("SUMMA time precision fixed successfully")
         except Exception as e:
             error_msg = f"Failed to fix SUMMA time precision: {str(e)}"
