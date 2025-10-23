@@ -754,13 +754,13 @@ def _convert_lumped_to_distributed_worker(task_data: Dict, summa_dir: Path, logg
             logger.info(f"Creating single lumped GRU (ID={lumped_gru_id}) for {n_hrus} HRUs in topology")
         
         # Create backup of original file before modification
-        backup_file = summa_file.with_suffix('.nc.backup')
-        if not backup_file.exists():
-            try:
-                shutil.copy2(summa_file, backup_file)
-                logger.info(f"Created backup: {backup_file.name}")
-            except Exception as e:
-                logger.warning(f"Could not create backup: {str(e)}")
+        #backup_file = summa_file.with_suffix('.nc.backup')
+        #if not backup_file.exists():
+        #    try:
+        #        shutil.copy2(summa_file, backup_file)
+        #        logger.info(f"Created backup: {backup_file.name}")
+        #    except Exception as e:
+        #        logger.warning(f"Could not create backup: {str(e)}")
         
         # Ensure the original file is writable
         try:
