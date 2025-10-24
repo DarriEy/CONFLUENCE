@@ -562,37 +562,123 @@ echo "✅ datatool script is now executable"
             'order': 7
         },
         'ngen': {
-            'description': 'NextGen National Water Model Framework',
-            'config_path_key': 'NGEN_INSTALL_PATH',
-            'config_exe_key': 'NGEN_EXE',
-            'default_path_suffix': 'installs/ngen',
-            'default_exe': 'build/ngen',
-            'repository': 'https://github.com/NOAA-OWP/ngen.git',
-            'branch': 'master',
-            'install_dir': 'ngen',
-            'build_commands': [
+    'description': 'NextGen National Water Model Framework',
+    'config_path_key': 'NGEN_INSTALL_PATH',
+    'config_exe_key': 'NGEN_EXE',
+    'default_path_suffix': 'installs/ngen',
+    'default_exe': 'build/ngen',
+    'repository': 'https://github.com/NOAA-OWP/ngen.git',
+    'branch': 'master',
+    'install_dir': 'ngen',
+    'build_commands': [
 '''
-# Build ngen from source
+# Build ngen from source with automatic dependency detection
 echo "🔨 Building ngen from source..."
+echo "================================================"
 
-# Check for required packages
-echo "Checking for required packages..."
-MISSING_PACKAGES=""
-for pkg in git gcc g++ make cmake python3; do
-    if ! command -v $pkg &> /dev/null; then
-        MISSING_PACKAGES="$MISSING_PACKAGES $pkg"
+# ============================================================================
+# STEP 1: Check for HPC module system
+# ============================================================================
+IS_HPC=false
+if command -v module &> /dev/null; then
+    IS_HPC=true
+    echo "✅ HPC module system detected"
+    
+    # Try to load required modules
+    echo "📦 Loading required modules..."
+    
+    # Load common HPC modules
+    module load cmake 2>/dev/null || echo "⚠️  cmake module not available"
+    module load gcc 2>/dev/null || echo "⚠️  gcc module not available"
+    module load python 2>/dev/null || module load python/3.11 2>/dev/null || echo "⚠️  python module not available"
+    
+    # Critical: Try to load UDUNITS
+    if module load udunits 2>/dev/null || module load udunits2 2>/dev/null; then
+        echo "✅ Loaded UDUNITS module"
+        HAS_UDUNITS=true
+    else
+        echo "⚠️  UDUNITS module not available - trying system libraries"
+        HAS_UDUNITS=false
     fi
-done
-
-if [ -n "$MISSING_PACKAGES" ]; then
-    echo "❌ ERROR: Missing required packages:$MISSING_PACKAGES"
-    echo "Please install them using your system's package manager"
-    echo "Example (Ubuntu/Debian): sudo apt install$MISSING_PACKAGES"
-    echo "Example (CentOS/RHEL): sudo yum install$MISSING_PACKAGES"
-    exit 1
+    
+    # Load NetCDF if available
+    module load netcdf 2>/dev/null || module load netcdf-fortran 2>/dev/null || echo "⚠️  netcdf module not available"
+    
+    echo "Loaded modules:"
+    module list 2>&1 | head -20
+else
+    echo "💻 Regular system detected (no module system)"
+    HAS_UDUNITS=false
 fi
 
-# Download Boost Libraries
+# ============================================================================
+# STEP 2: Find UDUNITS library
+# ============================================================================
+echo ""
+echo "🔍 Searching for UDUNITS2..."
+UDUNITS_FOUND=false
+UDUNITS_INCLUDE=""
+UDUNITS_LIB=""
+
+# Check if loaded via module (HPC)
+if [ -n "$EBROOTUDUNITS" ]; then
+    UDUNITS_FOUND=true
+    UDUNITS_INCLUDE="$EBROOTUDUNITS/include"
+    UDUNITS_LIB="$EBROOTUDUNITS/lib"
+    echo "✅ Found UDUNITS2 from module: $EBROOTUDUNITS"
+fi
+
+# Check common system locations
+if [ "$UDUNITS_FOUND" = "false" ]; then
+    for prefix in /usr /usr/local /opt/local $HOME/.local; do
+        if [ -f "$prefix/include/udunits2.h" ]; then
+            # Check for library in lib or lib64
+            if [ -f "$prefix/lib/libudunits2.so" ] || [ -f "$prefix/lib/libudunits2.a" ]; then
+                UDUNITS_FOUND=true
+                UDUNITS_INCLUDE="$prefix/include"
+                UDUNITS_LIB="$prefix/lib"
+                echo "✅ Found UDUNITS2 at: $prefix"
+                break
+            elif [ -f "$prefix/lib64/libudunits2.so" ] || [ -f "$prefix/lib64/libudunits2.a" ]; then
+                UDUNITS_FOUND=true
+                UDUNITS_INCLUDE="$prefix/include"
+                UDUNITS_LIB="$prefix/lib64"
+                echo "✅ Found UDUNITS2 at: $prefix (lib64)"
+                break
+            fi
+        fi
+    done
+fi
+
+# Try pkg-config
+if [ "$UDUNITS_FOUND" = "false" ] && command -v pkg-config &> /dev/null; then
+    if pkg-config --exists udunits; then
+        UDUNITS_FOUND=true
+        UDUNITS_INCLUDE=$(pkg-config --variable=includedir udunits)
+        UDUNITS_LIB=$(pkg-config --variable=libdir udunits)
+        echo "✅ Found UDUNITS2 via pkg-config"
+    fi
+fi
+
+# Decide on configuration based on UDUNITS availability
+if [ "$UDUNITS_FOUND" = "true" ]; then
+    echo "✅ Will build with UDUNITS support"
+    USE_UDUNITS=ON
+    UDUNITS_CMAKE_FLAGS="-DUDUNITS_INCLUDE_DIR=$UDUNITS_INCLUDE -DUDUNITS_LIBRARY=$UDUNITS_LIB/libudunits2.so"
+else
+    echo "⚠️  UDUNITS not found - building without unit conversion support"
+    echo "   To enable UDUNITS:"
+    echo "   - HPC: module load udunits"
+    echo "   - Ubuntu/Debian: sudo apt install libudunits2-dev"
+    echo "   - CentOS/RHEL: sudo yum install udunits2-devel"
+    USE_UDUNITS=OFF
+    UDUNITS_CMAKE_FLAGS=""
+fi
+
+# ============================================================================
+# STEP 3: Download Boost
+# ============================================================================
+echo ""
 echo "📦 Downloading Boost 1.79.0..."
 if [ ! -d "boost_1_79_0" ]; then
     curl -L -o boost_1_79_0.tar.bz2 \
@@ -610,14 +696,26 @@ else
     echo "✅ Boost already downloaded"
 fi
 
-# Set environment variables
+# ============================================================================
+# STEP 4: Set environment
+# ============================================================================
 export BOOST_ROOT="$(pwd)/boost_1_79_0"
-export CXX=/usr/bin/g++
+export CXX=${CXX:-g++}
 
-echo "🔧 BOOST_ROOT: $BOOST_ROOT"
-echo "🔧 CXX: $CXX"
+echo ""
+echo "🔧 Build Configuration:"
+echo "   BOOST_ROOT: $BOOST_ROOT"
+echo "   CXX: $CXX"
+echo "   UDUNITS: $USE_UDUNITS"
+if [ "$USE_UDUNITS" = "ON" ]; then
+    echo "   UDUNITS_INCLUDE: $UDUNITS_INCLUDE"
+    echo "   UDUNITS_LIB: $UDUNITS_LIB"
+fi
 
-# Get git submodules
+# ============================================================================
+# STEP 5: Get submodules
+# ============================================================================
+echo ""
 echo "📥 Fetching git submodules..."
 git submodule update --init --recursive -- test/googletest
 git submodule update --init --recursive -- extern/pybind11
@@ -627,13 +725,24 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Configure with CMake
+# ============================================================================
+# STEP 6: Configure with CMake
+# ============================================================================
+echo ""
 echo "⚙️  Configuring ngen with CMake..."
-cmake -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+
+# Detect NetCDF
+NETCDF_FOUND=false
+if [ -n "$EBROOTNETCDF" ] || command -v nc-config &> /dev/null; then
+    NETCDF_FOUND=true
+fi
+
+cmake -DCMAKE_CXX_COMPILER=$CXX \
       -DBOOST_ROOT="$BOOST_ROOT" \
-      -DNGEN_WITH_NETCDF:BOOL=ON \
+      -DNGEN_WITH_NETCDF:BOOL=$([ "$NETCDF_FOUND" = "true" ] && echo "ON" || echo "OFF") \
       -DNGEN_WITH_SQLITE3:BOOL=ON \
-      -DNGEN_WITH_UDUNITS:BOOL=OFF \
+      -DNGEN_WITH_UDUNITS:BOOL=$USE_UDUNITS \
+      $UDUNITS_CMAKE_FLAGS \
       -DNGEN_WITH_MPI:BOOL=OFF \
       -DNGEN_WITH_BMI_FORTRAN:BOOL=ON \
       -DNGEN_WITH_BMI_C:BOOL=ON \
@@ -644,54 +753,79 @@ cmake -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
       -S .
 
 if [ $? -ne 0 ]; then
+    echo ""
     echo "❌ ERROR: CMake configuration failed"
+    echo ""
+    echo "🔍 Troubleshooting tips:"
+    echo "   1. Check that required modules are loaded (on HPC)"
+    echo "   2. Verify compiler is available: $CXX --version"
+    echo "   3. Check CMake version: cmake --version (need 3.10+)"
     exit 1
 fi
 
-# Build ngen
-echo "🔨 Building ngen (this may take several minutes)..."
-# Determine number of cores for parallel build
-NCORES=$(nproc 2>/dev/null || echo 2)
-echo "Building with $NCORES parallel jobs..."
+# ============================================================================
+# STEP 7: Build
+# ============================================================================
+echo ""
+echo "🔨 Building ngen (this may take 5-15 minutes)..."
+NCORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+echo "   Using $NCORES parallel jobs"
 
 cmake --build build --target ngen -- -j $NCORES
 
 if [ $? -ne 0 ]; then
+    echo ""
     echo "❌ ERROR: ngen build failed"
+    echo ""
+    echo "🔍 Common issues:"
+    echo "   1. Missing dependencies - check error messages above"
+    echo "   2. Compiler issues - try: module load gcc"
+    echo "   3. Memory issues - reduce parallel jobs: cmake --build build -- -j 4"
     exit 1
 fi
 
-# Verify executable
+# ============================================================================
+# STEP 8: Verify installation
+# ============================================================================
 if [ -f "build/ngen" ]; then
-    echo "✅ ngen executable built successfully at: $(pwd)/build/ngen"
-    # Make it executable
+    echo ""
+    echo "✅ ngen executable built successfully!"
     chmod +x build/ngen
-    # Test if it runs
+    
     echo "🧪 Testing ngen executable..."
     ./build/ngen --help > /dev/null 2>&1
     if [ $? -eq 0 ]; then
-        echo "✅ ngen executable is working"
+        echo "✅ ngen executable is working correctly"
     else
-        echo "⚠️  Warning: ngen executable may not be working correctly"
+        echo "⚠️  ngen built but --help returned an error"
+        echo "   This is usually fine - the executable may still work"
+    fi
+    
+    echo ""
+    echo "================================================"
+    echo "✅ ngen installation complete!"
+    echo "================================================"
+    echo "📍 Executable: $(pwd)/build/ngen"
+    echo "🔧 UDUNITS support: $USE_UDUNITS"
+    if [ "$USE_UDUNITS" = "OFF" ]; then
+        echo "⚠️  Note: Built without UDUNITS (unit conversion disabled)"
     fi
 else
     echo "❌ ERROR: ngen executable not found after build"
+    echo "   Expected location: $(pwd)/build/ngen"
+    ls -la build/ 2>/dev/null || echo "   build directory not found"
     exit 1
 fi
-
-echo ""
-echo "✅ ngen installation complete!"
-echo "📍 Executable location: $(pwd)/build/ngen"
 '''
-],
-            'dependencies': [],
-            'test_command': '--help',
-            'verify_install': {
-                'file_paths': ['build/ngen'],
-                'check_type': 'executable'
+    ],
+    'dependencies': [],
+    'test_command': '--help',
+    'verify_install': {
+        'file_paths': ['build/ngen'],
+        'check_type': 'executable'
+    },
+    'order': 8
             },
-            'order': 8
-        },
         'ngiab': {
             'description': 'NextGen In A Box - Container-based ngen deployment',
             'config_path_key': 'NGIAB_INSTALL_PATH',
