@@ -162,14 +162,14 @@ class CLIArgumentManager:
         }
 
 
-def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
-    """
-    Define external tools/binaries required by CONFLUENCE.
-    
-    Returns:
-        Dictionary with tool definitions including config keys, executables, and repositories
-    """
-    return {
+    def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Define external tools/binaries required by CONFLUENCE.
+        
+        Returns:
+            Dictionary with tool definitions including config keys, executables, and repositories
+        """
+        return {
         'sundials': {
             'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
             'config_path_key': 'SUNDIALS_INSTALL_PATH',
