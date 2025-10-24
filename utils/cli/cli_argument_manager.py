@@ -568,7 +568,7 @@ echo "✅ datatool script is now executable"
     'config_exe_key': 'NGEN_EXE',
     'default_path_suffix': 'installs/ngen',
     'default_exe': 'build/ngen',
-    'repository': 'https://github.com/NOAA-OWP/ngen.git',
+    'repository': 'https://github.com/CIROH-UA/ngen', #'https://github.com/NOAA-OWP/ngen.git', 
     'branch': 'master',
     'install_dir': 'ngen',
     'build_commands': [
@@ -1288,40 +1288,50 @@ fi
                         tool_result['executable'] = exe_name_no_ext
                 
                 if exe_path.exists():
-                    # Try to get version/test the executable
-                    test_cmd = tool_info.get('test_command', '--help')
-                    try:
-                        result = subprocess.run(
-                            [str(exe_path), test_cmd],
-                            capture_output=True, 
-                            text=True, 
-                            timeout=10
-                        )
-                        if result.returncode == 0 or test_cmd == '--help':
-                            tool_result['status'] = 'valid'
-                            tool_result['version'] = result.stdout.strip()[:100] if result.stdout else 'Available'
-                            validation_results['valid_tools'].append(tool_name)
-                            print(f"   ✅ Found at: {exe_path}")
-                            print(f"   ✅ Status: Working")
-                        else:
-                            tool_result['status'] = 'failed'
-                            tool_result['errors'].append(f"Test command failed: {result.stderr}")
-                            validation_results['failed_tools'].append(tool_name)
-                            print(f"   🟡 Found but test failed: {exe_path}")
-                            print(f"   ⚠️  Error: {result.stderr[:100]}")
+                    # Check if tool needs execution test
+                    test_cmd = tool_info.get('test_command')
                     
-                    except subprocess.TimeoutExpired:
-                        tool_result['status'] = 'timeout'
-                        tool_result['errors'].append("Test command timed out")
-                        validation_results['warnings'].append(f"{tool_name}: test timed out")
-                        print(f"   🟡 Found but test timed out: {exe_path}")
-                    
-                    except Exception as test_error:
-                        tool_result['status'] = 'test_error'
-                        tool_result['errors'].append(f"Test error: {str(test_error)}")
-                        validation_results['warnings'].append(f"{tool_name}: {str(test_error)}")
-                        print(f"   🟡 Found but couldn't test: {exe_path}")
-                        print(f"   ⚠️  Test error: {str(test_error)}")
+                    # If no test command, just verify existence (for libraries, scripts, etc.)
+                    if test_cmd is None:
+                        tool_result['status'] = 'valid'
+                        tool_result['version'] = 'Installed (existence verified)'
+                        validation_results['valid_tools'].append(tool_name)
+                        print(f"   ✅ Found at: {exe_path}")
+                        print(f"   ✅ Status: Installed")
+                    else:
+                        # Test by executing
+                        try:
+                            result = subprocess.run(
+                                [str(exe_path), test_cmd],
+                                capture_output=True, 
+                                text=True, 
+                                timeout=10
+                            )
+                            if result.returncode == 0 or test_cmd == '--help':
+                                tool_result['status'] = 'valid'
+                                tool_result['version'] = result.stdout.strip()[:100] if result.stdout else 'Available'
+                                validation_results['valid_tools'].append(tool_name)
+                                print(f"   ✅ Found at: {exe_path}")
+                                print(f"   ✅ Status: Working")
+                            else:
+                                tool_result['status'] = 'failed'
+                                tool_result['errors'].append(f"Test command failed: {result.stderr}")
+                                validation_results['failed_tools'].append(tool_name)
+                                print(f"   🟡 Found but test failed: {exe_path}")
+                                print(f"   ⚠️  Error: {result.stderr[:100]}")
+                        
+                        except subprocess.TimeoutExpired:
+                            tool_result['status'] = 'timeout'
+                            tool_result['errors'].append("Test command timed out")
+                            validation_results['warnings'].append(f"{tool_name}: test timed out")
+                            print(f"   🟡 Found but test timed out: {exe_path}")
+                        
+                        except Exception as test_error:
+                            tool_result['status'] = 'test_error'
+                            tool_result['errors'].append(f"Test error: {str(test_error)}")
+                            validation_results['warnings'].append(f"{tool_name}: {str(test_error)}")
+                            print(f"   🟡 Found but couldn't test: {exe_path}")
+                            print(f"   ⚠️  Test error: {str(test_error)}")
                 
                 else:
                     tool_result['status'] = 'missing'
