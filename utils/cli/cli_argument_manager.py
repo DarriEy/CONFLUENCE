@@ -561,6 +561,7 @@ echo "✅ datatool script is now executable"
             'test_command': '--help',
             'order': 7
         },
+
         'ngen': {
     'description': 'NextGen National Water Model Framework',
     'config_path_key': 'NGEN_INSTALL_PATH',
@@ -572,248 +573,51 @@ echo "✅ datatool script is now executable"
     'install_dir': 'ngen',
     'build_commands': [
 '''
-# Build ngen from source with automatic dependency detection
-echo "🔨 Building ngen from source..."
-echo "================================================"
+# Build ngen from source
+echo "Building ngen..."
 
-# ============================================================================
-# STEP 1: Check for HPC module system
-# ============================================================================
-IS_HPC=false
-if command -v module &> /dev/null; then
-    IS_HPC=true
-    echo "✅ HPC module system detected"
-    
-    # Try to load required modules
-    echo "📦 Loading required modules..."
-    
-    # Load common HPC modules
-    module load cmake 2>/dev/null || echo "⚠️  cmake module not available"
-    module load gcc 2>/dev/null || echo "⚠️  gcc module not available"
-    module load python 2>/dev/null || module load python/3.11 2>/dev/null || echo "⚠️  python module not available"
-    
-    # Critical: Try to load UDUNITS
-    if module load udunits 2>/dev/null || module load udunits2 2>/dev/null; then
-        echo "✅ Loaded UDUNITS module"
-        HAS_UDUNITS=true
-    else
-        echo "⚠️  UDUNITS module not available - trying system libraries"
-        HAS_UDUNITS=false
-    fi
-    
-    # Load NetCDF if available
-    module load netcdf 2>/dev/null || module load netcdf-fortran 2>/dev/null || echo "⚠️  netcdf module not available"
-    
-    echo "Loaded modules:"
-    module list 2>&1 | head -20
-else
-    echo "💻 Regular system detected (no module system)"
-    HAS_UDUNITS=false
-fi
-
-# ============================================================================
-# STEP 2: Find UDUNITS library
-# ============================================================================
-echo ""
-echo "🔍 Searching for UDUNITS2..."
-UDUNITS_FOUND=false
-UDUNITS_INCLUDE=""
-UDUNITS_LIB=""
-
-# Check if loaded via module (HPC)
-if [ -n "$EBROOTUDUNITS" ]; then
-    UDUNITS_FOUND=true
-    UDUNITS_INCLUDE="$EBROOTUDUNITS/include"
-    UDUNITS_LIB="$EBROOTUDUNITS/lib"
-    echo "✅ Found UDUNITS2 from module: $EBROOTUDUNITS"
-fi
-
-# Check common system locations
-if [ "$UDUNITS_FOUND" = "false" ]; then
-    for prefix in /usr /usr/local /opt/local $HOME/.local; do
-        if [ -f "$prefix/include/udunits2.h" ]; then
-            # Check for library in lib or lib64
-            if [ -f "$prefix/lib/libudunits2.so" ] || [ -f "$prefix/lib/libudunits2.a" ]; then
-                UDUNITS_FOUND=true
-                UDUNITS_INCLUDE="$prefix/include"
-                UDUNITS_LIB="$prefix/lib"
-                echo "✅ Found UDUNITS2 at: $prefix"
-                break
-            elif [ -f "$prefix/lib64/libudunits2.so" ] || [ -f "$prefix/lib64/libudunits2.a" ]; then
-                UDUNITS_FOUND=true
-                UDUNITS_INCLUDE="$prefix/include"
-                UDUNITS_LIB="$prefix/lib64"
-                echo "✅ Found UDUNITS2 at: $prefix (lib64)"
-                break
-            fi
-        fi
-    done
-fi
-
-# Try pkg-config
-if [ "$UDUNITS_FOUND" = "false" ] && command -v pkg-config &> /dev/null; then
-    if pkg-config --exists udunits; then
-        UDUNITS_FOUND=true
-        UDUNITS_INCLUDE=$(pkg-config --variable=includedir udunits)
-        UDUNITS_LIB=$(pkg-config --variable=libdir udunits)
-        echo "✅ Found UDUNITS2 via pkg-config"
-    fi
-fi
-
-# Decide on configuration based on UDUNITS availability
-if [ "$UDUNITS_FOUND" = "true" ]; then
-    echo "✅ Will build with UDUNITS support"
-    USE_UDUNITS=ON
-    UDUNITS_CMAKE_FLAGS="-DUDUNITS_INCLUDE_DIR=$UDUNITS_INCLUDE -DUDUNITS_LIBRARY=$UDUNITS_LIB/libudunits2.so"
-else
-    echo "⚠️  UDUNITS not found - building without unit conversion support"
-    echo "   To enable UDUNITS:"
-    echo "   - HPC: module load udunits"
-    echo "   - Ubuntu/Debian: sudo apt install libudunits2-dev"
-    echo "   - CentOS/RHEL: sudo yum install udunits2-devel"
-    USE_UDUNITS=OFF
-    UDUNITS_CMAKE_FLAGS=""
-fi
-
-# ============================================================================
-# STEP 3: Download Boost
-# ============================================================================
-echo ""
-echo "📦 Downloading Boost 1.79.0..."
+# Download Boost
 if [ ! -d "boost_1_79_0" ]; then
     curl -L -o boost_1_79_0.tar.bz2 \
         https://sourceforge.net/projects/boost/files/boost/1.79.0/boost_1_79_0.tar.bz2/download
-    
-    if [ $? -ne 0 ]; then
-        echo "❌ ERROR: Failed to download Boost libraries"
-        exit 1
-    fi
-    
-    echo "📦 Extracting Boost..."
     tar -xjf boost_1_79_0.tar.bz2
     rm boost_1_79_0.tar.bz2
-else
-    echo "✅ Boost already downloaded"
 fi
 
-# ============================================================================
-# STEP 4: Set environment
-# ============================================================================
+# Set environment
 export BOOST_ROOT="$(pwd)/boost_1_79_0"
 export CXX=${CXX:-g++}
 
-echo ""
-echo "🔧 Build Configuration:"
-echo "   BOOST_ROOT: $BOOST_ROOT"
-echo "   CXX: $CXX"
-echo "   UDUNITS: $USE_UDUNITS"
-if [ "$USE_UDUNITS" = "ON" ]; then
-    echo "   UDUNITS_INCLUDE: $UDUNITS_INCLUDE"
-    echo "   UDUNITS_LIB: $UDUNITS_LIB"
-fi
-
-# ============================================================================
-# STEP 5: Get submodules
-# ============================================================================
-echo ""
-echo "📥 Fetching git submodules..."
-git submodule update --init --recursive -- test/googletest
+# Get submodules
+git submodule update --init --recursive -- test/googletest 
 git submodule update --init --recursive -- extern/pybind11
 
-if [ $? -ne 0 ]; then
-    echo "❌ ERROR: Failed to fetch git submodules"
-    exit 1
-fi
-
-# ============================================================================
-# STEP 6: Configure with CMake
-# ============================================================================
-echo ""
-echo "⚙️  Configuring ngen with CMake..."
-
-# Detect NetCDF
-NETCDF_FOUND=false
-if [ -n "$EBROOTNETCDF" ] || command -v nc-config &> /dev/null; then
-    NETCDF_FOUND=true
-fi
-
+# Configure
 cmake -DCMAKE_CXX_COMPILER=$CXX \
-      -DBOOST_ROOT="$BOOST_ROOT" \
-      -DNGEN_WITH_NETCDF:BOOL=$([ "$NETCDF_FOUND" = "true" ] && echo "ON" || echo "OFF") \
-      -DNGEN_WITH_SQLITE3:BOOL=ON \
-      -DNGEN_WITH_UDUNITS:BOOL=$USE_UDUNITS \
-      $UDUNITS_CMAKE_FLAGS \
-      -DNGEN_WITH_MPI:BOOL=OFF \
-      -DNGEN_WITH_BMI_FORTRAN:BOOL=ON \
-      -DNGEN_WITH_BMI_C:BOOL=ON \
-      -DNGEN_WITH_PYTHON:BOOL=ON \
-      -DNGEN_WITH_ROUTING:BOOL=OFF \
-      -DNGEN_WITH_TESTS:BOOL=OFF \
+      -DBOOST_ROOT=$BOOST_ROOT \
       -B build \
       -S .
 
 if [ $? -ne 0 ]; then
-    echo ""
-    echo "❌ ERROR: CMake configuration failed"
-    echo ""
-    echo "🔍 Troubleshooting tips:"
-    echo "   1. Check that required modules are loaded (on HPC)"
-    echo "   2. Verify compiler is available: $CXX --version"
-    echo "   3. Check CMake version: cmake --version (need 3.10+)"
+    echo "ERROR: CMake configuration failed"
     exit 1
 fi
 
-# ============================================================================
-# STEP 7: Build
-# ============================================================================
-echo ""
-echo "🔨 Building ngen (this may take 5-15 minutes)..."
-NCORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
-echo "   Using $NCORES parallel jobs"
-
+# Build
+NCORES=$(nproc 2>/dev/null || echo 4)
 cmake --build build --target ngen -- -j $NCORES
 
 if [ $? -ne 0 ]; then
-    echo ""
-    echo "❌ ERROR: ngen build failed"
-    echo ""
-    echo "🔍 Common issues:"
-    echo "   1. Missing dependencies - check error messages above"
-    echo "   2. Compiler issues - try: module load gcc"
-    echo "   3. Memory issues - reduce parallel jobs: cmake --build build -- -j 4"
+    echo "ERROR: Build failed"
     exit 1
 fi
 
-# ============================================================================
-# STEP 8: Verify installation
-# ============================================================================
+# Verify
 if [ -f "build/ngen" ]; then
-    echo ""
-    echo "✅ ngen executable built successfully!"
     chmod +x build/ngen
-    
-    echo "🧪 Testing ngen executable..."
-    ./build/ngen --help > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        echo "✅ ngen executable is working correctly"
-    else
-        echo "⚠️  ngen built but --help returned an error"
-        echo "   This is usually fine - the executable may still work"
-    fi
-    
-    echo ""
-    echo "================================================"
-    echo "✅ ngen installation complete!"
-    echo "================================================"
-    echo "📍 Executable: $(pwd)/build/ngen"
-    echo "🔧 UDUNITS support: $USE_UDUNITS"
-    if [ "$USE_UDUNITS" = "OFF" ]; then
-        echo "⚠️  Note: Built without UDUNITS (unit conversion disabled)"
-    fi
+    echo "✅ ngen built successfully"
 else
-    echo "❌ ERROR: ngen executable not found after build"
-    echo "   Expected location: $(pwd)/build/ngen"
-    ls -la build/ 2>/dev/null || echo "   build directory not found"
+    echo "ERROR: ngen executable not found"
     exit 1
 fi
 '''
@@ -825,7 +629,7 @@ fi
         'check_type': 'executable'
     },
     'order': 8
-            },
+                },
         'ngiab': {
             'description': 'NextGen In A Box - Container-based ngen deployment',
             'config_path_key': 'NGIAB_INSTALL_PATH',
