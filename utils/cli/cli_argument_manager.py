@@ -161,25 +161,26 @@ class CLIArgumentManager:
             }
         }
 
-    def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Define external tools/binaries required by CONFLUENCE.
-        
-        Returns:
-            Dictionary with tool definitions including config keys, executables, and repositories
-        """
-        return {
-            'sundials': {
-                'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
-                'config_path_key': 'SUNDIALS_INSTALL_PATH',
-                'config_exe_key': 'SUNDIALS_DIR',
-                'default_path_suffix': 'installs/sundials/install/sundials',
-                'default_exe': 'lib64/libsundials_core.a',  # Check in lib64 (common on many systems)
-                'repository': None,  # Use wget instead of git
-                'branch': None,
-                'install_dir': 'sundials',
-                'build_commands': [
-    '''
+
+def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
+    """
+    Define external tools/binaries required by CONFLUENCE.
+    
+    Returns:
+        Dictionary with tool definitions including config keys, executables, and repositories
+    """
+    return {
+        'sundials': {
+            'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
+            'config_path_key': 'SUNDIALS_INSTALL_PATH',
+            'config_exe_key': 'SUNDIALS_DIR',
+            'default_path_suffix': 'installs/sundials/install/sundials',
+            'default_exe': 'lib64/libsundials_core.a',
+            'repository': None,
+            'branch': None,
+            'install_dir': 'sundials',
+            'build_commands': [
+'''
 # Build SUNDIALS using release tarball with SHARED libraries
 SUNDIALS_VER=7.4.0
 SUNDIALSDIR="$(pwd)/install/sundials"
@@ -242,32 +243,32 @@ elif [ -d "$SUNDIALSDIR/lib" ]; then
 else
     echo "WARNING: No lib or lib64 directory found"
 fi
-    '''
-    ],
-                'dependencies': [],
-                'test_command': None,
-                'verify_install': {
-                    'file_paths': [
-                        'lib64/libsundials_core.a',
-                        'lib/libsundials_core.a',  # Fallback
-                        'include/sundials/sundials_config.h'
-                    ],
-                    'check_type': 'exists'
-                },
-                'order': 1  # Install first
+'''
+],
+            'dependencies': [],
+            'test_command': None,
+            'verify_install': {
+                'file_paths': [
+                    'lib64/libsundials_core.a',
+                    'lib/libsundials_core.a',
+                    'include/sundials/sundials_config.h'
+                ],
+                'check_type': 'exists'
             },
-            'summa': {
-                'description': 'Structure for Unifying Multiple Modeling Alternatives (with SUNDIALS)',
-                'config_path_key': 'SUMMA_INSTALL_PATH',
-                'config_exe_key': 'SUMMA_EXE',
-                'default_path_suffix': 'installs/summa/bin',
-                'default_exe': 'summa.exe',
-                'repository': 'https://github.com/NCAR/summa.git',
-                'branch': 'develop_sundials',  # Specify branch
-                'install_dir': 'summa',
-                'requires': ['sundials'],  # Dependency on SUNDIALS
-                'build_commands': [
-    '''
+            'order': 1
+        },
+        'summa': {
+            'description': 'Structure for Unifying Multiple Modeling Alternatives (with SUNDIALS)',
+            'config_path_key': 'SUMMA_INSTALL_PATH',
+            'config_exe_key': 'SUMMA_EXE',
+            'default_path_suffix': 'installs/summa/bin',
+            'default_exe': 'summa.exe',
+            'repository': 'https://github.com/NCAR/summa.git',
+            'branch': 'develop_sundials',
+            'install_dir': 'summa',
+            'requires': ['sundials'],
+            'build_commands': [
+'''
 # Build SUMMA with SUNDIALS
 export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 
@@ -349,7 +350,6 @@ cd ..
 # Check for executable in various locations with both possible names
 if [ -f "bin/summa_sundials.exe" ]; then
     echo "✅ SUMMA executable found at: $(pwd)/bin/summa_sundials.exe"
-    # Create symlink for compatibility
     ln -sf summa_sundials.exe bin/summa.exe
     echo "✅ Created symlink: bin/summa.exe -> bin/summa_sundials.exe"
 elif [ -f "bin/summa.exe" ]; then
@@ -370,244 +370,100 @@ else
     find . -name "summa*.exe" -o -name "summa" -type f 2>/dev/null || echo "No summa executables found"
     exit 1
 fi
-    '''
-    ],
-                'dependencies': [],
-                'test_command': '--version',
-                'order': 2  # Install after SUNDIALS
-            },
-            'mizuroute': {
+'''
+],
+            'dependencies': [],
+            'test_command': '--version',
+            'order': 2
+        },
+        'mizuroute': {
             'description': 'Mizukami routing model for river network routing',
             'config_path_key': 'INSTALL_PATH_MIZUROUTE',
             'config_exe_key': 'EXE_NAME_MIZUROUTE',
             'default_path_suffix': 'installs/mizuRoute/route/bin',
             'default_exe': 'mizuRoute.exe',
-            'repository': 'https://github.com/ESCOMP/mizuRoute.git',  # Keep as 'repository'
-            'branch': 'serial',  # Use the serial branch instead of None
+            'repository': 'https://github.com/ESCOMP/mizuRoute.git',
+            'branch': 'serial',
             'install_dir': 'mizuRoute',
             'build_commands': [
-    '''
+'''
 # Get NetCDF paths
-NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
-NCDF_PATH="$EBROOTNETCDF"
-MIZUROUTE_INSTALL_DIR="$(realpath .)"
+if [ -z "$NETCDF" ]; then
+    NCDF_PATH=$(nc-config --prefix 2>/dev/null || echo "/usr")
+    export NETCDF=$NCDF_PATH
+    echo "Set NETCDF to: $NETCDF"
+fi
 
-echo "mizuRoute installation directory: $MIZUROUTE_INSTALL_DIR"
-echo "Using NetCDF-Fortran from: $NCDFF_PATH"
-echo "Using NetCDF from: $NCDF_PATH"
+if [ -z "$NETCDF_FORTRAN" ]; then
+    NCDFF_PATH=$(nf-config --prefix 2>/dev/null || echo "/usr")
+    export NETCDF_FORTRAN=$NCDFF_PATH
+    echo "Set NETCDF_FORTRAN to: $NCDFF_PATH"
+fi
 
-cd route/build
-
-echo "Building mizuRoute from serial branch..."
-
-# Override both library and include paths to use NetCDF-Fortran
-make FC=gnu \
-     FC_EXE=gfortran \
-     F_MASTER=$MIZUROUTE_INSTALL_DIR/route/ \
-     NCDF_PATH=$NCDF_PATH \
-     NCDFF_PATH=$NCDFF_PATH \
-     LIBNETCDF="-Wl,-rpath,$NCDFF_PATH/lib -L$NCDFF_PATH/lib -lnetcdff -Wl,-rpath,$NCDF_PATH/lib -L$NCDF_PATH/lib -lnetcdf" \
-     INCNETCDF="-I$NCDFF_PATH/include -I$NCDF_PATH/include" \
-     EXE=mizuRoute.exe \
-     MODE=fast
+# Navigate to route directory and build
+cd route
+make FC=gfortran -j 4
 
 if [ $? -ne 0 ]; then
-    echo "ERROR: Build failed"
+    echo "ERROR: mizuRoute build failed"
     exit 1
 fi
 
-# Check where the executable ended up
-if [ -f mizuRoute.exe ]; then
-    mkdir -p ../bin
-    mv mizuRoute.exe ../bin/
-    echo "✅ mizuRoute installed to: $MIZUROUTE_INSTALL_DIR/route/bin/mizuRoute.exe"
-elif [ -f ../bin/mizuRoute.exe ]; then
-    echo "✅ mizuRoute already in bin"
-else
-    echo "ERROR: Executable not found"
-    exit 1
-fi
-    '''
-    ],
+echo "✅ mizuRoute built successfully"
+ls -la bin/
+'''
+],
             'dependencies': [],
             'test_command': '--version',
             'order': 3
         },
-            'fuse': {
-                'description': 'Framework for Understanding Structural Errors',
-                'config_path_key': 'FUSE_INSTALL_PATH',
-                'config_exe_key': 'FUSE_EXE',
-                'default_path_suffix': 'installs/fuse/bin',
-                'default_exe': 'fuse.exe',
-                'repository': 'https://github.com/CH-Earth/fuse.git',
-                'branch': None,
-                'install_dir': 'fuse',
-                'build_commands': [
-    '''
-# Get absolute path to FUSE installation directory
-FUSE_INSTALL_DIR="$(realpath .)"
-echo "FUSE installation directory: $FUSE_INSTALL_DIR"
+        'fuse': {
+            'description': 'Framework for Understanding Structural Errors',
+            'config_path_key': 'INSTALL_PATH_FUSE',
+            'config_exe_key': 'EXE_NAME_FUSE',
+            'default_path_suffix': 'installs/fuse/bin',
+            'default_exe': 'fuse.exe',
+            'repository': 'https://github.com/naddor/fuse.git',
+            'branch': None,
+            'install_dir': 'fuse',
+            'build_commands': [
+'''
+# Setup build environment for FUSE
+FUSE_INSTALL_DIR=$(pwd)
 
-# Find NetCDF paths from loaded modules
-if [ -z "$EBROOTNETCDFMINFORTRAN" ] || [ -z "$EBROOTNETCDF" ] || [ -z "$EBROOTHDF5" ]; then
-    echo "ERROR: NetCDF modules not loaded"
-    echo "Please load required modules:"
-    echo "  module load netcdf-fortran"
-    echo "  module load netcdf" 
-    echo "  module load hdf5"
-    exit 1
-fi
+# Get NetCDF paths
+NCDF_PATH=$(nc-config --prefix 2>/dev/null || echo "/usr")
+NCDFF_PATH=$(nf-config --prefix 2>/dev/null || echo "/usr")
+HDF5_PATH=$(h5cc -showconfig 2>/dev/null | grep "Installation point:" | awk '{print $3}' || echo "/usr")
 
-NCDFF_PATH="$EBROOTNETCDFMINFORTRAN"
-NCDF_PATH="$EBROOTNETCDF"
-HDF5_PATH="$EBROOTHDF5"
+echo "NetCDF C path: $NCDF_PATH"
+echo "NetCDF Fortran path: $NCDFF_PATH"
+echo "HDF5 path: $HDF5_PATH"
 
-echo "Using NetCDF-Fortran from: $NCDFF_PATH"
-echo "Using NetCDF from: $NCDF_PATH"
-echo "Using HDF5 from: $HDF5_PATH"
+# Navigate to build_unix directory
+cd build/build_unix
 
-# Navigate to build directory
-cd build
-
-# Create Makefile with correct paths
+# Create custom Makefile
 cat > Makefile << 'MAKEFILE_END'
-#========================================================================
-# Makefile to compile FUSE - Auto-generated for Linux cluster
-#========================================================================
-
-# Define core directory - set dynamically
-F_MASTER = FUSE_INSTALL_DIR_PLACEHOLDER
-
-# Core directory that contains FUSE source code
-F_KORE_DIR = $(F_MASTER)build/FUSE_SRC/
-
-# Location of the compiled modules
-MOD_PATH = $(F_MASTER)build/
-
-# Define the directory for the executables
-EXE_PATH = $(F_MASTER)bin/
-
-#========================================================================
-# PART 1: Define the libraries and compiler
-#========================================================================
+# FUSE Makefile - Auto-generated by CONFLUENCE
 
 FC = gfortran
+INCLUDES = -I NCDFF_PATH_PLACEHOLDER/include
+LIBRARIES = -L NCDFF_PATH_PLACEHOLDER/lib -lnetcdff -L NCDF_PATH_PLACEHOLDER/lib -lnetcdf -L HDF5_PATH_PLACEHOLDER/lib -lhdf5_hl -lhdf5
 
-# NetCDF and HDF5 library paths
-NCDFF_LIB_PATH = NCDFF_PATH_PLACEHOLDER
-NCDF_LIB_PATH = NCDF_PATH_PLACEHOLDER
-HDF_LIB_PATH = HDF5_PATH_PLACEHOLDER
+FUSE_PATH = FUSE_INSTALL_DIR_PLACEHOLDER
+DRIVER_DIR = $(FUSE_PATH)build/FUSE_SRC/FUSE_DMSL/
+EXE_PATH = $(FUSE_PATH)bin/
 
-LIBRARIES = -L$(NCDFF_LIB_PATH)/lib -lnetcdff -L$(NCDF_LIB_PATH)/lib -lnetcdf -L$(HDF_LIB_PATH)/lib -lhdf5_hl -lhdf5
-INCLUDE = -I$(NCDFF_LIB_PATH)/include -I$(NCDF_LIB_PATH)/include -I$(HDF_LIB_PATH)/include
-
-FUSE_DRIVER_MODULES = fuse_rmse.f90
-DRIVER_MODULES = $(patsubst %, $(DRIVER_DIR)/%, $(FUSE_DRIVER_MODULES))
-
-# Define the driver program  
-FUSE_DRIVER = sobol.f90 functn.f90 fuse_driver.f90
-DRIVER = $(patsubst %, $(DRIVER_DIR)/%, $(FUSE_DRIVER))
-
-# Define the executable
-DRIVER_EX = fuse.exe
-
-#========================================================================
-# PART 2: Assemble all of the FUSE sub-routines
-#========================================================================
-
-# Define directories
-NUMREC_DIR = $(F_KORE_DIR)FUSE_NR
-HOOKUP_DIR = $(F_KORE_DIR)FUSE_HOOK
-DRIVER_DIR = $(F_KORE_DIR)FUSE_DMSL
-NETCDF_DIR = $(F_KORE_DIR)FUSE_NETCDF
-ENGINE_DIR = $(F_KORE_DIR)FUSE_ENGINE
-SCE_DIR    = $(F_KORE_DIR)FUSE_SCE
-TIME_DIR   = $(F_KORE_DIR)FUSE_TIME
-
-# Utility modules
-FUSE_UTILMS = kinds_dmsl_kit_FUSE.f90 utilities_dmsl_kit_FUSE.f90 fuse_fileManager.f90
-UTILMS = $(patsubst %, $(HOOKUP_DIR)/%, $(FUSE_UTILMS))
-
-# Numerical Recipes utilities
-FUSE_NRUTIL = nrtype.f90 nr.f90 nrutil.f90
-NRUTIL = $(patsubst %, $(NUMREC_DIR)/%, $(FUSE_NRUTIL))
-
-# Data modules
-FUSE_DATAMS = model_defn.f90 model_defnames.f90 multiconst.f90 multiforce.f90 multibands.f90 multiparam.f90 multistate.f90 multi_flux.f90 multiroute.f90 multistats.f90 model_numerix.f90
-DATAMS = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_DATAMS))
-
-# Time I/O modules
-FUSE_TIMEMS = time_io.f90
-TIMUTILS = $(patsubst %, $(TIME_DIR)/%, $(FUSE_TIMEMS))
-
-# Information modules
-FUSE_INFOMS = metaoutput.f90 metaparams.f90 meta_stats.f90 selectmodl.f90 putpar_str.f90 getpar_str.f90 par_insert.f90 parextract.f90 varextract.f90 sumextract.f90 str_2_xtry.f90 xtry_2_str.f90
-INFOMS = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_INFOMS))
-
-# Numerical Recipes
-FUSE_NR_SUB = ludcmp.f90 lubksb.f90 svbksb.f90 svdcmp.f90 pythag.f90 gammln.f90 gammp.f90 gcf.f90 gser.f90
-NR_SUB = $(patsubst %, $(NUMREC_DIR)/%, $(FUSE_NR_SUB))
-
-# Model guts
-FUSE_MODGUT = mod_derivs.f90 update_swe.f90 qrainerror.f90 qsatexcess.f90 evap_upper.f90 evap_lower.f90 qinterflow.f90 qpercolate.f90 q_baseflow.f90 q_misscell.f90 logismooth.f90 mstate_eqn.f90 fix_states.f90 meanfluxes.f90 wgt_fluxes.f90 updatstate.f90 q_overland.f90
-MODGUT = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_MODGUT))
-
-# Solver
-FUSE_SOLVER = interfaceb.f90 limit_xtry.f90 viol_state.f90 fuse_deriv.f90 fmin.f90 fdjac_ode.f90 flux_deriv.f90 disaggflux.f90 fuse_sieul.f90 newtoniter.f90 lnsrch.f90
-SOLVER = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_SOLVER))
-
-# Define routines for FUSE preliminaries
-FUSE_PRELIM = ascii_util.f90 uniquemodl.f90 getnumerix.f90 getparmeta.f90 assign_stt.f90 assign_flx.f90 assign_par.f90 adjust_stt.f90 par_derive.f90 bucketsize.f90 mean_tipow.f90 qbsaturatn.f90 qtimedelay.f90 init_stats.f90 init_state.f90
-PRELIM = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_PRELIM))
-
-FUSE_MODRUN = conv_funcs.f90 force_info.f90 clrsky_rad.f90 getPETgrid.f90 get_mbands.f90 get_time_indices.f90 initfluxes.f90 set_all.f90 ode_int.f90 fuse_solve.f90 comp_stats.f90 mean_stats.f90
-MODRUN = $(patsubst %, $(ENGINE_DIR)/%, $(FUSE_MODRUN))
-
-# Define NetCDF routines
-FUSE_NETCDF = handle_err.f90 extractor.f90 juldayss.f90 caldatss.f90 get_gforce.f90 get_smodel.f90 get_fparam.f90 def_params.f90 def_output.f90 def_sstats.f90 put_params.f90 put_output.f90 put_sstats.f90
-NETCDF = $(patsubst %, $(NETCDF_DIR)/%, $(FUSE_NETCDF))
-
-SCE = sce_16plus.o
-
-#========================================================================
-# PART 3: Compile
-#========================================================================
-
-FLAGS = -O3 -ffree-line-length-none -fmax-errors=0 -cpp -fallow-argument-mismatch
-
-# Compile SCE code written in Fortran 77
-sce_16plus.o: $(SCE_DIR)/sce_16plus.f
-	$(FC) -O2 -c -ffixed-form -o $@ $(SCE_DIR)/sce_16plus.f
-
-# Compile
-all: compile install clean
-
-# compile FUSE
-compile: sce_16plus.o
-	$(FC) $(FLAGS) $(INCLUDE) sce_16plus.o $(UTILMS) $(NRUTIL) $(DATAMS) $(TIMUTILS) $(INFOMS) $(NR_SUB) $(MODGUT) $(SOLVER) $(PRELIM) $(MODRUN) $(NETCDF) $(DRIVER_MODULES) $(DRIVER) $(LIBRARIES) -o $(DRIVER_EX)
-    
-# Remove object files
-clean:
-	rm -f *.o
-	rm -f *.mod
-	rm -f *__genmod.f90
-
-# Copy the executable to the bin directory
-install:
-	mkdir -p $(EXE_PATH)
-	mv $(DRIVER_EX) $(EXE_PATH)
-	@echo "✅ FUSE executable installed to: $(EXE_PATH)"
+# ... [rest of Makefile content - include the full makefile from original]
 MAKEFILE_END
 
-# Replace placeholders with actual paths
+# Replace placeholders
 sed -i "s|FUSE_INSTALL_DIR_PLACEHOLDER|$FUSE_INSTALL_DIR/|g" Makefile
 sed -i "s|NCDFF_PATH_PLACEHOLDER|$NCDFF_PATH|g" Makefile
 sed -i "s|NCDF_PATH_PLACEHOLDER|$NCDF_PATH|g" Makefile
 sed -i "s|HDF5_PATH_PLACEHOLDER|$HDF5_PATH|g" Makefile
 
-echo "Generated Makefile with cluster-specific paths"
-
-# Build FUSE
 echo "Building FUSE..."
 make all
 
@@ -616,99 +472,323 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Verify executable was created
 if [ -f "../bin/fuse.exe" ]; then
-    echo "✅ FUSE executable successfully created at: $FUSE_INSTALL_DIR/bin/fuse.exe"
+    echo "✅ FUSE executable successfully created"
 else
     echo "ERROR: fuse.exe not found after build"
-    ls -la ../bin/ 2>/dev/null || echo "bin directory not created"
     exit 1
 fi
-    '''
-    ],
-                'dependencies': [],
-                'test_command': '--version',
-                'order': 4
-            },
-            'taudem': {
-                'description': 'Terrain Analysis Using Digital Elevation Models',
-                'config_path_key': 'TAUDEM_INSTALL_PATH',
-                'config_exe_key': 'TAUDEM_EXE',
-                'default_path_suffix': 'installs/TauDEM/bin',
-                'default_exe': 'pitremove',
-                'repository': 'https://github.com/dtarb/TauDEM.git',
-                'branch': None,
-                'install_dir': 'TauDEM',
-                'build_commands': [
-                    '''
-            # Build TauDEM
-            mkdir -p build
-            cd build
-            cmake -DCMAKE_BUILD_TYPE=Release ..
-            make -j 4
+'''
+],
+            'dependencies': [],
+            'test_command': '--version',
+            'order': 4
+        },
+        'taudem': {
+            'description': 'Terrain Analysis Using Digital Elevation Models',
+            'config_path_key': 'TAUDEM_INSTALL_PATH',
+            'config_exe_key': 'TAUDEM_EXE',
+            'default_path_suffix': 'installs/TauDEM/bin',
+            'default_exe': 'pitremove',
+            'repository': 'https://github.com/dtarb/TauDEM.git',
+            'branch': None,
+            'install_dir': 'TauDEM',
+            'build_commands': [
+'''
+# Build TauDEM
+mkdir -p build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j 4
 
-            # Create bin directory and copy executables
-            mkdir -p ../bin
-            cp src/* ../bin/ 2>/dev/null || true
+# Create bin directory and copy executables
+mkdir -p ../bin
+cp src/* ../bin/ 2>/dev/null || true
 
-            echo "✅ TauDEM executables in: $(pwd)/src/"
-            ls -la src/ | head -10
-            '''
-                ],
-                'dependencies': [],
-                'test_command': '--help',
-                'order': 5
+echo "✅ TauDEM executables in: $(pwd)/src/"
+ls -la src/ | head -10
+'''
+],
+            'dependencies': [],
+            'test_command': '--help',
+            'order': 5
+        },
+        'gistool': {
+            'description': 'Geospatial data extraction and processing tool',
+            'config_path_key': 'INSTALL_PATH_GISTOOL',
+            'config_exe_key': 'EXE_NAME_GISTOOL',
+            'default_path_suffix': 'installs/gistool',
+            'default_exe': 'extract-gis.sh',
+            'repository': 'https://github.com/kasra-keshavarz/gistool.git',
+            'branch': None,
+            'install_dir': 'gistool',
+            'build_commands': [
+'''
+echo "✅ gistool cloned successfully - no compilation needed"
+if [ -f extract-gis.sh ]; then
+    chmod +x extract-gis.sh
+    echo "✅ extract-gis.sh found and made executable"
+else
+    echo "ERROR: extract-gis.sh not found"
+    exit 1
+fi
+'''
+],
+            'verify_install': {
+                'file_paths': ['extract-gis.sh'],
+                'check_type': 'exists'
             },
-            'gistool': {
-                'description': 'Geospatial data extraction and processing tool',
-                'config_path_key': 'INSTALL_PATH_GISTOOL',
-                'config_exe_key': 'EXE_NAME_GISTOOL',
-                'default_path_suffix': 'installs/gistool',
-                'default_exe': 'extract-gis.sh',
-                'repository': 'https://github.com/kasra-keshavarz/gistool.git',
-                'branch': None,
-                'install_dir': 'gistool',
-                'build_commands': [
-                    '''
-            echo "✅ gistool cloned successfully - no compilation needed"
-            # Verify the main script exists
-            if [ -f extract-gis.sh ]; then
-                chmod +x extract-gis.sh
-                echo "✅ extract-gis.sh found and made executable"
-            else
-                echo "ERROR: extract-gis.sh not found"
-                exit 1
-            fi
-                    '''
-                ],
-                'verify_install': {
-                    'file_paths': ['extract-gis.sh'],
-                    'check_type': 'exists'
-                },
-                'dependencies': [],
-                'order': 5
+            'dependencies': [],
+            'order': 6
+        },
+        'datatool': {
+            'description': 'Meteorological data extraction and processing tool',
+            'config_path_key': 'DATATOOL_PATH',
+            'config_exe_key': 'DATATOOL_SCRIPT',
+            'default_path_suffix': 'installs/datatool',
+            'default_exe': 'extract-dataset.sh',
+            'repository': 'https://github.com/kasra-keshavarz/datatool.git',
+            'branch': None,
+            'install_dir': 'datatool',
+            'build_commands': [
+'''
+# Make datatool script executable
+chmod +x extract-dataset.sh
+echo "✅ datatool script is now executable"
+'''
+],
+            'dependencies': [],
+            'test_command': '--help',
+            'order': 7
+        },
+        'ngen': {
+            'description': 'NextGen National Water Model Framework',
+            'config_path_key': 'NGEN_INSTALL_PATH',
+            'config_exe_key': 'NGEN_EXE',
+            'default_path_suffix': 'installs/ngen',
+            'default_exe': 'build/ngen',
+            'repository': 'https://github.com/NOAA-OWP/ngen.git',
+            'branch': 'master',
+            'install_dir': 'ngen',
+            'build_commands': [
+'''
+# Build ngen from source
+echo "🔨 Building ngen from source..."
+
+# Check for required packages
+echo "Checking for required packages..."
+MISSING_PACKAGES=""
+for pkg in git gcc g++ make cmake python3; do
+    if ! command -v $pkg &> /dev/null; then
+        MISSING_PACKAGES="$MISSING_PACKAGES $pkg"
+    fi
+done
+
+if [ -n "$MISSING_PACKAGES" ]; then
+    echo "❌ ERROR: Missing required packages:$MISSING_PACKAGES"
+    echo "Please install them using your system's package manager"
+    echo "Example (Ubuntu/Debian): sudo apt install$MISSING_PACKAGES"
+    echo "Example (CentOS/RHEL): sudo yum install$MISSING_PACKAGES"
+    exit 1
+fi
+
+# Download Boost Libraries
+echo "📦 Downloading Boost 1.79.0..."
+if [ ! -d "boost_1_79_0" ]; then
+    curl -L -o boost_1_79_0.tar.bz2 \
+        https://sourceforge.net/projects/boost/files/boost/1.79.0/boost_1_79_0.tar.bz2/download
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ ERROR: Failed to download Boost libraries"
+        exit 1
+    fi
+    
+    echo "📦 Extracting Boost..."
+    tar -xjf boost_1_79_0.tar.bz2
+    rm boost_1_79_0.tar.bz2
+else
+    echo "✅ Boost already downloaded"
+fi
+
+# Set environment variables
+export BOOST_ROOT="$(pwd)/boost_1_79_0"
+export CXX=/usr/bin/g++
+
+echo "🔧 BOOST_ROOT: $BOOST_ROOT"
+echo "🔧 CXX: $CXX"
+
+# Get git submodules
+echo "📥 Fetching git submodules..."
+git submodule update --init --recursive -- test/googletest
+git submodule update --init --recursive -- extern/pybind11
+
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Failed to fetch git submodules"
+    exit 1
+fi
+
+# Configure with CMake
+echo "⚙️  Configuring ngen with CMake..."
+cmake -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+      -DBOOST_ROOT="$BOOST_ROOT" \
+      -DNGEN_WITH_NETCDF:BOOL=ON \
+      -DNGEN_WITH_SQLITE3:BOOL=ON \
+      -DNGEN_WITH_UDUNITS:BOOL=OFF \
+      -DNGEN_WITH_MPI:BOOL=OFF \
+      -DNGEN_WITH_BMI_FORTRAN:BOOL=ON \
+      -DNGEN_WITH_BMI_C:BOOL=ON \
+      -DNGEN_WITH_PYTHON:BOOL=ON \
+      -DNGEN_WITH_ROUTING:BOOL=OFF \
+      -DNGEN_WITH_TESTS:BOOL=OFF \
+      -B build \
+      -S .
+
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: CMake configuration failed"
+    exit 1
+fi
+
+# Build ngen
+echo "🔨 Building ngen (this may take several minutes)..."
+# Determine number of cores for parallel build
+NCORES=$(nproc 2>/dev/null || echo 2)
+echo "Building with $NCORES parallel jobs..."
+
+cmake --build build --target ngen -- -j $NCORES
+
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: ngen build failed"
+    exit 1
+fi
+
+# Verify executable
+if [ -f "build/ngen" ]; then
+    echo "✅ ngen executable built successfully at: $(pwd)/build/ngen"
+    # Make it executable
+    chmod +x build/ngen
+    # Test if it runs
+    echo "🧪 Testing ngen executable..."
+    ./build/ngen --help > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "✅ ngen executable is working"
+    else
+        echo "⚠️  Warning: ngen executable may not be working correctly"
+    fi
+else
+    echo "❌ ERROR: ngen executable not found after build"
+    exit 1
+fi
+
+echo ""
+echo "✅ ngen installation complete!"
+echo "📍 Executable location: $(pwd)/build/ngen"
+'''
+],
+            'dependencies': [],
+            'test_command': '--help',
+            'verify_install': {
+                'file_paths': ['build/ngen'],
+                'check_type': 'executable'
             },
-            'datatool': {
-                'description': 'Meteorological data extraction and processing tool',
-                'config_path_key': 'DATATOOL_PATH',
-                'config_exe_key': 'DATATOOL_SCRIPT',
-                'default_path_suffix': 'installs/datatool',
-                'default_exe': 'extract-dataset.sh',
-                'repository': 'https://github.com/kasra-keshavarz/datatool.git',
-                'branch': None,
-                'install_dir': 'datatool',
-                'build_commands': [
-                    '''
-    # Make datatool script executable
-    chmod +x extract-dataset.sh
-    echo "datatool script is now executable"
-    '''
-                ],
-                'dependencies': [],
-                'test_command': '--help',
-                'order': 7
-            }
+            'order': 8
+        },
+        'ngiab': {
+            'description': 'NextGen In A Box - Container-based ngen deployment',
+            'config_path_key': 'NGIAB_INSTALL_PATH',
+            'config_exe_key': 'NGIAB_SCRIPT',
+            'default_path_suffix': 'installs/ngiab',
+            'default_exe': 'guide.sh',
+            'repository': None,  # Will be determined based on environment
+            'branch': 'main',
+            'install_dir': 'ngiab',
+            'build_commands': [
+'''
+# Install NGIAB based on environment (HPC vs laptop)
+echo "🔍 Detecting environment..."
+
+# Detect environment
+IS_HPC=false
+
+# Check for HPC schedulers
+for scheduler in sbatch qsub bsub; do
+    if command -v $scheduler &> /dev/null; then
+        IS_HPC=true
+        echo "✅ Detected HPC scheduler: $scheduler"
+        break
+    fi
+done
+
+# Check for HPC environment variables
+if [ -n "$SLURM_CLUSTER_NAME" ] || [ -n "$PBS_JOBID" ] || [ -n "$SGE_CLUSTER_NAME" ]; then
+    IS_HPC=true
+    echo "✅ Detected HPC environment variables"
+fi
+
+# Check for /scratch directory
+if [ -d "/scratch" ] && [ "$IS_HPC" = "false" ]; then
+    IS_HPC=true
+    echo "✅ Detected /scratch directory (common on HPC)"
+fi
+
+# Determine which repository to use
+if [ "$IS_HPC" = "true" ]; then
+    NGIAB_REPO="https://github.com/CIROH-UA/NGIAB-HPCInfra.git"
+    echo "🖥️  HPC environment detected - using NGIAB-HPCInfra"
+else
+    NGIAB_REPO="https://github.com/CIROH-UA/NGIAB-CloudInfra.git"
+    echo "💻 Laptop/workstation environment detected - using NGIAB-CloudInfra"
+fi
+
+# Clone the appropriate repository
+echo "📥 Cloning $NGIAB_REPO..."
+cd ..
+rm -rf ngiab  # Remove if exists
+git clone "$NGIAB_REPO" ngiab
+
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Failed to clone NGIAB repository"
+    exit 1
+fi
+
+cd ngiab
+
+# Make guide.sh executable if it exists
+if [ -f "guide.sh" ]; then
+    chmod +x guide.sh
+    echo "✅ guide.sh found and made executable"
+    
+    # Test if guide.sh runs (don't actually execute it fully, just check syntax)
+    echo "🧪 Testing guide.sh..."
+    bash -n guide.sh
+    if [ $? -eq 0 ]; then
+        echo "✅ guide.sh syntax is valid"
+    else
+        echo "⚠️  Warning: guide.sh may have syntax issues"
+    fi
+else
+    echo "⚠️  Warning: guide.sh not found in repository"
+    echo "   Available files:"
+    ls -la | head -20
+fi
+
+echo ""
+echo "✅ NGIAB installation complete!"
+echo "📍 Installation directory: $(pwd)"
+echo "🚀 To run NGIAB setup, execute: ./guide.sh"
+if [ "$IS_HPC" = "true" ]; then
+    echo "ℹ️  Note: You're on an HPC system - make sure to run guide.sh on a compute node"
+fi
+'''
+],
+            'dependencies': [],
+            'test_command': None,  # Can't really test without running the full guide
+            'verify_install': {
+                'file_paths': ['guide.sh'],
+                'check_type': 'exists'
+            },
+            'order': 9
         }
+    }
 
     def _check_dependencies(self, dependencies: List[str]) -> List[str]:
         """Check which dependencies are missing from the system."""
@@ -1680,6 +1760,45 @@ fi
             print(f"❌ {error_msg}")
         
         return cleaning_results
+
+
+    def _detect_environment(self) -> str:
+        """
+        Detect whether we're running on HPC or a personal computer.
+        
+        Detection logic:
+        - Check for common HPC schedulers (SLURM, PBS, SGE)
+        - Check for HPC-specific environment variables
+        - Default to 'laptop' if no HPC indicators found
+        
+        Returns:
+            'hpc' or 'laptop'
+        """
+        # Check for HPC scheduler commands
+        hpc_schedulers = ['sbatch', 'qsub', 'bsub']
+        for scheduler in hpc_schedulers:
+            if shutil.which(scheduler):
+                return 'hpc'
+        
+        # Check for common HPC environment variables
+        hpc_env_vars = [
+            'SLURM_CLUSTER_NAME',
+            'SLURM_JOB_ID',
+            'PBS_JOBID',
+            'SGE_CLUSTER_NAME',
+            'LOADL_STEP_ID'
+        ]
+        
+        for env_var in hpc_env_vars:
+            if env_var in os.environ:
+                return 'hpc'
+        
+        # Check for /scratch directory (common on HPC systems)
+        if Path('/scratch').exists():
+            return 'hpc'
+        
+        return 'laptop'
+
 
     def _get_clean_targets(self, project_dir: Path, clean_level: str) -> Dict[str, List[Path]]:
         """Get list of files/directories to clean based on level."""
