@@ -590,18 +590,30 @@ num_timesteps=1
             geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
             centroid = geom_wgs84.iloc[0].centroid
         
-        # --- START OF CORRECTION ---
-        # The multi-line string has been reformatted to remove blank lines
-        # between the end of a namelist block and its closing '/'.
-        config_text = f"""&timing
+
+        # Resolve param dir relative to the ngen binary working dir (ngen/build)
+        # This matches how your NgenRunner sets cwd=self.ngen_exe.parent
+        ngen_build_dir = Path(self.config.get('NGEN_INSTALL_PATH', 'default'))
+        if ngen_build_dir == Path('default'):
+            ngen_build_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build'
+
+        noah_param_dir = (ngen_build_dir.parent / 'extern' / 'noah-owp-modular' / 'run' / 'data' / 'NOAH' / 'parameters').resolve()
+
+        # NOAH expects integer datetimes (YYYYMMDDHHMM), not quoted strings
+        # Consider deriving these from EXPERIMENT_TIME_START/END if you prefer
+        start_ymdhm = "200710010000"
+        end_ymdhm   = "201912310000"
+
+        config_text = (
+f"""&timing
   dt                 = 3600.0
-  startdate          = "200710010000"
-  enddate            = "201912310000"
+  startdate          = {start_ymdhm}
+  enddate            = {end_ymdhm}
   forcing_filename   = "./forcing/cat-{catchment_id}.csv"
   output_filename    = "out_cat-{catchment_id}.csv"
 /
 &parameters
-  parameter_dir      = "./data/NOAH/parameters/"
+  parameter_dir      = "{noah_param_dir}"
   general_table      = "GENPARM.TBL"
   soil_table         = "SOILPARM.TBL"
   noahowp_table      = "MPTABLE.TBL"
@@ -638,6 +650,8 @@ num_timesteps=1
   subsurface_option          = 1
 /
 """
+        )
+
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
         with open(config_file, 'w') as f:
