@@ -347,6 +347,10 @@ class NgenPreProcessor:
         if divides_gdf.crs != "EPSG:5070":
             divides_gdf = divides_gdf.to_crs("EPSG:5070")
         
+        # Set index to cat-{id} format for proper feature identification
+        divides_gdf.index = divides_gdf['divide_id'].apply(lambda x: f'cat-{x}')
+        divides_gdf.index.name = 'id'
+        
         # Save as geopackage
         gpkg_file = self.ngen_setup_dir / f"{self.domain_name}_catchments.gpkg"
         divides_gdf.to_file(gpkg_file, layer='divides', driver='GPKG')
