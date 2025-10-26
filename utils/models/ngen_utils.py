@@ -620,6 +620,42 @@ num_timesteps=1
 /
 
 &model_options
+  precip_phase_opt           = 1
+  snow_albedo_opt            = 2
+  dynamic_veg_opt            = 4
+  runoff_opt                 = 3
+  drainage_opt               = 3
+  frozen_soil_opt            = 1
+  dynamic_vic_opt            = 1
+  radiative_transfer_opt     = 3
+  sfc_drag_coeff_opt         = 1
+  canopy_stom_resist_opt     = 1
+  crop_model_opt             = 0
+  snowsoil_temp_time_opt     = 3
+  soil_temp_boundary_opt     = 2
+  supercooled_water_opt      = 1
+  stomatal_resistance_opt    = 1
+  evap_srfc_resistance_opt   = 1
+  subsurface_option          = 1
+/
+
+&structure
+  isltyp             = 1
+  nsoil              = 4
+  nsnow              = 3
+  nveg               = 27
+  vegtyp             = 7
+  croptype           = 0
+  sfctyp             = 1
+  soilcolor          = 4
+/
+
+&initial_values
+  dzsnso    = 0.0, 0.0, 0.0, 0.1, 0.3, 0.6, 1.0
+  sice      = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+  sh2o      = 0.3, 0.3, 0.3, 0.3
+  zwt       = -2.0
+/
 """
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
