@@ -83,17 +83,53 @@ class NgenPreProcessor:
             return self.project_dir / default_subpath
         return Path(path_value)
     
+    def _copy_noah_parameter_tables(self):
+        """
+        Copy Noah-OWP parameter tables from base settings to domain settings.
+        
+        Copies GENPARM.TBL, MPTABLE.TBL, and SOILPARM.TBL from:
+            CONFLUENCE_CODE_DIR/0_base_settings/NOAH/parameters/
+        To:
+            domain_dir/settings/ngen/NOAH/parameters/
+        """
+        self.logger.info("Copying Noah-OWP parameter tables")
+        
+        # Get path to CONFLUENCE code directory (parent of CONFLUENCE_DATA_DIR)
+        confluence_data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        confluence_code_dir = confluence_data_dir.parent / 'CONFLUENCE'
+        
+        # Source directory for Noah parameter tables
+        source_param_dir = confluence_code_dir / '0_base_settings' / 'NOAH' / 'parameters'
+        
+        # Destination directory
+        dest_param_dir = self.ngen_setup_dir / 'NOAH' / 'parameters'
+        
+        # Parameter table files to copy
+        param_files = ['GENPARM.TBL', 'MPTABLE.TBL', 'SOILPARM.TBL']
+        
+        for param_file in param_files:
+            source_file = source_param_dir / param_file
+            dest_file = dest_param_dir / param_file
+            
+            if source_file.exists():
+                copyfile(source_file, dest_file)
+                self.logger.info(f"Copied {param_file} to {dest_param_dir}")
+            else:
+                self.logger.warning(f"Parameter file not found: {source_file}")
+
+    
     def run_preprocessing(self):
         """
         Execute complete ngen preprocessing workflow.
         
         Steps:
         1. Create ngen directory structure
-        2. Generate nexus GeoJSON from river network
-        3. Create catchment geopackage
-        4. Prepare forcing data in ngen format
-        5. Generate model-specific configs (CFE, PET, NOAH)
-        6. Generate realization config JSON
+        2. Copy Noah-OWP parameter tables from base settings
+        3. Generate nexus GeoJSON from river network
+        4. Create catchment geopackage
+        5. Prepare forcing data in ngen format
+        6. Generate model-specific configs (CFE, PET, NOAH)
+        7. Generate realization config JSON
         """
         self.logger.info("Starting NextGen preprocessing")
         
@@ -103,6 +139,10 @@ class NgenPreProcessor:
         (self.ngen_setup_dir / "CFE").mkdir(exist_ok=True)
         (self.ngen_setup_dir / "PET").mkdir(exist_ok=True)
         (self.ngen_setup_dir / "NOAH").mkdir(exist_ok=True)
+        (self.ngen_setup_dir / "NOAH" / "parameters").mkdir(exist_ok=True)
+        
+        # Copy Noah-OWP parameter tables from base settings
+        self._copy_noah_parameter_tables()
         
         # Generate spatial data
         nexus_file = self.create_nexus_geojson()
@@ -582,15 +622,113 @@ num_timesteps=1
     
     def _generate_noah_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
         """
-        Generate NOAH-OWP model configuration placeholder.
+        Generate NOAH-OWP model configuration file (.input file).
         
-        NOAH-OWP BMI in ngen works best with /dev/null as init_config.
-        The model gets all necessary information through the BMI interface
-        and the realization config, not from a separate config file.
+        Creates a Fortran namelist file with all required sections:
+        - timing: simulation period and file paths
+        - parameters: paths to parameter tables
+        - location: catchment lat/lon and terrain
+        - forcing: forcing data settings
+        - model_options: Noah-OWP model configuration
+        - structure: soil/snow/vegetation structure
+        - initial_values: initial soil moisture, snow, water table
         """
-        # NOAH-OWP BMI for ngen uses /dev/null for init_config
-        # No actual configuration file is needed or generated
-        pass
+        # Get catchment centroid for lat/lon
+        centroid = catchment_row.geometry.centroid
+        
+        # Convert to WGS84 if needed
+        if self.catchment_crs != "EPSG:4326":
+            geom_wgs84 = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
+            geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
+            centroid = geom_wgs84.iloc[0].centroid
+        
+        # Get simulation timing from config
+        start_time = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
+        end_time = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        
+        # Convert to Noah-OWP format (YYYYMMDDhhmm)
+        start_dt = pd.to_datetime(start_time)
+        end_dt = pd.to_datetime(end_time)
+        start_str = start_dt.strftime('%Y%m%d%H%M')
+        end_str = end_dt.strftime('%Y%m%d%H%M')
+        
+        # Relative path to parameters directory from ngen build directory
+        # This needs to be relative to where ngen executable runs from
+        param_dir = f"./settings/ngen/NOAH/parameters/"
+        
+        # Create Noah-OWP configuration file
+        config_text = f"""&timing
+  dt                 = 3600.0
+  startdate          = "{start_str}"
+  enddate            = "{end_str}"
+  forcing_filename   = "BMI"
+  output_filename    = "out_cat-{catchment_id}.csv"
+/
+
+&parameters
+  parameter_dir      = "{param_dir}"
+  general_table      = "GENPARM.TBL"
+  soil_table         = "SOILPARM.TBL"
+  noahowp_table      = "MPTABLE.TBL"
+  soil_class_name    = "STAS"
+  veg_class_name     = "MODIFIED_IGBP_MODIS_NOAH"
+/
+
+&location
+  lat                = {centroid.y}
+  lon                = {centroid.x}
+  terrain_slope      = 0.0
+  azimuth            = 0.0
+/
+
+&forcing
+  ZREF               = 10.0
+  rain_snow_thresh   = 1.0
+/
+
+&model_options
+  precip_phase_option               = 1
+  snow_albedo_option                = 1
+  dynamic_veg_option                = 4
+  runoff_option                     = 3
+  drainage_option                   = 8
+  frozen_soil_option                = 1
+  dynamic_vic_option                = 1
+  radiative_transfer_option         = 3
+  sfc_drag_coeff_option             = 1
+  canopy_stom_resist_option         = 1
+  crop_model_option                 = 0
+  snowsoil_temp_time_option         = 3
+  soil_temp_boundary_option         = 2
+  supercooled_water_option          = 1
+  stomatal_resistance_option        = 1
+  evap_srfc_resistance_option       = 4
+  subsurface_option                 = 2
+/
+
+&structure
+ isltyp           = 3
+ nsoil            = 4
+ nsnow            = 3
+ nveg             = 20
+ vegtyp           = 10
+ croptype         = 0
+ sfctyp           = 1
+ soilcolor        = 4
+/
+
+&initial_values
+ dzsnso    =  0.0,  0.0,  0.0,  0.1,  0.3,  0.6,  1.0
+ sice      =  0.0,  0.0,  0.0,  0.0
+ sh2o      =  0.3,  0.3,  0.3,  0.3
+ zwt       =  -2.0
+/
+"""
+        
+        config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
+        with open(config_file, 'w') as f:
+            f.write(config_text)
+
     
     def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
         """
@@ -662,7 +800,7 @@ num_timesteps=1
                                     "model_type_name": "bmi_fortran_noahowp",
                                     "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
                                     "forcing_file": "",
-                                    "init_config": "/dev/null",
+                                    "init_config": f"{noah_config_base}/cat-{{{{id}}}}.input",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "QINSUR",
                                     "uses_forcing_file": False,
