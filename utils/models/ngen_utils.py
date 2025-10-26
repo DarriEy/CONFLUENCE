@@ -582,34 +582,15 @@ num_timesteps=1
     
     def _generate_noah_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
         """
-        Generate NOAH-OWP model configuration file.
+        Generate NOAH-OWP model configuration placeholder.
         
-        IMPORTANT: When NOAH-OWP-Modular is used as a BMI module in ngen,
-        it uses a simple key=value format, NOT traditional Fortran namelists.
-        The configuration is minimal since most settings are passed through
-        the realization config JSON.
+        NOAH-OWP BMI in ngen works best with /dev/null as init_config.
+        The model gets all necessary information through the BMI interface
+        and the realization config, not from a separate config file.
         """
-        
-        # Get catchment centroid
-        centroid = catchment_row.geometry.centroid
-        if self.catchment_crs != "EPSG:4326":
-            geom_wgs84 = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
-            geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
-            centroid = geom_wgs84.iloc[0].centroid
-        
-        # Simple key=value format for NOAH-OWP BMI
-        # Reference: NOAA-OWP/noah-owp-modular BMI implementation
-        # Note: NOAH-OWP BMI for ngen typically only needs lat/lon
-        # area_km2 is NOT a valid NOAH-OWP parameter and causes errors
-        config_text = f"""# NOAH-OWP BMI Configuration for ngen
-# Catchment: {catchment_id}
-lat={centroid.y}
-lon={centroid.x}
-"""
-        
-        config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
-        with open(config_file, 'w') as f:
-            f.write(config_text)
+        # NOAH-OWP BMI for ngen uses /dev/null for init_config
+        # No actual configuration file is needed or generated
+        pass
     
     def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
         """
@@ -681,7 +662,7 @@ lon={centroid.x}
                                     "model_type_name": "bmi_fortran_noahowp",
                                     "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
                                     "forcing_file": "",
-                                    "init_config": f"{noah_config_base}/cat-{{{{id}}}}.input",
+                                    "init_config": "/dev/null",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "QINSUR",
                                     "uses_forcing_file": False,
