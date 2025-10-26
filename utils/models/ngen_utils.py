@@ -423,12 +423,9 @@ class NgenPreProcessor:
         # Create ngen-formatted dataset
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
         
-        # Save to file with proper encoding for string IDs
+        # Save to file with NETCDF4 format (supports native string type)
         output_file = self.forcing_dir / "forcing.nc"
-        # Use dynamic string length based on max ID length
-        max_id_len = max(len(id_str) for id_str in catchment_ids)
-        encoding = {'ids': {'dtype': f'S{max_id_len}'}}
-        ngen_ds.to_netcdf(output_file, encoding=encoding, format='NETCDF4')
+        ngen_ds.to_netcdf(output_file, format='NETCDF4')
         
         # Close datasets
         forcing_data.close()
@@ -452,37 +449,42 @@ class NgenPreProcessor:
         n_catchments = len(catchment_ids)
         n_times = len(forcing_data.time)
         
-        # Convert time to seconds since epoch (ngen format)
+        # Convert time to nanoseconds since epoch (ngen format - matching working example)
         time_values = forcing_data.time.values
         if not np.issubdtype(time_values.dtype, np.datetime64):
             time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01')
         
-        # Convert to seconds since 1970-01-01 (Unix epoch) as integers
-        time_seconds = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 's')).astype(np.int64)
+        # Convert to nanoseconds since 1970-01-01 (Unix epoch)
+        time_ns = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')).astype(np.int64)
         
         # Create coordinate arrays
         catchment_coord = np.arange(n_catchments)
+        time_coord = np.arange(n_times)  # Simple indices for time dimension
         
-        # Initialize dataset with actual time values
+        # Initialize dataset with dimensions matching working example
         ngen_ds = xr.Dataset(
             coords={
                 'catchment-id': ('catchment-id', catchment_coord),
-                'time': ('time', time_seconds),  # Use actual time values, not indices
+                'time': ('time', time_coord),
+                'str_dim': ('str_dim', np.array([1]))  # Required dimension for ngen
             }
         )
         
-        # Add catchment IDs - use object dtype for proper NetCDF string handling
+        # Add catchment IDs as native NetCDF4 string type
         ngen_ds['ids'] = xr.DataArray(
             np.array(catchment_ids, dtype=object),
             dims=['catchment-id'],
             attrs={'long_name': 'catchment identifiers'}
         )
         
-        # Add metadata to time coordinate
-        ngen_ds['time'].attrs.update({
-            'units': 'seconds since 1970-01-01 00:00:00',
-            'calendar': 'standard'
-        })
+        # Add Time variable (capital T) with nanoseconds for each catchment-time pair
+        # Replicate time values for each catchment
+        time_data = np.tile(time_ns, (n_catchments, 1)).astype(np.float64)
+        ngen_ds['Time'] = xr.DataArray(
+            time_data,
+            dims=['catchment-id', 'time'],
+            attrs={'units': 'ns'}  # nanoseconds, not seconds!
+        )
         
         # Map and add forcing variables
         # ERA5 → ngen variable mapping
@@ -495,7 +497,7 @@ class NgenPreProcessor:
             'LWRadAtm': 'DLWRF_surface'
         }
         
-        # Add variables
+        # Add variables as float32 to match ngen requirements
         for era5_var, ngen_var in var_mapping.items():
             if era5_var in forcing_data:
                 # Get data and transpose to (catchment, time)
@@ -506,7 +508,7 @@ class NgenPreProcessor:
                     data = np.tile(data, (n_catchments, 1))
                 
                 ngen_ds[ngen_var] = xr.DataArray(
-                    data,
+                    data.astype(np.float32),  # Ensure float32
                     dims=['catchment-id', 'time']
                 )
         
@@ -521,11 +523,11 @@ class NgenPreProcessor:
             
             # Approximate split (could be improved with actual U/V components)
             ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                windspd_data * 0.707,  # Assume 45° angle
+                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
                 dims=['catchment-id', 'time']
             )
             ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                windspd_data * 0.707,
+                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
                 dims=['catchment-id', 'time']
             )
         
