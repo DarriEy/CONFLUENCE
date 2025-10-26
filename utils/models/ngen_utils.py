@@ -590,6 +590,9 @@ num_timesteps=1
             geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
             centroid = geom_wgs84.iloc[0].centroid
         
+        # --- START OF CORRECTION ---
+        # The multi-line string has been reformatted to remove blank lines
+        # between the end of a namelist block and its closing '/'.
         config_text = f"""&timing
   dt                 = 3600.0
   startdate          = "200710010000"
@@ -597,28 +600,24 @@ num_timesteps=1
   forcing_filename   = "./forcing/cat-{catchment_id}.csv"
   output_filename    = "out_cat-{catchment_id}.csv"
 /
-
 &parameters
-  parameter_dir      = "./data/NOAH/parameters//"
+  parameter_dir      = "./data/NOAH/parameters/"
   general_table      = "GENPARM.TBL"
   soil_table         = "SOILPARM.TBL"
   noahowp_table      = "MPTABLE.TBL"
   soil_class_name    = "STAS"
   veg_class_name     = "USGS"
 /
-
 &location
   lat                = {centroid.y}
   lon                = {centroid.x}
   terrain_slope      = 0.0
   azimuth            = 0.0
 /
-
 &forcing
   ZREF               = 10.0
   rain_snow_thresh   = 1.0
 /
-
 &model_options
   precip_phase_option        = 1
   snow_albedo_option         = 2
