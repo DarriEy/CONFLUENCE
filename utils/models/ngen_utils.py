@@ -887,7 +887,6 @@ num_timesteps=1
                     "provider": "NetCDF"
                 }
             },
-            "output_root": str((self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID', 'run_1') / "ngen").resolve()),
             "time": {
                 "start_time": sim_start,
                 "end_time": sim_end,
@@ -1002,9 +1001,12 @@ class NgenRunner:
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     check=True,
-                    cwd=self.ngen_exe.parent,  # Run from ngen build directory
+                    cwd=self.ngen_exe.parent,  # Run from ngen build directory (needed for relative library paths)
                     env=env  # Use modified environment with library paths
                 )
+            
+            # Move outputs from build directory to output directory
+            self._move_ngen_outputs(self.ngen_exe.parent, output_dir)
             
             self.logger.info("NextGen model run completed successfully")
             return output_dir
@@ -1013,6 +1015,45 @@ class NgenRunner:
             self.logger.error(f"NextGen model run failed with error code {e.returncode}")
             self.logger.error(f"Check log file: {log_file}")
             raise
+    
+    def _move_ngen_outputs(self, build_dir: Path, output_dir: Path):
+        """
+        Move ngen output files from build directory to output directory.
+        
+        ngen writes outputs to its working directory, so we need to move them
+        to the proper experiment output directory.
+        
+        Args:
+            build_dir: ngen build directory where outputs are written
+            output_dir: Target output directory for this experiment
+        """
+        import shutil
+        
+        # Common ngen output patterns
+        output_patterns = [
+            'cat-*.csv',      # Catchment outputs
+            'nex-*.csv',      # Nexus outputs  
+            '*.parquet',      # Parquet outputs
+            'cfe_output_*.txt',  # CFE specific outputs
+            'noah_output_*.txt', # Noah specific outputs
+        ]
+        
+        moved_files = []
+        for pattern in output_patterns:
+            for file in build_dir.glob(pattern):
+                dest = output_dir / file.name
+                shutil.move(str(file), str(dest))
+                moved_files.append(file.name)
+        
+        if moved_files:
+            self.logger.info(f"Moved {len(moved_files)} output files to {output_dir}")
+            for f in moved_files[:10]:  # Log first 10
+                self.logger.info(f"  - {f}")
+            if len(moved_files) > 10:
+                self.logger.info(f"  ... and {len(moved_files) - 10} more")
+        else:
+            self.logger.warning(f"No output files found in {build_dir}. Check if model ran correctly.")
+
 
 
 class NgenPostprocessor:
