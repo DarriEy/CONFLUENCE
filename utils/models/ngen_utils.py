@@ -308,12 +308,12 @@ class NgenPreProcessor:
         divides_gdf = catchment_gdf.copy()
         
         # Map to ngen schema
-        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
-        divides_gdf['id'] = divides_gdf['divide_id'].apply(lambda x: f'wb-{x}')  # Waterbody ID
+        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].apply(lambda x: f'cat-{x}')
+        divides_gdf['id'] = divides_gdf[self.hru_id_col].apply(lambda x: f'wb-{x}')  # Waterbody ID
         
         # Determine downstream connections
         # For lumped catchment, connect to corresponding nexus
-        divides_gdf['toid'] = divides_gdf['divide_id'].apply(lambda x: f'nex-{x}')
+        divides_gdf['toid'] = divides_gdf[self.hru_id_col].apply(lambda x: f'nex-{x}')
         
         # Add type
         divides_gdf['type'] = 'network'  # Changed from 'land' to 'network'
@@ -351,8 +351,8 @@ class NgenPreProcessor:
         # Remove the column since the index will carry 'id'
         divides_gdf = divides_gdf.drop(columns=['id'])
         
-        # Set index to cat-{id} format for proper feature identification
-        divides_gdf.index = divides_gdf['divide_id'].apply(lambda x: f'cat-{x}')
+        # Set index to the divide_id for proper feature identification
+        divides_gdf.index = divides_gdf['divide_id']
         divides_gdf.index.name = 'id'
         
         # Save as geopackage
