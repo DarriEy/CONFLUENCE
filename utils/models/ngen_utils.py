@@ -449,21 +449,22 @@ class NgenPreProcessor:
         n_catchments = len(catchment_ids)
         n_times = len(forcing_data.time)
         
-        # Convert time to nanoseconds since epoch (ngen format)
+        # Convert time to seconds since epoch (ngen format)
         time_values = forcing_data.time.values
         if not np.issubdtype(time_values.dtype, np.datetime64):
             time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01')
-        time_ns = (time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')
+        
+        # Convert to seconds since 1970-01-01 (Unix epoch) as integers
+        time_seconds = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 's')).astype(np.int64)
         
         # Create coordinate arrays
         catchment_coord = np.arange(n_catchments)
-        time_coord = np.arange(n_times)
         
-        # Initialize dataset
+        # Initialize dataset with actual time values
         ngen_ds = xr.Dataset(
             coords={
                 'catchment-id': ('catchment-id', catchment_coord),
-                'time': ('time', time_coord),
+                'time': ('time', time_seconds),  # Use actual time values, not indices
                 'str_dim': ('str_dim', [1])
             }
         )
@@ -474,21 +475,12 @@ class NgenPreProcessor:
             dims=['catchment-id']
         )
         
-        # Add time in nanoseconds
-        # Replicate for each catchment
-        time_data = np.tile(time_ns, (n_catchments, 1))
-        ngen_ds['Time'] = xr.DataArray(
-            time_data,
-            dims=['catchment-id', 'time'],
-            attrs={'units': 'ns'}
-        )
-        epoch_start_ns = np.int64(0)  # nanoseconds since 1970-01-01T00:00:00
-        epoch_end_ns = np.int64(time_ns[-1] - time_ns[0])  # optional, relative span
-
-        ngen_ds['Time'].attrs.update({
-            'epoch_start': '1970-01-01 00:00:00',   # string is fine; many examples use this
-            'epoch_end':   str(int(time_ns[-1]))    # optional but useful
+        # Add metadata to time coordinate
+        ngen_ds['time'].attrs.update({
+            'units': 'seconds since 1970-01-01 00:00:00',
+            'calendar': 'standard'
         })
+        
         # Map and add forcing variables
         # ERA5 → ngen variable mapping
         var_mapping = {
