@@ -265,7 +265,7 @@ class NgenPreProcessor:
                 "type": "Feature",
                 "id": f"nex-{catchment_id}",
                 "properties": {
-                    "toid": f"wb-{catchment_id}",
+                    "toid": "",  # Terminal outlet - empty toid breaks the cycle
                     "hl_id": None,
                     "hl_uri": "NA",
                     "type": "poi"
