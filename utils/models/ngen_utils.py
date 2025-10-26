@@ -402,21 +402,26 @@ class NgenPreProcessor:
         # Concatenate along time dimension
         forcing_data = xr.concat(datasets, dim='time')
         
-        # Get time bounds from config
-        sim_start = self.config.get('EXPERIMENT_TIME_START')
-        sim_end = self.config.get('EXPERIMENT_TIME_END')
+        # Get time bounds from config - use defaults if not specified or set to 'default'
+        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
+        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
         
-        # Select time period if specified
-        if sim_start != 'default' and sim_end != 'default':
-            start_time = pd.to_datetime(sim_start)
-            end_time = pd.to_datetime(sim_end)
-            
-            # Convert forcing time to datetime
-            time_values = pd.to_datetime(forcing_data.time.values)
-            forcing_data['time'] = time_values
-            
-            # Select time slice
-            forcing_data = forcing_data.sel(time=slice(start_time, end_time))
+        # Handle 'default' string
+        if sim_start == 'default':
+            sim_start = '2000-01-01 00:00:00'
+        if sim_end == 'default':
+            sim_end = '2000-12-31 23:00:00'
+        
+        # Always subset to simulation period
+        start_time = pd.to_datetime(sim_start)
+        end_time = pd.to_datetime(sim_end)
+        
+        # Convert forcing time to datetime if needed
+        time_values = pd.to_datetime(forcing_data.time.values)
+        forcing_data['time'] = time_values
+        
+        # Select time slice for simulation period
+        forcing_data = forcing_data.sel(time=slice(start_time, end_time))
             
         self.logger.info(f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}")
         
@@ -483,7 +488,7 @@ class NgenPreProcessor:
         ngen_ds['Time'] = xr.DataArray(
             time_data,
             dims=['catchment-id', 'time'],
-            attrs={'units': 'ns'}  # nanoseconds, not seconds!
+            attrs={'units': 'ns'}
         )
         
         # Map and add forcing variables
@@ -759,9 +764,14 @@ num_timesteps=1
         pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
         noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
         
-        # Get simulation time bounds
+        # Get simulation time bounds - handle 'default' string
         sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
         sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        
+        if sim_start == 'default':
+            sim_start = '2000-01-01 00:00:00'
+        if sim_end == 'default':
+            sim_end = '2000-12-31 23:00:00'
         
         # Create realization config
         config = {
