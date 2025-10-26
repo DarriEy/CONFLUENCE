@@ -423,9 +423,12 @@ class NgenPreProcessor:
         # Create ngen-formatted dataset
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
         
-        # Save to file
+        # Save to file with proper encoding for string IDs
         output_file = self.forcing_dir / "forcing.nc"
-        ngen_ds.to_netcdf(output_file)
+        # Use dynamic string length based on max ID length
+        max_id_len = max(len(id_str) for id_str in catchment_ids)
+        encoding = {'ids': {'dtype': f'S{max_id_len}'}}
+        ngen_ds.to_netcdf(output_file, encoding=encoding, format='NETCDF4')
         
         # Close datasets
         forcing_data.close()
@@ -465,14 +468,14 @@ class NgenPreProcessor:
             coords={
                 'catchment-id': ('catchment-id', catchment_coord),
                 'time': ('time', time_seconds),  # Use actual time values, not indices
-                'str_dim': ('str_dim', [1])
             }
         )
         
-        # Add catchment IDs as string array
+        # Add catchment IDs - use object dtype for proper NetCDF string handling
         ngen_ds['ids'] = xr.DataArray(
-            catchment_ids,
-            dims=['catchment-id']
+            np.array(catchment_ids, dtype=object),
+            dims=['catchment-id'],
+            attrs={'long_name': 'catchment identifiers'}
         )
         
         # Add metadata to time coordinate
