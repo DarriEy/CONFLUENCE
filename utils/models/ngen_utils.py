@@ -456,11 +456,29 @@ class NgenPreProcessor:
         
         # Convert time to nanoseconds since epoch (ngen format - matching working example)
         time_values = forcing_data.time.values
+        
+        # Ensure we have datetime64 objects
         if not np.issubdtype(time_values.dtype, np.datetime64):
-            time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01')
+            # Try to decode using xarray's built-in time decoding
+            if 'units' in forcing_data.time.attrs:
+                time_values = xr.decode_cf(forcing_data).time.values
+            else:
+                # Fallback: assume hours since 1900-01-01 (common ERA5 format)
+                time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01').values
+        
+        # Verify we have datetime64 now
+        if not np.issubdtype(time_values.dtype, np.datetime64):
+            raise ValueError(f"Could not convert time to datetime64, got dtype: {time_values.dtype}")
         
         # Convert to nanoseconds since 1970-01-01 (Unix epoch)
         time_ns = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')).astype(np.int64)
+        
+        # Sanity check - values should be positive and reasonable (between 1970 and 2100)
+        min_ns = 0  # 1970-01-01
+        max_ns = 4102444800 * 1e9  # 2100-01-01 in nanoseconds
+        if np.any(time_ns < min_ns) or np.any(time_ns > max_ns):
+            raise ValueError(f"Time values out of reasonable range. Got min={time_ns.min()}, max={time_ns.max()}. "
+                           f"Expected between {min_ns} and {max_ns}")
         
         # Create coordinate arrays
         catchment_coord = np.arange(n_catchments)
@@ -772,6 +790,11 @@ num_timesteps=1
             sim_start = '2000-01-01 00:00:00'
         if sim_end == 'default':
             sim_end = '2000-12-31 23:00:00'
+        
+        # Ensure time strings have seconds (some configs may omit them)
+        # Convert to datetime and back to ensure proper format
+        sim_start = pd.to_datetime(sim_start).strftime('%Y-%m-%d %H:%M:%S')
+        sim_end = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
         
         # Create realization config
         config = {
