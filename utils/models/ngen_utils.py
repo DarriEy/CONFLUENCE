@@ -378,10 +378,10 @@ class NgenPreProcessor:
         """
         self.logger.info("Preparing forcing data for ngen")
         
-        # Load catchment IDs
+        # Load catchment IDs - must match divide_id format in geopackage (cat-X)
         catchment_file = self.catchment_path / self.catchment_name
         catchment_gdf = gpd.read_file(catchment_file)
-        catchment_ids = catchment_gdf[self.hru_id_col].astype(str).tolist()
+        catchment_ids = [f"cat-{x}" for x in catchment_gdf[self.hru_id_col].astype(str).tolist()]
         n_catchments = len(catchment_ids)
         
         self.logger.info(f"Processing forcing for {n_catchments} catchments")
