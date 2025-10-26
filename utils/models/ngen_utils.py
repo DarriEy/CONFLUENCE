@@ -254,15 +254,18 @@ class NgenPreProcessor:
         catchment_wgs84 = catchment_gdf.to_crs("EPSG:4326")
         centroid = catchment_wgs84.geometry.centroid.iloc[0]
         
+        # Get catchment ID
+        catchment_id = str(catchment_gdf[self.hru_id_col].iloc[0])
+        
         nexus_geojson = {
             "type": "FeatureCollection",
             "name": "nexus",
             "xy_coordinate_resolution": 1e-06,
             "features": [{
                 "type": "Feature",
-                "id": "nex-1",
+                "id": f"nex-{catchment_id}",
                 "properties": {
-                    "toid": "wb-1",
+                    "toid": f"wb-{catchment_id}",
                     "hl_id": None,
                     "hl_uri": "NA",
                     "type": "poi"
@@ -307,8 +310,8 @@ class NgenPreProcessor:
         divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
         
         # Determine downstream connections
-        # For now, all catchments drain to the outlet nexus
-        divides_gdf['toid'] = 'nex-1'  # Connect to outlet nexus
+        # For lumped catchment, connect to corresponding nexus
+        divides_gdf['toid'] = divides_gdf['divide_id'].apply(lambda x: f'nex-{x}')
         
         # Add type
         divides_gdf['type'] = 'land'
