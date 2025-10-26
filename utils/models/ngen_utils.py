@@ -308,13 +308,14 @@ class NgenPreProcessor:
         
         # Map to ngen schema
         divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
+        divides_gdf['id'] = divides_gdf['divide_id'].apply(lambda x: f'wb-{x}')  # Waterbody ID
         
         # Determine downstream connections
         # For lumped catchment, connect to corresponding nexus
         divides_gdf['toid'] = divides_gdf['divide_id'].apply(lambda x: f'nex-{x}')
         
         # Add type
-        divides_gdf['type'] = 'land'
+        divides_gdf['type'] = 'network'  # Changed from 'land' to 'network'
         
         # Calculate area in km²
         if 'areasqkm' not in divides_gdf.columns:
@@ -324,7 +325,7 @@ class NgenPreProcessor:
             divides_gdf['areasqkm'] = divides_utm.geometry.area / 1e6
         
         # Select required columns
-        required_cols = ['divide_id', 'toid', 'type', 'areasqkm', 'geometry']
+        required_cols = ['divide_id', 'toid', 'type', 'id', 'areasqkm', 'geometry']
         optional_cols = ['ds_id', 'lengthkm', 'tot_drainage_areasqkm', 'has_flowline']
         
         # Add optional columns with defaults if missing
