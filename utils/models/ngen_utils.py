@@ -620,22 +620,22 @@ num_timesteps=1
 /
 
 &model_options
-  precip_phase_opt           = 1
-  snow_albedo_opt            = 2
-  dynamic_veg_opt            = 4
-  runoff_opt                 = 3
-  drainage_opt               = 3
-  frozen_soil_opt            = 1
-  dynamic_vic_opt            = 1
-  radiative_transfer_opt     = 3
-  sfc_drag_coeff_opt         = 1
-  canopy_stom_resist_opt     = 1
-  crop_model_opt             = 0
-  snowsoil_temp_time_opt     = 3
-  soil_temp_boundary_opt     = 2
-  supercooled_water_opt      = 1
-  stomatal_resistance_opt    = 1
-  evap_srfc_resistance_opt   = 1
+  precip_phase_option        = 1
+  snow_albedo_option         = 2
+  dynamic_veg_option         = 4
+  runoff_option              = 3
+  drainage_option            = 3
+  frozen_soil_option         = 1
+  dynamic_vic_option         = 1
+  radiative_transfer_option  = 3
+  sfc_drag_coeff_option      = 1
+  canopy_stom_resist_option  = 1
+  crop_model_option          = 0
+  snowsoil_temp_time_option  = 3
+  soil_temp_boundary_option  = 2
+  supercooled_water_option   = 1
+  stomatal_resistance_option = 1
+  evap_srfc_resistance_option = 1
   subsurface_option          = 1
 /
 
