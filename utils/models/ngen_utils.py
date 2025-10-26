@@ -581,7 +581,14 @@ num_timesteps=1
             f.write(config_text)
     
     def _generate_noah_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
-        """Generate NOAH-OWP model configuration file."""
+        """
+        Generate NOAH-OWP model configuration file.
+        
+        IMPORTANT: When NOAH-OWP-Modular is used as a BMI module in ngen,
+        it uses a simple key=value format, NOT traditional Fortran namelists.
+        The configuration is minimal since most settings are passed through
+        the realization config JSON.
+        """
         
         # Get catchment centroid
         centroid = catchment_row.geometry.centroid
@@ -590,68 +597,22 @@ num_timesteps=1
             geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
             centroid = geom_wgs84.iloc[0].centroid
         
-
-        # Resolve param dir relative to the ngen binary working dir (ngen/build)
-        # This matches how your NgenRunner sets cwd=self.ngen_exe.parent
-        ngen_build_dir = Path(self.config.get('NGEN_INSTALL_PATH', 'default'))
-        if ngen_build_dir == Path('default'):
-            ngen_build_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build'
-
-        noah_param_dir = (ngen_build_dir.parent / 'extern' / 'noah-owp-modular' / 'run' / 'data' / 'NOAH' / 'parameters').resolve()
-
-        # NOAH expects integer datetimes (YYYYMMDDHHMM), not quoted strings
-        # Consider deriving these from EXPERIMENT_TIME_START/END if you prefer
-        start_ymdhm = "200710010000"
-        end_ymdhm   = "201912310000"
-
-        config_text = (
-f"""&timing
-  dt                 = 3600.0
-  startdate          = {start_ymdhm}
-  enddate            = {end_ymdhm}
-  forcing_filename   = "./forcing/cat-{catchment_id}.csv"
-  output_filename    = "out_cat-{catchment_id}.csv"
-/
-&parameters
-  parameter_dir      = "{noah_param_dir}"
-  general_table      = "GENPARM.TBL"
-  soil_table         = "SOILPARM.TBL"
-  noahowp_table      = "MPTABLE.TBL"
-  soil_class_name    = "STAS"
-  veg_class_name     = "USGS"
-/
-&location
-  lat                = {centroid.y}
-  lon                = {centroid.x}
-  terrain_slope      = 0.0
-  azimuth            = 0.0
-/
-&forcing
-  ZREF               = 10.0
-  rain_snow_thresh   = 1.0
-/
-&model_options
-  precip_phase_option        = 1
-  snow_albedo_option         = 2
-  dynamic_veg_option         = 4
-  runoff_option              = 3
-  drainage_option            = 3
-  frozen_soil_option         = 1
-  dynamic_vic_option         = 1
-  radiative_transfer_option  = 3
-  sfc_drag_coeff_option      = 1
-  canopy_stom_resist_option  = 1
-  crop_model_option          = 0
-  snowsoil_temp_time_option  = 3
-  soil_temp_boundary_option  = 2
-  supercooled_water_option   = 1
-  stomatal_resistance_option = 1
-  evap_srfc_resistance_option = 1
-  subsurface_option          = 1
-/
+        # Calculate area in km²
+        if self.catchment_crs != "EPSG:5070":
+            geom_area = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
+            geom_area = geom_area.to_crs("EPSG:5070")
+            area_km2 = geom_area.geometry.area.iloc[0] / 1e6
+        else:
+            area_km2 = catchment_row.geometry.area / 1e6
+        
+        # Simple key=value format for NOAH-OWP BMI
+        # Reference: NOAA-OWP/noah-owp-modular BMI implementation
+        config_text = f"""# NOAH-OWP BMI Configuration for ngen
+# Catchment: {catchment_id}
+lat={centroid.y}
+lon={centroid.x}
+area_km2={area_km2}
 """
-        )
-
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
         with open(config_file, 'w') as f:
@@ -662,40 +623,32 @@ f"""&timing
         Generate ngen realization configuration JSON.
         
         This is the main configuration file that ngen uses to:
-        - Locate input files (catchments, nexus, forcing)
-        - Define model formulations and their chaining
-        - Set simulation time period
-        - Configure output settings
-        
-        Args:
-            catchment_file: Path to catchment geopackage
-            nexus_file: Path to nexus GeoJSON
-            forcing_file: Path to forcing NetCDF
+        - Define model formulations for each catchment
+        - Specify input/output connections
+        - Configure model parameters
+        - Link to forcing data
         """
         self.logger.info("Generating realization configuration")
         
-        # Get ngen install paths
-        ngen_install_dir = Path(self.config.get('NGEN_INSTALL_PATH', 'default'))
-        if ngen_install_dir == Path('default'):
-            ngen_install_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen'
-        
-        # Get simulation times
-        sim_start = self.config.get('EXPERIMENT_TIME_START', '2015-01-01 00:00:00')
-        sim_end = self.config.get('EXPERIMENT_TIME_END', '2015-12-31 23:00:00')
-        
-        # Use absolute paths for all file references
+        # Get absolute paths
         forcing_abs_path = str(forcing_file.resolve())
-        pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
+        
+        # Model configuration directories
         cfe_config_base = str((self.ngen_setup_dir / "CFE").resolve())
+        pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
         noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
         
+        # Get simulation time bounds
+        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
+        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        
+        # Create realization config
         config = {
             "global": {
                 "formulations": [{
                     "name": "bmi_multi",
                     "params": {
                         "model_type_name": "bmi_multi_noahowp_cfe",
-                        "forcing_file": "",
                         "init_config": "",
                         "allow_exceed_end_time": True,
                         "main_output_variable": "Q_OUT",
@@ -738,6 +691,7 @@ f"""&timing
                                     "init_config": f"{noah_config_base}/cat-{{{{id}}}}.input",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "QINSUR",
+                                    "uses_forcing_file": False,
                                     "variables_names_map": {
                                         "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
                                         "Q2": "atmosphere_air_water~vapor__relative_saturation",
@@ -747,8 +701,7 @@ f"""&timing
                                         "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
                                         "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
                                         "SFCPRS": "land_surface_air__pressure"
-                                    },
-                                    "uses_forcing_file": False
+                                    }
                                 }
                             },
                             {
