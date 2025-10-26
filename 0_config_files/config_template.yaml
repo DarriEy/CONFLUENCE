@@ -205,6 +205,7 @@ SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing
 
 ###  4.5 Model Specific settings: NextGen 
 NGEN_INSTALL_PATH: '/path/to/ngen/build'
+NGEN_EXE: ngen
 NGEN_BMI_MODULES:
    CFE:
      bmi_type: 'bmi_c'
@@ -212,6 +213,7 @@ NGEN_BMI_MODULES:
      init_config: './ngen_data/bmi_configs/cfe_config.json'
      main_output_variable: 'Q_OUT'
 
+NGEN_MODULES_TO_CALIBRATE: CFE,NOAH,PET                        # Options: CFE, NOAH, PET (or combinations like "CFE,PET")
 
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
