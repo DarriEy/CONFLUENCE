@@ -202,13 +202,13 @@ class NgenPreProcessor:
             # Create nexus ID
             nexus_id = f"nex-{int(seg_id)}"
             
-            # Determine nexus type
             if downstream_id == 0 or pd.isna(downstream_id):
                 nexus_type = "poi"
-                toid = ""                              # terminal sink (no receiver)
+                toid = ""                                  # terminal outlet
             else:
                 nexus_type = "nexus"
-                toid = f"wb-{int(downstream_id)}"      # nexus -> downstream catchment
+                toid = f"wb-{int(downstream_id)}"          # nexus -> downstream catchment
+
 
             
             feature = {
@@ -347,6 +347,9 @@ class NgenPreProcessor:
         # Ensure proper CRS (NAD83 Conus Albers - EPSG:5070)
         if divides_gdf.crs != "EPSG:5070":
             divides_gdf = divides_gdf.to_crs("EPSG:5070")
+        
+        # Remove the column since the index will carry 'id'
+        divides_gdf = divides_gdf.drop(columns=['id'])
         
         # Set index to cat-{id} format for proper feature identification
         divides_gdf.index = divides_gdf['divide_id'].apply(lambda x: f'cat-{x}')
