@@ -638,24 +638,6 @@ num_timesteps=1
   evap_srfc_resistance_option = 1
   subsurface_option          = 1
 /
-
-&structure
-  isltyp             = 1
-  nsoil              = 4
-  nsnow              = 3
-  nveg               = 27
-  vegtyp             = 7
-  croptype           = 0
-  sfctyp             = 1
-  soilcolor          = 4
-/
-
-&initial_values
-  dzsnso    = 0.0, 0.0, 0.0, 0.1, 0.3, 0.6, 1.0
-  sice      = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-  sh2o      = 0.3, 0.3, 0.3, 0.3
-  zwt       = -2.0
-/
 """
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
