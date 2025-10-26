@@ -652,9 +652,9 @@ num_timesteps=1
         start_str = start_dt.strftime('%Y%m%d%H%M')
         end_str = end_dt.strftime('%Y%m%d%H%M')
         
-        # Relative path to parameters directory from ngen build directory
-        # This needs to be relative to where ngen executable runs from
-        param_dir = f"./settings/ngen/NOAH/parameters/"
+        # Absolute path to parameters directory
+        # Noah-OWP requires absolute path since ngen runs from its build directory
+        param_dir = str((self.ngen_setup_dir / "NOAH" / "parameters").resolve()) + "/"
         
         # Create Noah-OWP configuration file
         config_text = f"""&timing
