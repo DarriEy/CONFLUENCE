@@ -203,6 +203,16 @@ SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
 SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
 
+###  4.5 Model Specific settings: NextGen 
+NGEN_INSTALL_PATH: '/path/to/ngen/build'
+NGEN_BMI_MODULES:
+   CFE:
+     bmi_type: 'bmi_c'
+     library_file: './extern/cfe/cmake_build/libcfebmi.so'
+     init_config: './ngen_data/bmi_configs/cfe_config.json'
+     main_output_variable: 'Q_OUT'
+
+
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
 INSTALL_PATH_MIZUROUTE: default                                # Mizuroute installation path. If "default", self.code_dir / installs / mizuRoute / route / bin
@@ -377,7 +387,7 @@ EMULATION_PARALLEL_ENSEMBLE: false                             # Run ensemble si
 EMULATION_MAX_PARALLEL_JOBS: 100                               # Maximum number of parallel jobs when running ensemble
 EMULATION_SKIP_MIZUROUTE: false                                # Skip running mizuRoute (for troubleshooting)
 EMULATION_USE_ATTRIBUTES: false                                # Use attributes to train parameter emulator
-EMULATION_MAX_ITERATIONS': 3                                   # Iterative refinement
+EMULATION_MAX_ITERATIONS: 3                                   # Iterative refinement
 
 ### ============================================= 7. Data and Path Settings: =====================================================================
 

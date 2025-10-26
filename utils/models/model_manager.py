@@ -13,6 +13,7 @@ from utils.models.hype_utils import HYPEPreProcessor # type: ignore
 from utils.models.flash_utils import FLASH # type: ignore
 from utils.models.mizuroute_utils import MizuRoutePreProcessor # type: ignore
 #from utils.models.mesh_utils import MESHPreProcessor # type: ignore
+from utils.models.ngen_utils import NgenPreProcessor # type: ignore
 
 # Model runners
 from utils.models.summa_utils import SummaRunner # type: ignore
@@ -22,6 +23,7 @@ from utils.models.hype_utils import HYPERunner # type: ignore
 from utils.models.flash_utils import FLASH # type: ignore
 from utils.models.mizuroute_utils import MizuRouteRunner # type: ignore
 #from utils.models.mesh_utils import MESHRunner # type: ignore
+from utils.models.ngen_utils import NgenRunner # type: ignore
 
 # Model postprocessors
 from utils.models.summa_utils import SUMMAPostprocessor # type: ignore
@@ -30,6 +32,8 @@ from utils.models.gr_utils import GRPostprocessor # type: ignore
 from utils.models.hype_utils import HYPEPostProcessor # type: ignore
 from utils.models.flash_utils import FLASHPostProcessor # type: ignore
 #from utils.models.mesh_utils import MESHPostProcessor # type: ignore
+from utils.models.ngen_utils import NgenPostprocessor # type: ignore
+
 
 # Visualization
 from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
@@ -109,6 +113,7 @@ class ModelManager:
             'FUSE': FUSEPreProcessor,
             'GR': GRPreProcessor,
             'HYPE': HYPEPreProcessor,
+            'NGEN': NgenPreProcessor,
             'FLASH': None,  # FLASH doesn't have a separate preprocessor
             'MESH': None,  # MESHPreProcessor (commented out)
         }
@@ -118,6 +123,7 @@ class ModelManager:
             'SUMMA': SummaRunner,
             'FUSE': FUSERunner,
             'GR': GRRunner,
+            'NGEN': NgenRunner,
             'HYPE': HYPERunner,
             'FLASH': FLASH,
             'MESH': None,  # MESHRunner (commented out)
@@ -127,6 +133,7 @@ class ModelManager:
         self.postprocessors = {
             'SUMMA': SUMMAPostprocessor,
             'FUSE': FUSEPostprocessor,
+            'NGEN': NgenPostprocessor,
             'GR': GRPostprocessor,
             'HYPE': HYPEPostProcessor,
             'FLASH': FLASHPostProcessor,
@@ -138,6 +145,7 @@ class ModelManager:
             'SUMMA': 'run_summa',
             'FUSE': 'run_fuse',
             'GR': 'run_gr',
+            'NGEN': 'run_model',      
             'HYPE': 'run_hype',
             'FLASH': 'run_flash',
             'MESH': 'run_MESH',

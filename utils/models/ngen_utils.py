@@ -1,0 +1,914 @@
+"""
+NextGen (ngen) Framework Utilities for CONFLUENCE
+
+This module provides preprocessing, execution, and postprocessing utilities
+for the NOAA NextGen Water Resources Modeling Framework within CONFLUENCE.
+
+Classes:
+    NgenPreProcessor: Handles spatial preprocessing and configuration generation
+    NgenRunner: Manages model execution
+    NgenPostprocessor: Processes model outputs
+
+Author: CONFLUENCE Development Team
+Date: 2025
+"""
+
+import os
+import sys
+import json
+import subprocess
+import numpy as np
+import pandas as pd
+import xarray as xr
+import geopandas as gpd
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, Optional, List, Tuple
+from shutil import copyfile
+import netCDF4 as nc4
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+
+class NgenPreProcessor:
+    """
+    Preprocessor for NextGen Framework.
+    
+    Handles conversion of CONFLUENCE data to ngen-compatible formats including:
+    - Catchment geometry (geopackage)
+    - Nexus points (GeoJSON)
+    - Forcing data (NetCDF)
+    - Model configurations (CFE, PET, NOAH-OWP)
+    - Realization configuration (JSON)
+    """
+    
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        """
+        Initialize the NextGen preprocessor.
+        
+        Args:
+            config: Configuration dictionary
+            logger: Logger object
+        """
+        self.config = config
+        self.logger = logger
+        
+        # Directories
+        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
+        self.forcing_dir = self.project_dir / "forcing" / "ngen_input"
+        
+        # Shapefiles
+        self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
+        self.catchment_name = config.get('CATCHMENT_SHP_NAME', 'default')
+        if self.catchment_name == 'default':
+            self.catchment_name = f"{config.get('DOMAIN_NAME')}_HRUs_{config.get('DOMAIN_DISCRETIZATION', 'GRUs')}.shp"
+        
+        self.river_network_path = self._get_default_path('RIVER_NETWORK_SHP_PATH', 'shapefiles/river_network')
+        self.river_network_name = config.get('RIVER_NETWORK_SHP_NAME', 'default')
+        if self.river_network_name == 'default':
+            self.river_network_name = f"{config.get('DOMAIN_NAME')}_riverNetwork_delineate.shp"
+        
+        # Forcing
+        self.basin_forcing_dir = self.project_dir / "forcing" / "basin_averaged_data"
+        
+        # IDs
+        self.hru_id_col = config.get('CATCHMENT_SHP_HRUID', 'HRU_ID')
+        self.domain_name = config.get('DOMAIN_NAME')
+        
+    def _get_default_path(self, key: str, default_subpath: str) -> Path:
+        """Get path from config or use default."""
+        path_value = self.config.get(key, 'default')
+        if path_value == 'default' or path_value is None:
+            return self.project_dir / default_subpath
+        return Path(path_value)
+    
+    def run_preprocessing(self):
+        """
+        Execute complete ngen preprocessing workflow.
+        
+        Steps:
+        1. Create ngen directory structure
+        2. Generate nexus GeoJSON from river network
+        3. Create catchment geopackage
+        4. Prepare forcing data in ngen format
+        5. Generate model-specific configs (CFE, PET, NOAH)
+        6. Generate realization config JSON
+        """
+        self.logger.info("Starting NextGen preprocessing")
+        
+        # Create directory structure
+        self.ngen_setup_dir.mkdir(parents=True, exist_ok=True)
+        self.forcing_dir.mkdir(parents=True, exist_ok=True)
+        (self.ngen_setup_dir / "CFE").mkdir(exist_ok=True)
+        (self.ngen_setup_dir / "PET").mkdir(exist_ok=True)
+        (self.ngen_setup_dir / "NOAH").mkdir(exist_ok=True)
+        
+        # Generate spatial data
+        nexus_file = self.create_nexus_geojson()
+        catchment_file = self.create_catchment_geopackage()
+        
+        # Prepare forcing
+        forcing_file = self.prepare_forcing_data()
+        
+        # Generate model configs
+        self.generate_model_configs()
+        
+        # Generate realization config
+        self.generate_realization_config(catchment_file, nexus_file, forcing_file)
+        
+        self.logger.info("NextGen preprocessing completed")
+        
+    def create_nexus_geojson(self) -> Path:
+        """
+        Create nexus GeoJSON from river network topology.
+        
+        Nexus points represent junctions and outlets in the stream network.
+        Each catchment flows to a nexus point.
+        
+        Returns:
+            Path to nexus GeoJSON file
+        """
+        self.logger.info("Creating nexus GeoJSON")
+        
+        # Load river network
+        river_network_file = self.river_network_path / self.river_network_name
+        if not river_network_file.exists():
+            self.logger.warning(f"River network not found: {river_network_file}")
+            # For lumped catchments, create a single outlet nexus
+            return self._create_simple_nexus()
+        
+        river_gdf = gpd.read_file(river_network_file)
+        
+        # Get segment ID columns
+        seg_id_col = self.config.get('RIVER_NETWORK_SHP_SEGID', 'LINKNO')
+        downstream_col = self.config.get('RIVER_NETWORK_SHP_DOWNSEGID', 'DSLINKNO')
+        
+        # Create nexus points at segment endpoints
+        nexus_features = []
+        
+        for idx, row in river_gdf.iterrows():
+            seg_id = row[seg_id_col]
+            downstream_id = row[downstream_col]
+            
+            # Get endpoint of segment
+            geom = row.geometry
+            if geom.geom_type == 'LineString':
+                endpoint = geom.coords[-1]  # Last point
+            else:
+                # For Point geometries (lumped case)
+                endpoint = (geom.x, geom.y)
+            
+            # Create nexus ID
+            nexus_id = f"nex-{int(seg_id)}"
+            
+            # Determine nexus type
+            if downstream_id == 0 or pd.isna(downstream_id):
+                nexus_type = "poi"  # Point of interest (outlet)
+                toid = f"wb-{int(seg_id)}"
+            else:
+                nexus_type = "nexus"
+                toid = f"nex-{int(downstream_id)}"
+            
+            feature = {
+                "type": "Feature",
+                "id": nexus_id,
+                "properties": {
+                    "toid": toid,
+                    "hl_id": None,
+                    "hl_uri": "NA",
+                    "type": nexus_type
+                },
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": list(endpoint)
+                }
+            }
+            nexus_features.append(feature)
+        
+        # Create GeoJSON
+        nexus_geojson = {
+            "type": "FeatureCollection",
+            "name": "nexus",
+            "xy_coordinate_resolution": 1e-06,
+            "features": nexus_features
+        }
+        
+        # Save to file
+        nexus_file = self.ngen_setup_dir / "nexus.geojson"
+        with open(nexus_file, 'w') as f:
+            json.dump(nexus_geojson, f, indent=2)
+        
+        self.logger.info(f"Created nexus file with {len(nexus_features)} nexus points: {nexus_file}")
+        return nexus_file
+    
+    def _create_simple_nexus(self) -> Path:
+        """Create a simple single-nexus for lumped catchments."""
+        self.logger.info("Creating simple outlet nexus for lumped catchment")
+        
+        # Load catchment to get centroid
+        catchment_file = self.catchment_path / self.catchment_name
+        catchment_gdf = gpd.read_file(catchment_file)
+        
+        # Get catchment centroid (in WGS84)
+        catchment_wgs84 = catchment_gdf.to_crs("EPSG:4326")
+        centroid = catchment_wgs84.geometry.centroid.iloc[0]
+        
+        nexus_geojson = {
+            "type": "FeatureCollection",
+            "name": "nexus",
+            "xy_coordinate_resolution": 1e-06,
+            "features": [{
+                "type": "Feature",
+                "id": "nex-1",
+                "properties": {
+                    "toid": "wb-1",
+                    "hl_id": None,
+                    "hl_uri": "NA",
+                    "type": "poi"
+                },
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [centroid.x, centroid.y]
+                }
+            }]
+        }
+        
+        nexus_file = self.ngen_setup_dir / "nexus.geojson"
+        with open(nexus_file, 'w') as f:
+            json.dump(nexus_geojson, f, indent=2)
+        
+        self.logger.info(f"Created simple nexus file: {nexus_file}")
+        return nexus_file
+    
+    def create_catchment_geopackage(self) -> Path:
+        """
+        Create ngen-compatible geopackage from CONFLUENCE catchment shapefile.
+        
+        The geopackage must contain a 'divides' layer with required attributes:
+        - divide_id: Catchment identifier
+        - toid: ID of downstream catchment (or nexus)
+        - areasqkm: Catchment area
+        - geometry: Polygon geometry
+        
+        Returns:
+            Path to catchment geopackage
+        """
+        self.logger.info("Creating catchment geopackage")
+        
+        # Load catchment shapefile
+        catchment_file = self.catchment_path / self.catchment_name
+        catchment_gdf = gpd.read_file(catchment_file)
+        
+        # Create divides layer
+        divides_gdf = catchment_gdf.copy()
+        
+        # Map to ngen schema
+        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
+        
+        # Determine downstream connections
+        # For now, all catchments drain to the outlet nexus
+        divides_gdf['toid'] = 'nex-1'  # Connect to outlet nexus
+        
+        # Add type
+        divides_gdf['type'] = 'land'
+        
+        # Calculate area in km²
+        if 'areasqkm' not in divides_gdf.columns:
+            # Convert to equal-area projection for area calculation
+            utm_crs = divides_gdf.estimate_utm_crs()
+            divides_utm = divides_gdf.to_crs(utm_crs)
+            divides_gdf['areasqkm'] = divides_utm.geometry.area / 1e6
+        
+        # Select required columns
+        required_cols = ['divide_id', 'toid', 'type', 'areasqkm', 'geometry']
+        optional_cols = ['ds_id', 'lengthkm', 'tot_drainage_areasqkm', 'has_flowline']
+        
+        # Add optional columns with defaults if missing
+        for col in optional_cols:
+            if col not in divides_gdf.columns:
+                if col == 'ds_id':
+                    divides_gdf[col] = 0.0
+                elif col == 'lengthkm':
+                    divides_gdf[col] = 0.0
+                elif col == 'tot_drainage_areasqkm':
+                    divides_gdf[col] = divides_gdf['areasqkm']
+                elif col == 'has_flowline':
+                    divides_gdf[col] = False
+        
+        output_cols = required_cols + [c for c in optional_cols if c in divides_gdf.columns]
+        divides_gdf = divides_gdf[output_cols]
+        
+        # Ensure proper CRS (NAD83 Conus Albers - EPSG:5070)
+        if divides_gdf.crs != "EPSG:5070":
+            divides_gdf = divides_gdf.to_crs("EPSG:5070")
+        
+        # Save as geopackage
+        gpkg_file = self.ngen_setup_dir / f"{self.domain_name}_catchments.gpkg"
+        divides_gdf.to_file(gpkg_file, layer='divides', driver='GPKG')
+        
+        self.logger.info(f"Created catchment geopackage with {len(divides_gdf)} catchments: {gpkg_file}")
+        return gpkg_file
+    
+    def prepare_forcing_data(self) -> Path:
+        """
+        Convert CONFLUENCE basin-averaged ERA5 forcing to ngen format.
+        
+        Processes:
+        1. Load all monthly forcing files
+        2. Merge across time
+        3. Map variable names (ERA5 → ngen)
+        4. Reorganize dimensions (hru, time) → (catchment-id, time)
+        5. Add catchment IDs
+        
+        Returns:
+            Path to ngen forcing NetCDF file
+        """
+        self.logger.info("Preparing forcing data for ngen")
+        
+        # Load catchment IDs
+        catchment_file = self.catchment_path / self.catchment_name
+        catchment_gdf = gpd.read_file(catchment_file)
+        catchment_ids = catchment_gdf[self.hru_id_col].astype(str).tolist()
+        n_catchments = len(catchment_ids)
+        
+        self.logger.info(f"Processing forcing for {n_catchments} catchments")
+        
+        # Get forcing files
+        forcing_files = sorted(self.basin_forcing_dir.glob("*.nc"))
+        if not forcing_files:
+            raise FileNotFoundError(f"No forcing files found in {self.basin_forcing_dir}")
+        
+        self.logger.info(f"Found {len(forcing_files)} forcing files")
+        
+        # Open all files and concatenate
+        datasets = []
+        for f in forcing_files:
+            ds = xr.open_dataset(f)
+            datasets.append(ds)
+        
+        # Concatenate along time dimension
+        forcing_data = xr.concat(datasets, dim='time')
+        
+        # Get time bounds from config
+        sim_start = self.config.get('EXPERIMENT_TIME_START')
+        sim_end = self.config.get('EXPERIMENT_TIME_END')
+        
+        # Select time period if specified
+        if sim_start != 'default' and sim_end != 'default':
+            start_time = pd.to_datetime(sim_start)
+            end_time = pd.to_datetime(sim_end)
+            
+            # Convert forcing time to datetime
+            time_values = pd.to_datetime(forcing_data.time.values)
+            forcing_data['time'] = time_values
+            
+            # Select time slice
+            forcing_data = forcing_data.sel(time=slice(start_time, end_time))
+            
+        self.logger.info(f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}")
+        
+        # Create ngen-formatted dataset
+        ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
+        
+        # Save to file
+        output_file = self.forcing_dir / "forcing.nc"
+        ngen_ds.to_netcdf(output_file)
+        
+        # Close datasets
+        forcing_data.close()
+        for ds in datasets:
+            ds.close()
+        
+        self.logger.info(f"Created ngen forcing file: {output_file}")
+        return output_file
+    
+    def _create_ngen_forcing_dataset(self, forcing_data: xr.Dataset, catchment_ids: List[str]) -> xr.Dataset:
+        """
+        Create ngen-formatted forcing dataset with proper variable mapping.
+        
+        Args:
+            forcing_data: Source forcing dataset (ERA5)
+            catchment_ids: List of catchment identifiers
+            
+        Returns:
+            ngen-formatted xarray Dataset
+        """
+        n_catchments = len(catchment_ids)
+        n_times = len(forcing_data.time)
+        
+        # Convert time to nanoseconds since epoch (ngen format)
+        time_values = forcing_data.time.values
+        if not np.issubdtype(time_values.dtype, np.datetime64):
+            time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01')
+        time_ns = (time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')
+        
+        # Create coordinate arrays
+        catchment_coord = np.arange(n_catchments)
+        time_coord = np.arange(n_times)
+        
+        # Initialize dataset
+        ngen_ds = xr.Dataset(
+            coords={
+                'catchment-id': ('catchment-id', catchment_coord),
+                'time': ('time', time_coord),
+                'str_dim': ('str_dim', [1])
+            }
+        )
+        
+        # Add catchment IDs as string array
+        ngen_ds['ids'] = xr.DataArray(
+            catchment_ids,
+            dims=['catchment-id']
+        )
+        
+        # Add time in nanoseconds
+        # Replicate for each catchment
+        time_data = np.tile(time_ns, (n_catchments, 1))
+        ngen_ds['Time'] = xr.DataArray(
+            time_data,
+            dims=['catchment-id', 'time'],
+            attrs={'units': 'ns'}
+        )
+        epoch_start_ns = np.int64(0)  # nanoseconds since 1970-01-01T00:00:00
+        epoch_end_ns = np.int64(time_ns[-1] - time_ns[0])  # optional, relative span
+
+        ngen_ds['Time'].attrs.update({
+            'epoch_start': '1970-01-01 00:00:00',   # string is fine; many examples use this
+            'epoch_end':   str(int(time_ns[-1]))    # optional but useful
+        })
+        # Map and add forcing variables
+        # ERA5 → ngen variable mapping
+        var_mapping = {
+            'pptrate': 'precip_rate',
+            'airtemp': 'TMP_2maboveground',
+            'spechum': 'SPFH_2maboveground',
+            'airpres': 'PRES_surface',
+            'SWRadAtm': 'DSWRF_surface',
+            'LWRadAtm': 'DLWRF_surface'
+        }
+        
+        # Add variables
+        for era5_var, ngen_var in var_mapping.items():
+            if era5_var in forcing_data:
+                # Get data and transpose to (catchment, time)
+                data = forcing_data[era5_var].values.T  # (time, hru) → (hru, time)
+                
+                # Replicate for multiple catchments if needed
+                if data.shape[0] == 1 and n_catchments > 1:
+                    data = np.tile(data, (n_catchments, 1))
+                
+                ngen_ds[ngen_var] = xr.DataArray(
+                    data,
+                    dims=['catchment-id', 'time']
+                )
+        
+        # Handle wind components
+        # ERA5 provides windspd; ngen needs UGRD and VGRD
+        # Approximate: assume wind from west, so UGRD = windspd, VGRD = 0
+        if 'windspd' in forcing_data:
+            windspd_data = forcing_data['windspd'].values.T
+            
+            if windspd_data.shape[0] == 1 and n_catchments > 1:
+                windspd_data = np.tile(windspd_data, (n_catchments, 1))
+            
+            # Approximate split (could be improved with actual U/V components)
+            ngen_ds['UGRD_10maboveground'] = xr.DataArray(
+                windspd_data * 0.707,  # Assume 45° angle
+                dims=['catchment-id', 'time']
+            )
+            ngen_ds['VGRD_10maboveground'] = xr.DataArray(
+                windspd_data * 0.707,
+                dims=['catchment-id', 'time']
+            )
+        
+        return ngen_ds
+    
+    def generate_model_configs(self):
+        """
+        Generate model-specific configuration files for each catchment.
+        
+        Creates:
+        - CFE (Conceptual Functional Equivalent) configs
+        - PET (Potential Evapotranspiration) configs  
+        - NOAH-OWP (Noah-Owens-Pries) configs
+        """
+        self.logger.info("Generating model configuration files")
+        
+        # Load catchment data for parameters
+        catchment_file = self.catchment_path / self.catchment_name
+        catchment_gdf = gpd.read_file(catchment_file)
+        
+        # Store the CRS for use in config generation
+        self.catchment_crs = catchment_gdf.crs
+        
+        for idx, catchment in catchment_gdf.iterrows():
+            cat_id = str(catchment[self.hru_id_col])
+            
+            # Generate configs
+            self._generate_cfe_config(cat_id, catchment)
+            self._generate_pet_config(cat_id, catchment)
+            self._generate_noah_config(cat_id, catchment)
+        
+        self.logger.info(f"Generated configs for {len(catchment_gdf)} catchments")
+    
+    def _generate_cfe_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
+        """Generate CFE model configuration file."""
+        
+        # Get catchment-specific parameters (or use defaults)
+        # In a full implementation, these would come from soil/vegetation data
+        config_text = f"""forcing_file=BMI
+surface_partitioning_scheme=Schaake
+soil_params.depth=2.0[m]
+soil_params.b=5.0[]
+soil_params.satdk=5.0e-06[m s-1]
+soil_params.satpsi=0.141[m]
+soil_params.slop=0.03[m/m]
+soil_params.smcmax=0.439[m/m]
+soil_params.wltsmc=0.047[m/m]
+soil_params.expon=1.0[]
+soil_params.expon_secondary=1.0[]
+refkdt=1.0
+max_gw_storage=0.0129[m]
+Cgw=1.8e-05[m h-1]
+expon=7.0[]
+gw_storage=0.35[m/m]
+alpha_fc=0.33
+soil_storage=0.35[m/m]
+K_nash=0.03[]
+K_lf=0.01[]
+nash_storage=0.0,0.0
+num_timesteps=1
+verbosity=1
+DEBUG=0
+giuh_ordinates=0.65,0.35
+"""
+        
+        config_file = self.ngen_setup_dir / "CFE" / f"cat-{catchment_id}_bmi_config_cfe_pass.txt"
+        with open(config_file, 'w') as f:
+            f.write(config_text)
+    
+    def _generate_pet_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
+        """Generate PET model configuration file."""
+        
+        # Get catchment centroid for lat/lon
+        centroid = catchment_row.geometry.centroid
+        
+        # Convert to WGS84 if needed
+        if self.catchment_crs != "EPSG:4326":
+            geom_wgs84 = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
+            geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
+            centroid = geom_wgs84.iloc[0].centroid
+        
+        config_text = f"""forcing_file=BMI
+wind_speed_measurement_height_m=10.0
+humidity_measurement_height_m=2.0
+vegetation_height_m=0.12
+zero_plane_displacement_height_m=0.0003
+momentum_transfer_roughness_length_m=0.0
+heat_transfer_roughness_length_m=0.0
+surface_longwave_emissivity=1.0
+surface_shortwave_albedo=0.23
+latitude_degrees={centroid.y}
+longitude_degrees={centroid.x}
+site_elevation_m=100.0
+time_step_size_s=3600
+num_timesteps=1
+"""
+        
+        config_file = self.ngen_setup_dir / "PET" / f"cat-{catchment_id}_pet_config.txt"
+        with open(config_file, 'w') as f:
+            f.write(config_text)
+    
+    def _generate_noah_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
+        """Generate NOAH-OWP model configuration file."""
+        
+        # Get catchment centroid
+        centroid = catchment_row.geometry.centroid
+        if self.catchment_crs != "EPSG:4326":
+            geom_wgs84 = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
+            geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
+            centroid = geom_wgs84.iloc[0].centroid
+        
+        config_text = f"""&timing
+  dt                 = 3600.0
+  startdate          = "200710010000"
+  enddate            = "201912310000"
+  forcing_filename   = "./forcing/cat-{catchment_id}.csv"
+  output_filename    = "out_cat-{catchment_id}.csv"
+/
+
+&parameters
+  parameter_dir      = "./data/NOAH/parameters//"
+  general_table      = "GENPARM.TBL"
+  soil_table         = "SOILPARM.TBL"
+  noahowp_table      = "MPTABLE.TBL"
+  soil_class_name    = "STAS"
+  veg_class_name     = "USGS"
+/
+
+&location
+  lat                = {centroid.y}
+  lon                = {centroid.x}
+  terrain_slope      = 0.0
+  azimuth            = 0.0
+/
+
+&forcing
+  ZREF               = 10.0
+  rain_snow_thresh   = 1.0
+/
+
+&model_options
+"""
+        
+        config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
+        with open(config_file, 'w') as f:
+            f.write(config_text)
+    
+    def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
+        """
+        Generate ngen realization configuration JSON.
+        
+        This is the main configuration file that ngen uses to:
+        - Locate input files (catchments, nexus, forcing)
+        - Define model formulations and their chaining
+        - Set simulation time period
+        - Configure output settings
+        
+        Args:
+            catchment_file: Path to catchment geopackage
+            nexus_file: Path to nexus GeoJSON
+            forcing_file: Path to forcing NetCDF
+        """
+        self.logger.info("Generating realization configuration")
+        
+        # Get ngen install paths
+        ngen_install_dir = Path(self.config.get('NGEN_INSTALL_PATH', 'default'))
+        if ngen_install_dir == Path('default'):
+            ngen_install_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen'
+        
+        # Get simulation times
+        sim_start = self.config.get('EXPERIMENT_TIME_START', '2015-01-01 00:00:00')
+        sim_end = self.config.get('EXPERIMENT_TIME_END', '2015-12-31 23:00:00')
+        
+        # Use absolute paths for all file references
+        forcing_abs_path = str(forcing_file.resolve())
+        pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
+        cfe_config_base = str((self.ngen_setup_dir / "CFE").resolve())
+        noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
+        
+        config = {
+            "global": {
+                "formulations": [{
+                    "name": "bmi_multi",
+                    "params": {
+                        "model_type_name": "bmi_multi_noahowp_cfe",
+                        "forcing_file": "",
+                        "init_config": "",
+                        "allow_exceed_end_time": True,
+                        "main_output_variable": "Q_OUT",
+                        "modules": [
+                            {
+                                "name": "bmi_c++",
+                                "params": {
+                                    "model_type_name": "bmi_c++_sloth",
+                                    "library_file": "./extern/sloth/cmake_build/libslothmodel.so",
+                                    "init_config": "/dev/null",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "z",
+                                    "uses_forcing_file": False,
+                                    "model_params": {
+                                        "sloth_ice_fraction_schaake(1,double,m,node)": 0.0,
+                                        "sloth_ice_fraction_xinanjiang(1,double,1,node)": 0.0,
+                                        "sloth_smp(1,double,1,node)": 0.0
+                                    }
+                                }
+                            },
+                            {
+                                "name": "bmi_c",
+                                "params": {
+                                    "model_type_name": "PET",
+                                    "library_file": "./extern/evapotranspiration/evapotranspiration/cmake_build/libpetbmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{pet_config_base}/cat-{{{{id}}}}_pet_config.txt",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "water_potential_evaporation_flux",
+                                    "registration_function": "register_bmi_pet",
+                                    "uses_forcing_file": False
+                                }
+                            },
+                            {
+                                "name": "bmi_fortran",
+                                "params": {
+                                    "model_type_name": "bmi_fortran_noahowp",
+                                    "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{noah_config_base}/cat-{{{{id}}}}.input",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "QINSUR",
+                                    "variables_names_map": {
+                                        "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
+                                        "Q2": "atmosphere_air_water~vapor__relative_saturation",
+                                        "SFCTMP": "land_surface_air__temperature",
+                                        "UU": "land_surface_wind__x_component_of_velocity",
+                                        "VV": "land_surface_wind__y_component_of_velocity",
+                                        "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
+                                        "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
+                                        "SFCPRS": "land_surface_air__pressure"
+                                    },
+                                    "uses_forcing_file": False
+                                }
+                            },
+                            {
+                                "name": "bmi_c",
+                                "params": {
+                                    "model_type_name": "bmi_c_cfe",
+                                    "library_file": "./extern/cfe/cmake_build/libcfebmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{cfe_config_base}/cat-{{{{id}}}}_bmi_config_cfe_pass.txt",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "Q_OUT",
+                                    "registration_function": "register_bmi_cfe",
+                                    "variables_names_map": {
+                                        "atmosphere_water__liquid_equivalent_precipitation_rate": "QINSUR",
+                                        "water_potential_evaporation_flux": "water_potential_evaporation_flux",
+                                        "ice_fraction_schaake": "sloth_ice_fraction_schaake",
+                                        "ice_fraction_xinanjiang": "sloth_ice_fraction_xinanjiang",
+                                        "soil_moisture_profile": "sloth_smp"
+                                    },
+                                    "uses_forcing_file": False
+                                }
+                            }
+                        ],
+                        "uses_forcing_file": False
+                    }
+                }],
+                "forcing": {
+                    "path": forcing_abs_path,
+                    "provider": "NetCDF"
+                }
+            },
+            "time": {
+                "start_time": sim_start,
+                "end_time": sim_end,
+                "output_interval": 3600
+            }
+        }
+        
+        # Save configuration
+        config_file = self.ngen_setup_dir / "realization_config.json"
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=2)
+        
+        self.logger.info(f"Created realization config: {config_file}")
+
+
+class NgenRunner:
+    """
+    Runner for NextGen Framework simulations.
+    
+    Handles execution of ngen with proper paths and error handling.
+    """
+    
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        """
+        Initialize the NextGen runner.
+        
+        Args:
+            config: Configuration dictionary
+            logger: Logger object
+        """
+        self.config = config
+        self.logger = logger
+        
+        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
+        
+        # Get ngen installation path
+        ngen_install_path = config.get('NGEN_INSTALL_PATH', 'default')
+        if ngen_install_path == 'default':
+            self.ngen_exe = Path(config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build' / 'ngen'
+        else:
+            self.ngen_exe = Path(ngen_install_path) / 'ngen'
+    
+    def run_model(self):
+        """
+        Execute NextGen model simulation.
+        
+        Runs ngen with the prepared catchment, nexus, forcing, and configuration files.
+        """
+        self.logger.info("Starting NextGen model run")
+        
+        # Get experiment info
+        experiment_id = self.config.get('EXPERIMENT_ID', 'default_run')
+        output_dir = self.project_dir / 'simulations' / experiment_id / 'ngen'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup paths for ngen execution
+        catchment_file = self.ngen_setup_dir / f"{self.config.get('DOMAIN_NAME')}_catchments.gpkg"
+        nexus_file = self.ngen_setup_dir / "nexus.geojson"
+        realization_file = self.ngen_setup_dir / "realization_config.json"
+        
+        # Verify files exist
+        for file in [catchment_file, nexus_file, realization_file]:
+            if not file.exists():
+                raise FileNotFoundError(f"Required file not found: {file}")
+        
+        # Setup environment with library paths
+        env = os.environ.copy()
+        
+        # Get ngen conda environment path from config or use default
+        ngen_conda_env = self.config.get('NGEN_CONDA_ENV', 'ngen_py310')
+        ngen_conda_path = Path.home() / '.conda' / 'envs' / ngen_conda_env / 'lib'
+        
+        # Get current conda environment lib path
+        current_conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'confluence')
+        current_conda_path = Path.home() / '.conda' / 'envs' / current_conda_env / 'lib'
+        
+        # Build LD_LIBRARY_PATH with conda environments and existing path
+        # Note: Load system modules (netcdf-c, netcdf-cxx4, udunits) before running CONFLUENCE
+        lib_paths = [
+            str(current_conda_path),  # Current environment first
+            str(ngen_conda_path),     # ngen environment second
+        ]
+        
+        # Add existing LD_LIBRARY_PATH if present (includes system module paths)
+        existing_ld_path = env.get('LD_LIBRARY_PATH', '')
+        if existing_ld_path:
+            lib_paths.append(existing_ld_path)
+        
+        env['LD_LIBRARY_PATH'] = ':'.join(lib_paths)
+        
+        self.logger.info(f"LD_LIBRARY_PATH: {env['LD_LIBRARY_PATH']}")
+        
+        # Build ngen command
+        ngen_cmd = [
+            str(self.ngen_exe),
+            str(catchment_file),
+            "all",
+            str(nexus_file),
+            "all",
+            str(realization_file)
+        ]
+        
+        self.logger.info(f"Running command: {' '.join(ngen_cmd)}")
+        
+        # Run ngen
+        log_file = output_dir / "ngen_log.txt"
+        try:
+            with open(log_file, 'w') as log:
+                result = subprocess.run(
+                    ngen_cmd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                    cwd=self.ngen_exe.parent,  # Run from ngen build directory
+                    env=env  # Use modified environment with library paths
+                )
+            
+            self.logger.info("NextGen model run completed successfully")
+            return output_dir
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"NextGen model run failed with error code {e.returncode}")
+            self.logger.error(f"Check log file: {log_file}")
+            raise
+
+
+class NgenPostprocessor:
+    """
+    Postprocessor for NextGen Framework outputs.
+    
+    Handles extraction and analysis of simulation results.
+    """
+    
+    def __init__(self, config: Dict[str, Any], logger: Any):
+        """
+        Initialize the NextGen postprocessor.
+        
+        Args:
+            config: Configuration dictionary
+            logger: Logger object
+        """
+        self.config = config
+        self.logger = logger
+        
+        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.results_dir = self.project_dir / "results"
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+    
+    def extract_streamflow(self) -> Optional[Path]:
+        """
+        Extract streamflow from ngen outputs.
+        
+        Returns:
+            Path to extracted streamflow file
+        """
+        self.logger.info("Extracting streamflow from ngen outputs")
+        
+        # Implementation depends on ngen output format
+        # This is a placeholder
+        
+        self.logger.warning("Streamflow extraction not yet implemented for ngen")
+        return None

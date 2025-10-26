@@ -48,6 +48,188 @@ print_success() {
     echo -e "${GREEN}Success:${NC} $1"
 }
 
+# Function to auto-detect and setup R environment for rpy2
+setup_r_environment() {
+    print_info "Auto-detecting R environment..."
+    
+    # Check if R is available
+    if ! command -v R >/dev/null 2>&1; then
+        print_error "R is not available in PATH"
+        print_info "Please load R module before running installation, e.g.:"
+        print_info "  module load r/4.5.0  # or your platform's R module"
+        return 1
+    fi
+    
+    local r_version=$(R --version | head -1)
+    print_success "Found R: $r_version"
+    
+    # Set R_HOME if not already set
+    if [[ -z "$R_HOME" ]]; then
+        print_info "R_HOME not set, auto-detecting..."
+        local detected_r_home=$(R RHOME 2>/dev/null)
+        if [[ -n "$detected_r_home" && -d "$detected_r_home" ]]; then
+            export R_HOME="$detected_r_home"
+            print_success "Set R_HOME=$R_HOME"
+        else
+            print_warning "Could not detect R_HOME"
+            print_info "You may need to set it manually: export R_HOME=\$(R RHOME)"
+        fi
+    else
+        print_success "R_HOME already set: $R_HOME"
+    fi
+    
+    # Add R lib to LD_LIBRARY_PATH if not already there
+    if [[ -n "$R_HOME" && -d "$R_HOME/lib" ]]; then
+        if [[ ":$LD_LIBRARY_PATH:" != *":$R_HOME/lib:"* ]]; then
+            export LD_LIBRARY_PATH="$R_HOME/lib:$LD_LIBRARY_PATH"
+            print_info "Added $R_HOME/lib to LD_LIBRARY_PATH"
+        fi
+    fi
+    
+    # Check for required libraries for rpy2 compilation
+    check_rpy2_dependencies
+    
+    return 0
+}
+
+# Function to check for libraries needed by rpy2
+check_rpy2_dependencies() {
+    print_info "Checking for libraries required by rpy2..."
+    
+    local missing_libs=()
+    local found_libs=()
+    
+    # Libraries that rpy2 commonly needs
+    local required_libs=("lzma" "bz2" "z")
+    
+    # Check using ldconfig if available
+    if command -v ldconfig >/dev/null 2>&1; then
+        for lib in "${required_libs[@]}"; do
+            if ldconfig -p 2>/dev/null | grep -q "lib${lib}\.so"; then
+                found_libs+=("$lib")
+            else
+                missing_libs+=("$lib")
+            fi
+        done
+    else
+        # Alternative: check common library paths
+        local lib_paths=("/usr/lib" "/usr/lib64" "/lib" "/lib64")
+        if [[ -n "$LD_LIBRARY_PATH" ]]; then
+            IFS=':' read -ra ADDITIONAL_PATHS <<< "$LD_LIBRARY_PATH"
+            lib_paths+=("${ADDITIONAL_PATHS[@]}")
+        fi
+        
+        for lib in "${required_libs[@]}"; do
+            local found=false
+            for path in "${lib_paths[@]}"; do
+                if [[ -f "$path/lib${lib}.so" ]] || [[ -f "$path/lib${lib}.a" ]]; then
+                    found=true
+                    break
+                fi
+            done
+            if $found; then
+                found_libs+=("$lib")
+            else
+                missing_libs+=("$lib")
+            fi
+        done
+    fi
+    
+    if [[ ${#found_libs[@]} -gt 0 ]]; then
+        print_success "Found libraries: ${found_libs[*]}"
+    fi
+    
+    if [[ ${#missing_libs[@]} -gt 0 ]]; then
+        print_warning "Could not detect libraries: ${missing_libs[*]}"
+        print_info "These libraries may be required for rpy2 compilation."
+        print_info "If you have loaded modules providing these libraries, they should work."
+        print_info "Common module names: xz, bzip2, libtirpc, zlib"
+        print_info ""
+        print_info "If installation fails, try loading additional modules or using ABI mode:"
+        print_info "  export RPY2_CFFI_MODE=ABI"
+    fi
+    
+    return 0
+}
+
+# Function to install Python packages with R environment
+install_python_requirements() {
+    local requirements_file="$1"
+    local use_break_system_packages="${2:-true}"
+    
+    if [[ ! -f "$requirements_file" ]]; then
+        print_error "Requirements file not found: $requirements_file"
+        return 1
+    fi
+    
+    # Set up pip flags based on whether we're in a venv/conda
+    local pip_flags=""
+    if [[ -z "$VIRTUAL_ENV" ]] && [[ -z "$CONDA_DEFAULT_ENV" ]]; then
+        if [[ "$use_break_system_packages" == "true" ]]; then
+            pip_flags="--break-system-packages"
+        fi
+    fi
+    
+    print_info "Installing Python dependencies from: $requirements_file"
+    print_info "This may take several minutes, especially for packages like rpy2..."
+    echo ""
+    
+    # Default to API mode for better performance
+    if [[ -z "$RPY2_CFFI_MODE" ]]; then
+        export RPY2_CFFI_MODE=API
+        print_info "Using RPY2_CFFI_MODE=API (better performance)"
+    else
+        print_info "Using user-specified RPY2_CFFI_MODE=$RPY2_CFFI_MODE"
+    fi
+    
+    # Try to install with current environment
+    if pip install -r "$requirements_file" $pip_flags; then
+        print_success "All dependencies installed successfully"
+        return 0
+    else
+        local exit_code=$?
+        print_error "Installation failed with RPY2_CFFI_MODE=$RPY2_CFFI_MODE"
+        
+        # If we were in API mode and it failed, try ABI mode
+        if [[ "$RPY2_CFFI_MODE" == "API" ]]; then
+            echo ""
+            print_warning "API mode installation failed. This is common on HPC systems."
+            print_info "Retrying with RPY2_CFFI_MODE=ABI (more compatible, slightly slower)..."
+            echo ""
+            
+            export RPY2_CFFI_MODE=ABI
+            
+            if pip install -r "$requirements_file" $pip_flags; then
+                print_success "Dependencies installed successfully in ABI mode"
+                print_info "Note: rpy2 is using ABI mode. This is fully functional but slightly slower than API mode."
+                return 0
+            fi
+        fi
+        
+        # Both attempts failed
+        echo ""
+        print_error "Failed to install dependencies"
+        echo ""
+        print_info "Troubleshooting steps:"
+        print_info "1. Verify R is loaded and accessible:"
+        print_info "     R --version"
+        print_info "     echo \$R_HOME"
+        print_info ""
+        print_info "2. Ensure required library modules are loaded, e.g.:"
+        print_info "     module load xz bzip2 libtirpc  # names vary by platform"
+        print_info ""
+        print_info "3. Try forcing ABI mode before installation:"
+        print_info "     export RPY2_CFFI_MODE=ABI"
+        print_info "     pip install -r requirements.txt --break-system-packages"
+        print_info ""
+        print_info "4. Check if R has required development libraries:"
+        print_info "     ls \$R_HOME/lib/"
+        echo ""
+        
+        return $exit_code
+    fi
+}
+
 # Function to find CONFLUENCE.py
 find_confluence_script() {
     local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
@@ -206,16 +388,24 @@ setup_install_env() {
     local requirements_file="${confluence_dir}/requirements.txt"
     
     print_info "Setting up Python environment for installation..."
+    echo ""
+    
+    # Setup R environment first (needed for rpy2)
+    if ! setup_r_environment; then
+        print_error "R environment setup failed"
+        return 1
+    fi
+    
+    echo ""
     
     # Check if we're in a conda environment
     if [[ -n "${CONDA_DEFAULT_ENV}" ]]; then
-        print_warning "Running in conda environment: ${CONDA_DEFAULT_ENV}"
-        print_warning "Will attempt to install dependencies in current environment"
+        print_info "Running in conda environment: ${CONDA_DEFAULT_ENV}"
+        print_info "Will install dependencies in current conda environment"
+        echo ""
         
         if [[ -f "$requirements_file" ]]; then
-            print_info "Installing dependencies from requirements.txt..."
-            if ! pip install -r "$requirements_file"; then
-                print_error "Failed to install dependencies"
+            if ! install_python_requirements "$requirements_file" "false"; then
                 return 1
             fi
         else
@@ -245,12 +435,12 @@ setup_install_env() {
             else
                 print_warning "Dependencies missing or outdated in existing environment"
                 print_info "Reinstalling dependencies..."
+                echo ""
                 
                 pip install --upgrade pip
                 
                 if [[ -f "$requirements_file" ]]; then
-                    if ! pip install -r "$requirements_file"; then
-                        print_error "Failed to install dependencies"
+                    if ! install_python_requirements "$requirements_file" "false"; then
                         return 1
                     fi
                 else
@@ -261,20 +451,26 @@ setup_install_env() {
                     fi
                 fi
                 
-                print_success "Dependencies installed successfully"
+                print_success "Dependencies updated successfully"
                 return 0
             fi
         else
-            print_error "Virtual environment exists but activation script not found"
+            print_error "Virtual environment activation script not found"
             return 1
         fi
     else
-        # Create new venv
+        # Create new virtual environment
         print_info "Creating new virtual environment: $venv_path"
-        if ! $python_cmd -m venv "$venv_path"; then
+        
+        pyenv install 3.11.0
+        pyenv local 3.11.0
+        
+        if ! $python_cmd -m venv "$venv_path" python=3.11; then
             print_error "Failed to create virtual environment"
             return 1
         fi
+        
+        print_success "Virtual environment created"
         
         # Activate it
         source "${venv_path}/bin/activate"
@@ -282,14 +478,15 @@ setup_install_env() {
         # Update python_cmd to use venv python
         python_cmd=$(which python3 || which python)
         
-        # Install dependencies
-        print_info "Installing Python dependencies..."
+        # Upgrade pip
+        print_info "Upgrading pip..."
         pip install --upgrade pip
         
+        echo ""
+        
+        # Install dependencies
         if [[ -f "$requirements_file" ]]; then
-            print_info "Installing from requirements.txt..."
-            if ! pip install -r "$requirements_file"; then
-                print_error "Failed to install dependencies from requirements.txt"
+            if ! install_python_requirements "$requirements_file" "false"; then
                 return 1
             fi
         else
@@ -348,11 +545,16 @@ setup_python_env() {
         print_info "Installing Python dependencies..."
         pip install --upgrade pip
         
+        # Setup R environment for rpy2
+        if ! setup_r_environment; then
+            print_warning "R environment setup had issues, continuing anyway..."
+        fi
+        
         # Check if requirements.txt exists and use it
         local requirements_file="${confluence_dir}/requirements.txt"
         if [[ -f "$requirements_file" ]]; then
             print_info "Found requirements.txt - installing all dependencies..."
-            if ! pip install -r "$requirements_file"; then
+            if ! install_python_requirements "$requirements_file" "false"; then
                 print_error "Failed to install dependencies from requirements.txt"
                 return 1
             fi
@@ -427,8 +629,16 @@ EOF
             echo "Python command: ${python_cmd:-'Not found'}"
             echo "Python version: $(${python_cmd} --version 2>/dev/null || echo 'Unknown')"
             echo "Virtual env: ${VIRTUAL_ENV:-'None active'}"
+            echo "Conda env: ${CONDA_DEFAULT_ENV:-'None active'}"
             echo "Working directory: $(pwd)"
             echo "CONFLUENCE_CODE_DIR: ${CONFLUENCE_CODE_DIR:-'Not set'}"
+            echo ""
+            echo "R Environment:"
+            echo "  R available: $(command -v R >/dev/null 2>&1 && echo 'Yes' || echo 'No')"
+            echo "  R_HOME: ${R_HOME:-'Not set'}"
+            if command -v R >/dev/null 2>&1; then
+                echo "  R version: $(R --version 2>/dev/null | head -1)"
+            fi
             exit 0
             ;;
         --wrapper-debug)
@@ -472,7 +682,8 @@ main() {
     local python_cmd
     if ! python_cmd=$(find_python); then
         print_error "Python ${MIN_PYTHON_VERSION}+ not found"
-        print_info "Please install Python ${MIN_PYTHON_VERSION} or later"
+        print_info "Please install or load Python ${MIN_PYTHON_VERSION} or later"
+        print_info "Example: module load python/3.11.5"
         exit 1
     fi
     
@@ -481,6 +692,15 @@ main() {
     # Handle installation mode - use special setup
     if [[ "$run_install" == "true" ]]; then
         print_info "CONFLUENCE installation mode"
+        echo ""
+        print_info "Prerequisites:"
+        print_info "  - Python 3.8+ (found: $(python3 --version 2>/dev/null || echo 'unknown'))"
+        print_info "  - R (found: $(command -v R >/dev/null 2>&1 && R --version 2>/dev/null | head -1 || echo 'not found'))"
+        print_info "  - Required library modules (xz, bzip2, etc.)"
+        echo ""
+        print_info "Make sure you have loaded all necessary modules before installation."
+        print_info "Example module load commands (adjust for your platform):"
+        print_info "  module load gcc openmpi python r netcdf gdal"
         echo ""
         
         # Set up Python environment specifically for install
@@ -510,6 +730,13 @@ main() {
         
         echo ""
         print_success "Installation complete!"
+        print_info ""
+        print_info "To use CONFLUENCE in the future, activate the environment:"
+        if [[ -n "${VIRTUAL_ENV}" ]]; then
+            print_info "  source ${VIRTUAL_ENV}/bin/activate"
+        elif [[ -f "${confluence_dir}/.confluence_env" ]]; then
+            print_info "  source ${confluence_dir}/.confluence_env"
+        fi
         exit 0
     fi
     
@@ -541,4 +768,4 @@ main() {
 trap 'echo -e "\nInterrupted"; exit 130' INT TERM
 
 # Run main function with all arguments
-main "$@" "$@"
+main "$@"
