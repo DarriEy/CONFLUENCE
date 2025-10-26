@@ -582,12 +582,13 @@ num_timesteps=1
     
     def _generate_noah_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
         """
-        Generate NOAH-OWP model configuration file.
+        Generate NOAH-OWP model configuration file in Fortran namelist format.
         
-        IMPORTANT: When NOAH-OWP-Modular is used as a BMI module in ngen,
-        it uses a simple key=value format, NOT traditional Fortran namelists.
-        The configuration is minimal since most settings are passed through
-        the realization config JSON.
+        NOAH-OWP-Modular requires proper Fortran namelist syntax with
+        &namelist_name ... / blocks. This is required even when running
+        through BMI in ngen.
+        
+        Reference: NOAA-OWP/noah-owp-modular NamelistRead.f90
         """
         
         # Get catchment centroid
@@ -605,13 +606,70 @@ num_timesteps=1
         else:
             area_km2 = catchment_row.geometry.area / 1e6
         
-        # Simple key=value format for NOAH-OWP BMI
-        # Reference: NOAA-OWP/noah-owp-modular BMI implementation
-        config_text = f"""# NOAH-OWP BMI Configuration for ngen
-# Catchment: {catchment_id}
-lat={centroid.y}
-lon={centroid.x}
-area_km2={area_km2}
+        # Get soil and vegetation types from catchment data or use defaults
+        # TODO: Update these column names to match your actual shapefile attributes
+        isltyp = int(catchment_row.get('soil_type', 4))  # Default: loam
+        vegtyp = int(catchment_row.get('veg_type', 10))   # Default: grassland
+        
+        # Fortran namelist format for NOAH-OWP BMI
+        # Note: forcing_filename and output_filename are required by the namelist reader
+        # but are not actually used when running in ngen (BMI handles I/O)
+        config_text = f"""&noahowp_options
+! Catchment: {catchment_id}
+! Location
+  lat             = {centroid.y}
+  lon             = {centroid.x}
+  
+! Terrain
+  terrain_slope   = 0.0
+  azimuth         = 0.0
+  
+! Time parameters
+  dt              = 3600
+  
+! Spatial parameters  
+  nsoil           = 4
+  nsnow           = 3
+  
+! Land classification
+  isltyp          = {isltyp}
+  vegtyp          = {vegtyp}
+  croptype        = 0
+  sfctyp          = 1
+  
+! File paths (required by namelist reader but not used in ngen/BMI mode)
+  forcing_filename = "dummy.txt"
+  output_filename  = "dummy_output.txt"
+  
+! Parameter tables
+  parameter_dir    = "./"
+  general_table    = "GENPARM.TBL"
+  soil_table       = "SOILPARM.TBL"
+  noahowp_table    = "MPTABLE.TBL"
+  
+! Soil and vegetation class names
+  soil_class_name  = "STAS"
+  veg_class_name   = "MODIFIED_IGBP_MODIS_NOAH"
+  
+! Model physics options
+  precip_phase_option            = 1
+  runoff_option                  = 3
+  drainage_option                = 3
+  frozen_soil_option             = 1
+  dynamic_vic_option             = 1
+  dynamic_veg_option             = 4
+  snow_albedo_option             = 2
+  radiative_transfer_option      = 3
+  sfc_drag_coeff_option          = 1
+  canopy_stom_resist_option      = 1
+  crop_model_option              = 0
+  snowsoil_temp_time_option      = 3
+  soil_temp_boundary_option      = 2
+  supercooled_water_option       = 1
+  stomatal_resistance_option     = 1
+  evap_srfc_resistance_option    = 1
+  subsurface_option              = 1
+/
 """
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
