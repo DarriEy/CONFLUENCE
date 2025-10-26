@@ -264,7 +264,7 @@ class NgenPreProcessor:
             "xy_coordinate_resolution": 1e-06,
             "features": [{
                 "type": "Feature",
-                "id": f"nex-{catchment_id}",  # Make sure catchment_id already has 'cat-' prefix or adjust accordingly
+                "id": f"nex-{catchment_id}",
                 "properties": {
                     "toid": "",  # Terminal outlet - empty toid breaks the cycle
                     "hl_id": None,
@@ -308,7 +308,7 @@ class NgenPreProcessor:
         divides_gdf = catchment_gdf.copy()
         
         # Map to ngen schema
-        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].apply(lambda x: f'cat-{x}')
+        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
         divides_gdf['id'] = divides_gdf['divide_id'].apply(lambda x: f'wb-{x}')  # Waterbody ID
         
         # Determine downstream connections
@@ -799,7 +799,7 @@ num_timesteps=1
                                     "model_type_name": "PET",
                                     "library_file": "./extern/evapotranspiration/evapotranspiration/cmake_build/libpetbmi.so",
                                     "forcing_file": "",
-                                    "init_config": f"{pet_config_base}/cat-{{{{id}}}}_pet_config.txt",
+                                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "water_potential_evaporation_flux",
                                     "registration_function": "register_bmi_pet",
@@ -812,7 +812,7 @@ num_timesteps=1
                                     "model_type_name": "bmi_fortran_noahowp",
                                     "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
                                     "forcing_file": "",
-                                    "init_config": f"{noah_config_base}/cat-{{{{id}}}}.input",
+                                    "init_config": f"{noah_config_base}/{{{{id}}}}.input",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "QINSUR",
                                     "uses_forcing_file": False,
@@ -834,7 +834,7 @@ num_timesteps=1
                                     "model_type_name": "bmi_c_cfe",
                                     "library_file": "./extern/cfe/cmake_build/libcfebmi.so",
                                     "forcing_file": "",
-                                    "init_config": f"{cfe_config_base}/cat-{{{{id}}}}_bmi_config_cfe_pass.txt",
+                                    "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "Q_OUT",
                                     "registration_function": "register_bmi_cfe",
