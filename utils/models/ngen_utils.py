@@ -887,6 +887,7 @@ num_timesteps=1
                     "provider": "NetCDF"
                 }
             },
+            "output_root": str((self.project_dir / "simulations" / self.config.get('EXPERIMENT_ID', 'run_1') / "ngen").resolve()),
             "time": {
                 "start_time": sim_start,
                 "end_time": sim_end,
