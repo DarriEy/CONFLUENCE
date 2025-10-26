@@ -597,21 +597,14 @@ num_timesteps=1
             geom_wgs84 = geom_wgs84.to_crs("EPSG:4326")
             centroid = geom_wgs84.iloc[0].centroid
         
-        # Calculate area in km²
-        if self.catchment_crs != "EPSG:5070":
-            geom_area = gpd.GeoSeries([catchment_row.geometry], crs=self.catchment_crs)
-            geom_area = geom_area.to_crs("EPSG:5070")
-            area_km2 = geom_area.geometry.area.iloc[0] / 1e6
-        else:
-            area_km2 = catchment_row.geometry.area / 1e6
-        
         # Simple key=value format for NOAH-OWP BMI
         # Reference: NOAA-OWP/noah-owp-modular BMI implementation
+        # Note: NOAH-OWP BMI for ngen typically only needs lat/lon
+        # area_km2 is NOT a valid NOAH-OWP parameter and causes errors
         config_text = f"""# NOAH-OWP BMI Configuration for ngen
 # Catchment: {catchment_id}
 lat={centroid.y}
 lon={centroid.x}
-area_km2={area_km2}
 """
         
         config_file = self.ngen_setup_dir / "NOAH" / f"cat-{catchment_id}.input"
