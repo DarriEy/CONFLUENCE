@@ -204,11 +204,12 @@ class NgenPreProcessor:
             
             # Determine nexus type
             if downstream_id == 0 or pd.isna(downstream_id):
-                nexus_type = "poi"  # Point of interest (outlet)
-                toid = f"wb-{int(seg_id)}"
+                nexus_type = "poi"
+                toid = ""                              # terminal sink (no receiver)
             else:
                 nexus_type = "nexus"
-                toid = f"nex-{int(downstream_id)}"
+                toid = f"wb-{int(downstream_id)}"      # nexus -> downstream catchment
+
             
             feature = {
                 "type": "Feature",
