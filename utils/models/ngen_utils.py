@@ -264,7 +264,7 @@ class NgenPreProcessor:
             "xy_coordinate_resolution": 1e-06,
             "features": [{
                 "type": "Feature",
-                "id": f"nex-{catchment_id}",
+                "id": f"nex-{catchment_id}",  # Make sure catchment_id already has 'cat-' prefix or adjust accordingly
                 "properties": {
                     "toid": "",  # Terminal outlet - empty toid breaks the cycle
                     "hl_id": None,
@@ -308,7 +308,7 @@ class NgenPreProcessor:
         divides_gdf = catchment_gdf.copy()
         
         # Map to ngen schema
-        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].astype(str)
+        divides_gdf['divide_id'] = divides_gdf[self.hru_id_col].apply(lambda x: f'cat-{x}')
         divides_gdf['id'] = divides_gdf['divide_id'].apply(lambda x: f'wb-{x}')  # Waterbody ID
         
         # Determine downstream connections
