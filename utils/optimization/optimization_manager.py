@@ -302,14 +302,16 @@ class OptimizationManager:
         
         try:
             hydrological_models = self.config.get('HYDROLOGICAL_MODEL', '').split(',')
-            
+                        
             for model in hydrological_models:
-                model = model.strip()
-                
+                model = model.strip().upper()
+
                 if model == 'SUMMA':
                     return self._calibrate_summa(opt_algorithm)
                 elif model == 'FUSE':
                     return self._calibrate_fuse(opt_algorithm)
+                elif model == 'NGEN':
+                    return self._calibrate_ngen(opt_algorithm)
                 else:
                     self.logger.warning(f"Calibration for model {model} not yet implemented")
             
