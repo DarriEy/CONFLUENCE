@@ -443,6 +443,59 @@ class OptimizationManager:
             self.logger.error(traceback.format_exc())
             return None
 
+    def _calibrate_ngen(self, algorithm: str) -> Optional[Path]:
+        """
+        Calibrate NextGen (NGEN) using the specified algorithm.
+        Mirrors the FUSE calibration flow but dispatches to NgenOptimizer.
+        """
+        supported_algorithms = [
+            # Population-based
+            'PSO', 'SCE-UA', 'DDS', 'DE', 'NSGA-II',
+            # Gradient-based
+            'ADAM', 'LBFGS'
+        ]
+        if algorithm not in supported_algorithms:
+            raise ValueError(
+                f"Unsupported optimization algorithm for NGEN: {algorithm}. "
+                f"Supported: {', '.join(supported_algorithms)}"
+            )
+
+        # Create optimization directory if it doesn't exist
+        opt_dir = self.project_dir / "optimisation"
+        opt_dir.mkdir(parents=True, exist_ok=True)
+
+        # Lazy import so we don’t require NGEN unless used
+        from ngen_optimiser import NgenOptimizer
+
+        self.logger.info(f"Using {algorithm} optimization for NGEN")
+        ngen_opt = NgenOptimizer(self.config, self.logger, opt_dir)
+
+        # Dispatch to the chosen algorithm (these methods exist in NgenOptimizer)
+        if algorithm == 'PSO':
+            results_file = ngen_opt.run_pso()
+        elif algorithm == 'SCE-UA':
+            results_file = ngen_opt.run_sce()
+        elif algorithm == 'DDS':
+            results_file = ngen_opt.run_dds()
+        elif algorithm == 'DE':
+            results_file = ngen_opt.run_de()
+        elif algorithm == 'NSGA-II':
+            results_file = ngen_opt.run_nsga2()
+        elif algorithm == 'ADAM':
+            steps = self.config.get('ADAM_STEPS', 100)
+            lr    = self.config.get('ADAM_LEARNING_RATE', 0.01)
+            results_file = ngen_opt.run_adam(steps=steps, lr=lr)
+        elif algorithm == 'LBFGS':
+            steps = self.config.get('LBFGS_STEPS', 50)
+            lr    = self.config.get('LBFGS_LEARNING_RATE', 0.1)
+            results_file = ngen_opt.run_lbfgs(steps=steps, lr=lr)
+        else:
+            raise RuntimeError(f"Unhandled NGEN algorithm: {algorithm}")
+
+        self.logger.info(f"NGEN calibration complete. Results: {results_file}")
+        return results_file
+
+
     def differentiable_parameter_emulation(self):
         """
         Runs the full Differentiable Parameter Emulation (DPE) workflow.
