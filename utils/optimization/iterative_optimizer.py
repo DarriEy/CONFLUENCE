@@ -2901,7 +2901,7 @@ if __name__ == "__main__":
         if self.use_parallel:
             self.logger.info(f"Parallel processing: {self.num_processes} processes")
 
-        if 'ngen' in self.models_to_run:
+        if 'ngen' in self.models_to_run.lower():
             algorithm = self.config.get('OPTIMIZATION_ALGORITHM', 'DDS')
             
             if algorithm == 'DDS':
