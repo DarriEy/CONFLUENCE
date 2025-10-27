@@ -313,33 +313,19 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         
         for nexus_file in nexus_files:
             try:
-                df = pd.read_csv(nexus_file)
+                # Read CSV - ngen output has no header, format is: index, datetime, flow
+                df = pd.read_csv(nexus_file, header=None, names=['index', 'datetime', 'flow'])
                 
-                # Find flow column
-                flow_col = None
-                for col_name in ['flow', 'Flow', 'Q_OUT', 'streamflow', 'discharge']:
-                    if col_name in df.columns:
-                        flow_col = col_name
-                        break
-                
-                if flow_col is None:
-                    continue
-                
-                # Find time column
-                time_col = None
-                for col_name in ['Time', 'time', 'datetime', 'date']:
-                    if col_name in df.columns:
-                        time_col = col_name
-                        break
-                
-                if time_col is None:
+                # Check if we got data
+                if df.empty:
+                    self.logger.warning(f"Empty file: {nexus_file}")
                     continue
                 
                 # Extract data
                 nexus_id = nexus_file.stem.replace('_output', '')
                 streamflow_df = pd.DataFrame({
-                    'datetime': pd.to_datetime(df[time_col]) if 'Time' in df.columns else pd.to_datetime(df[time_col]),
-                    'streamflow_cms': df[flow_col],
+                    'datetime': pd.to_datetime(df['datetime']),
+                    'streamflow_cms': df['flow'],
                     'nexus_id': nexus_id
                 })
                 
