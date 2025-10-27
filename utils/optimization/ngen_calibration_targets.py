@@ -54,59 +54,85 @@ class NgenCalibrationTarget:
         pass
     
     def _get_catchment_area(self) -> float:
-        """Get catchment area for unit conversion"""
-        try:
-            # Try river basins shapefile first
-            river_basins_path = self.config.get('RIVER_BASINS_PATH', 'default')
-            if river_basins_path == 'default':
-                river_basins_path = self.project_dir / 'shapefiles' / 'river_basins'
+        """
+        Return catchment area in km².
+        Priority/order:
+        1) config['catchment']['area_km2']
+        2) sum of area from a configured catchment shapefile path
+        3) auto-discover *HRUs_GRUs.shp under domain/<domain>/shapefiles/catchment/
+        We project to an equal-area CRS if needed before computing geometry areas.
+        """
+        from pathlib import Path
+        import geopandas as gpd
+        import numpy as np
+
+        # direct override in config
+        cfg_area = (self.config.get("catchment", {}) or {}).get("area_km2")
+        if cfg_area:
+            self.logger.info("Using catchment area from config: %.3f km²", float(cfg_area))
+            return float(cfg_area)
+
+        domain = (self.config.get("domain_name")
+                or self.config.get("domain")
+                or self.config.get("ngen", {}).get("domain")
+                or "")
+        if "paths" in self.config and "domain_dir" in self.config["paths"]:
+            domain_dir = Path(self.config["paths"]["domain_dir"])
+        else:
+            domain_dir = self.project_dir / f"domain_{domain}"
+
+        # explicit shapefile path in config?
+        shp_cfg = (self.config.get("shapefiles", {}) or {}).get("catchment")
+        candidates = []
+        if shp_cfg:
+            candidates.append(Path(shp_cfg))
+
+        # convention used in your logs
+        shp_dir = domain_dir / "shapefiles" / "catchment"
+        if shp_dir.exists():
+            # prefer HRUs_GRUs style files first
+            candidates += sorted(shp_dir.glob("*HRUs_GRUs.shp"))
+            # otherwise, any polygon shapefile
+            candidates += [p for p in sorted(shp_dir.glob("*.shp")) if p not in candidates]
+
+        shp_path = next((p for p in candidates if p.exists()), None)
+        if shp_path is None:
+            self.logger.warning(
+                "Could not find catchment shapefile. Looked for: %s",
+                [str(p) for p in candidates] or [str(shp_dir / '<*.shp>')]
+            )
+            self.logger.warning("Using default catchment area: 100.0 km²")
+            return 100.0
+
+        self.logger.info("Reading catchment shapefile: %s", shp_path)
+        gdf = gpd.read_file(shp_path)
+
+        # If there's a precomputed area column, use it (common: 'area', 'AREA', 'Area_m2', etc.)
+        area_cols = [c for c in gdf.columns if c.lower() in ("area", "area_m2", "areasqkm", "area_km2")]
+        if area_cols:
+            col = area_cols[0]
+            vals = gdf[col].astype(float)
+            # detect unit by magnitude; prefer km² columns if indicated
+            if col.lower() in ("areasqkm", "area_km2"):
+                area_km2 = float(np.nansum(vals))
             else:
-                river_basins_path = Path(river_basins_path)
-            
-            river_basins_name = self.config.get('RIVER_BASINS_NAME', 'default')
-            if river_basins_name == 'default':
-                river_basins_name = f"{self.domain_name}_riverBasins.shp"
-            
-            shapefile = river_basins_path / river_basins_name
-            
-            if shapefile.exists():
-                gdf = gpd.read_file(shapefile)
-                area_col = self.config.get('RIVER_BASINS_AREA_COL', 'GRU_area')
-                if area_col in gdf.columns:
-                    total_area = gdf[area_col].sum()
-                    self.logger.info(f"Catchment area from river basins: {total_area:.2f} km²")
-                    return total_area
-            
-            # Try catchment shapefile as fallback
-            catchment_path = self.config.get('CATCHMENT_PATH', 'default')
-            if catchment_path == 'default':
-                catchment_path = self.project_dir / 'shapefiles' / 'catchment'
-            else:
-                catchment_path = Path(catchment_path)
-            
-            catchment_name = self.config.get('CATCHMENT_SHP_NAME', 'default')
-            if catchment_name == 'default':
-                catchment_name = f"{self.domain_name}_HRUs.shp"
-            
-            shapefile = catchment_path / catchment_name
-            
-            if shapefile.exists():
-                gdf = gpd.read_file(shapefile)
-                # Try different possible area column names
-                for area_col in ['HRU_area', 'GRU_area', 'area_km2', 'Area_km2']:
-                    if area_col in gdf.columns:
-                        total_area = gdf[area_col].sum()
-                        self.logger.info(f"Catchment area from HRUs: {total_area:.2f} km²")
-                        return total_area
-            
-            # If no shapefile available, use default or config value
-            default_area = self.config.get('CATCHMENT_AREA_KM2', 100.0)
-            self.logger.warning(f"Could not find area from shapefiles, using default: {default_area} km²")
-            return default_area
-            
-        except Exception as e:
-            self.logger.error(f"Error getting catchment area: {e}")
-            return 100.0  # Default fallback
+                # assume m² if not labelled as km²
+                area_km2 = float(np.nansum(vals)) / 1e6
+            self.logger.info("Catchment area from attribute '%s': %.3f km²", col, area_km2)
+            return area_km2
+
+        # Otherwise compute from geometry; reproject if necessary to equal-area
+        if gdf.crs is None or gdf.crs.is_geographic:
+            # CONUS equal-area; switch if your domain is elsewhere
+            equal_area = "EPSG:5070"
+            self.logger.info("Projecting geometries to %s for area calculation", equal_area)
+            gdf = gdf.to_crs(equal_area)
+
+        area_m2 = gdf.geometry.area.sum()
+        area_km2 = float(area_m2 / 1e6)
+        self.logger.info("Catchment area from geometry: %.3f km²", area_km2)
+        return area_km2
+
     
     def calculate_metrics(self, experiment_id: str = None) -> Dict[str, float]:
         """Calculate performance metrics (to be implemented by subclasses)"""
@@ -130,59 +156,123 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         # Streamflow-specific settings
         self.station_id = config.get('STATION_ID', None)
         self.calibration_period = self._parse_calibration_period()
-        
-    def _load_observations(self):
-        """Load observed streamflow data"""
-        obs_file = self.config.get('OBSERVED_STREAMFLOW_FILE', None)
-        
-        if obs_file is None or obs_file == 'default':
-            obs_file = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
+            
+    def _load_observations(self) -> pd.Series:
+        """
+        Load observed streamflow and return a UTC-indexed Series in m³/s aligned to the model window.
+        Priority:
+        1) config['observations']['streamflow']['path']
+        2) domain_{domain}/observations/streamflow/*_streamflow_obs.csv
+        3) any .csv under observations/streamflow/
+        The loader tries common column names and units (cfs/cms).
+        """
+        import re
+        from pathlib import Path
+
+        # ---- resolve domain + base dirs ----
+        domain = (self.config.get("domain_name")
+                or self.config.get("domain")
+                or self.config.get("ngen", {}).get("domain")
+                or "")
+        domain_dir = None
+        # Allow explicit project/domain override
+        if "paths" in self.config and "domain_dir" in self.config["paths"]:
+            domain_dir = Path(self.config["paths"]["domain_dir"])
         else:
-            obs_file = Path(obs_file)
-        
-        if not obs_file.exists():
-            self.logger.warning(f"Observed streamflow file not found: {obs_file}")
-            self.obs_data = None
-            return
-        
-        try:
-            # Read observed data
-            self.obs_data = pd.read_csv(obs_file)
-            
-            # Standardize column names
-            date_col = None
-            flow_col = None
-            
-            for col in self.obs_data.columns:
-                col_lower = col.lower()
-                if col_lower in ['date', 'datetime', 'time']:
-                    date_col = col
-                elif col_lower in ['discharge', 'streamflow', 'flow', 'q', 'q_obs']:
-                    flow_col = col
-            
-            if date_col is None or flow_col is None:
-                self.logger.error("Could not identify date and flow columns in observed data")
-                self.obs_data = None
-                return
-            
-            # Rename columns to standard names
-            self.obs_data = self.obs_data.rename(columns={
-                date_col: 'datetime',
-                flow_col: 'streamflow_cms'
-            })
-            
-            # Convert datetime
-            self.obs_data['datetime'] = pd.to_datetime(self.obs_data['datetime'])
-            
-            # Remove NaN values
-            self.obs_data = self.obs_data.dropna(subset=['streamflow_cms'])
-            
-            self.logger.info(f"Loaded {len(self.obs_data)} observed streamflow records")
-            self.logger.info(f"Observation period: {self.obs_data['datetime'].min()} to {self.obs_data['datetime'].max()}")
-            
-        except Exception as e:
-            self.logger.error(f"Error loading observed streamflow: {e}")
-            self.obs_data = None
+            # default convention used in the logs you shared
+            # /.../CONFLUENCE_data/domain_<domain>
+            domain_dir = self.project_dir / f"domain_{domain}"
+
+        obs_override = (
+            self.config.get("observations", {})
+                    .get("streamflow", {})
+                    .get("path")
+        )
+
+        # ---- candidate paths ----
+        candidates = []
+        if obs_override:
+            candidates.append(Path(obs_override))
+
+        obs_dir = domain_dir / "observations" / "streamflow" / 'preprocessed'
+        if obs_dir.exists():
+            # prefer *_streamflow_obs.csv first (your convention), then any csv
+            candidates += sorted(obs_dir.glob("*_streamflow_processed.csv"))
+            candidates += [p for p in sorted(obs_dir.glob("*.csv"))
+                        if p not in candidates]
+
+        # ---- pick the first that exists ----
+        obs_path = next((p for p in candidates if p.exists()), None)
+        if obs_path is None:
+            self.logger.warning(
+                "Observed streamflow file not found. Looked for: %s",
+                [str(p) for p in candidates] or [str(obs_dir / "<*.csv>")]
+            )
+            # keep behavior consistent with previous code: default to empty series
+            return pd.Series(dtype="float64", name="obs")
+
+        self.logger.info("Loading observed streamflow: %s", obs_path)
+
+        # ---- read CSV with flexible parsing ----
+        # Try common datetime column names
+        dt_cols_try = ["time", "datetime", "date_time", "DateTime", "date", "timestamp"]
+        df = pd.read_csv(obs_path)
+
+        # find datetime column
+        dt_col = next((c for c in df.columns if c in dt_cols_try), None)
+        if dt_col is None:
+            # try fuzzy match
+            dt_col = next((c for c in df.columns if re.search("date|time", c, re.I)), None)
+        if dt_col is None:
+            raise ValueError(
+                f"Could not find a datetime column in {obs_path}. "
+                f"Tried: {dt_cols_try}"
+            )
+
+        # find value column (cms/cfs/flow/value/discharge)
+        val_cols_try = [
+            "discharge_cms", "flow_cms", "Q_cms", "cms",
+            "discharge_cfs", "flow_cfs", "Q_cfs", "cfs",
+            "discharge", "flow", "value", "Q"
+        ]
+        val_col = next((c for c in df.columns if c in val_cols_try), None)
+        if val_col is None:
+            # heuristic: pick the first non-datetime numeric column
+            numeric_cols = [c for c in df.columns if c != dt_col and pd.api.types.is_numeric_dtype(df[c])]
+            if not numeric_cols:
+                raise ValueError(f"No numeric streamflow column found in {obs_path}.")
+            val_col = numeric_cols[0]
+
+        # parse times -> UTC index
+        ts = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
+        s = pd.Series(df[val_col].astype(float).values, index=ts, name="obs").sort_index()
+        s = s[~s.index.duplicated(keep="first")].dropna()
+
+        # ---- unit handling (convert to m³/s) ----
+        col_lower = val_col.lower()
+        if "cfs" in col_lower:
+            s = s * 0.028316846592  # ft³/s -> m³/s
+        # if cms or otherwise, assume already m³/s
+
+        # ---- align to model window if available ----
+        start = (self.config.get("forcing", {}) or {}).get("start_time")
+        end   = (self.config.get("forcing", {}) or {}).get("end_time")
+        if start:
+            start = pd.to_datetime(start, utc=True)
+        if end:
+            end = pd.to_datetime(end, utc=True)
+
+        if start or end:
+            s = s.loc[slice(start or s.index.min(), end or s.index.max())]
+
+        # optional resample to model timestep
+        dt_min = (self.config.get("model", {}) or {}).get("timestep_minutes") \
+                or (self.config.get("ngen", {}) or {}).get("timestep_minutes")
+        if dt_min:
+            s = s.resample(f"{int(dt_min)}min").mean().interpolate(limit=2)
+
+        return s
+
     
     def _parse_calibration_period(self) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
         """Parse calibration period from config"""
