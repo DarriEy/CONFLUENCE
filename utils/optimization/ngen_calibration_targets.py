@@ -321,10 +321,10 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
                     self.logger.warning(f"Empty file: {nexus_file}")
                     continue
                 
-                # Extract data
+                # Extract data - convert datetime to UTC to match observations
                 nexus_id = nexus_file.stem.replace('_output', '')
                 streamflow_df = pd.DataFrame({
-                    'datetime': pd.to_datetime(df['datetime']),
+                    'datetime': pd.to_datetime(df['datetime'], utc=True),
                     'streamflow_cms': df['flow'],
                     'nexus_id': nexus_id
                 })
