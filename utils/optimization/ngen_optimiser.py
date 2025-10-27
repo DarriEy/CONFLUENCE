@@ -22,6 +22,9 @@ import logging
 from typing import Dict, Any, List, Tuple, Optional
 import time
 import traceback
+import torch
+import torch.optim as optim
+from tqdm import tqdm
 
 from ngen_parameter_manager import NgenParameterManager
 from ngen_calibration_targets import NgenCalibrationTarget, NgenStreamflowTarget
@@ -523,11 +526,600 @@ class NgenOptimizer:
         
         return complex_pop, complex_fit
     
+    def run_de(self) -> Path:
+        """
+        Run Differential Evolution (DE) for ngen.
+        
+        Returns:
+            Path to results file
+        """
+        self.logger.info("Starting ngen calibration with DE")
+        
+        # DE parameters
+        self.population_size = self.config.get('POPULATION_SIZE', self._determine_de_population_size())
+        self.F = self.config.get('DE_SCALING_FACTOR', 0.5)  # Scaling factor
+        self.CR = self.config.get('DE_CROSSOVER_RATE', 0.9)  # Crossover rate
+        
+        self.logger.info(f"DE configuration:")
+        self.logger.info(f"  Population size: {self.population_size}")
+        self.logger.info(f"  Scaling factor (F): {self.F}")
+        self.logger.info(f"  Crossover rate (CR): {self.CR}")
+        
+        # Get parameter info
+        param_names = self.param_manager.all_param_names
+        n_params = len(param_names)
+        
+        # Initialize population (normalized [0,1])
+        population = np.random.random((self.population_size, n_params))
+        fitness_values = np.full(self.population_size, -np.inf if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] else np.inf)
+        
+        # Evaluate initial population
+        self.logger.info("Evaluating initial DE population...")
+        for i in range(self.population_size):
+            params = self.param_manager.denormalize_parameters(population[i])
+            fitness = self._evaluate_parameters(params)
+            fitness_values[i] = fitness
+            
+            if i == 0 or ((fitness > self.best_fitness) if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] 
+                         else (fitness < self.best_fitness)):
+                self.best_fitness = fitness
+                self.best_params = params
+            
+            self.iteration_results.append({
+                'iteration': 0,
+                'individual': i,
+                'fitness': fitness,
+                'parameters': params
+            })
+            
+            if (i + 1) % 10 == 0:
+                self.logger.info(f"Evaluated {i+1}/{self.population_size} individuals")
+        
+        # DE evolution
+        for iteration in range(1, self.max_iterations + 1):
+            self.logger.info(f"=== DE Iteration {iteration}/{self.max_iterations} ===")
+            
+            for i in range(self.population_size):
+                # Select three random individuals (different from i)
+                candidates = [idx for idx in range(self.population_size) if idx != i]
+                a, b, c = population[np.random.choice(candidates, 3, replace=False)]
+                
+                # Mutation: v = a + F * (b - c)
+                mutant = a + self.F * (b - c)
+                mutant = np.clip(mutant, 0, 1)
+                
+                # Crossover
+                trial = np.copy(population[i])
+                crossover_mask = np.random.random(n_params) < self.CR
+                # Ensure at least one parameter is from mutant
+                if not np.any(crossover_mask):
+                    crossover_mask[np.random.randint(n_params)] = True
+                trial[crossover_mask] = mutant[crossover_mask]
+                
+                # Evaluate trial
+                trial_params = self.param_manager.denormalize_parameters(trial)
+                trial_fitness = self._evaluate_parameters(trial_params)
+                
+                # Selection
+                is_better = ((trial_fitness > fitness_values[i]) if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE']
+                            else (trial_fitness < fitness_values[i]))
+                
+                if is_better:
+                    population[i] = trial
+                    fitness_values[i] = trial_fitness
+                    self.logger.info(f"Individual {i}: Improved! {self.optimization_metric}={trial_fitness:.4f}")
+                    
+                    # Update global best
+                    is_best = ((trial_fitness > self.best_fitness) if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE']
+                              else (trial_fitness < self.best_fitness))
+                    
+                    if is_best:
+                        self.best_fitness = trial_fitness
+                        self.best_params = trial_params
+                        self.logger.info(f"★ New best! {self.optimization_metric}={self.best_fitness:.4f}")
+                
+                # Store result
+                self.iteration_results.append({
+                    'iteration': iteration,
+                    'individual': i,
+                    'fitness': trial_fitness if is_better else fitness_values[i],
+                    'parameters': trial_params if is_better else self.param_manager.denormalize_parameters(population[i])
+                })
+            
+            best_idx = np.nanargmax(fitness_values) if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] else np.nanargmin(fitness_values)
+            self.logger.info(f"Iteration {iteration} complete. Best {self.optimization_metric}: {fitness_values[best_idx]:.4f}")
+        
+        return self._save_results('DE')
+    
+    def _determine_de_population_size(self) -> int:
+        """Determine appropriate population size for DE based on parameter count"""
+        param_count = len(self.param_manager.all_param_names)
+        # DE rule of thumb: 5-10 times the number of parameters
+        return max(15, min(6 * param_count, 60))
+    
+    def run_nsga2(self) -> Path:
+        """
+        Run NSGA-II (Non-dominated Sorting Genetic Algorithm II) for ngen.
+        Multi-objective optimization.
+        
+        Returns:
+            Path to results file
+        """
+        self.logger.info("Starting ngen calibration with NSGA-II")
+        
+        # NSGA-II parameters
+        self.population_size = self.config.get('NSGA2_POPULATION_SIZE', self._determine_nsga2_population_size())
+        self.crossover_rate = self.config.get('NSGA2_CROSSOVER_RATE', 0.9)
+        self.mutation_rate = self.config.get('NSGA2_MUTATION_RATE', 0.1)
+        self.eta_c = self.config.get('NSGA2_ETA_C', 20)  # Crossover distribution index
+        self.eta_m = self.config.get('NSGA2_ETA_M', 20)  # Mutation distribution index
+        
+        # Multi-objective setup
+        self.objectives = self.config.get('NSGA2_OBJECTIVES', ['NSE', 'KGE'])
+        self.num_objectives = len(self.objectives)
+        
+        self.logger.info(f"NSGA-II configuration:")
+        self.logger.info(f"  Population size: {self.population_size}")
+        self.logger.info(f"  Crossover rate: {self.crossover_rate}")
+        self.logger.info(f"  Mutation rate: {self.mutation_rate}")
+        self.logger.info(f"  Objectives: {', '.join(self.objectives)}")
+        
+        # Get parameter info
+        param_names = self.param_manager.all_param_names
+        n_params = len(param_names)
+        
+        # Initialize population
+        population = np.random.random((self.population_size, n_params))
+        objectives_matrix = np.full((self.population_size, self.num_objectives), np.nan)
+        
+        # Evaluate initial population
+        self.logger.info("Evaluating initial NSGA-II population...")
+        for i in range(self.population_size):
+            params = self.param_manager.denormalize_parameters(population[i])
+            metrics = self.calibration_target.calculate_metrics(self.experiment_id)
+            
+            # Extract objectives
+            for j, obj in enumerate(self.objectives):
+                objectives_matrix[i, j] = metrics.get(obj.upper(), -999.0)
+            
+            self.iteration_results.append({
+                'iteration': 0,
+                'individual': i,
+                'objectives': objectives_matrix[i],
+                'parameters': params
+            })
+            
+            if (i + 1) % 10 == 0:
+                self.logger.info(f"Evaluated {i+1}/{self.population_size} individuals")
+        
+        # NSGA-II evolution
+        for generation in range(1, self.max_iterations + 1):
+            self.logger.info(f"=== NSGA-II Generation {generation}/{self.max_iterations} ===")
+            
+            # Generate offspring
+            offspring = self._generate_nsga2_offspring(population)
+            offspring_objectives = np.full((self.population_size, self.num_objectives), np.nan)
+            
+            # Evaluate offspring
+            for i in range(len(offspring)):
+                params = self.param_manager.denormalize_parameters(offspring[i])
+                metrics = self.calibration_target.calculate_metrics(self.experiment_id)
+                
+                for j, obj in enumerate(self.objectives):
+                    offspring_objectives[i, j] = metrics.get(obj.upper(), -999.0)
+            
+            # Combine parent and offspring
+            combined_pop = np.vstack([population, offspring])
+            combined_obj = np.vstack([objectives_matrix, offspring_objectives])
+            
+            # Environmental selection (non-dominated sorting + crowding distance)
+            selected_indices = self._environmental_selection_nsga2(combined_pop, combined_obj)
+            
+            # Update population
+            population = combined_pop[selected_indices]
+            objectives_matrix = combined_obj[selected_indices]
+            
+            # Log progress
+            pareto_front = self._get_pareto_front(objectives_matrix)
+            front_size = len(pareto_front)
+            avg_objectives = np.nanmean(objectives_matrix, axis=0)
+            
+            obj_str = ", ".join([f"Avg_{obj}={avg:.4f}" for obj, avg in zip(self.objectives, avg_objectives)])
+            self.logger.info(f"Generation {generation} complete. Pareto front size: {front_size}, {obj_str}")
+            
+            # Store results
+            for i in range(len(population)):
+                params = self.param_manager.denormalize_parameters(population[i])
+                self.iteration_results.append({
+                    'iteration': generation,
+                    'individual': i,
+                    'objectives': objectives_matrix[i],
+                    'parameters': params
+                })
+        
+        # Store final Pareto front
+        pareto_indices = self._get_pareto_front(objectives_matrix)
+        self.pareto_front = {
+            'solutions': population[pareto_indices],
+            'objectives': objectives_matrix[pareto_indices],
+            'parameters': [self.param_manager.denormalize_parameters(sol) for sol in population[pareto_indices]]
+        }
+        
+        # Select a representative solution (knee point)
+        knee_idx = self._find_knee_point(objectives_matrix[pareto_indices])
+        self.best_params = self.pareto_front['parameters'][knee_idx]
+        self.best_fitness = objectives_matrix[pareto_indices][knee_idx][0]  # Use first objective
+        
+        self.logger.info(f"NSGA-II completed. Pareto front size: {len(pareto_indices)}")
+        
+        return self._save_results('NSGA-II')
+    
+    def _determine_nsga2_population_size(self) -> int:
+        """Determine appropriate population size for NSGA-II"""
+        param_count = len(self.param_manager.all_param_names)
+        return max(20, min(8 * param_count, 100))
+    
+    def _generate_nsga2_offspring(self, population: np.ndarray) -> np.ndarray:
+        """Generate offspring using SBX crossover and polynomial mutation"""
+        offspring = []
+        pop_size, n_params = population.shape
+        
+        for _ in range(pop_size):
+            # Tournament selection
+            parent1 = population[np.random.randint(pop_size)]
+            parent2 = population[np.random.randint(pop_size)]
+            
+            # Simulated Binary Crossover (SBX)
+            if np.random.random() < self.crossover_rate:
+                u = np.random.random(n_params)
+                beta = np.where(u <= 0.5,
+                               (2 * u) ** (1.0 / (self.eta_c + 1)),
+                               (1.0 / (2 * (1 - u))) ** (1.0 / (self.eta_c + 1)))
+                
+                child = 0.5 * ((1 + beta) * parent1 + (1 - beta) * parent2)
+            else:
+                child = parent1.copy()
+            
+            # Polynomial mutation
+            for i in range(n_params):
+                if np.random.random() < self.mutation_rate:
+                    u = np.random.random()
+                    if u < 0.5:
+                        delta = (2 * u) ** (1.0 / (self.eta_m + 1)) - 1
+                    else:
+                        delta = 1 - (2 * (1 - u)) ** (1.0 / (self.eta_m + 1))
+                    
+                    child[i] += delta
+            
+            child = np.clip(child, 0, 1)
+            offspring.append(child)
+        
+        return np.array(offspring)
+    
+    def _environmental_selection_nsga2(self, population: np.ndarray, objectives: np.ndarray) -> np.ndarray:
+        """Environmental selection using non-dominated sorting and crowding distance"""
+        pop_size = len(population) // 2  # Select half
+        
+        # Non-dominated sorting
+        fronts = self._fast_non_dominated_sort(objectives)
+        
+        # Select individuals
+        selected = []
+        front_idx = 0
+        
+        while len(selected) < pop_size and front_idx < len(fronts):
+            front = fronts[front_idx]
+            
+            if len(selected) + len(front) <= pop_size:
+                selected.extend(front)
+            else:
+                # Calculate crowding distance for this front
+                crowding = self._crowding_distance(objectives[front])
+                # Sort by crowding distance (descending)
+                sorted_indices = np.argsort(crowding)[::-1]
+                needed = pop_size - len(selected)
+                selected.extend([front[i] for i in sorted_indices[:needed]])
+            
+            front_idx += 1
+        
+        return np.array(selected)
+    
+    def _fast_non_dominated_sort(self, objectives: np.ndarray) -> List[List[int]]:
+        """Fast non-dominated sorting algorithm"""
+        pop_size = len(objectives)
+        domination_count = np.zeros(pop_size)
+        dominated_solutions = [[] for _ in range(pop_size)]
+        fronts = [[]]
+        
+        for i in range(pop_size):
+            for j in range(i + 1, pop_size):
+                if self._dominates(objectives[i], objectives[j]):
+                    dominated_solutions[i].append(j)
+                    domination_count[j] += 1
+                elif self._dominates(objectives[j], objectives[i]):
+                    dominated_solutions[j].append(i)
+                    domination_count[i] += 1
+            
+            if domination_count[i] == 0:
+                fronts[0].append(i)
+        
+        current_front = 0
+        while len(fronts[current_front]) > 0:
+            next_front = []
+            for i in fronts[current_front]:
+                for j in dominated_solutions[i]:
+                    domination_count[j] -= 1
+                    if domination_count[j] == 0:
+                        next_front.append(j)
+            current_front += 1
+            fronts.append(next_front)
+        
+        return fronts[:-1]  # Remove last empty front
+    
+    def _dominates(self, obj1: np.ndarray, obj2: np.ndarray) -> bool:
+        """Check if obj1 dominates obj2 (assuming maximization)"""
+        return np.all(obj1 >= obj2) and np.any(obj1 > obj2)
+    
+    def _crowding_distance(self, objectives: np.ndarray) -> np.ndarray:
+        """Calculate crowding distance for a set of solutions"""
+        pop_size, num_obj = objectives.shape
+        crowding = np.zeros(pop_size)
+        
+        for m in range(num_obj):
+            sorted_indices = np.argsort(objectives[:, m])
+            crowding[sorted_indices[0]] = np.inf
+            crowding[sorted_indices[-1]] = np.inf
+            
+            obj_range = objectives[sorted_indices[-1], m] - objectives[sorted_indices[0], m]
+            if obj_range > 0:
+                for i in range(1, pop_size - 1):
+                    crowding[sorted_indices[i]] += (
+                        (objectives[sorted_indices[i + 1], m] - objectives[sorted_indices[i - 1], m]) / obj_range
+                    )
+        
+        return crowding
+    
+    def _get_pareto_front(self, objectives: np.ndarray) -> np.ndarray:
+        """Get indices of solutions in Pareto front"""
+        fronts = self._fast_non_dominated_sort(objectives)
+        return np.array(fronts[0]) if fronts else np.array([])
+    
+    def _find_knee_point(self, objectives: np.ndarray) -> int:
+        """Find knee point in Pareto front (representative solution)"""
+        if len(objectives) == 1:
+            return 0
+        
+        # Normalize objectives
+        obj_min = np.min(objectives, axis=0)
+        obj_max = np.max(objectives, axis=0)
+        normalized = (objectives - obj_min) / (obj_max - obj_min + 1e-10)
+        
+        # Find solution closest to ideal point (1, 1, ...)
+        distances = np.linalg.norm(normalized - 1, axis=1)
+        return np.argmin(distances)
+    
+    def run_adam(self, steps: int = 100, lr: float = 0.01) -> Path:
+        """
+        Run Adam gradient-based optimization for ngen using finite differences.
+        
+        Args:
+            steps: Number of optimization steps
+            lr: Learning rate
+            
+        Returns:
+            Path to results file
+        """
+        return self._run_differentiable_optimization('ADAM', steps, lr)
+    
+    def run_lbfgs(self, steps: int = 50, lr: float = 0.1) -> Path:
+        """
+        Run L-BFGS gradient-based optimization for ngen using finite differences.
+        
+        Args:
+            steps: Number of optimization steps
+            lr: Learning rate
+            
+        Returns:
+            Path to results file
+        """
+        return self._run_differentiable_optimization('LBFGS', steps, lr)
+    
+    def _run_differentiable_optimization(self, optimizer_choice: str, steps: int, lr: float) -> Path:
+        """
+        Core differentiable optimization implementation using finite differences.
+        
+        Args:
+            optimizer_choice: 'ADAM' or 'LBFGS'
+            steps: Number of optimization steps
+            lr: Learning rate
+            
+        Returns:
+            Path to results file
+        """
+        self.logger.info(f"Starting ngen differentiable optimization with {optimizer_choice}")
+        
+        # Setup device
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.logger.info(f"Using device: {device}")
+        
+        # Initialize parameters (normalized [0,1])
+        initial_params = self.param_manager.get_default_parameters()
+        x0 = self.param_manager.normalize_parameters(initial_params)
+        x = torch.tensor(x0, dtype=torch.float32, device=device, requires_grad=True)
+        
+        # Setup optimizer
+        if optimizer_choice == 'ADAM':
+            optimizer = optim.Adam([x], lr=lr)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max' if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] else 'min',
+                                                             factor=0.5, patience=10)
+        elif optimizer_choice == 'LBFGS':
+            optimizer = optim.LBFGS([x], lr=lr, max_iter=20, line_search_fn='strong_wolfe')
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer_choice}")
+        
+        # Optimization state
+        best_loss = float('-inf') if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] else float('inf')
+        best_x = x.detach().clone()
+        loss_history = []
+        
+        # Finite difference parameters
+        epsilon = self.config.get('FD_EPSILON', 1e-4)
+        
+        # Optimization loop
+        if optimizer_choice == 'ADAM':
+            progress_bar = tqdm(range(1, steps + 1), desc=f"ngen {optimizer_choice}")
+            
+            for step in progress_bar:
+                optimizer.zero_grad()
+                
+                with torch.no_grad():
+                    x.clamp_(0.0, 1.0)
+                
+                # Compute loss and gradients using finite differences
+                current_loss, gradients = self._compute_fd_gradients(x, epsilon)
+                
+                # Manual gradient setting
+                x.grad = gradients
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_([x], max_norm=1.0)
+                
+                optimizer.step()
+                
+                # Track progress
+                loss_history.append(current_loss)
+                is_better = (current_loss > best_loss if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] 
+                            else current_loss < best_loss)
+                
+                if is_better:
+                    best_loss = current_loss
+                    best_x = x.detach().clone()
+                
+                # Update learning rate
+                if scheduler:
+                    scheduler.step(current_loss)
+                
+                # Progress bar update
+                progress_bar.set_postfix({
+                    'Loss': f'{current_loss:.6f}',
+                    'Best': f'{best_loss:.6f}',
+                    'LR': f'{optimizer.param_groups[0]["lr"]:.6f}'
+                })
+                
+                # Store result
+                params = self.param_manager.denormalize_parameters(x.detach().cpu().numpy())
+                self.iteration_results.append({
+                    'iteration': step,
+                    'fitness': current_loss,
+                    'parameters': params
+                })
+                
+                if step % 10 == 0:
+                    self.logger.info(f"Step {step}: {self.optimization_metric}={current_loss:.6f}, Best={best_loss:.6f}")
+        
+        elif optimizer_choice == 'LBFGS':
+            for step in range(1, steps + 1):
+                def closure():
+                    optimizer.zero_grad()
+                    loss, grad = self._compute_fd_gradients(x, epsilon)
+                    x.grad = grad
+                    return loss
+                
+                loss = optimizer.step(closure)
+                
+                with torch.no_grad():
+                    x.clamp_(0.0, 1.0)
+                
+                current_loss = float(loss)
+                loss_history.append(current_loss)
+                
+                is_better = (current_loss > best_loss if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] 
+                            else current_loss < best_loss)
+                
+                if is_better:
+                    best_loss = current_loss
+                    best_x = x.detach().clone()
+                
+                params = self.param_manager.denormalize_parameters(x.detach().cpu().numpy())
+                self.iteration_results.append({
+                    'iteration': step,
+                    'fitness': current_loss,
+                    'parameters': params
+                })
+                
+                if step % 5 == 0:
+                    self.logger.info(f"Step {step}: {self.optimization_metric}={current_loss:.6f}, Best={best_loss:.6f}")
+        
+        # Store best results
+        self.best_params = self.param_manager.denormalize_parameters(best_x.detach().cpu().numpy())
+        self.best_fitness = best_loss
+        
+        self.logger.info(f"{optimizer_choice} optimization completed. Best {self.optimization_metric}: {best_loss:.6f}")
+        
+        return self._save_results(f'{optimizer_choice}')
+    
+    def _compute_fd_gradients(self, x: torch.Tensor, epsilon: float) -> Tuple[float, torch.Tensor]:
+        """
+        Compute gradients using finite differences.
+        
+        Args:
+            x: Current parameter tensor (normalized)
+            epsilon: Finite difference step size
+            
+        Returns:
+            Tuple of (loss, gradients)
+        """
+        x_np = x.detach().cpu().numpy()
+        n_params = len(x_np)
+        
+        # Evaluate at current point
+        params = self.param_manager.denormalize_parameters(x_np)
+        current_loss = self._evaluate_parameters(params)
+        
+        # Compute finite difference gradients
+        gradients = np.zeros(n_params)
+        
+        for i in range(n_params):
+            # Forward step
+            x_forward = x_np.copy()
+            x_forward[i] += epsilon
+            x_forward = np.clip(x_forward, 0, 1)
+            
+            params_forward = self.param_manager.denormalize_parameters(x_forward)
+            loss_forward = self._evaluate_parameters(params_forward)
+            
+            # Central difference
+            x_backward = x_np.copy()
+            x_backward[i] -= epsilon
+            x_backward = np.clip(x_backward, 0, 1)
+            
+            params_backward = self.param_manager.denormalize_parameters(x_backward)
+            loss_backward = self._evaluate_parameters(params_backward)
+            
+            # Gradient
+            gradients[i] = (loss_forward - loss_backward) / (2 * epsilon)
+        
+        # Convert to torch tensor with appropriate sign for maximization/minimization
+        grad_tensor = torch.tensor(gradients, dtype=torch.float32, device=x.device)
+        
+        # Flip sign for maximization metrics
+        if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE']:
+            grad_tensor = -grad_tensor  # Gradient ascent
+        
+        return current_loss, grad_tensor
+    
     def _save_results(self, algorithm: str) -> Path:
         """Save optimization results to file"""
         try:
             # Convert results to DataFrame
             results_df = pd.DataFrame(self.iteration_results)
+            
+            # Handle NSGA-II objectives differently
+            if algorithm == 'NSGA-II' and 'objectives' in results_df.columns:
+                # Expand objectives
+                obj_cols = pd.DataFrame(results_df['objectives'].tolist(), 
+                                       columns=[f'obj_{obj}' for obj in self.objectives])
+                results_df = pd.concat([results_df.drop('objectives', axis=1), obj_cols], axis=1)
             
             # Expand parameter columns
             param_cols = pd.DataFrame(results_df['parameters'].tolist())
@@ -540,19 +1132,55 @@ class NgenOptimizer:
             
             self.logger.info(f"Results saved to: {results_file}")
             
-            # Save best parameters separately
-            best_params_file = self.results_dir / f"ngen_{algorithm}_{self.experiment_id}_best_params.json"
-            import json
-            with open(best_params_file, 'w') as f:
-                json.dump({
-                    'algorithm': algorithm,
-                    'best_fitness': float(self.best_fitness),
-                    'metric': self.optimization_metric,
-                    'parameters': {k: float(v) for k, v in self.best_params.items()}
-                }, f, indent=2)
+            # Save best parameters or Pareto front
+            if algorithm == 'NSGA-II' and hasattr(self, 'pareto_front') and self.pareto_front:
+                # Save entire Pareto front
+                pareto_file = self.results_dir / f"ngen_{algorithm}_{self.experiment_id}_pareto_front.csv"
+                
+                pareto_data = []
+                for i, (sol, obj, params) in enumerate(zip(
+                    self.pareto_front['solutions'],
+                    self.pareto_front['objectives'],
+                    self.pareto_front['parameters']
+                )):
+                    row = {'solution_id': i}
+                    for j, obj_name in enumerate(self.objectives):
+                        row[f'obj_{obj_name}'] = obj[j]
+                    row.update(params)
+                    pareto_data.append(row)
+                
+                pareto_df = pd.DataFrame(pareto_data)
+                pareto_df.to_csv(pareto_file, index=False)
+                self.logger.info(f"Pareto front saved to: {pareto_file}")
+                
+                # Also save representative (knee point) solution
+                best_params_file = self.results_dir / f"ngen_{algorithm}_{self.experiment_id}_best_params.json"
+                import json
+                with open(best_params_file, 'w') as f:
+                    json.dump({
+                        'algorithm': algorithm,
+                        'representative_solution': 'knee_point',
+                        'objectives': {obj: float(val) for obj, val in zip(self.objectives, self.pareto_front['objectives'][self._find_knee_point(self.pareto_front['objectives'])])},
+                        'parameters': {k: float(v) for k, v in self.best_params.items()}
+                    }, f, indent=2)
+                
+                self.logger.info(f"Representative solution saved to: {best_params_file}")
+                self.logger.info(f"Pareto front size: {len(self.pareto_front['solutions'])}")
             
-            self.logger.info(f"Best parameters saved to: {best_params_file}")
-            self.logger.info(f"Final best {self.optimization_metric}: {self.best_fitness:.4f}")
+            else:
+                # Single-objective: save best parameters
+                best_params_file = self.results_dir / f"ngen_{algorithm}_{self.experiment_id}_best_params.json"
+                import json
+                with open(best_params_file, 'w') as f:
+                    json.dump({
+                        'algorithm': algorithm,
+                        'best_fitness': float(self.best_fitness),
+                        'metric': self.optimization_metric,
+                        'parameters': {k: float(v) for k, v in self.best_params.items()}
+                    }, f, indent=2)
+                
+                self.logger.info(f"Best parameters saved to: {best_params_file}")
+                self.logger.info(f"Final best {self.optimization_metric}: {self.best_fitness:.4f}")
             
             return results_file
             

@@ -92,6 +92,10 @@ from fuse_worker_functions import (
     _evaluate_fuse_parameters_worker
 )
 
+
+from ngen_optimiser import NgenOptimizer
+
+
 # ============= PARAMETER MANAGEMENT =============
 
 class ParameterManager:
@@ -1082,7 +1086,12 @@ class BaseOptimizer(ABC):
         
         if self.use_parallel:
             self._setup_parallel_processing()
-    
+
+        if 'ngen' in self.models_to_run:
+            self.ngen_optimizer = NgenOptimizer(config, logger, optimization_settings_dir)
+
+
+
     @abstractmethod
     def get_algorithm_name(self) -> str:
         """Return the name of the optimization algorithm"""
@@ -2891,6 +2900,28 @@ if __name__ == "__main__":
         
         if self.use_parallel:
             self.logger.info(f"Parallel processing: {self.num_processes} processes")
+
+        if 'ngen' in self.models_to_run:
+            algorithm = self.config.get('OPTIMIZATION_ALGORITHM', 'DDS')
+            
+            if algorithm == 'DDS':
+                self.ngen_optimizer.run_dds()
+            elif algorithm == 'PSO':
+                self.ngen_optimizer.run_pso()
+            elif algorithm == 'SCE' or algorithm == 'SCE-UA':
+                self.ngen_optimizer.run_sce()
+            elif algorithm == 'DE':
+                self.ngen_optimizer.run_de()
+            elif algorithm == 'NSGA-II' or algorithm == 'NSGA2':
+                self.ngen_optimizer.run_nsga2()
+            elif algorithm == 'ADAM':
+                steps = self.config.get('ADAM_STEPS', 100)
+                lr = self.config.get('ADAM_LEARNING_RATE', 0.01)
+                self.ngen_optimizer.run_adam(steps, lr)
+            elif algorithm == 'LBFGS':
+                steps = self.config.get('LBFGS_STEPS', 50)
+                lr = self.config.get('LBFGS_LEARNING_RATE', 0.1)
+                self.ngen_optimizer.run_lbfgs(steps, lr)
         
         self.logger.info("=" * 60)
         
