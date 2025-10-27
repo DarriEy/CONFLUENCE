@@ -44,14 +44,14 @@ class NgenCalibrationTarget:
         self.experiment_id = config.get('EXPERIMENT_ID')
         
         # Get observation data
-        self._load_observations()
+        self.obs_data = self._load_observations()
         
         # Get catchment area for unit conversion
         self.catchment_area_km2 = self._get_catchment_area()
     
     def _load_observations(self):
         """Load observation data (to be implemented by subclasses)"""
-        pass
+        return None
     
     def _get_catchment_area(self) -> float:
         """
@@ -153,14 +153,17 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         self.station_id = config.get('STATION_ID', None)
         self.calibration_period = self._parse_calibration_period()
             
-    def _load_observations(self) -> pd.Series:
+    def _load_observations(self) -> pd.DataFrame:
         """
-        Load observed streamflow and return a UTC-indexed Series in m³/s aligned to the model window.
+        Load observed streamflow and return a DataFrame with datetime and streamflow_cms columns.
         Priority:
         1) config['observations']['streamflow']['path']
         2) domain_{domain}/observations/streamflow/*_streamflow_obs.csv
         3) any .csv under observations/streamflow/
         The loader tries common column names and units (cfs/cms).
+        
+        Returns:
+            DataFrame with columns ['datetime', 'streamflow_cms']
         """
         import re
         from pathlib import Path
@@ -264,7 +267,11 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         if dt_min:
             s = s.resample(f"{int(dt_min)}min").mean().interpolate(limit=2)
 
-        return s
+        # Convert Series to DataFrame with proper columns for merging
+        obs_df = s.reset_index()
+        obs_df.columns = ['datetime', 'streamflow_cms']
+        
+        return obs_df
 
     
     def _parse_calibration_period(self) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
