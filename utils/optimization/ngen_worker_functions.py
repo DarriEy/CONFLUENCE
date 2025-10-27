@@ -100,7 +100,7 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
     
     try:
         # Import NgenRunner from ngen_utils
-        from utils.model_utils.ngen_utils import NgenRunner
+        from utils.models.ngen_utils import NgenRunner
         
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
@@ -238,7 +238,7 @@ def _extract_ngen_streamflow_worker(config: Dict[str, Any], experiment_id: str) 
         Path to extracted streamflow file, or None if failed
     """
     try:
-        from utils.model_utils.ngen_utils import NgenPostprocessor
+        from utils.models.ngen_utils import NgenPostprocessor
         import logging
         
         # Create minimal logger
