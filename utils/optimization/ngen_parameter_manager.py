@@ -54,8 +54,10 @@ class NgenParameterManager:
         # Configuration file paths
         self.realization_config = self.ngen_setup_dir / 'realization.json'
         self.cfe_config = self.ngen_setup_dir / 'CFE' / 'cfe_config.json'
+        self.cfe_txt_dir = self.ngen_setup_dir / 'CFE'
         self.pet_config = self.ngen_setup_dir / 'PET' / 'pet_config.json'
         self.noah_config = self.ngen_setup_dir / 'NOAH' / 'noah_config.json'
+
         
         self.logger.info(f"NgenParameterManager initialized")
         self.logger.info(f"Calibrating modules: {self.modules_to_calibrate}")
@@ -279,33 +281,51 @@ class NgenParameterManager:
         except Exception as e:
             self.logger.error(f"Error updating ngen config files: {e}")
             return False
-        
+            
     def _update_cfe_config(self, params: Dict[str, float]) -> bool:
+        """Update CFE configuration: prefer JSON, fallback to BMI .txt.
+        Preserves units in [brackets] for BMI text files."""
         try:
-            # Prefer JSON if present
+            # --- Preferred path: JSON file ---
             if self.cfe_config.exists():
                 with open(self.cfe_config, 'r') as f:
                     cfg = json.load(f)
+                updated = 0
                 for k, v in params.items():
-                    if k in cfg: cfg[k] = v
-                    else: self.logger.warning(f"CFE parameter {k} not found in JSON config")
+                    if k in cfg:
+                        cfg[k] = v
+                        updated += 1
+                    else:
+                        self.logger.warning(f"CFE parameter {k} not found in JSON config")
                 with open(self.cfe_config, 'w') as f:
                     json.dump(cfg, f, indent=2)
+                self.logger.debug(f"Updated CFE JSON with {updated} parameters")
                 return True
 
-            # Fallback: BMI txt
-            txt_candidates = list(self.cfe_txt.glob("*.txt"))
-            if len(txt_candidates) == 0:
-                self.logger.error(f"CFE config not found (no JSON or BMI .txt in {self.cfe_txt})")
+            # --- Fallback: BMI text file ---
+            # Choose the right file: prefer the one matching {{id}} if known
+            candidates = []
+            if getattr(self, "hydro_id", None):
+                # e.g., cat-1_bmi_config_cfe_pass.txt
+                pattern = f"{self.hydro_id}_bmi_config_cfe_*.txt"
+                candidates = list(self.cfe_txt_dir.glob(pattern))
+
+            # If we didn't find any by id, fall back to a single *.txt in CFE/
+            if not candidates:
+                candidates = list(self.cfe_txt_dir.glob("*.txt"))
+
+            if len(candidates) == 0:
+                self.logger.error(f"CFE config not found (no JSON, no BMI .txt in {self.cfe_txt_dir})")
                 return False
-            if len(txt_candidates) > 1:
-                self.logger.error(f"Multiple BMI .txt files in {self.cfe_txt}; cannot disambiguate")
+            if len(candidates) > 1:
+                # Ambiguity guard: don’t risk updating multiple files unexpectedly
+                self.logger.error(f"Multiple BMI .txt files in {self.cfe_txt_dir}; please set NGEN_ACTIVE_CATCHMENT_ID or prune files")
                 return False
 
-            path = txt_candidates[0]
+            path = candidates[0]
             lines = path.read_text().splitlines()
 
-            # mapping from CFE param names to BMI keys
+            # Map DE parameter names to BMI keys in the file
             keymap = {
                 "bb": "soil_params.b",
                 "satdk": "soil_params.satdk",
@@ -314,9 +334,21 @@ class NgenParameterManager:
                 "smcmax": "soil_params.smcmax",
             }
 
-            # replace in-memory
-            def fmt_val(x):  # keep original formats roughly
-                return f"{x:.8g}"
+            # Helper: write numeric value preserving any trailing [units]
+            num_units_re = re.compile(r"""
+                ^\s*             # leading space
+                (?P<num>[+-]?(?:\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?)  # number (incl. sci)
+                (?P<tail>\s*(\[[^\]]*\])?.*)$   # optional units and remainder
+            """, re.VERBOSE)
+
+            def render_value(original_rhs: str, new_val: float) -> str:
+                m = num_units_re.match(original_rhs.strip())
+                if m:
+                    tail = m.group('tail') or ''
+                    # Use compact but stable float formatting
+                    return f"{new_val:.8g}{tail}"
+                # If parsing fails, just replace entirely with the new number
+                return f"{new_val:.8g}"
 
             updated = set()
             for i, line in enumerate(lines):
@@ -324,24 +356,27 @@ class NgenParameterManager:
                     continue
                 k, rhs = line.split("=", 1)
                 k = k.strip()
-                # strip trailing units like [m s-1]
-                val_part = rhs.split()[0].strip()
+                rhs_keep = rhs.rstrip("\n")
+                # Match parameters by mapped BMI key
                 for p, bmi_k in keymap.items():
                     if p in params and k == bmi_k:
-                        lines[i] = f"{k}={fmt_val(params[p])}"
+                        new_rhs = render_value(rhs_keep, params[p])
+                        lines[i] = f"{k}={new_rhs}"
                         updated.add(p)
 
-            # warn about anything not found
-            for p in params.keys():
-                if p not in updated:
-                    self.logger.warning(f"CFE parameter {p} not found in BMI config")
+            # Warn about any requested params we couldn’t find in the BMI file
+            for p in params:
+                if p not in updated and p in keymap:
+                    self.logger.warning(f"CFE parameter {p} not found in BMI config {path.name}")
 
             path.write_text("\n".join(lines) + "\n")
+            self.logger.debug(f"Updated CFE BMI text ({path.name}) with {len(updated)} parameters")
             return True
 
         except Exception as e:
             self.logger.error(f"Error updating CFE config: {e}")
             return False
+
 
     
     def _update_noah_config(self, params: Dict[str, float]) -> bool:

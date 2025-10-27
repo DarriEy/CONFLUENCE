@@ -214,6 +214,8 @@ NGEN_BMI_MODULES:
      main_output_variable: 'Q_OUT'
 
 NGEN_MODULES_TO_CALIBRATE: CFE,NOAH,PET                        # Options: CFE, NOAH, PET (or combinations like "CFE,PET")
+NGEN_CFE_PARAMS_TO_CALIBRATE: smcmax,satdk,bb,slop
+
 
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute
