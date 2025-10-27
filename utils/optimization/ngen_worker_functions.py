@@ -17,8 +17,10 @@ from pathlib import Path
 import sys
 from typing import Dict, Any, List, Tuple, Optional
 
-# Add parent directory to path to import ngen_utils
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+# Add CONFLUENCE root directory to path
+# File is at: CONFLUENCE/utils/optimization/ngen_worker_functions.py
+# We need:  CONFLUENCE/ (so we can import utils.model_utils.ngen_utils)
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 
 def _apply_ngen_parameters_worker(config: Dict[str, Any], params: Dict[str, float]) -> bool:
