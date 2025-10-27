@@ -930,16 +930,20 @@ class NgenRunner:
         else:
             self.ngen_exe = Path(ngen_install_path) / 'ngen'
     
-    def run_model(self):
+    def run_model(self, experiment_id: str = None):
         """
         Execute NextGen model simulation.
+        
+        Args:
+            experiment_id: Optional experiment identifier. If None, uses config value.
         
         Runs ngen with the prepared catchment, nexus, forcing, and configuration files.
         """
         self.logger.info("Starting NextGen model run")
         
         # Get experiment info
-        experiment_id = self.config.get('EXPERIMENT_ID', 'default_run')
+        if experiment_id is None:
+            experiment_id = self.config.get('EXPERIMENT_ID', 'default_run')
         output_dir = self.project_dir / 'simulations' / experiment_id / 'ngen'
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -1009,12 +1013,12 @@ class NgenRunner:
             self._move_ngen_outputs(self.ngen_exe.parent, output_dir)
             
             self.logger.info("NextGen model run completed successfully")
-            return output_dir
+            return True
             
         except subprocess.CalledProcessError as e:
             self.logger.error(f"NextGen model run failed with error code {e.returncode}")
             self.logger.error(f"Check log file: {log_file}")
-            raise
+            return False
     
     def _move_ngen_outputs(self, build_dir: Path, output_dir: Path):
         """

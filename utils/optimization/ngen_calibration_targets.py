@@ -72,14 +72,10 @@ class NgenCalibrationTarget:
             self.logger.info("Using catchment area from config: %.3f km²", float(cfg_area))
             return float(cfg_area)
 
-        domain = (self.config.get("domain_name")
-                or self.config.get("domain")
-                or self.config.get("ngen", {}).get("domain")
-                or "")
+        # project_dir is already the domain directory, use it directly
+        domain_dir = self.project_dir
         if "paths" in self.config and "domain_dir" in self.config["paths"]:
             domain_dir = Path(self.config["paths"]["domain_dir"])
-        else:
-            domain_dir = self.project_dir / f"domain_{domain}"
 
         # explicit shapefile path in config?
         shp_cfg = (self.config.get("shapefiles", {}) or {}).get("catchment")
@@ -170,18 +166,15 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         from pathlib import Path
 
         # ---- resolve domain + base dirs ----
-        domain = (self.config.get("domain_name")
-                or self.config.get("domain")
-                or self.config.get("ngen", {}).get("domain")
-                or "")
+        # project_dir is already the full domain directory (e.g., domain_USA_01073000_headwater)
+        # so we should use it directly
         domain_dir = None
         # Allow explicit project/domain override
         if "paths" in self.config and "domain_dir" in self.config["paths"]:
             domain_dir = Path(self.config["paths"]["domain_dir"])
         else:
-            # default convention used in the logs you shared
-            # /.../CONFLUENCE_data/domain_<domain>
-            domain_dir = self.project_dir / f"domain_{domain}"
+            # Use project_dir directly - it's already the domain directory
+            domain_dir = self.project_dir
 
         obs_override = (
             self.config.get("observations", {})
