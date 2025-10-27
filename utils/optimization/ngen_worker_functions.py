@@ -90,6 +90,12 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
     Returns:
         bool: True if successful, False otherwise
     """
+    import logging
+    import traceback
+    
+    # Get the main confluence logger if available
+    logger = logging.getLogger('confluence')
+    
     try:
         # Import NgenRunner from ngen_utils
         from utils.model_utils.ngen_utils import NgenRunner
@@ -97,12 +103,7 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
         
-        # Create a minimal logger for the worker
-        import logging
-        logger = logging.getLogger(f'ngen_worker_{experiment_id}')
-        logger.setLevel(logging.WARNING)  # Only show warnings/errors to reduce output
-        
-        # Initialize runner
+        # Initialize runner with main logger
         runner = NgenRunner(config, logger)
         
         # Run ngen
@@ -110,10 +111,17 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
         
         return success
         
+    except FileNotFoundError as e:
+        logger.error(f"Required ngen input file not found: {str(e)}")
+        logger.error("Make sure ngen preprocessing has been run to generate required files:")
+        logger.error("  - catchment geopackage")
+        logger.error("  - nexus geojson")
+        logger.error("  - realization config json")
+        return False
+        
     except Exception as e:
-        print(f"Error running ngen: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error running ngen: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return False
 
 

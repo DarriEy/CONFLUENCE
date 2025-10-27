@@ -77,6 +77,10 @@ class NgenOptimizer:
         self.best_fitness = -np.inf if self.optimization_metric.upper() in ['KGE', 'KGEp', 'NSE'] else np.inf
         self.iteration_results = []
         
+        # Track failures for error reporting
+        self.consecutive_failures = 0
+        self.max_error_reports = 3  # Only report detailed errors for first 3 failures
+        
         self.logger.info("NgenOptimizer initialized")
         self.logger.info(f"Optimization metric: {self.optimization_metric}")
         self.logger.info(f"Max iterations: {self.max_iterations}")
@@ -109,12 +113,18 @@ class NgenOptimizer:
         try:
             # Apply parameters
             if not self.param_manager.update_config_files(params):
-                self.logger.error("Failed to update ngen config files")
+                if self.consecutive_failures < self.max_error_reports:
+                    self.logger.error("Failed to update ngen config files")
+                self.consecutive_failures += 1
                 return -999.0
             
-            # Run ngen
+            # Run ngen (errors are now logged in the worker function)
             if not _run_ngen_worker(self.config):
-                self.logger.error("Failed to run ngen model")
+                if self.consecutive_failures < self.max_error_reports:
+                    self.logger.error("Failed to run ngen model (see detailed error above)")
+                elif self.consecutive_failures == self.max_error_reports:
+                    self.logger.error(f"Suppressing further error messages after {self.max_error_reports} failures...")
+                self.consecutive_failures += 1
                 return -999.0
             
             # Calculate metrics
@@ -123,6 +133,10 @@ class NgenOptimizer:
             metric_name = self.optimization_metric.upper()
             if metric_name in metrics:
                 fitness = metrics[metric_name]
+                # Reset failure counter on success
+                if self.consecutive_failures > 0:
+                    self.logger.info(f"Model run successful after {self.consecutive_failures} failures")
+                    self.consecutive_failures = 0
                 self.logger.info(f"Fitness: {metric_name}={fitness:.4f}")
                 return fitness
             else:
