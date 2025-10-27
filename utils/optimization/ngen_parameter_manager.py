@@ -58,7 +58,16 @@ class NgenParameterManager:
         self.cfe_txt_dir = self.ngen_setup_dir / 'CFE'
         self.pet_config = self.ngen_setup_dir / 'PET' / 'pet_config.json'
         self.noah_config = self.ngen_setup_dir / 'NOAH' / 'noah_config.json'
+        self.noah_dir = self.ngen_setup_dir / 'NOAH'
+        self.pet_dir  = self.ngen_setup_dir / 'PET'
 
+        # expected JSONs (may not exist; that's fine)
+        self.noah_config = self.noah_dir / 'noah_config.json'
+        self.pet_config  = self.pet_dir  / 'pet_config.json'
+
+        # BMI text dirs
+        self.cfe_txt_dir  = self.ngen_setup_dir / 'CFE'
+        self.pet_txt_dir  = self.pet_dir
         
         self.logger.info(f"NgenParameterManager initialized")
         self.logger.info(f"Calibrating modules: {self.modules_to_calibrate}")
@@ -379,61 +388,270 @@ class NgenParameterManager:
             return False
 
 
-    
+        
     def _update_noah_config(self, params: Dict[str, float]) -> bool:
-        """Update NOAH-OWP configuration file"""
+        """
+        Update NOAH configuration for calibration:
+        1) Prefer JSON if present.
+        2) Fallback to NOAH BMI input file ({{id}}.input).
+        3) Optionally update TBL parameters in NOAH/parameters (if mappings supplied).
+        """
         try:
-            if not self.noah_config.exists():
-                self.logger.error(f"NOAH config not found: {self.noah_config}")
+            # ---------- 1) JSON path ----------
+            if self.noah_config.exists():
+                with open(self.noah_config, 'r') as f:
+                    cfg = json.load(f)
+                updated = 0
+                for k, v in params.items():
+                    if k in cfg:
+                        cfg[k] = v
+                        updated += 1
+                    else:
+                        self.logger.warning(f"NOAH parameter {k} not in JSON config")
+                with open(self.noah_config, 'w') as f:
+                    json.dump(cfg, f, indent=2)
+                self.logger.debug(f"Updated NOAH JSON with {updated} parameters")
+                return True
+
+            # ---------- 2) BMI input fallback ----------
+            # Select the right *.input (prefer the one matching the active id)
+            if not self.noah_dir.exists():
+                self.logger.error(f"NOAH directory missing: {self.noah_dir}")
                 return False
-            
-            # Read existing config
-            with open(self.noah_config, 'r') as f:
-                config = json.load(f)
-            
-            # Update parameters
-            for param_name, value in params.items():
-                if param_name in config:
-                    config[param_name] = value
+
+            input_candidates = []
+            if getattr(self, "hydro_id", None):
+                input_candidates = list(self.noah_dir.glob(f"{self.hydro_id}.input"))
+            if not input_candidates:
+                input_candidates = list(self.noah_dir.glob("*.input"))
+
+            if len(input_candidates) == 0:
+                self.logger.error(f"NOAH config not found: no JSON and no *.input under {self.noah_dir}")
+                return False
+            if len(input_candidates) > 1:
+                self.logger.error(f"Multiple NOAH *.input files; set NGEN_ACTIVE_CATCHMENT_ID to disambiguate")
+                return False
+
+            ipath = input_candidates[0]
+            text = ipath.read_text()
+
+            # Map DE param names -> (&section, key) within the NOAH input.
+            # Start with a small set; add more as you choose to calibrate them.
+            keymap = {
+                # de_name : (section, key)
+                "rain_snow_thresh": ("forcing", "rain_snow_thresh"),
+                "ZREF"            : ("forcing", "ZREF"),
+                "dt"              : ("timing", "dt"),  # careful: affects timestep!
+            }
+
+            import re
+            sec_re_template = r"(?s)&\s*{section}\b(.*?)/"
+            key_re_template = r"(^|\n)(\s*{key}\s*=\s*)([^,\n/]+)"
+
+            def replace_in_namelist(txt: str, section: str, key: str, new_val: float) -> tuple[str, bool]:
+                sec_re = re.compile(sec_re_template.format(section=re.escape(section)))
+                m_sec = sec_re.search(txt)
+                if not m_sec:
+                    return txt, False
+                block = m_sec.group(1)
+                key_re = re.compile(key_re_template.format(key=re.escape(key)), re.MULTILINE)
+
+                def _sub(mm):
+                    prefix = mm.group(2)
+                    rhs = mm.group(3).strip()
+                    # Preserve quotes if present (rare for numeric keys, but safe)
+                    if rhs.startswith('"') and rhs.endswith('"'):
+                        return f"{mm.group(1)}{prefix}\"{new_val:.8g}\""
+                    else:
+                        return f"{mm.group(1)}{prefix}{new_val:.8g}"
+
+                new_block, n = key_re.subn(_sub, block, count=1)
+                if n == 0:
+                    return txt, False
+                return txt[:m_sec.start(1)] + new_block + txt[m_sec.end(1):], True
+
+            updated_inputs = 0
+            for p, (sec, key) in keymap.items():
+                if p in params:
+                    text, ok = replace_in_namelist(text, sec, key, params[p])
+                    if ok:
+                        updated_inputs += 1
+                    else:
+                        self.logger.warning(f"NOAH param {p} ({sec}.{key}) not found in {ipath.name}")
+
+            if updated_inputs > 0:
+                ipath.write_text(text)
+                self.logger.debug(f"Updated NOAH input ({ipath.name}) with {updated_inputs} parameter(s)")
+                return True
+
+            # ---------- 3) Optional: TBL updates ----------
+            # If nothing changed in *.input, try TBL mappings if provided.
+            # Expect a structure like:
+            # self.noah_tbl_map = {
+            #   "REFKDT": ("MPTABLE.TBL", "REFKDT", 1),    # (file, variable, column_index or None)
+            #   "REFDK" : ("MPTABLE.TBL", "REFDK", 1),
+            #   "SLOPE" : ("SOILPARM.TBL", "SLOPE",  <col>),
+            # }
+            tbl_map: Dict[str, Tuple[str, str, Optional[int]]] = getattr(self, "noah_tbl_map", {})
+
+            if not tbl_map:
+                # Nothing to do is not an error; we may just not be calibrating NOAH today.
+                return True
+
+            # Stage per-run parameters dir (recommended)
+            params_dir = self.noah_dir / "parameters"
+            if not params_dir.exists():
+                self.logger.error(f"NOAH parameters directory missing: {params_dir}")
+                return False
+
+            # Implement minimal editor: update numeric for a row that starts with var name.
+            def edit_tbl_value(tbl_path: Path, var: str, col: Optional[int], new_val: float) -> bool:
+                if not tbl_path.exists():
+                    self.logger.error(f"TBL not found: {tbl_path}")
+                    return False
+                lines = tbl_path.read_text().splitlines()
+                changed = False
+                for i, line in enumerate(lines):
+                    if not line.strip() or line.strip().startswith("#"):
+                        continue
+                    # naive match: variable name at start (allow whitespace)
+                    if line.lstrip().startswith(var):
+                        parts = line.split()
+                        # If first token is the var name, replace either the single value or a specific column
+                        if parts[0] == var:
+                            if col is None:
+                                # single-valued variable
+                                if len(parts) >= 2:
+                                    parts[1] = f"{new_val:.8g}"
+                                    lines[i] = " ".join(parts)
+                                    changed = True
+                                    break
+                            else:
+                                # multi-column; ensure index in bounds
+                                idx = int(col)
+                                if idx < len(parts):
+                                    parts[idx] = f"{new_val:.8g}"
+                                    lines[i] = " ".join(parts)
+                                    changed = True
+                                    break
+                if changed:
+                    tbl_path.write_text("\n".join(lines) + "\n")
+                return changed
+
+            updated_tbls = 0
+            for p, (fname, var, col) in tbl_map.items():
+                if p not in params:
+                    continue
+                tbl_path = params_dir / fname
+                if edit_tbl_value(tbl_path, var, col, params[p]):
+                    updated_tbls += 1
                 else:
-                    self.logger.warning(f"NOAH parameter {param_name} not found in config")
-            
-            # Write updated config
-            with open(self.noah_config, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            self.logger.debug(f"Updated NOAH config with {len(params)} parameters")
+                    self.logger.warning(f"NOAH TBL param {p} ({fname}:{var}[{col}]) not found/updated")
+
+            if updated_tbls > 0:
+                self.logger.debug(f"Updated NOAH TBLs with {updated_tbls} parameter(s)")
+                return True
+
+            # Nothing updated; not fatal (maybe NOAH not being calibrated this run)
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error updating NOAH config: {e}")
             return False
-    
+
+        
     def _update_pet_config(self, params: Dict[str, float]) -> bool:
-        """Update PET configuration file"""
+        """
+        Update PET configuration:
+        1) Prefer JSON if present.
+        2) Fallback to PET BMI text file: PET/{{id}}_pet_config.txt (or the only *.txt).
+        """
+        keymap = {
+                    "rain_snow_thresh": ("forcing", "rain_snow_thresh"),
+                    "ZREF"            : ("forcing", "ZREF"),
+                }
         try:
-            if not self.pet_config.exists():
-                self.logger.error(f"PET config not found: {self.pet_config}")
+            # ---------- 1) JSON ----------
+            if self.pet_config.exists():
+                with open(self.pet_config, 'r') as f:
+                    cfg = json.load(f)
+                up = 0
+                for k, v in params.items():
+                    if k in cfg:
+                        cfg[k] = v; up += 1
+                    else:
+                        self.logger.warning(f"PET parameter {k} not in JSON config")
+                with open(self.pet_config, 'w') as f:
+                    json.dump(cfg, f, indent=2)
+                self.logger.debug(f"Updated PET JSON with {up} parameter(s)")
+                return True
+
+            # ---------- 2) BMI text ----------
+            # pick file by hydro_id if present, else a single *.txt under PET/
+            if not self.pet_txt_dir.exists():
+                self.logger.error(f"PET directory missing: {self.pet_txt_dir}")
                 return False
-            
-            # Read existing config
-            with open(self.pet_config, 'r') as f:
-                config = json.load(f)
-            
-            # Update parameters
-            for param_name, value in params.items():
-                if param_name in config:
-                    config[param_name] = value
-                else:
-                    self.logger.warning(f"PET parameter {param_name} not found in config")
-            
-            # Write updated config
-            with open(self.pet_config, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            self.logger.debug(f"Updated PET config with {len(params)} parameters")
+
+            candidates = []
+            if getattr(self, "hydro_id", None):
+                candidates = list(self.pet_txt_dir.glob(f"{self.hydro_id}_pet_config.txt"))
+            if not candidates:
+                candidates = list(self.pet_txt_dir.glob("*.txt"))
+
+            if len(candidates) == 0:
+                self.logger.error(f"PET config not found: no JSON and no *.txt in {self.pet_txt_dir}")
+                return False
+            if len(candidates) > 1:
+                self.logger.error(f"Multiple PET *.txt configs; set NGEN_ACTIVE_CATCHMENT_ID to disambiguate")
+                return False
+
+            path = candidates[0]
+            lines = path.read_text().splitlines()
+
+            import re
+            num_units_re = re.compile(r"""
+                ^\s*
+                (?P<num>[+-]?(?:\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?)
+                (?P<tail>\s*(\[[^\]]*\])?.*)$
+            """, re.VERBOSE)
+
+            def render_value(rhs: str, new_val: float) -> str:
+                m = num_units_re.match(rhs.strip())
+                if m:
+                    tail = m.group('tail') or ''
+                    return f"{new_val:.8g}{tail}"
+                return f"{new_val:.8g}"
+
+            # Map DE param names -> keys in PET text (adjust to your file)
+            keymap = {
+                # "albedo": "albedo",
+                # "z0m"   : "surface_roughness",
+                # add the keys that actually exist in your PET file
+            }
+
+            updated = set()
+            for i, line in enumerate(lines):
+                if "=" not in line or line.strip().startswith("#"):
+                    continue
+                k, rhs = line.split("=", 1)
+                key = k.strip()
+                if not key:
+                    continue
+                for p, txt_key in keymap.items():
+                    if p in params and key == txt_key:
+                        lines[i] = f"{key}={render_value(rhs, params[p])}"
+                        updated.add(p)
+
+            for p in params:
+                if p in keymap and p not in updated:
+                    self.logger.warning(f"PET parameter {p} not found in {path.name}")
+
+            if updated:
+                path.write_text("\n".join(lines) + "\n")
+                self.logger.debug(f"Updated PET BMI text ({path.name}) with {len(updated)} parameter(s)")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error updating PET config: {e}")
             return False
+
