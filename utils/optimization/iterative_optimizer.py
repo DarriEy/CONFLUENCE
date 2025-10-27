@@ -1071,6 +1071,8 @@ class BaseOptimizer(ABC):
         self.best_params = None
         self.best_score = float('-inf')
         self.iteration_history = []
+
+        self.models_to_run = config.get('HYDROLOGICAL_MODEL').split(',')
         
         # Set random seed for reproducibility
         self.random_seed = config.get('RANDOM_SEED', None)
@@ -1087,7 +1089,7 @@ class BaseOptimizer(ABC):
         if self.use_parallel:
             self._setup_parallel_processing()
 
-        if 'ngen' in self.models_to_run:
+        if 'ngen' in self.models_to_run.lower():
             self.ngen_optimizer = NgenOptimizer(config, logger, optimization_settings_dir)
 
 
