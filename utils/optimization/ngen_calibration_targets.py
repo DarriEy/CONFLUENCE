@@ -136,7 +136,7 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         obs_file = self.config.get('OBSERVED_STREAMFLOW_FILE', None)
         
         if obs_file is None or obs_file == 'default':
-            obs_file = self.project_dir / 'observations' / 'streamflow' / f"{self.domain_name}_streamflow_obs.csv"
+            obs_file = self.project_dir / 'observations' / 'streamflow' / 'preprocessed' / f"{self.domain_name}_streamflow_processed.csv"
         else:
             obs_file = Path(obs_file)
         
