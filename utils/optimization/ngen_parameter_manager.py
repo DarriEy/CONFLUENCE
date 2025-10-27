@@ -16,6 +16,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
+import re
 
 
 class NgenParameterManager:
