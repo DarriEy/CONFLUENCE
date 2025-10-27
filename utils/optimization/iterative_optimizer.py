@@ -1089,7 +1089,7 @@ class BaseOptimizer(ABC):
         if self.use_parallel:
             self._setup_parallel_processing()
 
-        if 'ngen' in self.models_to_run.lower():
+        if 'NGEN' in self.models_to_run:
             self.ngen_optimizer = NgenOptimizer(config, logger, optimization_settings_dir)
 
 
@@ -2903,7 +2903,7 @@ if __name__ == "__main__":
         if self.use_parallel:
             self.logger.info(f"Parallel processing: {self.num_processes} processes")
 
-        if 'ngen' in self.models_to_run.lower():
+        if 'NGEN' in self.models_to_run:
             algorithm = self.config.get('OPTIMIZATION_ALGORITHM', 'DDS')
             
             if algorithm == 'DDS':
