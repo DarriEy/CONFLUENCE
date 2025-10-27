@@ -279,35 +279,70 @@ class NgenParameterManager:
         except Exception as e:
             self.logger.error(f"Error updating ngen config files: {e}")
             return False
-    
+        
     def _update_cfe_config(self, params: Dict[str, float]) -> bool:
-        """Update CFE configuration file"""
         try:
-            if not self.cfe_config.exists():
-                self.logger.error(f"CFE config not found: {self.cfe_config}")
+            # Prefer JSON if present
+            if self.cfe_config.exists():
+                with open(self.cfe_config, 'r') as f:
+                    cfg = json.load(f)
+                for k, v in params.items():
+                    if k in cfg: cfg[k] = v
+                    else: self.logger.warning(f"CFE parameter {k} not found in JSON config")
+                with open(self.cfe_config, 'w') as f:
+                    json.dump(cfg, f, indent=2)
+                return True
+
+            # Fallback: BMI txt
+            txt_candidates = list(self.cfe_txt.glob("*.txt"))
+            if len(txt_candidates) == 0:
+                self.logger.error(f"CFE config not found (no JSON or BMI .txt in {self.cfe_txt})")
                 return False
-            
-            # Read existing config
-            with open(self.cfe_config, 'r') as f:
-                config = json.load(f)
-            
-            # Update parameters
-            for param_name, value in params.items():
-                if param_name in config:
-                    config[param_name] = value
-                else:
-                    self.logger.warning(f"CFE parameter {param_name} not found in config")
-            
-            # Write updated config
-            with open(self.cfe_config, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            self.logger.debug(f"Updated CFE config with {len(params)} parameters")
+            if len(txt_candidates) > 1:
+                self.logger.error(f"Multiple BMI .txt files in {self.cfe_txt}; cannot disambiguate")
+                return False
+
+            path = txt_candidates[0]
+            lines = path.read_text().splitlines()
+
+            # mapping from CFE param names to BMI keys
+            keymap = {
+                "bb": "soil_params.b",
+                "satdk": "soil_params.satdk",
+                "slop": "soil_params.slop",
+                "maxsmc": "soil_params.smcmax",
+                "smcmax": "soil_params.smcmax",
+            }
+
+            # replace in-memory
+            def fmt_val(x):  # keep original formats roughly
+                return f"{x:.8g}"
+
+            updated = set()
+            for i, line in enumerate(lines):
+                if "=" not in line or line.strip().startswith("#"):
+                    continue
+                k, rhs = line.split("=", 1)
+                k = k.strip()
+                # strip trailing units like [m s-1]
+                val_part = rhs.split()[0].strip()
+                for p, bmi_k in keymap.items():
+                    if p in params and k == bmi_k:
+                        lines[i] = f"{k}={fmt_val(params[p])}"
+                        updated.add(p)
+
+            # warn about anything not found
+            for p in params.keys():
+                if p not in updated:
+                    self.logger.warning(f"CFE parameter {p} not found in BMI config")
+
+            path.write_text("\n".join(lines) + "\n")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error updating CFE config: {e}")
             return False
+
     
     def _update_noah_config(self, params: Dict[str, float]) -> bool:
         """Update NOAH-OWP configuration file"""
