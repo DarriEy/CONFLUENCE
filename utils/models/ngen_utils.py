@@ -919,7 +919,7 @@ class NgenRunner:
         """
         self.config = config
         self.logger = logger
-        
+        self.domain_name = config.get('DOMAIN_NAME')
         self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
         self.ngen_settings_dir = self.project_dir / "settings" / "ngen"
         
