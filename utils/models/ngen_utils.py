@@ -957,32 +957,6 @@ class NgenRunner:
             if not file.exists():
                 raise FileNotFoundError(f"Required file not found: {file}")
         
-        # Setup environment with library paths
-        env = os.environ.copy()
-        
-        # Get ngen conda environment path from config or use default
-        ngen_conda_env = self.config.get('NGEN_CONDA_ENV', 'ngen_py310')
-        ngen_conda_path = Path.home() / '.conda' / 'envs' / ngen_conda_env / 'lib'
-        
-        # Get current conda environment lib path
-        current_conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'confluence')
-        current_conda_path = Path.home() / '.conda' / 'envs' / current_conda_env / 'lib'
-        
-        # Build LD_LIBRARY_PATH with conda environments and existing path
-        # Note: Load system modules (netcdf-c, netcdf-cxx4, udunits) before running CONFLUENCE
-        lib_paths = [
-            str(current_conda_path),  # Current environment first
-            str(ngen_conda_path),     # ngen environment second
-        ]
-        
-        # Add existing LD_LIBRARY_PATH if present (includes system module paths)
-        existing_ld_path = env.get('LD_LIBRARY_PATH', '')
-        if existing_ld_path:
-            lib_paths.append(existing_ld_path)
-        
-        env['LD_LIBRARY_PATH'] = ':'.join(lib_paths)
-        
-        self.logger.info(f"LD_LIBRARY_PATH: {env['LD_LIBRARY_PATH']}")
         
         # Build ngen command
         ngen_cmd = [
