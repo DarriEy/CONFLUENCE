@@ -443,153 +443,57 @@ class OptimizationManager:
             self.logger.error(traceback.format_exc())
             return None
 
+    def _calibrate_ngen(self, algorithm: str) -> Optional[Path]:
+        """
+        Calibrate NextGen (NGEN) using the specified algorithm.
+        Mirrors the FUSE calibration flow but dispatches to NgenOptimizer.
+        """
+        supported_algorithms = [
+            # Population-based
+            'PSO', 'SCE-UA', 'DDS', 'DE', 'NSGA-II',
+            # Gradient-based
+            'ADAM', 'LBFGS'
+        ]
+        if algorithm not in supported_algorithms:
+            raise ValueError(
+                f"Unsupported optimization algorithm for NGEN: {algorithm}. "
+                f"Supported: {', '.join(supported_algorithms)}"
+            )
 
-    def _calibrate_ngen(self, algorithm: str = 'DE') -> Dict[str, Any]:
-        """
-        Calibrate NGEN model using specified optimization algorithm
-        
-        Args:
-            algorithm: Optimization algorithm to use (currently only 'DE' supported)
-            
-        Returns:
-            Dictionary with calibration results
-        """
+        # Create optimization directory if it doesn't exist
+        opt_dir = self.project_dir / "optimisation"
+        opt_dir.mkdir(parents=True, exist_ok=True)
+
+        # Lazy import so we don’t require NGEN unless used
+        from ngen_optimiser import NgenOptimizer
+
         self.logger.info(f"Using {algorithm} optimization for NGEN")
-        
-        try:
-            # Import required components
-            from utils.optimization.ngen_optimiser import NgenOptimizer
-            from utils.optimization.ngen_parameter_manager import NgenParameterManager
-            from utils.optimization.ngen_calibration_targets import NgenCalibrationTarget
-            from utils.models.ngen_utils import NgenRunner
-            
-            # Setup paths
-            ngen_settings_dir = self.project_dir / 'settings' / 'ngen'
-            ngen_sim_dir = self.project_dir / 'simulations' / self.experiment_id / 'ngen'
-            
-            # Ensure directories exist
-            ngen_settings_dir.mkdir(parents=True, exist_ok=True)
-            ngen_sim_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Initialize parameter manager
-            self.logger.info("Initializing NGEN parameter manager")
-            param_manager = NgenParameterManager(
-                config=self.config,
-                logger=self.logger,
-                ngen_settings_dir=ngen_settings_dir
-            )
-            
-            # Initialize calibration target
-            self.logger.info("Initializing NGEN calibration target")
-            calibration_target = NgenCalibrationTarget(
-                config=self.config,
-                project_dir=self.project_dir,
-                logger=self.logger
-            )
-            
-            # Initialize NGEN runner
-            self.logger.info("Initializing NGEN model runner")
-            ngen_runner = NgenRunner(
-                config=self.config,
-                logger=self.logger
-            )
-            
-            # Initialize optimizer with all required components
-            self.logger.info("Initializing NGEN optimizer")
-            ngen_opt = NgenOptimizer(
-                config=self.config,
-                logger=self.logger,
-                param_manager=param_manager,
-                calibration_target=calibration_target,
-                ngen_runner=ngen_runner
-            )
-            
-            # Run optimization
-            if algorithm.upper() == 'DE':
-                results = ngen_opt.run_de()
-            else:
-                raise ValueError(f"Unsupported optimization algorithm for NGEN: {algorithm}")
-            
-            # Save results
-            self._save_ngen_results(results, ngen_sim_dir)
-            
-            self.logger.info("NGEN calibration completed successfully")
-            return results
-            
-        except ImportError as e:
-            self.logger.error(f"Failed to import required NGEN components: {str(e)}")
-            self.logger.error("Ensure ngen_optimiser.py, ngen_parameter_manager.py, and ngen_calibration_targets.py are in utils/optimization/")
-            raise
-        except Exception as e:
-            self.logger.error(f"Error during NGEN calibration: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
+        ngen_opt = NgenOptimizer(self.config, self.logger, opt_dir)
 
+        # Dispatch to the chosen algorithm (these methods exist in NgenOptimizer)
+        if algorithm == 'PSO':
+            results_file = ngen_opt.run_pso()
+        elif algorithm == 'SCE-UA':
+            results_file = ngen_opt.run_sce()
+        elif algorithm == 'DDS':
+            results_file = ngen_opt.run_dds()
+        elif algorithm == 'DE':
+            results_file = ngen_opt.run_de()
+        elif algorithm == 'NSGA-II':
+            results_file = ngen_opt.run_nsga2()
+        elif algorithm == 'ADAM':
+            steps = self.config.get('ADAM_STEPS', 100)
+            lr    = self.config.get('ADAM_LEARNING_RATE', 0.01)
+            results_file = ngen_opt.run_adam(steps=steps, lr=lr)
+        elif algorithm == 'LBFGS':
+            steps = self.config.get('LBFGS_STEPS', 50)
+            lr    = self.config.get('LBFGS_LEARNING_RATE', 0.1)
+            results_file = ngen_opt.run_lbfgs(steps=steps, lr=lr)
+        else:
+            raise RuntimeError(f"Unhandled NGEN algorithm: {algorithm}")
 
-    def _save_ngen_results(self, results: Dict[str, Any], output_dir: Path) -> None:
-        """
-        Save NGEN calibration results
-        
-        Args:
-            results: Calibration results dictionary
-            output_dir: Directory to save results
-        """
-        import json
-        from datetime import datetime
-        
-        try:
-            # Create results directory
-            results_dir = output_dir / 'calibration_results'
-            results_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Save best parameters
-            best_params_file = results_dir / 'best_parameters.json'
-            with open(best_params_file, 'w') as f:
-                json.dump(results['best_params'], f, indent=2)
-            
-            self.logger.info(f"Saved best parameters to: {best_params_file}")
-            
-            # Save optimization history
-            history_file = results_dir / 'optimization_history.json'
-            with open(history_file, 'w') as f:
-                # Convert numpy types to Python types for JSON serialization
-                history = []
-                for entry in results.get('history', []):
-                    history_entry = {}
-                    for key, value in entry.items():
-                        if key == 'best_params':
-                            # Convert params dict
-                            history_entry[key] = {k: float(v) for k, v in value.items()}
-                        elif hasattr(value, 'item'):  # numpy type
-                            history_entry[key] = value.item()
-                        else:
-                            history_entry[key] = value
-                    history.append(history_entry)
-                
-                json.dump(history, f, indent=2)
-            
-            self.logger.info(f"Saved optimization history to: {history_file}")
-            
-            # Save summary
-            summary = {
-                'algorithm': results.get('algorithm', 'DE'),
-                'best_score': float(results['best_score']),
-                'total_time': results.get('total_time', 0),
-                'converged': results.get('converged', False),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            summary_file = results_dir / 'calibration_summary.json'
-            with open(summary_file, 'w') as f:
-                json.dump(summary, f, indent=2)
-            
-            self.logger.info(f"Saved calibration summary to: {summary_file}")
-            
-        except Exception as e:
-            self.logger.error(f"Error saving NGEN results: {str(e)}")
-
-
+        self.logger.info(f"NGEN calibration complete. Results: {results_file}")
+        return results_file
 
 
     def differentiable_parameter_emulation(self):

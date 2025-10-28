@@ -919,10 +919,9 @@ class NgenRunner:
         """
         self.config = config
         self.logger = logger
-        self.domain_name = config.get('DOMAIN_NAME')
+        
         self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
-        self.ngen_settings_dir = self.project_dir / "settings" / "ngen"
-        self.ngen_output_dir = self.project_dir / 'simulations' / config.get('EXPERIMENT_ID') / 'ngen'
+        self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
         
         # Get ngen installation path
         ngen_install_path = config.get('NGEN_INSTALL_PATH', 'default')
@@ -930,80 +929,96 @@ class NgenRunner:
             self.ngen_exe = Path(config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build' / 'ngen'
         else:
             self.ngen_exe = Path(ngen_install_path) / 'ngen'
-
     
-    def run_model(self) -> Optional[Path]:
+    def run_model(self, experiment_id: str = None):
         """
-        Run the NGEN model
+        Execute NextGen model simulation.
         
-        Returns:
-            Path to output directory if successful, None otherwise
+        Args:
+            experiment_id: Optional experiment identifier. If None, uses config value.
+        
+        Runs ngen with the prepared catchment, nexus, forcing, and configuration files.
         """
         self.logger.info("Starting NextGen model run")
         
+        # Get experiment info
+        if experiment_id is None:
+            experiment_id = self.config.get('EXPERIMENT_ID', 'default_run')
+        output_dir = self.project_dir / 'simulations' / experiment_id / 'ngen'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup paths for ngen execution
+        catchment_file = self.ngen_setup_dir / f"{self.config.get('DOMAIN_NAME')}_catchments.gpkg"
+        nexus_file = self.ngen_setup_dir / "nexus.geojson"
+        realization_file = self.ngen_setup_dir / "realization_config.json"
+        
+        # Verify files exist
+        for file in [catchment_file, nexus_file, realization_file]:
+            if not file.exists():
+                raise FileNotFoundError(f"Required file not found: {file}")
+        
+        # Setup environment with library paths
+        env = os.environ.copy()
+        
+        # Get ngen conda environment path from config or use default
+        ngen_conda_env = self.config.get('NGEN_CONDA_ENV', 'ngen_py310')
+        ngen_conda_path = Path.home() / '.conda' / 'envs' / ngen_conda_env / 'lib'
+        
+        # Get current conda environment lib path
+        current_conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'confluence')
+        current_conda_path = Path.home() / '.conda' / 'envs' / current_conda_env / 'lib'
+        
+        # Build LD_LIBRARY_PATH with conda environments and existing path
+        # Note: Load system modules (netcdf-c, netcdf-cxx4, udunits) before running CONFLUENCE
+        lib_paths = [
+            str(current_conda_path),  # Current environment first
+            str(ngen_conda_path),     # ngen environment second
+        ]
+        
+        # Add existing LD_LIBRARY_PATH if present (includes system module paths)
+        existing_ld_path = env.get('LD_LIBRARY_PATH', '')
+        if existing_ld_path:
+            lib_paths.append(existing_ld_path)
+        
+        env['LD_LIBRARY_PATH'] = ':'.join(lib_paths)
+        
+        self.logger.info(f"LD_LIBRARY_PATH: {env['LD_LIBRARY_PATH']}")
+        
+        # Build ngen command
+        ngen_cmd = [
+            str(self.ngen_exe),
+            str(catchment_file),
+            "all",
+            str(nexus_file),
+            "all",
+            str(realization_file)
+        ]
+        
+        self.logger.info(f"Running command: {' '.join(ngen_cmd)}")
+        
+        # Run ngen
+        log_file = output_dir / "ngen_log.txt"
         try:
-            # Verify ngen executable exists
-            ngen_path = self.config.get('NGEN_INSTALL_PATH')
-            if ngen_path == 'default':
-                ngen_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'ngen' / 'build' 
-            else:
-                ngen_path = Path(ngen_path)
+            with open(log_file, 'w') as log:
+                result = subprocess.run(
+                    ngen_cmd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                    cwd=self.ngen_exe.parent,  # Run from ngen build directory (needed for relative library paths)
+                    env=env  # Use modified environment with library paths
+                )
             
-            ngen_exe = ngen_path / self.config.get('NGEN_EXE')
-            if not ngen_exe or not ngen_exe.exists():
-                self.logger.error(f"NGEN executable not found: {ngen_exe}")
-                return None
-            
-            # Verify required input files
-            catchment_file = self.ngen_settings_dir / f"{self.domain_name}_catchments.gpkg"
-            nexus_file = self.ngen_settings_dir / "nexus.geojson"
-            realization_file = self.ngen_settings_dir / "realization_config.json"
-            
-            if not all([catchment_file.exists(), nexus_file.exists(), realization_file.exists()]):
-                self.logger.error("Required input files not found")
-                return None
-            
-            # Build ngen command
-            cmd = [
-                str(ngen_exe),
-                str(catchment_file), "all",
-                str(nexus_file), "all",
-                str(realization_file)
-            ]
-            
-            self.logger.info(f"Running command: {' '.join(cmd)}")
-            
-            # The library path should be set externally before running CONFLUENCE
-            env = os.environ.copy()
-            
-            # Run ngen
-            result = subprocess.run(
-                cmd,
-                env=env,
-                capture_output=True,
-                text=True,
-                cwd=str(self.ngen_output_dir)
-            )
-            
-            if result.returncode != 0:
-                self.logger.error(f"NGEN execution failed with return code {result.returncode}")
-                self.logger.error(f"STDOUT: {result.stdout}")
-                self.logger.error(f"STDERR: {result.stderr}")
-                return None
-            
-            # Move outputs to proper location
-            if not self._move_ngen_outputs():
-                self.logger.error("Failed to move NGEN outputs")
-                return None
+            # Move outputs from build directory to output directory
+            self._move_ngen_outputs(self.ngen_exe.parent, output_dir)
             
             self.logger.info("NextGen model run completed successfully")
-            return self.ngen_output_dir
+            return True
             
-        except Exception as e:
-            self.logger.error(f"Error running NGEN model: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-        return None
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"NextGen model run failed with error code {e.returncode}")
+            self.logger.error(f"Check log file: {log_file}")
+            return False
     
     def _move_ngen_outputs(self, build_dir: Path, output_dir: Path):
         """
