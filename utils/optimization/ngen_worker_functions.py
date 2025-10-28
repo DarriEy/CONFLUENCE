@@ -85,9 +85,13 @@ def _apply_ngen_parameters_worker(config: Dict[str, Any], params: Dict[str, floa
 def _run_ngen_worker(config: Dict[str, Any]) -> bool:
     """
     Worker function to execute ngen model.
+    Supports both serial and parallel modes.
     
     Args:
-        config: Configuration dictionary
+        config: Configuration dictionary. In parallel mode, includes:
+                - '_proc_ngen_dir': Process-specific ngen directory
+                - '_proc_settings_dir': Process-specific settings directory
+                - '_proc_id': Process ID
         
     Returns:
         bool: True if successful, False otherwise
@@ -99,14 +103,31 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
     logger = logging.getLogger('confluence')
     
     try:
+        # Check if this is a parallel process
+        if '_proc_ngen_dir' in config:
+            # Parallel mode - use process-specific directories
+            proc_id = config.get('_proc_id', 0)
+            logger.debug(f"Running ngen in parallel mode (proc {proc_id})")
+            
+            # Create a modified config for this process
+            # The NgenRunner will use these paths if they're set
+            parallel_config = config.copy()
+            parallel_config['_ngen_output_dir'] = config['_proc_ngen_dir']
+            parallel_config['_ngen_settings_dir'] = config['_proc_settings_dir']
+        else:
+            # Serial mode - use standard configuration
+            logger.debug("Running ngen in serial mode")
+            parallel_config = config
+            proc_id = 0
+        
         # Import NgenRunner from ngen_utils
         from utils.models.ngen_utils import NgenRunner
         
-        domain_name = config.get('DOMAIN_NAME')
-        experiment_id = config.get('EXPERIMENT_ID')
+        domain_name = parallel_config.get('DOMAIN_NAME')
+        experiment_id = parallel_config.get('EXPERIMENT_ID')
         
-        # Initialize runner with main logger
-        runner = NgenRunner(config, logger)
+        # Initialize runner with modified config
+        runner = NgenRunner(parallel_config, logger)
         
         # Run ngen
         success = runner.run_model(experiment_id)
@@ -114,7 +135,7 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
         return success
         
     except FileNotFoundError as e:
-        logger.error(f"Required ngen input file not found: {str(e)}")
+        logger.error(f"Required ngen input file not found (proc {proc_id if '_proc_ngen_dir' in config else 0}): {str(e)}")
         logger.error("Make sure ngen preprocessing has been run to generate required files:")
         logger.error("  - catchment geopackage")
         logger.error("  - nexus geojson")
@@ -122,7 +143,7 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
         return False
         
     except Exception as e:
-        logger.error(f"Error running ngen: {str(e)}")
+        logger.error(f"Error running ngen (proc {proc_id if '_proc_ngen_dir' in config else 0}): {str(e)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return False
 

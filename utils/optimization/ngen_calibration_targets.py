@@ -130,8 +130,13 @@ class NgenCalibrationTarget:
         return area_km2
 
     
-    def calculate_metrics(self, experiment_id: str = None) -> Dict[str, float]:
-        """Calculate performance metrics (to be implemented by subclasses)"""
+    def calculate_metrics(self, experiment_id: str = None, output_dir: Optional[Path] = None) -> Dict[str, float]:
+        """Calculate performance metrics (to be implemented by subclasses)
+        
+        Args:
+            experiment_id: Experiment identifier
+            output_dir: Optional output directory (for parallel mode)
+        """
         raise NotImplementedError("Subclasses must implement calculate_metrics()")
 
 
@@ -284,28 +289,35 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         
         return start_date, end_date
     
-    def _load_simulated_streamflow(self, experiment_id: str) -> Optional[pd.DataFrame]:
+    def _load_simulated_streamflow(self, experiment_id: str, output_dir: Optional[Path] = None) -> Optional[pd.DataFrame]:
         """
         Load simulated streamflow from ngen nexus outputs.
         
         Args:
             experiment_id: Experiment identifier
+            output_dir: Optional output directory (for parallel mode). If provided,
+                       uses this directory instead of the default path.
             
         Returns:
             DataFrame with simulated streamflow or None
         """
-        # Look for nexus output files
-        output_dir = self.project_dir / 'simulations' / experiment_id / 'ngen'
+        # Use provided output_dir (parallel mode) or default path (serial mode)
+        if output_dir is not None:
+            # Parallel mode - use provided directory
+            sim_dir = output_dir
+        else:
+            # Serial mode - use standard path
+            sim_dir = self.project_dir / 'simulations' / experiment_id / 'ngen'
         
-        if not output_dir.exists():
-            self.logger.error(f"Simulation output directory not found: {output_dir}")
+        if not sim_dir.exists():
+            self.logger.error(f"Simulation output directory not found: {sim_dir}")
             return None
         
         # Find nexus output files
-        nexus_files = list(output_dir.glob('nex-*_output.csv'))
+        nexus_files = list(sim_dir.glob('nex-*_output.csv'))
         
         if not nexus_files:
-            self.logger.error(f"No nexus output files found in {output_dir}")
+            self.logger.error(f"No nexus output files found in {sim_dir}")
             return None
         
         # Read all nexus outputs and combine
@@ -346,12 +358,14 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
         
         return combined
     
-    def calculate_metrics(self, experiment_id: str = None) -> Dict[str, float]:
+    def calculate_metrics(self, experiment_id: str = None, output_dir: Optional[Path] = None) -> Dict[str, float]:
         """
         Calculate streamflow performance metrics.
         
         Args:
             experiment_id: Experiment identifier
+            output_dir: Optional output directory (for parallel mode). If provided,
+                       uses this directory to find ngen outputs instead of default path.
             
         Returns:
             Dictionary of performance metrics
@@ -363,8 +377,8 @@ class NgenStreamflowTarget(NgenCalibrationTarget):
             self.logger.error("No observed data available for metric calculation")
             return {'KGE': -999.0, 'NSE': -999.0, 'MAE': 999.0, 'RMSE': 999.0}
         
-        # Load simulated data
-        sim_data = self._load_simulated_streamflow(experiment_id)
+        # Load simulated data with optional output_dir for parallel mode
+        sim_data = self._load_simulated_streamflow(experiment_id, output_dir=output_dir)
         
         if sim_data is None:
             self.logger.error("No simulated data available for metric calculation")
