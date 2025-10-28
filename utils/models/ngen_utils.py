@@ -944,13 +944,12 @@ class NgenRunner:
         try:
             # Verify ngen executable exists
             ngen_path = self.config.get('NGEN_INSTALL_PATH')
-            ngen_bin = self.config.get('NGEN_EXE')
             if ngen_path == 'default':
                 ngen_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'ngen' / 'build' 
             else:
                 ngen_path = Path(ngen_path)
             
-            ngen_exe = ngen_path 
+            ngen_exe = ngen_path / self.config.get('NGEN_EXE')
             if not ngen_exe or not ngen_exe.exists():
                 self.logger.error(f"NGEN executable not found: {ngen_exe}")
                 return None
