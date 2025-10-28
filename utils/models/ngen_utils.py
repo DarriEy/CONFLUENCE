@@ -939,7 +939,7 @@ class NgenRunner:
         
         Runs ngen with the prepared catchment, nexus, forcing, and configuration files.
         """
-        self.logger.info("Starting NextGen model run")
+        self.logger.debug("Starting NextGen model run")
         
         # Get experiment info
         if experiment_id is None:
@@ -988,7 +988,7 @@ class NgenRunner:
             # Move outputs from build directory to output directory
             self._move_ngen_outputs(self.ngen_exe.parent, output_dir)
             
-            self.logger.info("NextGen model run completed successfully")
+            self.logger.debug("NextGen model run completed successfully")
             return True
             
         except subprocess.CalledProcessError as e:
