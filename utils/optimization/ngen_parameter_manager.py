@@ -143,6 +143,12 @@ class NgenParameterManager:
         bounds['bexp'] = {'min': 2.0, 'max': 14.0}       # Pore size distribution (-)
         bounds['smcwlt'] = {'min': 0.01, 'max': 0.3}     # Wilting point (m3/m3)
         bounds['smcref'] = {'min': 0.1, 'max': 0.5}      # Reference soil moisture (m3/m3)
+        bounds['noah_refdk'] = {'min': 1e-7, 'max': 1e-3}     # Reference saturated hydraulic conductivity (m/s)
+        bounds['noah_refkdt'] = {'min': 0.5, 'max': 5.0}      # Surface runoff parameter (-)
+        bounds['noah_czil'] = {'min': 0.02, 'max': 0.2}       # Zilitinkevich coefficient for roughness (-)
+        bounds['noah_z0'] = {'min': 0.001, 'max': 1.0}        # Roughness length (m)
+        bounds['noah_frzk'] = {'min': 0.0, 'max': 10.0}       # Frozen ground parameter (-)
+        bounds['noah_salp'] = {'min': -2.0, 'max': 2.0}       # Shape parameter for surface runoff (-)
         
         # PET (Potential Evapotranspiration) parameters
         bounds['wind_speed_measurement_height_m'] = {'min': 2.0, 'max': 10.0}  # Wind measurement height (m)
@@ -150,6 +156,13 @@ class NgenParameterManager:
         bounds['vegetation_height_m'] = {'min': 0.01, 'max': 2.0}              # Vegetation height (m)
         bounds['zero_plane_displacement_height_m'] = {'min': 0.0, 'max': 1.5}  # Zero plane displacement (m)
         bounds['momentum_transfer_roughness_length_m'] = {'min': 0.001, 'max': 0.5}  # Roughness length (m)
+        bounds['rain_snow_thresh'] = {'min': -2.0, 'max': 3.0}                 # Rain/snow temperature threshold (°C)
+        bounds['ZREF'] = {'min': 2.0, 'max': 10.0}                             # Reference height (m)
+        bounds['pet_albedo'] = {'min': 0.05, 'max': 0.95}                      # Surface albedo (fraction)
+        bounds['pet_z0_mom'] = {'min': 0.001, 'max': 0.5}                      # Momentum roughness length (m)
+        bounds['pet_z0_heat'] = {'min': 0.0001, 'max': 0.1}                    # Heat roughness length (m)
+        bounds['pet_veg_h'] = {'min': 0.01, 'max': 30.0}                       # Vegetation height (m)
+        bounds['pet_d0'] = {'min': 0.0, 'max': 20.0}                           # Zero plane displacement height (m)
         
         return bounds
     
@@ -654,4 +667,3 @@ class NgenParameterManager:
         except Exception as e:
             self.logger.error(f"Error updating PET config: {e}")
             return False
-

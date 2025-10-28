@@ -960,7 +960,6 @@ class NgenRunner:
         # Setup environment with library paths
         env = os.environ.copy()
         
-        
         # Build ngen command
         ngen_cmd = [
             str(self.ngen_exe),
@@ -971,7 +970,7 @@ class NgenRunner:
             str(realization_file)
         ]
         
-        self.logger.info(f"Running command: {' '.join(ngen_cmd)}")
+        self.logger.debug(f"Running command: {' '.join(ngen_cmd)}")
         
         # Run ngen
         log_file = output_dir / "ngen_log.txt"
