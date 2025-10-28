@@ -251,7 +251,7 @@ class NgenParameterManager:
         """
         try:
             # Find all catchment config files
-            config_dir = self.ngen_settings_dir / 'model_configs'
+            config_dir = self.ngen_settings_dir 
             
             if not config_dir.exists():
                 self.logger.error(f"Config directory not found: {config_dir}")
