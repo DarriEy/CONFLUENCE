@@ -1026,11 +1026,11 @@ class NgenRunner:
                 moved_files.append(file.name)
         
         if moved_files:
-            self.logger.info(f"Moved {len(moved_files)} output files to {output_dir}")
+            self.logger.debug(f"Moved {len(moved_files)} output files to {output_dir}")
             for f in moved_files[:10]:  # Log first 10
-                self.logger.info(f"  - {f}")
+                self.logger.debug(f"  - {f}")
             if len(moved_files) > 10:
-                self.logger.info(f"  ... and {len(moved_files) - 10} more")
+                self.logger.debug(f"  ... and {len(moved_files) - 10} more")
         else:
             self.logger.warning(f"No output files found in {build_dir}. Check if model ran correctly.")
 
