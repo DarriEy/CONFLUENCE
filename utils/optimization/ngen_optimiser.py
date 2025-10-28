@@ -25,6 +25,7 @@ import traceback
 import torch
 import torch.optim as optim
 from tqdm import tqdm
+import shutil
 
 from ngen_parameter_manager import NgenParameterManager
 from ngen_calibration_targets import NgenCalibrationTarget, NgenStreamflowTarget
@@ -81,9 +82,23 @@ class NgenOptimizer:
         self.consecutive_failures = 0
         self.max_error_reports = 3  # Only report detailed errors for first 3 failures
         
+        # Parallel processing setup (similar to SUMMA calibration)
+        self.use_parallel = config.get('MPI_PROCESSES', 1) > 1
+        self.num_processes = max(1, config.get('MPI_PROCESSES', 1))
+        self.parallel_dirs = []
+        self._consecutive_parallel_failures = 0
+        
+        if self.use_parallel:
+            self.logger.info(f"Setting up parallel processing with {self.num_processes} MPI processes")
+            self._setup_parallel_processing()
+        
         self.logger.info("NgenOptimizer initialized")
         self.logger.info(f"Optimization metric: {self.optimization_metric}")
         self.logger.info(f"Max iterations: {self.max_iterations}")
+        if self.use_parallel:
+            self.logger.info(f"Parallel mode: {self.num_processes} processes")
+        else:
+            self.logger.info("Serial mode: 1 process")
     
     def _create_calibration_target(self) -> Any:
         """Factory method to create appropriate ngen calibration target"""
@@ -100,35 +115,127 @@ class NgenOptimizer:
             self.logger.warning(f"Unknown target {optimization_target}, defaulting to streamflow")
             return NgenStreamflowTarget(self.config, project_dir, self.logger)
     
-    def _evaluate_parameters(self, params: Dict[str, float]) -> float:
+    def _setup_parallel_processing(self) -> None:
+        """Setup parallel processing directories and files (similar to SUMMA calibration)"""
+        self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
+        
+        data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        project_dir = data_dir / f"domain_{self.domain_name}"
+        optimization_dir = project_dir / "simulations" / self.experiment_id
+        
+        for proc_id in range(self.num_processes):
+            # Create process-specific directories (parallel_proc_00, parallel_proc_01, etc.)
+            proc_base_dir = optimization_dir / f"parallel_proc_{proc_id:02d}"
+            proc_ngen_dir = proc_base_dir / "ngen"
+            proc_settings_dir = proc_base_dir / "settings" / "ngen"
+            
+            # Create directories
+            for directory in [proc_base_dir, proc_ngen_dir, proc_settings_dir]:
+                directory.mkdir(parents=True, exist_ok=True)
+            
+            # Create log directories
+            (proc_ngen_dir / "logs").mkdir(parents=True, exist_ok=True)
+            
+            # Copy settings files to process directory
+            self._copy_settings_to_process_dir(proc_settings_dir)
+            
+            # Store directory info for later use
+            proc_dirs = {
+                'base_dir': proc_base_dir,
+                'ngen_dir': proc_ngen_dir,
+                'settings_dir': proc_settings_dir,
+                'proc_id': proc_id
+            }
+            self.parallel_dirs.append(proc_dirs)
+            
+            self.logger.debug(f"Created parallel directory for process {proc_id}: {proc_base_dir}")
+        
+        self.logger.info(f"Parallel processing setup complete: {len(self.parallel_dirs)} process directories created")
+    
+    def _copy_settings_to_process_dir(self, proc_settings_dir: Path) -> None:
+        """Copy ngen settings files to a process-specific directory"""
+        source_settings_dir = self.ngen_setup_dir
+        
+        if not source_settings_dir.exists():
+            self.logger.warning(f"Source settings directory not found: {source_settings_dir}")
+            return
+        
+        # Copy all ngen configuration files (realization config, catchment config, routing config, etc.)
+        for item in source_settings_dir.iterdir():
+            if item.is_file():
+                dest_file = proc_settings_dir / item.name
+                shutil.copy2(item, dest_file)
+                self.logger.debug(f"Copied {item.name} to process settings directory")
+            elif item.is_dir():
+                # Copy directories recursively (e.g., for forcing data links)
+                dest_dir = proc_settings_dir / item.name
+                if not dest_dir.exists():
+                    shutil.copytree(item, dest_dir)
+                    self.logger.debug(f"Copied directory {item.name} to process settings directory")
+    
+    def _cleanup_parallel_processing(self) -> None:
+        """Clean up parallel processing resources"""
+        if self.use_parallel:
+            self.logger.info("Cleaning up parallel processing directories")
+            # Optional: Could remove parallel directories if desired
+            # For now, we keep them for debugging purposes
+    
+    def _evaluate_parameters(self, params: Dict[str, float], proc_id: int = 0) -> float:
         """
         Evaluate a parameter set.
         
         Args:
             params: Dictionary of parameters
+            proc_id: Process ID for parallel processing (default 0 for serial mode)
             
         Returns:
             Fitness value
         """
         try:
+            # Get appropriate directories based on parallel/serial mode
+            if self.use_parallel and proc_id < len(self.parallel_dirs):
+                proc_info = self.parallel_dirs[proc_id]
+                settings_dir = proc_info['settings_dir']
+                ngen_sim_dir = proc_info['ngen_dir']
+                
+                # Create a modified config for this process
+                proc_config = self.config.copy()
+                proc_config['_proc_ngen_dir'] = str(ngen_sim_dir)
+                proc_config['_proc_settings_dir'] = str(settings_dir)
+                proc_config['_proc_id'] = proc_id
+                
+                # Use process-specific parameter manager
+                param_manager = NgenParameterManager(proc_config, self.logger, settings_dir)
+            else:
+                # Serial mode or proc_id 0 - use main directories
+                settings_dir = self.optimization_settings_dir
+                ngen_sim_dir = self.ngen_sim_dir
+                proc_config = self.config
+                param_manager = self.param_manager
+            
             # Apply parameters
-            if not self.param_manager.update_config_files(params):
+            if not param_manager.update_config_files(params):
                 if self.consecutive_failures < self.max_error_reports:
-                    self.logger.error("Failed to update ngen config files")
+                    self.logger.error(f"Failed to update ngen config files (proc {proc_id})")
                 self.consecutive_failures += 1
                 return -999.0
             
             # Run ngen (errors are now logged in the worker function)
-            if not _run_ngen_worker(self.config):
+            if not _run_ngen_worker(proc_config):
                 if self.consecutive_failures < self.max_error_reports:
-                    self.logger.error("Failed to run ngen model (see detailed error above)")
+                    self.logger.error(f"Failed to run ngen model (proc {proc_id}, see detailed error above)")
                 elif self.consecutive_failures == self.max_error_reports:
                     self.logger.error(f"Suppressing further error messages after {self.max_error_reports} failures...")
                 self.consecutive_failures += 1
                 return -999.0
             
-            # Calculate metrics
-            metrics = self.calibration_target.calculate_metrics(self.experiment_id)
+            # Calculate metrics using process-specific output if in parallel mode
+            if self.use_parallel and proc_id > 0:
+                # For parallel mode, metrics calculation needs to use process-specific output
+                # You may need to modify calibration_target.calculate_metrics to accept output_dir
+                metrics = self.calibration_target.calculate_metrics(self.experiment_id, output_dir=ngen_sim_dir)
+            else:
+                metrics = self.calibration_target.calculate_metrics(self.experiment_id)
             
             metric_name = self.optimization_metric.upper()
             if metric_name in metrics:
@@ -137,15 +244,16 @@ class NgenOptimizer:
                 if self.consecutive_failures > 0:
                     self.logger.info(f"Model run successful after {self.consecutive_failures} failures")
                     self.consecutive_failures = 0
-                self.logger.info(f"Fitness: {metric_name}={fitness:.4f}")
+                self.logger.info(f"Fitness (proc {proc_id}): {metric_name}={fitness:.4f}")
                 return fitness
             else:
                 self.logger.error(f"Metric {metric_name} not in results")
                 return -999.0
                 
         except Exception as e:
-            self.logger.error(f"Error evaluating parameters: {e}")
-            traceback.print_exc()
+            self.logger.error(f"Error evaluating parameters (proc {proc_id}): {e}")
+            if self.consecutive_failures < self.max_error_reports:
+                traceback.print_exc()
             return -999.0
     
     def run_dds(self) -> Path:
