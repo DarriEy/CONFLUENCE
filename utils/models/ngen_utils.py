@@ -957,6 +957,9 @@ class NgenRunner:
             if not file.exists():
                 raise FileNotFoundError(f"Required file not found: {file}")
         
+        # Setup environment with library paths
+        env = os.environ.copy()
+        
         
         # Build ngen command
         ngen_cmd = [
