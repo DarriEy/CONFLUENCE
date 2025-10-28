@@ -2,257 +2,387 @@
 # -*- coding: utf-8 -*-
 
 """
-NextGen (ngen) Worker Functions
+NGEN Worker Functions for Parallel Calibration
 
-Worker functions for ngen model calibration that can be called from 
-the main iterative optimizer or used in parallel processing.
-
-Author: CONFLUENCE Development Team
-Date: 2025
+These functions are used by MPI workers to evaluate NGEN parameter sets in parallel.
+Similar structure to SUMMA worker functions but adapted for NGEN.
 """
 
 import numpy as np
-import pandas as pd
+import json
 from pathlib import Path
-import sys
-from typing import Dict, Any, List, Tuple, Optional
-
-# Add CONFLUENCE root directory to path
-# File is at: CONFLUENCE/utils/optimization/ngen_worker_functions.py
-# We need:  CONFLUENCE/ (so we can import utils.model_utils.ngen_utils)
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from typing import Dict, Any, Optional
+import subprocess
+import shutil
 
 
-def _apply_ngen_parameters_worker(config: Dict[str, Any], params: Dict[str, float]) -> bool:
+def ngen_worker_function(task: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Worker function to apply ngen parameters to configuration files.
+    Worker function for parallel NGEN parameter evaluation
+    
+    This function is called by each MPI worker to:
+    1. Update NGEN configuration with new parameters
+    2. Run NGEN model
+    3. Calculate performance metrics
+    4. Return results
     
     Args:
-        config: Configuration dictionary
-        params: Dictionary of parameter names and values (format: "MODULE.param")
-        
+        task: Dictionary containing:
+            - individual_id: Unique identifier for this evaluation
+            - params: Parameter dictionary to evaluate
+            - config: Configuration dictionary
+            - optimization_metric: Target metric (e.g., 'KGE')
+            
     Returns:
-        bool: True if successful, False otherwise
+        Dictionary with evaluation results:
+            - individual_id: Task identifier
+            - params: Parameters that were evaluated
+            - score: Optimization metric value
+            - metrics: All calculated metrics
+            - success: Boolean indicating if evaluation succeeded
     """
     try:
-        import json
+        individual_id = task.get('individual_id', -1)
+        params = task.get('params', {})
+        config = task.get('config', {})
+        target_metric = task.get('optimization_metric', 'KGE')
         
+        # Setup paths
+        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
         
-        ngen_setup_dir = data_dir / f"domain_{domain_name}" / 'settings' / 'ngen'
+        project_dir = data_dir / f"domain_{domain_name}"
+        ngen_settings_dir = project_dir / 'settings' / 'ngen'
+        ngen_output_dir = project_dir / 'simulations' / experiment_id / 'ngen'
         
-        # Group parameters by module
-        module_params = {}
-        for param_name, value in params.items():
-            if '.' in param_name:
-                module, param = param_name.split('.', 1)
-                if module not in module_params:
-                    module_params[module] = {}
-                module_params[module][param] = value
+        # Update NGEN configuration files with new parameters
+        if not _update_ngen_configs(params, ngen_settings_dir, config):
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': np.nan,
+                'success': False,
+                'error': 'Failed to update configs'
+            }
         
-        # Update each module's config file
-        for module, module_param_dict in module_params.items():
-            config_file = ngen_setup_dir / module / f"{module.lower()}_config.json"
+        # Run NGEN model
+        output_dir = _run_ngen_model(config, ngen_settings_dir, ngen_output_dir)
+        if not output_dir:
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': np.nan,
+                'success': False,
+                'error': 'NGEN run failed'
+            }
+        
+        # Calculate metrics
+        metrics = _calculate_ngen_metrics(config, ngen_output_dir)
+        if not metrics or target_metric not in metrics:
+            return {
+                'individual_id': individual_id,
+                'params': params,
+                'score': np.nan,
+                'metrics': metrics,
+                'success': False,
+                'error': f'Metric {target_metric} not found'
+            }
+        
+        score = metrics[target_metric]
+        
+        return {
+            'individual_id': individual_id,
+            'params': params,
+            'score': score,
+            'metrics': metrics,
+            'success': True
+        }
+        
+    except Exception as e:
+        return {
+            'individual_id': task.get('individual_id', -1),
+            'params': task.get('params', {}),
+            'score': np.nan,
+            'success': False,
+            'error': str(e)
+        }
+
+
+def _update_ngen_configs(params: Dict[str, float], ngen_settings_dir: Path, 
+                         config: Dict) -> bool:
+    """
+    Update NGEN BMI configuration files with new parameter values
+    
+    Args:
+        params: Parameter dictionary
+        ngen_settings_dir: Path to NGEN settings directory
+        config: Configuration dictionary
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        config_dir = ngen_settings_dir / 'model_configs'
+        
+        if not config_dir.exists():
+            return False
+        
+        # Determine which modules to update based on parameter names
+        modules_to_calibrate = config.get('NGEN_MODULES_TO_CALIBRATE', 'NOAH').split(',')
+        modules_to_calibrate = [m.strip() for m in modules_to_calibrate]
+        
+        for module in modules_to_calibrate:
+            # Filter parameters for this module
+            module_params = {k: v for k, v in params.items() 
+                           if k.startswith(module.lower()) or k in ['rain_snow_thresh', 'ZREF']}
             
-            if not config_file.exists():
-                print(f"Warning: Config file not found: {config_file}")
+            if not module_params:
                 continue
             
-            # Read existing config
-            with open(config_file, 'r') as f:
-                cfg = json.load(f)
+            # Find and update config files for this module
+            pattern = f"*{module.lower()}*.json"
+            config_files = list(config_dir.glob(pattern))
             
-            # Update parameters
-            for param, value in module_param_dict.items():
-                if param in cfg:
-                    cfg[param] = value
+            for config_file in config_files:
+                with open(config_file, 'r') as f:
+                    config_data = json.load(f)
+                
+                # Update parameters in the config
+                # Handle different possible config structures
+                if 'config' in config_data:
+                    config_section = config_data['config']
+                elif 'parameters' in config_data:
+                    config_section = config_data['parameters']
                 else:
-                    print(f"Warning: Parameter {param} not found in {module} config")
-            
-            # Write updated config
-            with open(config_file, 'w') as f:
-                json.dump(cfg, f, indent=2)
+                    config_section = config_data
+                
+                # Update each parameter
+                for param_name, param_value in module_params.items():
+                    # Remove module prefix if present (e.g., noah_refdk -> refdk)
+                    param_key = param_name.replace(f'{module.lower()}_', '')
+                    config_section[param_key] = float(param_value)
+                
+                # Write updated config
+                with open(config_file, 'w') as f:
+                    json.dump(config_data, f, indent=2)
         
         return True
         
     except Exception as e:
-        print(f"Error applying ngen parameters: {str(e)}")
+        print(f"Error updating NGEN configs: {str(e)}")
         return False
 
 
-def _run_ngen_worker(config: Dict[str, Any]) -> bool:
+def _run_ngen_model(config: Dict, ngen_settings_dir: Path, 
+                    ngen_output_dir: Path) -> Optional[Path]:
     """
-    Worker function to execute ngen model.
+    Run NGEN model
     
     Args:
         config: Configuration dictionary
+        ngen_settings_dir: Path to NGEN settings
+        ngen_output_dir: Path to output directory
         
     Returns:
-        bool: True if successful, False otherwise
+        Output directory path if successful, None otherwise
     """
-    import logging
-    import traceback
-    
-    # Get the main confluence logger if available
-    logger = logging.getLogger('confluence')
-    
     try:
-        # Import NgenRunner from ngen_utils
-        from utils.models.ngen_utils import NgenRunner
+        # Get NGEN executable path
+        ngen_install_path = Path(config.get('NGEN_INSTALL_PATH', 'default'))
+        if ngen_install_path == Path('default'):
+            data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+            ngen_install_path = data_dir / 'installs' / 'ngen'
         
+        ngen_exe = ngen_install_path / 'build' / 'ngen'
+        
+        if not ngen_exe.exists():
+            print(f"NGEN executable not found: {ngen_exe}")
+            return None
+        
+        # Get input files
         domain_name = config.get('DOMAIN_NAME')
-        experiment_id = config.get('EXPERIMENT_ID')
+        catchment_file = ngen_settings_dir / f"{domain_name}_catchments.gpkg"
+        nexus_file = ngen_settings_dir / "nexus.geojson"
+        realization_file = ngen_settings_dir / "realization_config.json"
         
-        # Initialize runner with main logger
-        runner = NgenRunner(config, logger)
+        if not all([catchment_file.exists(), nexus_file.exists(), realization_file.exists()]):
+            print("Required NGEN input files not found")
+            return None
         
-        # Run ngen
-        success = runner.run_model(experiment_id)
+        # Create output directory
+        ngen_output_dir.mkdir(parents=True, exist_ok=True)
         
-        return success
+        # Build command
+        cmd = [
+            str(ngen_exe),
+            str(catchment_file), "all",
+            str(nexus_file), "all",
+            str(realization_file)
+        ]
         
-    except FileNotFoundError as e:
-        logger.error(f"Required ngen input file not found: {str(e)}")
-        logger.error("Make sure ngen preprocessing has been run to generate required files:")
-        logger.error("  - catchment geopackage")
-        logger.error("  - nexus geojson")
-        logger.error("  - realization config json")
-        return False
+        # Run NGEN (LD_LIBRARY_PATH should already be set in environment)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(ngen_output_dir),
+            timeout=3600  # 1 hour timeout
+        )
         
-    except Exception as e:
-        logger.error(f"Error running ngen: {str(e)}")
-        logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        return False
-
-
-def _calculate_ngen_metrics_worker(config: Dict[str, Any], metric: str = 'KGE') -> float:
-    """
-    Worker function to calculate ngen performance metrics.
-    
-    Args:
-        config: Configuration dictionary
-        metric: Metric to calculate ('KGE', 'NSE', 'MAE', 'RMSE')
+        if result.returncode != 0:
+            print(f"NGEN failed: {result.stderr}")
+            return None
         
-    Returns:
-        float: Metric value (or -999.0 for error/invalid)
-    """
-    try:
-        from ngen_calibration_targets import NgenStreamflowTarget
-        import logging
+        return ngen_output_dir
         
-        domain_name = config.get('DOMAIN_NAME')
-        experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
-        project_dir = data_dir / f"domain_{domain_name}"
-        
-        # Create minimal logger
-        logger = logging.getLogger(f'ngen_metrics_{experiment_id}')
-        logger.setLevel(logging.WARNING)
-        
-        # Create calibration target
-        target = NgenStreamflowTarget(config, project_dir, logger)
-        
-        # Calculate metrics
-        metrics = target.calculate_metrics(experiment_id)
-        
-        # Return requested metric
-        metric_upper = metric.upper()
-        if metric_upper in metrics:
-            return float(metrics[metric_upper])
-        else:
-            print(f"Warning: Metric {metric} not found in results")
-            return -999.0
-        
-    except Exception as e:
-        print(f"Error calculating ngen metrics: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return -999.0
-
-
-def _evaluate_ngen_parameters_worker(
-    config: Dict[str, Any],
-    normalized_params: np.ndarray,
-    param_names: List[str],
-    param_bounds: Dict[str, Dict[str, float]]
-) -> float:
-    """
-    Worker function to evaluate a parameter set for ngen.
-    
-    This function:
-    1. Denormalizes parameters
-    2. Applies them to ngen config files
-    3. Runs ngen model
-    4. Calculates performance metrics
-    
-    Args:
-        config: Configuration dictionary
-        normalized_params: Normalized parameter values [0,1]
-        param_names: List of parameter names
-        param_bounds: Parameter bounds dictionary
-        
-    Returns:
-        float: Fitness value (metric score)
-    """
-    try:
-        # Denormalize parameters
-        params = {}
-        for i, param_name in enumerate(param_names):
-            bounds = param_bounds[param_name]
-            value = (normalized_params[i] * (bounds['max'] - bounds['min']) + 
-                    bounds['min'])
-            params[param_name] = float(value)
-        
-        # Apply parameters to ngen
-        if not _apply_ngen_parameters_worker(config, params):
-            return -999.0
-        
-        # Run ngen model
-        if not _run_ngen_worker(config):
-            return -999.0
-        
-        # Calculate metrics
-        metric = config.get('OPTIMIZATION_METRIC', 'KGE')
-        fitness = _calculate_ngen_metrics_worker(config, metric)
-        
-        return fitness
-        
-    except Exception as e:
-        print(f"Error in ngen parameter evaluation: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return -999.0
-
-
-def _extract_ngen_streamflow_worker(config: Dict[str, Any], experiment_id: str) -> Optional[Path]:
-    """
-    Worker function to extract streamflow from ngen outputs.
-    
-    Args:
-        config: Configuration dictionary
-        experiment_id: Experiment identifier
-        
-    Returns:
-        Path to extracted streamflow file, or None if failed
-    """
-    try:
-        from utils.models.ngen_utils import NgenPostprocessor
-        import logging
-        
-        # Create minimal logger
-        logger = logging.getLogger(f'ngen_extract_{experiment_id}')
-        logger.setLevel(logging.WARNING)
-        
-        # Initialize postprocessor
-        postprocessor = NgenPostprocessor(config, logger)
-        
-        # Extract streamflow
-        output_file = postprocessor.extract_streamflow(experiment_id)
-        
-        return output_file
-        
-    except Exception as e:
-        print(f"Error extracting ngen streamflow: {str(e)}")
+    except subprocess.TimeoutExpired:
+        print("NGEN execution timed out")
         return None
+    except Exception as e:
+        print(f"Error running NGEN: {str(e)}")
+        return None
+
+
+def _calculate_ngen_metrics(config: Dict, ngen_output_dir: Path) -> Optional[Dict[str, float]]:
+    """
+    Calculate performance metrics from NGEN output
+    
+    Args:
+        config: Configuration dictionary
+        ngen_output_dir: Path to NGEN output directory
+        
+    Returns:
+        Dictionary of metrics or None if calculation fails
+    """
+    try:
+        import pandas as pd
+        
+        # Find output files
+        nexus_outputs = list(ngen_output_dir.glob("nex-*_output.csv"))
+        
+        if not nexus_outputs:
+            print("No NGEN output files found")
+            return None
+        
+        # Read simulated streamflow from nexus output
+        nexus_output_file = nexus_outputs[0]  # Use first nexus (typically outlet)
+        sim_df = pd.read_csv(nexus_output_file)
+        
+        # Get observed streamflow
+        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        domain_name = config.get('DOMAIN_NAME')
+        obs_file = (data_dir / f"domain_{domain_name}" / 'observations' / 'streamflow' / 
+                   'preprocessed' / f"{domain_name}_streamflow_processed.csv")
+        
+        if not obs_file.exists():
+            print(f"Observed data not found: {obs_file}")
+            return None
+        
+        obs_df = pd.read_csv(obs_file, parse_dates=['datetime'])
+        
+        # Merge simulated and observed
+        sim_df['datetime'] = pd.to_datetime(sim_df['time'])
+        merged = pd.merge(
+            obs_df[['datetime', 'discharge_cms']],
+            sim_df[['datetime', 'flow']],
+            on='datetime',
+            how='inner'
+        )
+        
+        if len(merged) == 0:
+            print("No overlapping data between simulated and observed")
+            return None
+        
+        observed = merged['discharge_cms'].values
+        simulated = merged['flow'].values
+        
+        # Calculate metrics
+        metrics = calculate_performance_metrics(observed, simulated)
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"Error calculating metrics: {str(e)}")
+        return None
+
+
+def calculate_performance_metrics(observed: np.ndarray, simulated: np.ndarray) -> Dict[str, float]:
+    """
+    Calculate hydrological performance metrics
+    
+    Args:
+        observed: Observed values
+        simulated: Simulated values
+        
+    Returns:
+        Dictionary with KGE, NSE, RMSE, MAE, PBIAS
+    """
+    # Remove NaN values
+    valid = ~(np.isnan(observed) | np.isnan(simulated))
+    observed = observed[valid]
+    simulated = simulated[valid]
+    
+    if len(observed) == 0:
+        return {'KGE': np.nan, 'NSE': np.nan, 'RMSE': np.nan, 'MAE': np.nan, 'PBIAS': np.nan}
+    
+    # Nash-Sutcliffe Efficiency
+    mean_obs = observed.mean()
+    nse_num = ((observed - simulated) ** 2).sum()
+    nse_den = ((observed - mean_obs) ** 2).sum()
+    nse = 1 - (nse_num / nse_den) if nse_den > 0 else np.nan
+    
+    # Root Mean Square Error
+    rmse = np.sqrt(((observed - simulated) ** 2).mean())
+    
+    # Mean Absolute Error
+    mae = np.abs(observed - simulated).mean()
+    
+    # Percent Bias
+    pbias = 100 * (simulated.sum() - observed.sum()) / observed.sum() if observed.sum() != 0 else np.nan
+    
+    # Kling-Gupta Efficiency
+    r = np.corrcoef(observed, simulated)[0, 1] if len(observed) > 1 else np.nan
+    std_obs = observed.std()
+    std_sim = simulated.std()
+    mean_sim = simulated.mean()
+    
+    alpha = std_sim / std_obs if std_obs != 0 else np.nan
+    beta = mean_sim / mean_obs if mean_obs != 0 else np.nan
+    kge = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2) if not np.isnan(r + alpha + beta) else np.nan
+    
+    return {
+        'KGE': kge,
+        'NSE': nse,
+        'RMSE': rmse,
+        'MAE': mae,
+        'PBIAS': pbias,
+        'r': r,
+        'alpha': alpha,
+        'beta': beta,
+        'n_obs': len(observed)
+    }
+
+
+def evaluate_ngen_parameters(params: Dict[str, float], config: Dict, 
+                             optimization_metric: str = 'KGE') -> float:
+    """
+    Simplified function to evaluate a single parameter set
+    
+    Args:
+        params: Parameter dictionary
+        config: Configuration dictionary
+        optimization_metric: Target metric name
+        
+    Returns:
+        Metric value (fitness score)
+    """
+    task = {
+        'individual_id': 0,
+        'params': params,
+        'config': config,
+        'optimization_metric': optimization_metric
+    }
+    
+    result = ngen_worker_function(task)
+    return result.get('score', np.nan)
