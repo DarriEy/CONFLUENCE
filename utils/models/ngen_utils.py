@@ -921,7 +921,7 @@ class NgenRunner:
         self.logger = logger
         
         self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
-        self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
+        self.ngen_setttings_dir = self.project_dir / "settings" / "ngen"
         
         # Get ngen installation path
         ngen_install_path = config.get('NGEN_INSTALL_PATH', 'default')
@@ -929,6 +929,7 @@ class NgenRunner:
             self.ngen_exe = Path(config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build' / 'ngen'
         else:
             self.ngen_exe = Path(ngen_install_path) / 'ngen'
+
     
     def run_model(self) -> Optional[Path]:
         """
