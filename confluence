@@ -172,7 +172,7 @@ install_python_requirements() {
     
     print_info "Installing Python dependencies from: $requirements_file"
     print_info "This may take several minutes, especially for packages like rpy2..."
-    print_info "Note: Explicitly using PyPI to avoid NumPy 2.x compatibility issues with platform wheels"
+    print_info "Note: Using pip --isolated to bypass platform wheelhouse and use PyPI"
     echo ""
     
     # Default to API mode for better performance
@@ -184,9 +184,9 @@ install_python_requirements() {
     fi
     
     # Try to install with current environment
-    # Bypass Compute Canada wheelhouse to avoid NumPy 2.x compatibility issues
-    # Explicitly use PyPI and disable all other sources
-    if pip install --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
+    # Use --isolated to ignore Compute Canada's pip configuration completely
+    # This forces pip to use only PyPI with no platform-specific wheels
+    if pip install --isolated --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
         print_success "All dependencies installed successfully"
         return 0
     else
@@ -202,7 +202,7 @@ install_python_requirements() {
             
             export RPY2_CFFI_MODE=ABI
             
-            if pip install --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
+            if pip install --isolated --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
                 print_success "Dependencies installed successfully in ABI mode"
                 print_info "Note: rpy2 is using ABI mode. This is fully functional but slightly slower than API mode."
                 return 0
