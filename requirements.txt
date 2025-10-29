@@ -1,15 +1,13 @@
 # Core scientific and data processing libraries
-numpy
-pandas
-scipy
+numpy>=2.2.0,<3.0
+pandas>=2.2.0,<3.0
+scipy>=1.15.0,<2.0
 xarray
 pint_xarray
 pyarrow
 distributed
 pyviscous
 ipykernel
-
-
 
 # Machine learning and data science libraries
 torch
@@ -37,7 +35,7 @@ hydrobm
 baseflow 
 
 # Visualization
-matplotlib
+matplotlib>=3.9.0
 
 # Optimization and analysis
 SALib
@@ -65,3 +63,6 @@ pytest
 
 # Documentation
 sphinx
+
+cftime>=1.6.4
+numexpr>=2.10.0
