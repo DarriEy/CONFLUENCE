@@ -343,7 +343,7 @@ install_python_requirements() {
     # Filter out GDAL and rpy2 from requirements - we'll install them separately
     # GDAL needs version detection, rpy2 is optional and may fail on some systems
     local temp_requirements="${requirements_file}.tmp"
-    grep -v -iE "^(GDAL|rpy2)[>=<~!]" "$requirements_file" > "$temp_requirements" 2>/dev/null || cp "$requirements_file" "$temp_requirements"
+    grep -v -iE "^(GDAL|rpy2)([>=<~!]|$)" "$requirements_file" > "$temp_requirements" 2>/dev/null || cp "$requirements_file" "$temp_requirements"
     
     local gdal_filtered=false
     local rpy2_filtered=false
