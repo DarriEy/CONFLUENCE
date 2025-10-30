@@ -62,3 +62,6 @@ pytest
 
 # Documentation
 sphinx
+
+numexpr
+cftime
