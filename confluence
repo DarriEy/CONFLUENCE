@@ -509,23 +509,14 @@ setup_install_env() {
     
     echo ""
     
-    # Check if we're in a conda environment
+    # Always use venv for platform-agnostic installation
+    # Even if conda is loaded (just for Python 3.11 access), create a venv
+    print_info "Platform-agnostic mode: will create isolated virtual environment"
     if [[ -n "${CONDA_DEFAULT_ENV}" ]]; then
-        print_info "Running in conda environment: ${CONDA_DEFAULT_ENV}"
-        print_info "Will install dependencies in current conda environment"
-        echo ""
-        
-        if [[ -f "$requirements_file" ]]; then
-            if ! install_python_requirements "$requirements_file" "false"; then
-                return 1
-            fi
-        else
-            print_warning "requirements.txt not found at: $requirements_file"
-            return 1
-        fi
-        
-        return 0
+        print_info "Note: Conda detected (${CONDA_DEFAULT_ENV}) but will use venv instead"
+        print_info "Conda is only used to access Python ${REQUIRED_PYTHON_VERSION}"
     fi
+    echo ""
     
     # Check if venv exists
     if [[ -d "$venv_path" ]]; then
