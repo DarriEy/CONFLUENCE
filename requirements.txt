@@ -49,9 +49,6 @@ contextily
 # Configuration management
 pyyaml
 
-# Parallel processing
-mpi4py
-
 # Web APIs (if used for data acquisition)
 requests
 cdsapi
