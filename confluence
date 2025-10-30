@@ -394,6 +394,8 @@ check_virtual_env() {
             print_info "Found virtual environment: ${venv_path}"
             print_info "Activating virtual environment..."
             source "${venv_path}/bin/activate"
+            export PYTHONPATH=""
+            print_info "Cleared PYTHONPATH to isolate venv from system packages"
             return 0
         fi
     done
