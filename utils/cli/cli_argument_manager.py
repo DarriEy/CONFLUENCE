@@ -377,141 +377,125 @@ class CLIArgumentManager:
                 'test_command': '--version',
                 'order': 2
             },
+'mizuroute': {
+    'description': 'Mizukami routing model for river network routing',
+    'config_path_key': 'INSTALL_PATH_MIZUROUTE',
+    'config_exe_key': 'EXE_NAME_MIZUROUTE',
+    'default_path_suffix': 'installs/mizuRoute/route/bin',
+    'default_exe': 'mizuRoute.exe',
+    'repository': 'https://github.com/ESCOMP/mizuRoute.git',
+    'branch': 'serial',
+    'install_dir': 'mizuRoute',
+    'build_commands': [
+        r'''
+# Portable build for mizuRoute (no Makefile edits)
+set -e
 
-            'mizuroute': {
-                'description': 'Mizukami routing model for river network routing',
-                'config_path_key': 'INSTALL_PATH_MIZUROUTE',
-                'config_exe_key': 'EXE_NAME_MIZUROUTE',
-                'default_path_suffix': 'installs/mizuRoute/route/bin',
-                'default_exe': 'mizuRoute.exe',
-                'repository': 'https://github.com/ESCOMP/mizuRoute.git',
-                'branch': 'serial',
-                'install_dir': 'mizuRoute',
-                'build_commands': [
-                    '''
-    # Portable build for mizuRoute (no Makefile edits)
-    # Picks up NetCDF paths from nc-config / nf-config when available.
+# Prefer absolute compiler path if available
+FC_PATH="$(command -v ${FC:-gfortran})"
+FC="${FC_PATH:-gfortran}"
+NCORES="${NCORES:-4}"
 
-    # Discover NetCDF locations or fall back to /usr
-    NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
-    NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
-    FC="${FC:-gfortran}"
-    NCORES="${NCORES:-4}"
+NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
+NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
 
-    echo "Using FC=$FC"
-    echo "NETCDF (C): $NETCDF"
-    echo "NETCDF_FORTRAN: $NETCDF_FORTRAN"
+echo "Using FC=$FC"
+echo "NETCDF (C): $NETCDF"
+echo "NETCDF_FORTRAN: $NETCDF_FORTRAN"
 
-    # Build from route/build (upstream layout)
-    cd route/build
+cd route/build
 
-    echo "Building mizuRoute (variable-driven)…"
-    make -j "$NCORES" \
-    FC="$FC" \
-    NETCDF="$NETCDF" \
-    NETCDF_FORTRAN="$NETCDF_FORTRAN"
+# Some mizuRoute Makefiles validate both FC and FC_EXE; set both.
+make -j "$NCORES" \
+  FC="$FC" \
+  FC_EXE="$FC" \
+  NETCDF="$NETCDF" \
+  NETCDF_FORTRAN="$NETCDF_FORTRAN"
 
-    BUILD_STATUS=$?
+# Verify exe
+if [ -f "../bin/mizuRoute.exe" ] || [ -f "../bin/mizuroute.exe" ] || [ -f "../bin/runoff_route.exe" ]; then
+  echo "✅ mizuRoute built successfully"
+  ls -la ../bin/
+else
+  echo "ERROR: mizuRoute executable not found after build"
+  ls -la ../bin/ || echo "bin directory not found"
+  exit 1
+fi
+'''
+    ],
+    'dependencies': [],
+    'test_command': None,
+    'verify_install': {
+        'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe', 'route/bin/runoff_route.exe'],
+        'check_type': 'exists_any'
+    },
+    'order': 3
+},
 
-    if [ $BUILD_STATUS -ne 0 ]; then
-    echo "ERROR: mizuRoute build failed"
-    exit 1
-    fi
 
-    # Check for executable(s) in the upstream bin folder
-    if [ -f "../bin/mizuRoute.exe" ] || [ -f "../bin/mizuroute.exe" ] || [ -f "../bin/runoff_route.exe" ]; then
-    echo "✅ mizuRoute built successfully"
-    ls -la ../bin/
-    else
-    echo "ERROR: mizuRoute executable not found after build"
-    ls -la ../bin/ || echo "bin directory not found"
-    exit 1
-    fi
-    '''
-                ],
-                'dependencies': [],
-                'test_command': None,  # mizuRoute doesn't have a --version flag
-                'verify_install': {
-                    'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe', 'route/bin/runoff_route.exe'],
-                    'check_type': 'exists_any'
-                },
-                'order': 3
-            },
+'fuse': {
+    'description': 'Framework for Understanding Structural Errors',
+    'config_path_key': 'FUSE_INSTALL_PATH',
+    'config_exe_key': 'FUSE_LIB',  # renamed since we install a lib, not an exe
+    'default_path_suffix': 'installs/fuse/build',
+    'default_exe': 'libfuse.a',
+    'repository': 'https://github.com/naddor/fuse.git',
+    'branch': None,
+    'install_dir': 'fuse',
+    'build_commands': [
+        r'''
+# Build libfuse.a without linking demo exe (no Makefile edits)
+set -e
 
-            'fuse': {
-                'description': 'Framework for Understanding Structural Errors',
-                'config_path_key': 'FUSE_INSTALL_PATH',
-                'config_exe_key': 'FUSE_EXE',
-                'default_path_suffix': 'installs/fuse/bin',
-                'default_exe': 'fuse.exe',
-                'repository': 'https://github.com/naddor/fuse.git',
-                'branch': None,
-                'install_dir': 'fuse',
-                'build_commands': [
-                    '''
-    # Portable build for FUSE (no Makefile edits)
-    # Avoid concatenation bug by passing F_MASTER with a trailing slash.
-    # Feed library/include roots from system helpers.
+FC="${FC:-gfortran}"
+NCORES="${NCORES:-4}"
 
-    set -e
+# Discover roots (fallback to /usr)
+NCDF_PATH="$(nc-config --prefix 2>/dev/null || echo /usr)"
+NCDFF_PATH="$(nf-config --prefix 2>/dev/null || echo /usr)"
+HDF5_PATH="$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print \$2}" || echo /usr)"
 
-    FC="${FC:-gfortran}"
-    NCORES="${NCORES:-4}"
+echo "FC: $FC"
+echo "NetCDF C: $NCDF_PATH"
+echo "NetCDF Fortran: $NCDFF_PATH"
+echo "HDF5: $HDF5_PATH"
 
-    # Discover paths; default to /usr if helpers are missing
-    NCDF_PATH="$(nc-config --prefix 2>/dev/null || echo /usr)"
-    NCDFF_PATH="$(nf-config --prefix 2>/dev/null || echo /usr)"
-    HDF5_PATH="$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print \$2}" || echo /usr)"
+cd build
 
-    echo "FC: $FC"
-    echo "NetCDF C root:        $NCDF_PATH"
-    echo "NetCDF Fortran root:  $NCDFF_PATH"
-    echo "HDF5 root:            $HDF5_PATH"
+# Compile all sources to objects (no link). Respect upstream layout.
+# Include dirs: NetCDF-Fortran include is enough for module headers.
+INC="-I$NCDFF_PATH/include"
+LIBS="-L$NCDFF_PATH/lib -lnetcdff -L$NCDF_PATH/lib -lnetcdf -L$HDF5_PATH/lib -lhdf5_hl -lhdf5"
 
-    # Build directory (upstream uses ./build, not build_unix)
-    cd build
+# Clean any stale artifacts
+rm -f *.o *.mod libfuse.a
 
-    # Compute F_MASTER with trailing slash to prevent 'fusebuild' path join
-    F_MASTER_TRAIL="$(cd .. && pwd)/"
-    echo "F_MASTER: $F_MASTER_TRAIL"
+# Find all .f / .F files under FUSE_SRC, compile to .o in build/
+find FUSE_SRC -type f \( -name '*.f' -o -name '*.F' -o -name '*.f90' \) | while read -r src; do
+  echo "Compiling $src"
+  "$FC" -c $INC "$src"
+done
 
-    echo "Building FUSE (variable-driven)…"
-    # The Makefile already defines variables like F_MASTER, NCDF_LIB_PATH, HDF_LIB_PATH, INCLUDE_PATH.
-    # We pass them in rather than editing the file.
-    make -j "$NCORES" \
-    FC="$FC" \
-    F_MASTER="$F_MASTER_TRAIL" \
-    NCDF_LIB_PATH="$NCDFF_PATH" \
-    HDF_LIB_PATH="$HDF5_PATH" \
-    INCLUDE_PATH="$NCDFF_PATH"
+# Archive into static library
+ar rcs libfuse.a ./*.o
 
-    echo "Checking for fuse.exe…"
-    if [ -f "../bin/fuse.exe" ]; then
-    echo "✅ FUSE executable successfully created"
-    ls -la ../bin/
-    elif [ -f "fuse.exe" ]; then
-    echo "✅ FUSE executable found in build directory, moving to bin/"
-    mkdir -p ../bin
-    mv fuse.exe ../bin/
-    ls -la ../bin/
-    else
-    echo "ERROR: fuse.exe not found after build"
-    echo "Contents of build directory:"
-    ls -la
-    echo "Contents of bin directory:"
-    ls -la ../bin/ || echo "bin directory not found"
-    exit 1
-    fi
-    '''
-                ],
-                'dependencies': [],
-                'test_command': None,  # FUSE requires specific input files to run
-                'verify_install': {
-                    'file_paths': ['bin/fuse.exe'],
-                    'check_type': 'exists'
-                },
-                'order': 4
-            },
+# Create bin dir but we don't install an exe
+mkdir -p ../bin
+echo "✅ Built static library: $(pwd)/libfuse.a"
+
+# List for visibility
+ls -lh libfuse.a
+'''
+    ],
+    'dependencies': [],
+    'test_command': None,  # library only
+    'verify_install': {
+        'file_paths': ['build/libfuse.a'],
+        'check_type': 'exists'
+    },
+    'order': 4
+},
+
 
             'taudem': {
                 'description': 'Terrain Analysis Using Digital Elevation Models',
@@ -593,96 +577,85 @@ class CLIArgumentManager:
                 'order': 7
             },
 
-            'ngen': {
-                'description': 'NextGen National Water Model Framework',
-                'config_path_key': 'NGEN_INSTALL_PATH',
-                'config_exe_key': 'NGEN_EXE',
-                'default_path_suffix': 'installs/ngen',
-                'default_exe': 'cmake_build/ngen',
-                'repository': 'https://github.com/CIROH-UA/ngen',
-                'branch': 'ngiab',
-                'install_dir': 'ngen',
-                'build_commands': [
-                    '''
-    # Build ngen from source
-    echo "Building ngen..."
+'ngen': {
+    'description': 'NextGen National Water Model Framework',
+    'config_path_key': 'NGEN_INSTALL_PATH',
+    'config_exe_key': 'NGEN_EXE',
+    'default_path_suffix': 'installs/ngen',
+    'default_exe': 'cmake_build/ngen',
+    'repository': 'https://github.com/CIROH-UA/ngen',
+    'branch': 'ngiab',
+    'install_dir': 'ngen',
+    'build_commands': [
+        r'''
+# Build ngen from source with NumPy < 2.0
+set -e
 
-    # Get system info
-    NCORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-    echo "Using $NCORES cores for compilation"
+echo "Building ngen..."
 
-    # Download and setup Boost (if not already present)
-    if [ ! -d "boost_1_79_0" ]; then
-        echo "Downloading Boost 1.79.0..."
-        wget -q https://sourceforge.net/projects/boost/files/boost/1.79.0/boost_1_79_0.tar.bz2/download -O boost_1_79_0.tar.bz2
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to download Boost"
-            exit 1
-        fi
-        echo "Extracting Boost..."
-        tar -xjf boost_1_79_0.tar.bz2
-        rm boost_1_79_0.tar.bz2
-    fi
+# Ensure CMake finds a supported NumPy; avoid picking up ~/.local
+export PYTHONNOUSERSITE=1
+python -c "import sys; print(sys.version)"
+python -m pip install --upgrade pip >/dev/null 2>&1 || true
+python -m pip install 'numpy<2.0' >/dev/null 2>&1
 
-    # Set Boost environment
-    export BOOST_ROOT="$(pwd)/boost_1_79_0"
-    echo "BOOST_ROOT set to: $BOOST_ROOT"
+# Verify numpy version for logs
+python - <<'PY'
+import numpy, sys
+print("NumPy version:", numpy.__version__)
+PY
 
-    # Set compiler (use system default)
-    export CXX=${CXX:-g++}
-    echo "Using C++ compiler: $CXX"
+# Get system info
+NCORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+echo "Using $NCORES cores for compilation"
 
-    # Initialize submodules
-    echo "Initializing git submodules..."
-    git submodule update --init --recursive -- test/googletest
-    git submodule update --init --recursive -- extern/pybind11
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to initialize git submodules"
-        exit 1
-    fi
+# Download Boost if not present
+if [ ! -d "boost_1_79_0" ]; then
+    echo "Downloading Boost 1.79.0..."
+    wget -q https://sourceforge.net/projects/boost/files/boost/1.79.0/boost_1_79_0.tar.bz2/download -O boost_1_79_0.tar.bz2
+    tar -xjf boost_1_79_0.tar.bz2
+    rm -f boost_1_79_0.tar.bz2
+fi
 
-    # Configure with CMake
-    echo "Configuring ngen with CMake..."
-    cmake -DCMAKE_CXX_COMPILER=$CXX \
-        -DBOOST_ROOT=$BOOST_ROOT \
-        -DCMAKE_BUILD_TYPE=Release \
-        -B cmake_build \
-        -S .
-    if [ $? -ne 0 ]; then
-        echo "ERROR: CMake configuration failed"
-        echo "CMake output above should indicate the problem"
-        exit 1
-    fi
+export BOOST_ROOT="$(pwd)/boost_1_79_0"
+echo "BOOST_ROOT set to: $BOOST_ROOT"
 
-    # Build
-    echo "Building ngen (this may take several minutes)..."
-    cmake --build cmake_build --target ngen -- -j $NCORES
-    if [ $? -ne 0 ]; then
-        echo "ERROR: ngen build failed"
-        exit 1
-    fi
+export CXX=${CXX:-g++}
+echo "Using C++ compiler: $CXX"
 
-    # Verify executable exists
-    if [ -f "cmake_build/ngen" ]; then
-        echo "✅ ngen built successfully"
-        echo "Executable location: $(pwd)/cmake_build/ngen"
-        ./cmake_build/ngen --help || echo "ngen executable created"
-    else
-        echo "ERROR: ngen executable not found after build"
-        echo "Contents of cmake_build directory:"
-        ls -la cmake_build/ || echo "cmake_build directory not found"
-        exit 1
-    fi
-    '''
-                ],
-                'dependencies': [],
-                'test_command': '--help',
-                'verify_install': {
-                    'file_paths': ['cmake_build/ngen'],
-                    'check_type': 'exists'
-                },
-                'order': 8
-            },
+echo "Initializing git submodules..."
+git submodule update --init --recursive -- test/googletest
+git submodule update --init --recursive -- extern/pybind11
+
+echo "Configuring ngen with CMake..."
+cmake -DCMAKE_CXX_COMPILER="$CXX" \
+      -DBOOST_ROOT="$BOOST_ROOT" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -B cmake_build \
+      -S .
+
+echo "Building ngen..."
+cmake --build cmake_build --target ngen -- -j "$NCORES"
+
+if [ -f "cmake_build/ngen" ]; then
+    echo "✅ ngen built successfully"
+    echo "Executable location: $(pwd)/cmake_build/ngen"
+    ./cmake_build/ngen --help || echo "ngen executable created"
+else
+    echo "ERROR: ngen executable not found after build"
+    ls -la cmake_build/ || echo "cmake_build directory not found"
+    exit 1
+fi
+'''
+    ],
+    'dependencies': [],
+    'test_command': '--help',
+    'verify_install': {
+        'file_paths': ['cmake_build/ngen'],
+        'check_type': 'exists'
+    },
+    'order': 8
+},
 
             'ngiab': {
                 'description': 'NextGen In A Box - Container-based ngen deployment',
