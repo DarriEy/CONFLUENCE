@@ -1,7 +1,7 @@
 # Core scientific and data processing libraries
-numpy>=2.2.0,<3.0
-pandas>=2.2.0,<3.0
-scipy>=1.15.0,<2.0
+numpy
+pandas
+scipy
 xarray
 pint_xarray
 pyarrow
@@ -35,7 +35,7 @@ hydrobm
 baseflow 
 
 # Visualization
-matplotlib>=3.9.0
+matplotlib
 
 # Optimization and analysis
 SALib
@@ -63,6 +63,3 @@ pytest
 
 # Documentation
 sphinx
-
-cftime>=1.6.4
-numexpr>=2.10.0
