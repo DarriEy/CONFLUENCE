@@ -15,6 +15,7 @@ set -e  # Exit on any error
 SCRIPT_NAME="confluence"
 CONFLUENCE_SCRIPT="CONFLUENCE.py"
 MIN_PYTHON_VERSION="3.8"
+REQUIRED_PYTHON_VERSION="3.11"  # Preferred Python version
 
 # Colors for output (if terminal supports it)
 if [[ -t 1 ]]; then
@@ -172,7 +173,6 @@ install_python_requirements() {
     
     print_info "Installing Python dependencies from: $requirements_file"
     print_info "This may take several minutes, especially for packages like rpy2..."
-    print_info "Note: Using pip --isolated to bypass platform wheelhouse and use PyPI"
     echo ""
     
     # Default to API mode for better performance
@@ -184,9 +184,8 @@ install_python_requirements() {
     fi
     
     # Try to install with current environment
-    # Use --isolated to ignore Compute Canada's pip configuration completely
-    # This forces pip to use only PyPI with no platform-specific wheels
-    if pip install --isolated --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
+    # Install from PyPI to ensure clean builds in the venv
+    if pip install -r "$requirements_file" $pip_flags; then
         print_success "All dependencies installed successfully"
         return 0
     else
@@ -202,7 +201,7 @@ install_python_requirements() {
             
             export RPY2_CFFI_MODE=ABI
             
-            if pip install --isolated --index-url https://pypi.org/simple --no-cache-dir -r "$requirements_file" $pip_flags; then
+            if pip install -r "$requirements_file" $pip_flags; then
                 print_success "Dependencies installed successfully in ABI mode"
                 print_info "Note: rpy2 is using ABI mode. This is fully functional but slightly slower than API mode."
                 return 0
@@ -223,7 +222,7 @@ install_python_requirements() {
         print_info ""
         print_info "3. Try forcing ABI mode before installation:"
         print_info "     export RPY2_CFFI_MODE=ABI"
-        print_info "     pip install -r requirements.txt --break-system-packages"
+        print_info "     ./confluence --install"
         print_info ""
         print_info "4. Check if R has required development libraries:"
         print_info "     ls \$R_HOME/lib/"
@@ -288,6 +287,26 @@ sys.exit(0 if current >= required else 1)
     
     echo "$python_cmd"
     return 0
+}
+
+# Function to verify Python version meets requirements
+verify_python_version() {
+    local python_cmd="$1"
+    local preferred_version="$2"
+    
+    local current_version=$($python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    
+    print_info "Current Python version: $current_version"
+    
+    if [[ "$current_version" == "$preferred_version" ]]; then
+        print_success "Python $current_version matches required version $preferred_version"
+        return 0
+    else
+        print_warning "Python $current_version detected, but $preferred_version is recommended"
+        print_info "CONFLUENCE works best with Python $preferred_version"
+        print_info "If you have issues, try: module load python/$preferred_version"
+        return 0  # Don't fail, just warn
+    fi
 }
 
 # Function to check if Python dependencies are satisfied
@@ -393,6 +412,10 @@ setup_install_env() {
     print_info "Setting up Python environment for installation..."
     echo ""
     
+    # Verify Python version
+    verify_python_version "$python_cmd" "$REQUIRED_PYTHON_VERSION"
+    echo ""
+    
     # Setup R environment first (needed for rpy2)
     if ! setup_r_environment; then
         print_error "R environment setup failed"
@@ -464,10 +487,10 @@ setup_install_env() {
     else
         # Create new virtual environment
         print_info "Creating new virtual environment: $venv_path"
+        print_info "This creates an isolated Python environment for CONFLUENCE"
+        echo ""
         
-        #pyenv install 3.11.0
-        #pyenv local 3.11.0
-        
+        # Create clean venv without system site packages for full control
         if ! $python_cmd -m venv "$venv_path"; then
             print_error "Failed to create virtual environment"
             return 1
@@ -481,20 +504,28 @@ setup_install_env() {
         # Update python_cmd to use venv python
         python_cmd=$(which python3 || which python)
         
-        # Upgrade pip
+        # Verify we're in the venv
+        local venv_python=$(which python3)
+        print_info "Using Python from: $venv_python"
+        
+        # Upgrade pip first
         print_info "Upgrading pip..."
-        pip install --upgrade pip
+        pip install --upgrade pip setuptools wheel
         
         echo ""
         
         # Install dependencies
         if [[ -f "$requirements_file" ]]; then
+            print_info "Installing all packages from requirements.txt into clean venv..."
+            print_info "This includes numpy, netCDF4, and all other dependencies"
+            echo ""
+            
             if ! install_python_requirements "$requirements_file" "false"; then
                 return 1
             fi
         else
             print_warning "requirements.txt not found - installing basic dependencies..."
-            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2 xarray; then
                 print_error "Failed to install dependencies"
                 return 1
             fi
@@ -697,13 +728,13 @@ main() {
         print_info "CONFLUENCE installation mode"
         echo ""
         print_info "Prerequisites:"
-        print_info "  - Python 3.8+ (found: $(python3 --version 2>/dev/null || echo 'unknown'))"
+        print_info "  - Python 3.11+ (found: $(python3 --version 2>/dev/null || echo 'unknown'))"
         print_info "  - R (found: $(command -v R >/dev/null 2>&1 && R --version 2>/dev/null | head -1 || echo 'not found'))"
         print_info "  - Required library modules (xz, bzip2, etc.)"
         echo ""
         print_info "Make sure you have loaded all necessary modules before installation."
         print_info "Example module load commands (adjust for your platform):"
-        print_info "  module load gcc openmpi python r netcdf gdal"
+        print_info "  module load gcc openmpi python/3.11 r netcdf gdal"
         echo ""
         
         # Set up Python environment specifically for install
