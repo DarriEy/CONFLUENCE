@@ -4,7 +4,6 @@ pandas
 scipy
 xarray
 pint_xarray
-pyarrow
 distributed
 pyviscous
 ipykernel
