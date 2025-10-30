@@ -468,7 +468,7 @@ setup_install_env() {
         #pyenv install 3.11.0
         #pyenv local 3.11.0
         
-        if ! $python_cmd -m venv "$venv_path" python=3.11; then
+        if ! $python_cmd -m venv "$venv_path"; then
             print_error "Failed to create virtual environment"
             return 1
         fi
