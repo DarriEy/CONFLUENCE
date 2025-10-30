@@ -349,11 +349,11 @@ install_python_requirements() {
     local rpy2_filtered=false
     
     if ! cmp -s "$requirements_file" "$temp_requirements"; then
-        if grep -q -iE "^GDAL[>=<~!]" "$requirements_file"; then
+        if grep -q -iE "^GDAL([>=<~!]|$)" "$requirements_file"; then
             gdal_filtered=true
             print_info "Note: GDAL will be installed separately with auto-detected version"
         fi
-        if grep -q -iE "^rpy2" "$requirements_file"; then
+        if grep -q -iE "^rpy2([>=<~!]|$)" "$requirements_file"; then
             rpy2_filtered=true
             print_info "Note: rpy2 will be installed separately (optional)"
         fi
@@ -394,6 +394,16 @@ install_python_requirements() {
             fi
         fi
         
+        # Always try to install GDAL if gdal-config is available
+        # This handles cases where GDAL is not in requirements.txt but is needed
+        if command -v gdal-config >/dev/null 2>&1; then
+            echo ""
+            print_info "GDAL module detected - installing Python bindings..."
+            if ! install_gdal_python; then
+                print_warning "GDAL Python bindings installation failed, but continuing..."
+            fi
+        fi
+        
         print_success "Core dependencies installed successfully"
         return 0
     else
@@ -430,6 +440,15 @@ install_python_requirements() {
                     else
                         print_warning "rpy2 installation failed - continuing without it"
                         print_info "You can try installing it manually later if needed"
+                    fi
+                fi
+                
+                # Always try to install GDAL if gdal-config is available
+                if command -v gdal-config >/dev/null 2>&1; then
+                    echo ""
+                    print_info "GDAL module detected - installing Python bindings..."
+                    if ! install_gdal_python; then
+                        print_warning "GDAL Python bindings installation failed, but continuing..."
                     fi
                 fi
                 
