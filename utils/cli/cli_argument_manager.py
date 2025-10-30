@@ -387,59 +387,47 @@ fi
         'install_dir': 'mizuRoute',
         'build_commands': [
 '''
-# Get NetCDF paths from system
-if [ -z "$NETCDF" ]; then
-    NCDF_PATH=$(nc-config --prefix 2>/dev/null || echo "/usr")
-    export NETCDF=$NCDF_PATH
-    echo "Set NETCDF to: $NETCDF"
-fi
+# Portable build for mizuRoute (no Makefile edits)
+# Picks up NetCDF paths from nc-config / nf-config when available.
 
-if [ -z "$NETCDF_FORTRAN" ]; then
-    NCDFF_PATH=$(nf-config --prefix 2>/dev/null || echo "/usr")
-    export NETCDF_FORTRAN=$NCDFF_PATH
-    echo "Set NETCDF_FORTRAN to: $NCDFF_PATH"
-fi
+# Discover NetCDF locations or fall back to /usr
+NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
+NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
+FC="${FC:-gfortran}"
+NCORES="${NCORES:-4}"
 
-# Navigate to route/build directory where the Makefile is located
+echo "Using FC=$FC"
+echo "NETCDF (C): $NETCDF"
+echo "NETCDF_FORTRAN: $NETCDF_FORTRAN"
+
+# Build from route/build (upstream layout)
 cd route/build
 
-# Edit the Makefile to set the correct paths
-echo "Configuring Makefile..."
+echo "Building mizuRoute (variable-driven)…"
+make -j "$NCORES" \
+  FC="$FC" \
+  NETCDF="$NETCDF" \
+  NETCDF_FORTRAN="$NETCDF_FORTRAN"
 
-# Set F_MASTER to parent directory (one level up from build)
-sed -i "s|^F_MASTER.*|F_MASTER = $(cd .. && pwd)|g" Makefile
+BUILD_STATUS=$?
 
-# Set compiler
-sed -i "s|^FC.*|FC = gfortran|g" Makefile
-sed -i "s|^FC_EXE.*|FC_EXE = gfortran|g" Makefile
-
-# Set NetCDF paths if not already set
-if ! grep -q "^NCDF_PATH" Makefile; then
-    echo "NCDF_PATH = $NETCDF" >> Makefile
+if [ $BUILD_STATUS -ne 0 ]; then
+  echo "ERROR: mizuRoute build failed"
+  exit 1
 fi
 
-# Enable OpenMP (optional, but good for performance)
-sed -i "s|^isOpenMP.*|isOpenMP = no|g" Makefile
-
-echo "Building mizuRoute..."
-make -j 4
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: mizuRoute build failed"
-    exit 1
-fi
-
-# Check if executable was created
+# Check for executable(s) in the upstream bin folder
 if [ -f "../bin/mizuRoute.exe" ] || [ -f "../bin/mizuroute.exe" ] || [ -f "../bin/runoff_route.exe" ]; then
-    echo "✅ mizuRoute built successfully"
-    ls -la ../bin/
+  echo "✅ mizuRoute built successfully"
+  ls -la ../bin/
 else
-    echo "ERROR: mizuRoute executable not found after build"
-    ls -la ../bin/ || echo "bin directory not found"
-    exit 1
+  echo "ERROR: mizuRoute executable not found after build"
+  ls -la ../bin/ || echo "bin directory not found"
+  exit 1
 fi
 '''
-],
+        ],
+
         'dependencies': [],
         'test_command': None,  # mizuRoute doesn't have a --version flag
         'verify_install': {
@@ -449,87 +437,64 @@ fi
         'order': 3
     },
     
-    'fuse': {
-        'description': 'Framework for Understanding Structural Errors',
-        'config_path_key': 'INSTALL_PATH_FUSE',
-        'config_exe_key': 'EXE_NAME_FUSE',
-        'default_path_suffix': 'installs/fuse/bin',
-        'default_exe': 'fuse.exe',
-        'repository': 'https://github.com/naddor/fuse.git',
-        'branch': None,
-        'install_dir': 'fuse',
         'build_commands': [
 '''
-# Setup build environment for FUSE
-FUSE_INSTALL_DIR=$(pwd)
+# Portable build for FUSE (no Makefile edits)
+# Avoid concatenation bug by passing F_MASTER with a trailing slash.
+# Feed library/include roots from system helpers.
 
-# Get NetCDF paths from system
-NCDF_PATH=$(nc-config --prefix 2>/dev/null || echo "/usr")
-NCDFF_PATH=$(nf-config --prefix 2>/dev/null || echo "/usr")
-HDF5_PATH=$(h5cc -showconfig 2>/dev/null | grep "Installation point:" | awk '{print $3}' || echo "/usr")
+set -e
 
-echo "NetCDF C path: $NCDF_PATH"
-echo "NetCDF Fortran path: $NCDFF_PATH"
-echo "HDF5 path: $HDF5_PATH"
+FC="${FC:-gfortran}"
+NCORES="${NCORES:-4}"
 
-# Navigate to build directory (not build/build_unix)
+# Discover paths; default to /usr if helpers are missing
+NCDF_PATH="$(nc-config --prefix 2>/dev/null || echo /usr)"
+NCDFF_PATH="$(nf-config --prefix 2>/dev/null || echo /usr)"
+HDF5_PATH="$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print \$2}" || echo /usr)"
+
+echo "FC: $FC"
+echo "NetCDF C root:        $NCDF_PATH"
+echo "NetCDF Fortran root:  $NCDFF_PATH"
+echo "HDF5 root:            $HDF5_PATH"
+
+# Build directory (upstream uses ./build, not build_unix)
 cd build
 
-# Check if Makefile exists
-if [ ! -f "Makefile" ]; then
-    echo "ERROR: Makefile not found in build directory"
-    echo "Available files in build/:"
-    ls -la
-    exit 1
-fi
+# Compute F_MASTER with trailing slash to prevent 'fusebuild' path join
+F_MASTER_TRAIL="$(cd .. && pwd)/"
+echo "F_MASTER: $F_MASTER_TRAIL"
 
-# Configure the Makefile with system-specific paths
-echo "Configuring Makefile..."
+echo "Building FUSE (variable-driven)…"
+# The Makefile already defines variables like F_MASTER, NCDF_LIB_PATH, HDF_LIB_PATH, INCLUDE_PATH.
+# We pass them in rather than editing the file.
+make -j "$NCORES" \
+  FC="$FC" \
+  F_MASTER="$F_MASTER_TRAIL" \
+  NCDF_LIB_PATH="$NCDFF_PATH" \
+  HDF_LIB_PATH="$HDF5_PATH" \
+  INCLUDE_PATH="$NCDFF_PATH"
 
-# Update F_MASTER path (path to FUSE root directory)
-sed -i "s|^F_MASTER.*=.*|F_MASTER = $FUSE_INSTALL_DIR|g" Makefile
-
-# Update NetCDF paths
-sed -i "s|^NCDF_PATH.*=.*|NCDF_PATH = $NCDFF_PATH|g" Makefile
-sed -i "s|^LIBNC.*=.*|LIBNC = -L$NCDFF_PATH/lib -lnetcdff -L$NCDF_PATH/lib -lnetcdf|g" Makefile
-sed -i "s|^INCNC.*=.*|INCNC = -I$NCDFF_PATH/include|g" Makefile
-
-# Set compiler
-sed -i "s|^FC.*=.*|FC = gfortran|g" Makefile
-
-# Create bin directory if it doesn't exist
-mkdir -p ../bin
-
-echo "Building FUSE..."
-make
-
-BUILD_STATUS=$?
-
-if [ $BUILD_STATUS -ne 0 ]; then
-    echo "ERROR: FUSE build failed"
-    echo "Makefile contents:"
-    head -50 Makefile
-    exit 1
-fi
-
-# Check for executable
+echo "Checking for fuse.exe…"
 if [ -f "../bin/fuse.exe" ]; then
-    echo "✅ FUSE executable successfully created"
-    ls -la ../bin/
+  echo "✅ FUSE executable successfully created"
+  ls -la ../bin/
 elif [ -f "fuse.exe" ]; then
-    echo "✅ FUSE executable found in build directory, moving to bin/"
-    mv fuse.exe ../bin/
-    ls -la ../bin/
+  echo "✅ FUSE executable found in build directory, moving to bin/"
+  mkdir -p ../bin
+  mv fuse.exe ../bin/
+  ls -la ../bin/
 else
-    echo "ERROR: fuse.exe not found after build"
-    echo "Contents of build directory:"
-    ls -la
-    echo "Contents of bin directory:"
-    ls -la ../bin/ || echo "bin directory not found"
-    exit 1
+  echo "ERROR: fuse.exe not found after build"
+  echo "Contents of build directory:"
+  ls -la
+  echo "Contents of bin directory:"
+  ls -la ../bin/ || echo "bin directory not found"
+  exit 1
 fi
 '''
 ],
+
         'dependencies': [],
         'test_command': None,  # FUSE requires specific input files to run
         'verify_install': {
@@ -562,7 +527,7 @@ cp src/* ../bin/ 2>/dev/null || true
 echo "✅ TauDEM executables in: $(pwd)/src/"
 ls -la src/ | head -10
 '''
-],
+        ],
             'dependencies': [],
             'test_command': '--help',
             'order': 5
