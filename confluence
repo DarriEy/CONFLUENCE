@@ -394,8 +394,14 @@ check_virtual_env() {
             print_info "Found virtual environment: ${venv_path}"
             print_info "Activating virtual environment..."
             source "${venv_path}/bin/activate"
-            export PYTHONPATH=""
-            print_info "Cleared PYTHONPATH to isolate venv from system packages"
+            
+            # Clear PYTHONPATH to prevent system packages from interfering
+            # If the activate script was modified by install, it will handle this
+            # But we do it here too for older venvs
+            if [[ -n "$PYTHONPATH" ]]; then
+                export PYTHONPATH=""
+            fi
+            
             return 0
         fi
     done
@@ -453,6 +459,12 @@ setup_install_env() {
             print_info "Activating existing virtual environment..."
             source "${venv_path}/bin/activate"
             
+            # CRITICAL: Clear PYTHONPATH to prevent system packages from interfering
+            if [[ -n "$PYTHONPATH" ]]; then
+                print_warning "Clearing PYTHONPATH to isolate venv from system packages"
+                export PYTHONPATH=""
+            fi
+            
             # Update python_cmd to use venv python
             python_cmd=$(which python3 || which python)
             
@@ -503,8 +515,30 @@ setup_install_env() {
         # Activate it
         source "${venv_path}/bin/activate"
         
+        # CRITICAL: Clear PYTHONPATH to prevent system packages from interfering
+        # The netcdf/hdf5 modules add system Python packages to PYTHONPATH
+        # which causes incompatible system packages to be loaded instead of venv packages
+        if [[ -n "$PYTHONPATH" ]]; then
+            print_warning "Clearing PYTHONPATH to isolate venv from system packages"
+            print_info "Original PYTHONPATH: $PYTHONPATH"
+            export PYTHONPATH=""
+        fi
+        
         # Update python_cmd to use venv python
         python_cmd=$(which python3 || which python)
+        
+        # Make PYTHONPATH clearing persistent by modifying the activate script
+        print_info "Configuring venv to automatically clear PYTHONPATH on future activations..."
+        cat >> "${venv_path}/bin/activate" << 'EOF'
+
+# Added by CONFLUENCE installer: Clear PYTHONPATH to prevent system package conflicts
+# This ensures venv packages are always found first
+if [ -n "$PYTHONPATH" ]; then
+    export _OLD_CONFLUENCE_PYTHONPATH="$PYTHONPATH"
+    unset PYTHONPATH
+fi
+EOF
+        print_success "Venv will now automatically clear PYTHONPATH when activated"
         
         # Verify we're in the venv
         local venv_python=$(which python3)
@@ -576,6 +610,11 @@ setup_python_env() {
         
         # Activate environment
         source "${venv_path}/bin/activate"
+        
+        # Clear PYTHONPATH
+        if [[ -n "$PYTHONPATH" ]]; then
+            export PYTHONPATH=""
+        fi
         
         # Install dependencies
         print_info "Installing Python dependencies..."
