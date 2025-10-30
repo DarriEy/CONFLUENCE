@@ -87,8 +87,90 @@ setup_r_environment() {
         fi
     fi
     
+    # Set up compiler/linker flags for rpy2 compilation
+    # This helps the compiler find libraries from loaded modules
+    setup_rpy2_compiler_flags
+    
     # Check for required libraries for rpy2 compilation
     check_rpy2_dependencies
+    
+    return 0
+}
+
+# Function to set up compiler flags for rpy2 by detecting library paths
+setup_rpy2_compiler_flags() {
+    print_info "Setting up compiler environment for rpy2..."
+    
+    # Collect library paths from environment and common locations
+    local lib_paths=()
+    
+    # Add paths from LD_LIBRARY_PATH
+    if [[ -n "$LD_LIBRARY_PATH" ]]; then
+        IFS=':' read -ra paths <<< "$LD_LIBRARY_PATH"
+        lib_paths+=("${paths[@]}")
+    fi
+    
+    # On HPC systems, check for library paths in loaded modules
+    # These are common locations where modules place libraries
+    local potential_lib_dirs=(
+        "/usr/lib64"
+        "/usr/lib"
+        "/lib64"
+        "/lib"
+    )
+    
+    # Add Spack/module library paths if they exist
+    if [[ -n "$LIBRARY_PATH" ]]; then
+        IFS=':' read -ra paths <<< "$LIBRARY_PATH"
+        lib_paths+=("${paths[@]}")
+    fi
+    
+    # Look for libraries in parent directories of loaded executables
+    # This helps find libraries from loaded modules
+    for prog in xz bzip2; do
+        if command -v $prog >/dev/null 2>&1; then
+            local prog_path=$(command -v $prog)
+            local prog_dir=$(dirname "$prog_path")
+            local potential_lib_path="${prog_dir}/../lib"
+            if [[ -d "$potential_lib_path" ]]; then
+                lib_paths+=("$(cd "$potential_lib_path" && pwd)")
+            fi
+            potential_lib_path="${prog_dir}/../lib64"
+            if [[ -d "$potential_lib_path" ]]; then
+                lib_paths+=("$(cd "$potential_lib_path" && pwd)")
+            fi
+        fi
+    done
+    
+    # Build LDFLAGS and CFLAGS
+    local ldflags=""
+    local cflags=""
+    local unique_paths=()
+    
+    # Remove duplicates and build flags
+    for path in "${lib_paths[@]}"; do
+        if [[ -d "$path" ]] && [[ ! " ${unique_paths[@]} " =~ " ${path} " ]]; then
+            unique_paths+=("$path")
+            ldflags="$ldflags -L$path"
+            
+            # Also add include path if it exists
+            local inc_path="${path/lib/include}"
+            if [[ -d "$inc_path" ]]; then
+                cflags="$cflags -I$inc_path"
+            fi
+        fi
+    done
+    
+    # Export flags for pip to use during compilation
+    if [[ -n "$ldflags" ]]; then
+        export LDFLAGS="$ldflags $LDFLAGS"
+        print_info "Set LDFLAGS for rpy2 compilation"
+    fi
+    
+    if [[ -n "$cflags" ]]; then
+        export CFLAGS="$cflags $CFLAGS"
+        print_info "Set CFLAGS for rpy2 compilation"
+    fi
     
     return 0
 }
@@ -99,9 +181,10 @@ check_rpy2_dependencies() {
     
     local missing_libs=()
     local found_libs=()
+    local missing_in_linker_path=()
     
-    # Libraries that rpy2 commonly needs
-    local required_libs=("lzma" "bz2" "z")
+    # Libraries that rpy2 commonly needs (tirpc is also required on many systems)
+    local required_libs=("lzma" "bz2" "z" "tirpc")
     
     # Check using ldconfig if available
     if command -v ldconfig >/dev/null 2>&1; then
@@ -113,10 +196,16 @@ check_rpy2_dependencies() {
             fi
         done
     else
-        # Alternative: check common library paths
+        # Alternative: check common library paths plus module paths
         local lib_paths=("/usr/lib" "/usr/lib64" "/lib" "/lib64")
+        
+        # Add paths from environment variables that compilers use
         if [[ -n "$LD_LIBRARY_PATH" ]]; then
             IFS=':' read -ra ADDITIONAL_PATHS <<< "$LD_LIBRARY_PATH"
+            lib_paths+=("${ADDITIONAL_PATHS[@]}")
+        fi
+        if [[ -n "$LIBRARY_PATH" ]]; then
+            IFS=':' read -ra ADDITIONAL_PATHS <<< "$LIBRARY_PATH"
             lib_paths+=("${ADDITIONAL_PATHS[@]}")
         fi
         
@@ -142,12 +231,43 @@ check_rpy2_dependencies() {
     
     if [[ ${#missing_libs[@]} -gt 0 ]]; then
         print_warning "Could not detect libraries: ${missing_libs[*]}"
-        print_info "These libraries may be required for rpy2 compilation."
-        print_info "If you have loaded modules providing these libraries, they should work."
-        print_info "Common module names: xz, bzip2, libtirpc, zlib"
-        print_info ""
-        print_info "If installation fails, try loading additional modules or using ABI mode:"
-        print_info "  export RPY2_CFFI_MODE=ABI"
+        print_info "These libraries are REQUIRED for rpy2 compilation."
+        echo ""
+        print_info "You must load modules providing these libraries before installation:"
+        
+        # Provide platform-specific guidance
+        if [[ -n "$SLURM_CLUSTER_NAME" ]]; then
+            # On HPC systems
+            print_info ""
+            print_info "Example module load commands (adjust versions for your system):"
+            for lib in "${missing_libs[@]}"; do
+                case "$lib" in
+                    lzma)
+                        print_info "  module load xz"
+                        ;;
+                    bz2)
+                        print_info "  module load bzip2"
+                        ;;
+                    tirpc)
+                        print_info "  module load libtirpc"
+                        ;;
+                    z)
+                        print_info "  module load zlib"
+                        ;;
+                esac
+            done
+        else
+            print_info "Common module names: xz, bzip2, libtirpc, zlib"
+        fi
+        
+        echo ""
+        print_info "After loading modules, rerun: ./confluence --install"
+        echo ""
+        print_warning "Installation will likely FAIL without these libraries!"
+        echo ""
+        
+        # Give user a chance to see the message
+        read -p "Press Enter to continue anyway, or Ctrl+C to abort and load modules..."
     fi
     
     return 0
@@ -217,25 +337,31 @@ install_python_requirements() {
     fi
     
     print_info "Installing Python dependencies from: $requirements_file"
-    print_info "This may take several minutes, especially for packages like rpy2..."
+    print_info "This may take several minutes..."
     echo ""
     
-    # Filter out GDAL from requirements - we'll install it separately with version detection
+    # Filter out GDAL and rpy2 from requirements - we'll install them separately
+    # GDAL needs version detection, rpy2 is optional and may fail on some systems
     local temp_requirements="${requirements_file}.tmp"
-    grep -v -iE "^GDAL[>=<~!]" "$requirements_file" > "$temp_requirements" 2>/dev/null || cp "$requirements_file" "$temp_requirements"
+    grep -v -iE "^(GDAL|rpy2)[>=<~!]" "$requirements_file" > "$temp_requirements" 2>/dev/null || cp "$requirements_file" "$temp_requirements"
     
     local gdal_filtered=false
+    local rpy2_filtered=false
+    
     if ! cmp -s "$requirements_file" "$temp_requirements"; then
-        gdal_filtered=true
-        print_info "Note: GDAL will be installed separately with auto-detected version"
+        if grep -q -iE "^GDAL[>=<~!]" "$requirements_file"; then
+            gdal_filtered=true
+            print_info "Note: GDAL will be installed separately with auto-detected version"
+        fi
+        if grep -q -iE "^rpy2" "$requirements_file"; then
+            rpy2_filtered=true
+            print_info "Note: rpy2 will be installed separately (optional)"
+        fi
     fi
     
-    # Default to API mode for better performance
+    # Default to API mode for better performance (only matters if rpy2 is installed)
     if [[ -z "$RPY2_CFFI_MODE" ]]; then
         export RPY2_CFFI_MODE=API
-        print_info "Using RPY2_CFFI_MODE=API (better performance)"
-    else
-        print_info "Using user-specified RPY2_CFFI_MODE=$RPY2_CFFI_MODE"
     fi
     
     # Try to install with current environment
@@ -251,7 +377,24 @@ install_python_requirements() {
             fi
         fi
         
-        print_success "All dependencies installed successfully"
+        # Try to install rpy2 separately - it's optional and may fail
+        if [[ "$rpy2_filtered" == "true" ]]; then
+            echo ""
+            print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
+            print_info "Using RPY2_CFFI_MODE=$RPY2_CFFI_MODE"
+            if pip install rpy2 $pip_flags; then
+                print_success "rpy2 installed successfully"
+            else
+                print_warning "rpy2 installation failed - continuing without it"
+                print_info "rpy2 enables R integration features"
+                print_info "You can try installing it manually later if needed:"
+                print_info "  source venv/bin/activate"
+                print_info "  export RPY2_CFFI_MODE=ABI"
+                print_info "  pip install rpy2"
+            fi
+        fi
+        
+        print_success "Core dependencies installed successfully"
         return 0
     else
         local exit_code=$?
@@ -278,8 +421,19 @@ install_python_requirements() {
                     fi
                 fi
                 
-                print_success "Dependencies installed successfully in ABI mode"
-                print_info "Note: rpy2 is using ABI mode. This is fully functional but slightly slower than API mode."
+                # Try to install rpy2 separately - it's optional
+                if [[ "$rpy2_filtered" == "true" ]]; then
+                    echo ""
+                    print_info "Attempting to install rpy2 in ABI mode (optional)..."
+                    if pip install rpy2 $pip_flags; then
+                        print_success "rpy2 installed successfully in ABI mode"
+                    else
+                        print_warning "rpy2 installation failed - continuing without it"
+                        print_info "You can try installing it manually later if needed"
+                    fi
+                fi
+                
+                print_success "Core dependencies installed successfully in ABI mode"
                 return 0
             fi
         fi
@@ -553,9 +707,18 @@ setup_install_env() {
                     fi
                 else
                     print_warning "requirements.txt not found - installing basic dependencies..."
-                    if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+                    if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil xarray; then
                         print_error "Failed to install dependencies"
                         return 1
+                    fi
+                    
+                    # Try to install rpy2 separately - it's optional
+                    print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
+                    if pip install rpy2; then
+                        print_success "rpy2 installed successfully"
+                    else
+                        print_warning "rpy2 installation failed - you can install it manually later if needed"
+                        print_info "To install rpy2 later: pip install rpy2"
                     fi
                 fi
                 
@@ -629,9 +792,18 @@ EOF
             fi
         else
             print_warning "requirements.txt not found - installing basic dependencies..."
-            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2 xarray; then
+            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil xarray; then
                 print_error "Failed to install dependencies"
                 return 1
+            fi
+            
+            # Try to install rpy2 separately - it's optional
+            print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
+            if pip install rpy2; then
+                print_success "rpy2 installed successfully"
+            else
+                print_warning "rpy2 installation failed - you can install it manually later if needed"
+                print_info "To install rpy2 later: source venv/bin/activate && pip install rpy2"
             fi
         fi
         
@@ -703,9 +875,18 @@ setup_python_env() {
             fi
         else
             print_warning "requirements.txt not found - installing basic dependencies..."
-            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil rpy2; then
+            if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil; then
                 print_error "Failed to install dependencies"
                 return 1
+            fi
+            
+            # Try to install rpy2 separately - it's optional
+            print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
+            if pip install rpy2; then
+                print_success "rpy2 installed successfully"
+            else
+                print_warning "rpy2 installation failed - you can install it manually later if needed"
+                print_info "To install rpy2 later: source venv/bin/activate && pip install rpy2"
             fi
         fi
         
