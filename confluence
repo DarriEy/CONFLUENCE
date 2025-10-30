@@ -221,7 +221,7 @@ install_python_requirements() {
     echo ""
     
     # Filter out GDAL from requirements - we'll install it separately with version detection
-    local temp_requirements="${requirements_file}.tmp"
+    local temp_requirements="${requirements_file}"
     grep -v -iE "^GDAL[>=<~!]" "$requirements_file" > "$temp_requirements"
     
     local gdal_filtered=false
