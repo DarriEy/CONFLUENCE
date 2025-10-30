@@ -30,7 +30,6 @@ rpy2
 findlibs
 
 # Hydrological modeling libraries
-netCDF4>=1.6.5
 hydrobm
 baseflow 
 
