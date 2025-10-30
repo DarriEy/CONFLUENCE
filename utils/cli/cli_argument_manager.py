@@ -774,7 +774,7 @@ fi
             },
             'order': 9
         }
-    }
+    
 
     def _check_dependencies(self, dependencies: List[str]) -> List[str]:
         """Check which dependencies are missing from the system."""
