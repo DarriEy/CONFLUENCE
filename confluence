@@ -153,6 +153,51 @@ check_rpy2_dependencies() {
     return 0
 }
 
+# Function to detect and install GDAL Python bindings matching system version
+install_gdal_python() {
+    print_info "Detecting system GDAL version..."
+    
+    # Check if gdal-config is available
+    if ! command -v gdal-config >/dev/null 2>&1; then
+        print_warning "gdal-config not found - GDAL module may not be loaded"
+        print_info "Skipping GDAL Python bindings installation"
+        return 0
+    fi
+    
+    # Get GDAL version
+    local gdal_version=$(gdal-config --version 2>/dev/null)
+    if [[ -z "$gdal_version" ]]; then
+        print_warning "Could not detect GDAL version"
+        print_info "Skipping GDAL Python bindings installation"
+        return 0
+    fi
+    
+    print_success "Found system GDAL version: $gdal_version"
+    print_info "Installing matching GDAL Python bindings..."
+    
+    # Try to install exact version match
+    if pip install "GDAL==$gdal_version"; then
+        print_success "Installed GDAL Python bindings version $gdal_version"
+        return 0
+    else
+        print_warning "Could not install GDAL==$gdal_version"
+        
+        # Try minor version (e.g., 3.9.1 -> try 3.9.0)
+        local major_minor=$(echo "$gdal_version" | cut -d. -f1,2)
+        print_info "Trying GDAL>=$major_minor.0,<$major_minor.99..."
+        
+        if pip install "GDAL>=${major_minor}.0,<${major_minor}.99"; then
+            print_success "Installed GDAL Python bindings for $major_minor series"
+            return 0
+        else
+            print_error "Failed to install GDAL Python bindings"
+            print_info "You may need to install GDAL manually:"
+            print_info "  pip install GDAL==$gdal_version"
+            return 1
+        fi
+    fi
+}
+
 # Function to install Python packages with R environment
 install_python_requirements() {
     local requirements_file="$1"
@@ -175,6 +220,16 @@ install_python_requirements() {
     print_info "This may take several minutes, especially for packages like rpy2..."
     echo ""
     
+    # Filter out GDAL from requirements - we'll install it separately with version detection
+    local temp_requirements="${requirements_file}.tmp"
+    grep -v -iE "^GDAL[>=<~!]" "$requirements_file" > "$temp_requirements"
+    
+    local gdal_filtered=false
+    if ! cmp -s "$requirements_file" "$temp_requirements"; then
+        gdal_filtered=true
+        print_info "Note: GDAL will be installed separately with auto-detected version"
+    fi
+    
     # Default to API mode for better performance
     if [[ -z "$RPY2_CFFI_MODE" ]]; then
         export RPY2_CFFI_MODE=API
@@ -185,11 +240,22 @@ install_python_requirements() {
     
     # Try to install with current environment
     # Install from PyPI to ensure clean builds in the venv
-    if pip install -r "$requirements_file" $pip_flags; then
+    if pip install -r "$temp_requirements" $pip_flags; then
+        rm -f "$temp_requirements"
+        
+        # Now install GDAL separately with version detection
+        if [[ "$gdal_filtered" == "true" ]]; then
+            echo ""
+            if ! install_gdal_python; then
+                print_warning "GDAL Python bindings installation failed, but continuing..."
+            fi
+        fi
+        
         print_success "All dependencies installed successfully"
         return 0
     else
         local exit_code=$?
+        rm -f "$temp_requirements"
         print_error "Installation failed with RPY2_CFFI_MODE=$RPY2_CFFI_MODE"
         
         # If we were in API mode and it failed, try ABI mode
@@ -201,7 +267,17 @@ install_python_requirements() {
             
             export RPY2_CFFI_MODE=ABI
             
-            if pip install -r "$requirements_file" $pip_flags; then
+            if pip install -r "$temp_requirements" $pip_flags; then
+                rm -f "$temp_requirements"
+                
+                # Install GDAL separately with version detection
+                if [[ "$gdal_filtered" == "true" ]]; then
+                    echo ""
+                    if ! install_gdal_python; then
+                        print_warning "GDAL Python bindings installation failed, but continuing..."
+                    fi
+                fi
+                
                 print_success "Dependencies installed successfully in ABI mode"
                 print_info "Note: rpy2 is using ABI mode. This is fully functional but slightly slower than API mode."
                 return 0
@@ -209,6 +285,7 @@ install_python_requirements() {
         fi
         
         # Both attempts failed
+        rm -f "$temp_requirements"
         echo ""
         print_error "Failed to install dependencies"
         echo ""

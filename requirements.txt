@@ -27,7 +27,6 @@ seaborn
 plotly
 rpy2
 findlibs
-GDAL==3.9.1
 
 # Hydrological modeling libraries
 netCDF4
