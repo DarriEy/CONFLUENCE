@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Import external tools configuration
-from external_tools_config import get_external_tools_definitions
+from utils.external_tools_config import get_external_tools_definitions
 
 
 class CLIArgumentManager:
