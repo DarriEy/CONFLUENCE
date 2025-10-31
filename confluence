@@ -385,7 +385,8 @@ check_rpy2_dependencies() {
     
     local missing_libs=()
     local found_libs=()
-    local required_libs=("lzma" "bz2" "z" "tirpc")
+    # Libraries that rpy2 commonly needs (including ICU for internationalization)
+    local required_libs=("lzma" "bz2" "z" "tirpc" "icuuc" "icui18n")
     
     # Check using ldconfig if available
     if command -v ldconfig &> /dev/null; then
@@ -437,18 +438,44 @@ check_rpy2_dependencies() {
         print_warning "Could not detect libraries: ${missing_libs[*]}"
         print_info "These libraries are REQUIRED for rpy2 compilation."
         echo ""
-        print_info "On HPC systems, load the required modules:"
-        print_info "  module load xz bzip2 zlib"
+        print_info "You must load modules providing these libraries before installation:"
+        
+        # Provide platform-specific guidance
+        if [[ -n "${SLURM_CLUSTER_NAME:-}" ]]; then
+            # On HPC systems
+            print_info ""
+            print_info "Example module load commands (adjust versions for your system):"
+            for lib in "${missing_libs[@]}"; do
+                case "$lib" in
+                    lzma)
+                        print_info "  module load xz"
+                        ;;
+                    bz2)
+                        print_info "  module load bzip2"
+                        ;;
+                    tirpc)
+                        print_info "  module load libtirpc"
+                        ;;
+                    z)
+                        print_info "  module load zlib"
+                        ;;
+                    icuuc|icui18n)
+                        print_info "  module load icu"
+                        ;;
+                esac
+            done
+        else
+            print_info "Common module names: xz, bzip2, libtirpc, zlib, icu"
+        fi
+        
         echo ""
-        print_info "On Debian/Ubuntu systems:"
-        print_info "  sudo apt-get install liblzma-dev libbz2-dev zlib1g-dev libtirpc-dev"
+        print_info "After loading modules, rerun: ./confluence --install"
         echo ""
-        print_info "On RHEL/CentOS systems:"
-        print_info "  sudo yum install xz-devel bzip2-devel zlib-devel libtirpc-devel"
+        print_warning "Installation will likely FAIL without these libraries!"
         echo ""
-        print_info "On macOS:"
-        print_info "  brew install xz bzip2 zlib"
-        echo ""
+        
+        # Give user a chance to see the message
+        read -r -p "Press Enter to continue anyway, or Ctrl+C to abort and load modules..."
     fi
     
     return 0
@@ -458,50 +485,158 @@ check_rpy2_dependencies() {
 # INSTALLATION AND DEPENDENCY MANAGEMENT
 #===============================================================================
 
+# Detect and install GDAL Python bindings matching system version
+# Returns:
+#   0 on success, 1 on failure
+install_gdal_python() {
+    print_info "Detecting system GDAL version..."
+    
+    # Check if gdal-config is available
+    if ! command -v gdal-config &> /dev/null; then
+        print_warning "gdal-config not found - GDAL module may not be loaded"
+        print_info "Skipping GDAL Python bindings installation"
+        return 0
+    fi
+    
+    # Get GDAL version
+    local gdal_version
+    gdal_version=$(gdal-config --version 2>/dev/null)
+    if [[ -z "$gdal_version" ]]; then
+        print_warning "Could not detect GDAL version"
+        print_info "Skipping GDAL Python bindings installation"
+        return 0
+    fi
+    
+    print_success "Found system GDAL version: ${gdal_version}"
+    print_info "Installing matching GDAL Python bindings..."
+    
+    # Try to install exact version match
+    if pip install "GDAL==${gdal_version}"; then
+        print_success "Installed GDAL Python bindings version ${gdal_version}"
+        return 0
+    else
+        print_warning "Could not install GDAL==${gdal_version}"
+        
+        # Try minor version (e.g., 3.9.1 -> try 3.9.0)
+        local major_minor
+        major_minor=$(echo "$gdal_version" | cut -d. -f1,2)
+        print_info "Trying GDAL>=${major_minor}.0,<${major_minor}.99..."
+        
+        if pip install "GDAL>=${major_minor}.0,<${major_minor}.99"; then
+            print_success "Installed GDAL Python bindings for ${major_minor} series"
+            return 0
+        else
+            print_error "Failed to install GDAL Python bindings"
+            print_info "You may need to install GDAL manually:"
+            print_info "  pip install GDAL==${gdal_version}"
+            return 1
+        fi
+    fi
+}
+
 # Install Python requirements from requirements.txt
 # Arguments:
 #   $1: Path to requirements.txt
-#   $2: Skip rpy2 if "true"
+#   $2: Use break-system-packages flag ("true" or "false")
 # Returns:
 #   0 on success, 1 on failure
 install_python_requirements() {
     local requirements_file="$1"
-    local skip_rpy2="${2:-false}"
+    local use_break_system_packages="${2:-true}"
     
     if [[ ! -f "$requirements_file" ]]; then
         print_error "Requirements file not found: ${requirements_file}"
         return 1
     fi
     
-    print_info "Installing Python packages from ${requirements_file}..."
-    
-    if [[ "$skip_rpy2" == "true" ]]; then
-        # Install all except rpy2
-        if ! pip install $(grep -v "^rpy2" "$requirements_file" | grep -v "^#" | grep -v "^$"); then
-            print_error "Failed to install packages"
-            return 1
-        fi
-        
-        # Try rpy2 separately
-        if grep -q "^rpy2" "$requirements_file"; then
-            print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
-            if pip install rpy2; then
-                print_success "rpy2 installed successfully"
-            else
-                print_warning "rpy2 installation failed - continuing without it"
-                print_info "rpy2 is optional but recommended for R integration"
-            fi
-        fi
-    else
-        # Install everything
-        if ! pip install -r "$requirements_file"; then
-            print_error "Failed to install packages from requirements.txt"
-            return 1
+    # Set up pip flags based on whether we're in a venv/conda
+    local pip_flags=""
+    if [[ -z "${VIRTUAL_ENV:-}" ]] && [[ -z "${CONDA_DEFAULT_ENV:-}" ]]; then
+        if [[ "$use_break_system_packages" == "true" ]]; then
+            pip_flags="--break-system-packages"
         fi
     fi
     
-    print_success "Python packages installed successfully"
-    return 0
+    print_info "Installing Python dependencies from: ${requirements_file}"
+    print_info "This may take several minutes..."
+    echo ""
+    
+    # Filter out GDAL and rpy2 from requirements - we'll install them separately
+    # GDAL needs version detection, rpy2 is optional and may fail on some systems
+    local temp_requirements="${requirements_file}.tmp"
+    grep -v -iE "^(GDAL|rpy2)([>=<~!]|$)" "$requirements_file" > "$temp_requirements" 2>/dev/null || cp "$requirements_file" "$temp_requirements"
+    
+    local gdal_filtered=false
+    local rpy2_filtered=false
+    
+    if ! cmp -s "$requirements_file" "$temp_requirements"; then
+        if grep -q -iE "^GDAL([>=<~!]|$)" "$requirements_file"; then
+            gdal_filtered=true
+            print_info "Note: GDAL will be installed separately with auto-detected version"
+        fi
+        if grep -q -iE "^rpy2([>=<~!]|$)" "$requirements_file"; then
+            rpy2_filtered=true
+            print_info "Note: rpy2 will be installed separately (optional)"
+        fi
+    fi
+    
+    # Default to API mode for better performance (only matters if rpy2 is installed)
+    if [[ -z "${RPY2_CFFI_MODE:-}" ]]; then
+        export RPY2_CFFI_MODE=API
+    fi
+    
+    # Install from filtered requirements
+    # shellcheck disable=SC2086
+    if pip install -r "$temp_requirements" $pip_flags; then
+        rm -f "$temp_requirements"
+        
+        # Now install GDAL separately with version detection
+        if [[ "$gdal_filtered" == "true" ]]; then
+            echo ""
+            if ! install_gdal_python; then
+                print_warning "GDAL Python bindings installation failed, but continuing..."
+            fi
+        fi
+        
+        # Try to install rpy2 separately - it's optional and may fail
+        if [[ "$rpy2_filtered" == "true" ]]; then
+            echo ""
+            print_info "Attempting to install rpy2 (optional, may fail on some systems)..."
+            print_info "Using RPY2_CFFI_MODE=${RPY2_CFFI_MODE}"
+            # shellcheck disable=SC2086
+            if pip install rpy2 $pip_flags; then
+                print_success "rpy2 installed successfully"
+            else
+                print_warning "rpy2 installation failed - continuing without it"
+                print_info "rpy2 enables R integration features"
+                print_info "You can try installing it manually later if needed:"
+                print_info "  source venv/bin/activate"
+                print_info "  export RPY2_CFFI_MODE=ABI"
+                print_info "  pip install rpy2"
+            fi
+        fi
+        
+        # Always try to install GDAL if gdal-config is available and not already installed
+        # This handles cases where GDAL is not in requirements.txt but is needed
+        if command -v gdal-config &> /dev/null; then
+            echo ""
+            if ! python -c "import osgeo.gdal" &> /dev/null; then
+                print_info "GDAL not installed yet, attempting installation..."
+                if ! install_gdal_python; then
+                    print_warning "GDAL Python bindings installation failed"
+                fi
+            else
+                print_success "GDAL Python bindings already installed"
+            fi
+        fi
+        
+        print_success "Python packages installed successfully"
+        return 0
+    else
+        rm -f "$temp_requirements"
+        print_error "Failed to install packages from requirements.txt"
+        return 1
+    fi
 }
 
 # Set up Python virtual environment and install dependencies
@@ -546,6 +681,12 @@ setup_install_env() {
             if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil; then
                 print_error "Failed to install dependencies"
                 return 1
+            fi
+            
+            # Try to install GDAL with version matching
+            echo ""
+            if ! install_gdal_python; then
+                print_warning "GDAL installation failed - you may need to install it manually"
             fi
             
             # Try to install rpy2 separately
@@ -614,6 +755,12 @@ setup_install_env() {
         if ! pip install numpy pandas geopandas rasterio netCDF4 PyYAML shapely rasterstats psutil; then
             print_error "Failed to install dependencies"
             return 1
+        fi
+        
+        # Try to install GDAL with version matching
+        echo ""
+        if ! install_gdal_python; then
+            print_warning "GDAL installation failed - you may need to install it manually"
         fi
         
         # Try to install rpy2 separately
