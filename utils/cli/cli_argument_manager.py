@@ -191,7 +191,7 @@ class CLIArgumentManager:
             '--config',
             type=str,
             default='./0_config_files/config_template.yaml',
-            help='Path to YAML configuration file (default: ./0_config_files/config_active.yaml)'
+            help='Path to YAML configuration file (default: ./0_config_files/config_template.yaml)'
         )
         config_group.add_argument(
             '--debug',
