@@ -238,7 +238,7 @@ class CLIArgumentManager:
                 'config_exe_key': 'SUMMA_EXE',
                 'default_path_suffix': 'installs/summa/bin',
                 'default_exe': 'summa.exe',
-                'repository': 'https://github.com/NCAR/summa.git',
+                'repository': 'https://github.com/CH-Earth/summa.git',
                 'branch': 'develop_sundials',
                 'install_dir': 'summa',
                 'requires': ['sundials'],
