@@ -34,7 +34,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Import external tools configuration
-from utils.external_tools_config import get_external_tools_definitions
+# Add CONFLUENCE root directory to path
+# File is at: CONFLUENCE/utils/cli/cli_argument_manager.py
+# We need:  CONFLUENCE/ (so we can import utils.model_utils.ngen_utils)
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from utils.cli.external_tools_config import get_external_tools_definitions
 
 
 class CLIArgumentManager:
