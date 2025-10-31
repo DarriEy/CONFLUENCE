@@ -20,6 +20,7 @@ class MizuRoutePreProcessor:
         self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.mizuroute_setup_dir = self.project_dir / "settings" / "mizuRoute"
 
+
     def run_preprocessing(self):
         self.logger.debug("Starting mizuRoute spatial preprocessing")
         self.copy_base_settings()
@@ -29,8 +30,10 @@ class MizuRoutePreProcessor:
             self.remap_summa_catchments_to_routing()
 
         # NEW: choose control writer based on source model
-        if self.config.get('MIZU_FROM_MODEL') == 'FUSE' or self.config.get('FUSE_ROUTING_INTEGRATION', 'mizuRoute') == 'mizuRoute':
+        if self.config.get('MIZU_FROM_MODEL') == 'FUSE' or self.config.get('FUSE_ROUTING_INTEGRATION') == 'mizuRoute':
             self.create_fuse_control_file()
+        elif self.config.get('MIZU_FROM_MODEL') == 'GR' or self.config.get('GR_ROUTING_INTEGRATION') == 'mizuRoute':
+            self.create_gr_control_file()
         else:
             self.create_control_file()
 
@@ -103,6 +106,59 @@ class MizuRoutePreProcessor:
         self.logger.info(f"Area-weighted remapping file created with {n_hrus} HRUs")
         self.logger.info(f"Weight range: {weights.min():.4f} to {weights.max():.4f}")
         self.logger.info(f"Weight sum: {weights.sum():.4f}")
+
+
+
+    def create_gr_control_file(self):
+        """Create mizuRoute control file specifically for GR4J input"""
+        self.logger.debug("Creating mizuRoute control file for GR4J")
+        
+        control_name = self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuRoute_control_GR.txt')
+        
+        with open(self.mizuroute_setup_dir / control_name, 'w') as cf:
+            self._write_control_file_header(cf)
+            self._write_gr_control_file_directories(cf)
+            self._write_control_file_parameters(cf)
+            self._write_control_file_simulation_controls(cf)
+            self._write_control_file_topology(cf)
+            self._write_gr_control_file_runoff(cf)
+            self._write_control_file_remapping(cf)
+            self._write_control_file_miscellaneous(cf)
+
+    def _write_gr_control_file_directories(self, cf):
+        """Write GR-specific directory paths for mizuRoute control"""
+        experiment_output_gr = self.config.get('EXPERIMENT_OUTPUT_GR', 'default')
+        experiment_output_mizuroute = self.config.get('EXPERIMENT_OUTPUT_MIZUROUTE')
+
+        if experiment_output_gr == 'default':
+            experiment_output_gr = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'GR'
+        else:
+            experiment_output_gr = Path(experiment_output_gr)
+
+        if experiment_output_mizuroute == 'default':
+            experiment_output_mizuroute = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'mizuRoute'
+        else:
+            experiment_output_mizuroute = Path(experiment_output_mizuroute)
+
+        cf.write("!\n! --- DEFINE DIRECTORIES \n")
+        cf.write(f"<ancil_dir>             {self.mizuroute_setup_dir}/    ! Folder that contains ancillary data (river network, remapping netCDF) \n")
+        cf.write(f"<input_dir>             {experiment_output_gr}/    ! Folder that contains runoff data from GR4J \n")
+        cf.write(f"<output_dir>            {experiment_output_mizuroute}/    ! Folder that will contain mizuRoute simulations \n")
+
+    def _write_gr_control_file_runoff(self, cf):
+        """Write GR-specific runoff file settings"""
+        cf.write("!\n! --- DEFINE RUNOFF FILE \n")
+        cf.write(f"<fname_qsim>            {self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_runs_def.nc    ! netCDF name for GR4J runoff \n")
+        cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'q_routed')}    ! Variable name for GR4J runoff \n")
+        cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS', 'mm/d')}    ! Units of input runoff \n")
+        cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT', '86400')}    ! Time interval of input runoff in seconds \n")
+        cf.write("<dname_time>            time    ! Dimension name for time \n")
+        cf.write("<vname_time>            time    ! Variable name for time \n")
+        cf.write("<dname_hruid>           gru     ! Dimension name for HM_HRU ID \n")
+        cf.write("<vname_hruid>           gruId   ! Variable name for HM_HRU ID \n")
+        cf.write("<calendar>              standard    ! Calendar of the nc file \n")
+
+
 
     def _check_if_headwater_basin(self, shp_river):
         """
