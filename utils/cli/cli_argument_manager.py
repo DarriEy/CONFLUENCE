@@ -161,88 +161,115 @@ class CLIArgumentManager:
             }
         }
 
-    def _define_external_tools(installs_dir: str):
+    def _define_external_tools(self) -> Dict[str, Dict[str, Any]]:
         """
-        Returns a dict of external tool install specs.
-        Each spec provides:
-        - repo (optional)
-        - branch (optional)
-        - build (list[str]): shell snippets run in a POSIX shell with `set -e`
-        - expect (list[str]): files/dirs that must exist on success (relative to tool root)
-        - note  : freeform note shown on success
-        The runner should execute each build step from the tool root (cloned repo top-level),
-        unless noted otherwise.
+        Define external tools/binaries required by CONFLUENCE.
+
+        Returns:
+            Dictionary with tool definitions including config keys, executables, and repositories
         """
-        # Small helpers embedded into the shell steps:
-        # - nc/nf/h5 roots without hardcoding
-        common_env_bootstrap = r'''
-    # ------- common env bootstrap -------
+
+        common_env = r'''
     set -e
-    # Prefer user-provided env if set; otherwise discover
+    # Compiler: force short name to satisfy Makefile sanity checks
     export FC="${FC:-gfortran}"
     export FC_EXE="${FC_EXE:-gfortran}"
-
-    # Discover NetCDF and HDF roots (fall back to /usr)
+    # Discover libraries (fallback to /usr)
     export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
     export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
     export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print $2}" || echo /usr)}"
+    # Threads
+    export NCORES="${NCORES:-4}"
+        '''.strip()
 
-    # Paths that FUSE Makefile expects
-    export NCDF_LIB_PATH="${NCDF_LIB_PATH:-$NETCDF_FORTRAN}"
-    export INCLUDE_PATH="${INCLUDE_PATH:-$NETCDF_FORTRAN}"
-    export HDF_LIB_PATH="${HDF_LIB_PATH:-$HDF5_ROOT}"
-    # -----------------------------------
-    '''.strip()
+        return {
 
-        tools = {
             # ------------------------------------------------------------
-            "sundials": {
-                "repo": "https://github.com/LLNL/sundials.git",
-                "branch": "v6.7.0",
-                "build": [
+            'sundials': {
+                'description': 'SUNDIALS - SUite of Nonlinear and DIfferential/ALgebraic equation Solvers',
+                'config_path_key': 'SUNDIALS_INSTALL_PATH',
+                'config_exe_key': 'SUNDIALS_DIR',
+                'default_path_suffix': 'installs/sundials/install/sundials',
+                'default_exe': 'lib64/libsundials_core.a',
+                'repository': None,
+                'branch': None,
+                'install_dir': 'sundials',
+                'build_commands': [
                     r'''
-    set -e
-    mkdir -p install/sundials
-    rm -rf build && mkdir build
-    cd build
-    cmake -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DCMAKE_INSTALL_PREFIX="$(pwd)/../install/sundials" \
-        -DEXAMPLES_ENABLE_C=OFF -DEXAMPLES_ENABLE_CXX=OFF -DEXAMPLES_ENABLE_F77=OFF -DEXAMPLES_ENABLE_F90=OFF \
-        -S .. -B .
+    # Build SUNDIALS from release tarball (shared libs OK; SUMMA will link).
+    SUNDIALS_VER=7.4.0
+    SUNDIALSDIR="$(pwd)/install/sundials"
+    rm -f "v${SUNDIALS_VER}.tar.gz" || true
+    wget -q https://github.com/LLNL/sundials/archive/refs/tags/v${SUNDIALS_VER}.tar.gz
+    tar -xzf v${SUNDIALS_VER}.tar.gz
+    cd sundials-${SUNDIALS_VER}
+    rm -rf build && mkdir build && cd build
+    cmake .. \
+    -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
+    -DCMAKE_Fortran_COMPILER=gfortran \
+    -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
+    -DEXAMPLES_ENABLE=OFF \
+    -DBUILD_TESTING=OFF
     cmake --build . --target install -j ${NCORES:-4}
-    ''',
+    # print lib dir for debug
+    [ -d "$SUNDIALSDIR/lib64" ] && ls -la "$SUNDIALSDIR/lib64" | head -20 || true
+    [ -d "$SUNDIALSDIR/lib" ] && ls -la "$SUNDIALSDIR/lib" | head -20 || true
+                    '''
                 ],
-                "expect": ["install/sundials/lib", "install/sundials/include"],
-                "note": "Static SUNDIALS built."
+                'dependencies': [],
+                'test_command': None,
+                'verify_install': {
+                    'file_paths': [
+                        'lib64/libsundials_core.a',
+                        'lib/libsundials_core.a',
+                        'include/sundials/sundials_config.h'
+                    ],
+                    'check_type': 'exists_any'
+                },
+                'order': 1
             },
 
             # ------------------------------------------------------------
-            "summa": {
-                "repo": "https://github.com/NCAR/summa.git",
-                "branch": "develop",
-                "build": [
-                    common_env_bootstrap,
+            'summa': {
+                'description': 'Structure for Unifying Multiple Modeling Alternatives (with SUNDIALS)',
+                'config_path_key': 'SUMMA_INSTALL_PATH',
+                'config_exe_key': 'SUMMA_EXE',
+                'default_path_suffix': 'installs/summa/bin',
+                'default_exe': 'summa.exe',
+                'repository': 'https://github.com/NCAR/summa.git',
+                'branch': 'develop_sundials',
+                'install_dir': 'summa',
+                'requires': ['sundials'],
+                'build_commands': [
                     r'''
-    # SUMMA expects BLAS/LAPACK; prefer OpenBLAS if available (macOS: Homebrew)
-    OPENBLAS_PREFIX=""
-    if command -v brew >/dev/null 2>&1; then
-    if [ -d "$(brew --prefix 2>/dev/null)/opt/openblas" ]; then
-        OPENBLAS_PREFIX="$(brew --prefix)/opt/openblas"
-    fi
+    # Build SUMMA against SUNDIALS + NetCDF, prefer OpenBLAS on macOS/Homebrew
+    set -e
+    SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+    echo "Using SUNDIALS from: $SUNDIALS_DIR"
+    if [ -d "$SUNDIALS_DIR/lib64" ]; then SUND_LIB="$SUNDIALS_DIR/lib64"; else SUND_LIB="$SUNDIALS_DIR/lib"; fi
+
+    # Homebrew OpenBLAS (mac)
+    OPENBLAS_ARG=""
+    if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/openblas" ]; then
+    OPENBLAS_ARG="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(brew --prefix)/opt/openblas"
     fi
 
     rm -rf cmake_build && mkdir -p cmake_build
     cmake -S build -B cmake_build \
+    -DUSE_SUNDIALS=ON \
     -DCMAKE_BUILD_TYPE=Release \
-    -DNETCDF_PATH="$NETCDF" \
-    -DNETCDF_FORTRAN_PATH="$NETCDF_FORTRAN" \
-    -DSUNDIALS_ROOT="$(pwd)/../sundials/install/sundials" \
-    $( [ -n "$OPENBLAS_PREFIX" ] && echo "-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$OPENBLAS_PREFIX" )
+    -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
+    -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
+    -DNETCDF_PATH="${NETCDF:-/usr}" \
+    -DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}" \
+    $OPENBLAS_ARG \
+    -DCMAKE_Fortran_COMPILER=gfortran \
+    -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
     cmake --build cmake_build --target summa_sundials -j ${NCORES:-4}
 
-    # Normalize binary name/path expected by CONFLUENCE
     mkdir -p bin
     if [ -f "cmake_build/bin/summa_sundials.exe" ]; then
     cp cmake_build/bin/summa_sundials.exe bin/
@@ -250,174 +277,283 @@ class CLIArgumentManager:
     elif [ -f "cmake_build/bin/summa.exe" ]; then
     cp cmake_build/bin/summa.exe bin/
     fi
-    ''',
+                    '''
                 ],
-                "expect": ["bin/summa.exe"],
-                "note": "SUMMA built against SUNDIALS & NetCDF."
+                'dependencies': [],
+                'test_command': '--version',
+                'verify_install': {
+                    'file_paths': ['bin/summa.exe', 'cmake_build/bin/summa.exe', 'cmake_build/bin/summa_sundials.exe'],
+                    'check_type': 'exists_any'
+                },
+                'order': 2
             },
 
             # ------------------------------------------------------------
-            "mizuroute": {
-                "repo": "https://github.com/ESCOMP/mizuRoute.git",
-                "branch": "serial",
-                "build": [
-                    common_env_bootstrap,
+            'mizuroute': {
+                'description': 'Mizukami routing model for river network routing',
+                'config_path_key': 'INSTALL_PATH_MIZUROUTE',
+                'config_exe_key': 'EXE_NAME_MIZUROUTE',
+                'default_path_suffix': 'installs/mizuRoute/route/bin',
+                'default_exe': 'mizuRoute.exe',
+                'repository': 'https://github.com/ESCOMP/mizuRoute.git',
+                'branch': 'serial',
+                'install_dir': 'mizuRoute',
+                'build_commands': [
+                    common_env,
                     r'''
-    # Build from the upstream layout route/build
+    # Build without editing Makefiles; satisfy FC sanity check
     cd route/build
     make clean || true
-    make -j ${NCORES:-4} \
+    make -j "${NCORES}" \
     FC="${FC}" FC_EXE="${FC_EXE}" \
     NETCDF="${NETCDF}" NETCDF_FORTRAN="${NETCDF_FORTRAN}"
 
-    # Verify one of the known exe names
-    ls -l ../bin/ || true
-    ''',
+    # show outputs
+    ls -la ../bin/ || true
+    # accept any of the known exe names
+                    '''
                 ],
-                "expect": ["route/bin/mizuRoute.exe"],
-                "note": "mizuRoute built (serial branch)."
+                'dependencies': [],
+                'test_command': None,
+                'verify_install': {
+                    'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe', 'route/bin/runoff_route.exe'],
+                    'check_type': 'exists_any'
+                },
+                'order': 3
             },
 
             # ------------------------------------------------------------
-            "fuse": {
-                "repo": "https://github.com/naddor/fuse.git",
-                "build": [
-                    common_env_bootstrap,
+            'fuse': {
+                'description': 'Framework for Understanding Structural Errors',
+                'config_path_key': 'FUSE_INSTALL_PATH',
+                'config_exe_key': 'FUSE_LIB',  # you’re validating a lib on FIR/ANVIL
+                'default_path_suffix': 'installs/fuse',
+                'default_exe': 'build/libfuse.a',
+                'repository': 'https://github.com/naddor/fuse.git',
+                'branch': None,
+                'install_dir': 'fuse',
+                'build_commands': [
+                    common_env,
                     r'''
-    # Upstream uses ./build with a Makefile that expects several vars.
+    # Use the upstream Makefile (handles module order). Provide paths via vars.
     cd build
     make clean || true
-    make -j ${NCORES:-4} \
+    make -j "${NCORES}" \
     FC="${FC}" \
     F_MASTER="$(cd .. && pwd)/" \
-    NCDF_LIB_PATH="${NCDF_LIB_PATH}" \
-    HDF_LIB_PATH="${HDF_LIB_PATH}" \
-    INCLUDE_PATH="${INCLUDE_PATH}"
+    NCDF_LIB_PATH="${NETCDF_FORTRAN}" \
+    HDF_LIB_PATH="${HDF5_ROOT}" \
+    INCLUDE_PATH="${NETCDF_FORTRAN}"
 
-    # The Makefile should place fuse.exe under ../bin/
-    ls -l ../bin/ || true
-    ''',
+    # Prefer the static lib (your validator checks build/libfuse.a). If only an exe is produced, accept it too.
+    # Create lib if present
+    [ -f libfuse.a ] && echo "Built libfuse.a" || true
+    mkdir -p ../bin
+    [ -f fuse.exe ] && mv -f fuse.exe ../bin/ || true
+    ls -la . ../bin || true
+                    '''
                 ],
-                "expect": ["bin/fuse.exe"],
-                "note": "FUSE built with correct F_MASTER and NetCDF/HDF paths."
+                'dependencies': [],
+                'test_command': None,
+                'verify_install': {
+                    'file_paths': ['build/libfuse.a', 'bin/fuse.exe'],
+                    'check_type': 'exists_any'
+                },
+                'order': 4
             },
 
             # ------------------------------------------------------------
-            "taudem": {
-                "repo": "https://github.com/dtarb/TauDEM.git",
-                "build": [
+            'taudem': {
+                'description': 'Terrain Analysis Using Digital Elevation Models',
+                'config_path_key': 'TAUDEM_INSTALL_PATH',
+                'config_exe_key': 'TAUDEM_EXE',
+                'default_path_suffix': 'installs/TauDEM/bin',
+                'default_exe': 'pitremove',
+                'repository': 'https://github.com/dtarb/TauDEM.git',
+                'branch': None,
+                'install_dir': 'TauDEM',
+                'build_commands': [
                     r'''
     set -e
-    rm -rf build && mkdir build
-    cd build
+    rm -rf build && mkdir build && cd build
     cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
     cmake --build . -j ${NCORES:-4}
     mkdir -p ../bin
     # copy common executables
     find . -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; || true
-    ''',
+                    '''
                 ],
-                "expect": ["bin/pitremove"],
-                "note": "TauDEM compiled."
+                'dependencies': [],
+                'test_command': '--help',
+                'verify_install': {
+                    'file_paths': ['bin/pitremove'],
+                    'check_type': 'exists'
+                },
+                'order': 5
             },
 
             # ------------------------------------------------------------
-            "gistool": {
-                "repo": "https://github.com/kasra-keshavarz/gistool.git",
-                "build": [
+            'gistool': {
+                'description': 'Geospatial data extraction and processing tool',
+                'config_path_key': 'INSTALL_PATH_GISTOOL',
+                'config_exe_key': 'EXE_NAME_GISTOOL',
+                'default_path_suffix': 'installs/gistool',
+                'default_exe': 'extract-gis.sh',
+                'repository': 'https://github.com/kasra-keshavarz/gistool.git',
+                'branch': None,
+                'install_dir': 'gistool',
+                'build_commands': [
                     r'''
     set -e
-    chmod +x extract-gis.sh || true
-    ''',
+    chmod +x extract-gis.sh
+                    '''
                 ],
-                "expect": ["extract-gis.sh"],
-                "note": "gistool ready."
+                'verify_install': {
+                    'file_paths': ['extract-gis.sh'],
+                    'check_type': 'exists'
+                },
+                'dependencies': [],
+                'test_command': None,
+                'order': 6
             },
 
             # ------------------------------------------------------------
-            "datatool": {
-                "repo": "https://github.com/kasra-keshavarz/datatool.git",
-                "build": [
+            'datatool': {
+                'description': 'Meteorological data extraction and processing tool',
+                'config_path_key': 'DATATOOL_PATH',
+                'config_exe_key': 'DATATOOL_SCRIPT',
+                'default_path_suffix': 'installs/datatool',
+                'default_exe': 'extract-dataset.sh',
+                'repository': 'https://github.com/kasra-keshavarz/datatool.git',
+                'branch': None,
+                'install_dir': 'datatool',
+                'build_commands': [
                     r'''
     set -e
-    chmod +x extract-dataset.sh || true
-    ''',
+    chmod +x extract-dataset.sh
+                    '''
                 ],
-                "expect": ["extract-dataset.sh"],
-                "note": "datatool ready."
+                'dependencies': [],
+                'test_command': '--help',
+                'verify_install': {
+                    'file_paths': ['extract-dataset.sh'],
+                    'check_type': 'exists'
+                },
+                'order': 7
             },
 
             # ------------------------------------------------------------
-            "ngen": {
-                "repo": "https://github.com/CIROH-UA/ngen",
-                "branch": "ngiab",
-                "build": [
+            'ngen': {
+                'description': 'NextGen National Water Model Framework',
+                'config_path_key': 'NGEN_INSTALL_PATH',
+                'config_exe_key': 'NGEN_EXE',
+                'default_path_suffix': 'installs/ngen',
+                'default_exe': 'cmake_build/ngen',
+                'repository': 'https://github.com/CIROH-UA/ngen',
+                'branch': 'ngiab',
+                'install_dir': 'ngen',
+                'build_commands': [
                     r'''
     set -e
-    # Ensure NumPy < 2 in the ACTIVE venv to satisfy CMake check
-    if python - <<'PY'
-    import sys
-    import numpy as np
+    echo "Building ngen..."
+
+    # Make sure CMake sees a supported NumPy, and ignore user-site
+    export PYTHONNOUSERSITE=1
+    python -m pip install --upgrade "pip<24.1" >/dev/null 2>&1 || true
+    python - <<'PY' || (python -m pip install "numpy<2" "setuptools<70" && true)
     from packaging.version import Version
+    import numpy as np
     assert Version(np.__version__) < Version("2.0")
     PY
-    then
-    echo "Using NumPy $(python -c 'import numpy as np; print(np.__version__)')"
-    else
-    echo "Pinning NumPy < 2 for ngen build..."
-    python -m pip install --upgrade "pip<24.1" >/dev/null 2>&1 || true
-    python -m pip install "numpy<2" "setuptools<70"
-    fi
+    python - <<'PY'
+    import numpy as np
+    print("Using NumPy:", np.__version__)
+    PY
 
-    # Optional: if Python bindings are still problematic, flip this to OFF
-    WITH_PY=ON
-
-    # Download Boost locally if not present (works on clusters without dev Boost)
+    # Boost (local)
     if [ ! -d "boost_1_79_0" ]; then
     echo "Fetching Boost 1.79.0..."
-    curl -fsSL -o boost_1_79_0.tar.bz2 \
-        https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2
+    (wget -q https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2 -O boost_1_79_0.tar.bz2 \
+        || curl -fsSL -o boost_1_79_0.tar.bz2 https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2)
     tar -xjf boost_1_79_0.tar.bz2 && rm -f boost_1_79_0.tar.bz2
     fi
     export BOOST_ROOT="$(pwd)/boost_1_79_0"
+    export CXX=${CXX:-g++}
 
-    # Init submodules we need
+    # Submodules needed
     git submodule update --init --recursive -- test/googletest extern/pybind11 || true
 
     rm -rf cmake_build
-    cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBOOST_ROOT="$BOOST_ROOT" \
-    -DNGEN_WITH_PYTHON=${WITH_PY} \
-    -S . -B cmake_build
+
+    # First try with Python ON
+    if cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=ON -S . -B cmake_build; then
+    echo "Configured with Python ON"
+    else
+    echo "CMake failed with Python ON; retrying with Python OFF"
+    rm -rf cmake_build
+    cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=OFF -S . -B cmake_build
+    fi
 
     cmake --build cmake_build --target ngen -j ${NCORES:-4}
-
-    # smoke test
     ./cmake_build/ngen --help >/dev/null || true
-    ''',
+                    '''
                 ],
-                "expect": ["cmake_build/ngen"],
-                "note": "NGen built (local Boost; NumPy pinned if necessary)."
+                'dependencies': [],
+                'test_command': '--help',
+                'verify_install': {
+                    'file_paths': ['cmake_build/ngen'],
+                    'check_type': 'exists'
+                },
+                'order': 8
             },
 
             # ------------------------------------------------------------
-            "ngiab": {
-                "repo": "https://github.com/CIROH-UA/ngiab",
-                "build": [
+            'ngiab': {
+                'description': 'NextGen In A Box - Container-based ngen deployment',
+                'config_path_key': 'NGIAB_INSTALL_PATH',
+                'config_exe_key': 'NGIAB_SCRIPT',
+                'default_path_suffix': 'installs/ngiab',
+                'default_exe': 'guide.sh',
+                'repository': None,
+                'branch': 'main',
+                'install_dir': 'ngiab',
+                'build_commands': [
                     r'''
     set -e
-    chmod +x guide.sh || true
-    ''',
+    # Detect HPC vs laptop/workstation and fetch the right NGIAB wrapper repo into ../ngiab
+    IS_HPC=false
+    for scheduler in sbatch qsub bsub; do
+    if command -v $scheduler >/dev/null 2>&1; then IS_HPC=true; break; fi
+    done
+    [ -n "$SLURM_CLUSTER_NAME" ] && IS_HPC=true
+    [ -n "$PBS_JOBID" ] && IS_HPC=true
+    [ -n "$SGE_CLUSTER_NAME" ] && IS_HPC=true
+    [ -d "/scratch" ] && IS_HPC=true
+
+    if $IS_HPC; then
+    NGIAB_REPO="https://github.com/CIROH-UA/NGIAB-HPCInfra.git"
+    echo "HPC environment detected; using NGIAB-HPCInfra"
+    else
+    NGIAB_REPO="https://github.com/CIROH-UA/NGIAB-CloudInfra.git"
+    echo "Non-HPC environment detected; using NGIAB-CloudInfra"
+    fi
+
+    cd ..
+    rm -rf ngiab
+    git clone "$NGIAB_REPO" ngiab
+    cd ngiab
+    [ -f guide.sh ] && chmod +x guide.sh && bash -n guide.sh || true
+                    '''
                 ],
-                "expect": ["guide.sh"],
-                "note": "NGIAB scripts available."
+                'dependencies': [],
+                'test_command': None,
+                'verify_install': {
+                    'file_paths': ['guide.sh'],
+                    'check_type': 'exists'
+                },
+                'order': 9
             },
         }
-
-        # Turn the dict into the shape your installer expects. If your runner expects a list in order:
-        install_order = ["sundials", "summa", "mizuroute", "fuse", "taudem", "gistool", "datatool", "ngen", "ngiab"]
-        return {name: tools[name] for name in install_order}
 
 
 
