@@ -19,21 +19,6 @@
 <h3 align="center">Community Optimization Nexus for Leveraging Understanding of<br>Environmental Networks in Computational Exploration</h3>
 
 ---
-## Intellectual Property Notice
-
-**Confluence** © 2023–2025 Darri Eythorsson.  
-Developed independently. All rights reserved under copyright law.
-
-Confluence is released under the GNU GPL v3 license (see `LICENSE`),  
-with the additional condition that **any use in externally funded projects,
-grants, or institutional initiatives requires the author’s written consent.**
-
-Unauthorized use, modification, or redistribution outside these terms
-constitutes infringement and academic misconduct.
-
-To request permission, please contact:
-📧 darri.eythorsson@ucalgary.ca
-
 
 ## 🌊 Overview
 
