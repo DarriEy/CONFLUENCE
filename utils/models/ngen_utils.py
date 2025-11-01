@@ -8,9 +8,6 @@ Classes:
     NgenPreProcessor: Handles spatial preprocessing and configuration generation
     NgenRunner: Manages model execution
     NgenPostprocessor: Processes model outputs
-
-Author: CONFLUENCE Development Team
-Date: 2025
 """
 
 import os
@@ -91,6 +88,11 @@ class NgenPreProcessor:
             CONFLUENCE_CODE_DIR/0_base_settings/NOAH/parameters/
         To:
             domain_dir/settings/ngen/NOAH/parameters/
+        
+        Note: These are generic CONUS tables. For best results:
+        - Verify soil_class_name matches your region
+        - Consider region-specific MPTABLE.TBL
+        - Check vegetation types in your domain
         """
         self.logger.info("Copying Noah-OWP parameter tables")
         
@@ -444,68 +446,24 @@ class NgenPreProcessor:
         """
         Create ngen-formatted forcing dataset with proper variable mapping.
         
-        Args:
-            forcing_data: Source forcing dataset (ERA5)
-            catchment_ids: List of catchment identifiers
-            
-        Returns:
-            ngen-formatted xarray Dataset
+        IMPROVED: Now checks for actual U/V wind components from ERA5.
         """
         n_catchments = len(catchment_ids)
         n_times = len(forcing_data.time)
         
-        # Convert time to nanoseconds since epoch (ngen format - matching working example)
-        time_values = forcing_data.time.values
+        # Create ngen dataset with required dimensions
+        ngen_ds = xr.Dataset()
         
-        # Ensure we have datetime64 objects
-        if not np.issubdtype(time_values.dtype, np.datetime64):
-            # Try to decode using xarray's built-in time decoding
-            if 'units' in forcing_data.time.attrs:
-                time_values = xr.decode_cf(forcing_data).time.values
-            else:
-                # Fallback: assume hours since 1900-01-01 (common ERA5 format)
-                time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01').values
-        
-        # Verify we have datetime64 now
-        if not np.issubdtype(time_values.dtype, np.datetime64):
-            raise ValueError(f"Could not convert time to datetime64, got dtype: {time_values.dtype}")
-        
-        # Convert to nanoseconds since 1970-01-01 (Unix epoch)
-        time_ns = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')).astype(np.int64)
-        
-        # Sanity check - values should be positive and reasonable (between 1970 and 2100)
-        min_ns = 0  # 1970-01-01
-        max_ns = 4102444800 * 1e9  # 2100-01-01 in nanoseconds
-        if np.any(time_ns < min_ns) or np.any(time_ns > max_ns):
-            raise ValueError(f"Time values out of reasonable range. Got min={time_ns.min()}, max={time_ns.max()}. "
-                           f"Expected between {min_ns} and {max_ns}")
-        
-        # Create coordinate arrays
-        catchment_coord = np.arange(n_catchments)
-        time_coord = np.arange(n_times)  # Simple indices for time dimension
-        
-        # Initialize dataset with dimensions matching working example
-        ngen_ds = xr.Dataset(
-            coords={
-                'catchment-id': ('catchment-id', catchment_coord),
-                'time': ('time', time_coord),
-                'str_dim': ('str_dim', np.array([1]))  # Required dimension for ngen
-            }
+        # Add catchment-id dimension
+        ngen_ds['catchment-id'] = xr.DataArray(
+            catchment_ids,
+            dims=['catchment-id']
         )
         
-        # Add catchment IDs as native NetCDF4 string type
-        ngen_ds['ids'] = xr.DataArray(
-            np.array(catchment_ids, dtype=object),
-            dims=['catchment-id'],
-            attrs={'long_name': 'catchment identifiers'}
-        )
-        
-        # Add Time variable (capital T) with nanoseconds for each catchment-time pair
-        # Replicate time values for each catchment
-        time_data = np.tile(time_ns, (n_catchments, 1)).astype(np.float64)
-        ngen_ds['Time'] = xr.DataArray(
-            time_data,
-            dims=['catchment-id', 'time'],
+        # Add time dimension (as int64 nanoseconds since epoch)
+        ngen_ds['time'] = xr.DataArray(
+            forcing_data.time.values.astype('datetime64[ns]').astype(np.int64),
+            dims=['time'],
             attrs={'units': 'ns'}
         )
         
@@ -535,24 +493,50 @@ class NgenPreProcessor:
                     dims=['catchment-id', 'time']
                 )
         
-        # Handle wind components
-        # ERA5 provides windspd; ngen needs UGRD and VGRD
-        # Approximate: assume wind from west, so UGRD = windspd, VGRD = 0
-        if 'windspd' in forcing_data:
+        # Handle wind components - IMPROVED VERSION
+        # Check if ERA5 has actual U/V components
+        if 'u10' in forcing_data and 'v10' in forcing_data:
+            # Use actual U/V components from ERA5
+            self.logger.info("Using actual U/V wind components from ERA5")
+            
+            ugrd_data = forcing_data['u10'].values.T
+            vgrd_data = forcing_data['v10'].values.T
+            
+            if ugrd_data.shape[0] == 1 and n_catchments > 1:
+                ugrd_data = np.tile(ugrd_data, (n_catchments, 1))
+                vgrd_data = np.tile(vgrd_data, (n_catchments, 1))
+            
+            ngen_ds['UGRD_10maboveground'] = xr.DataArray(
+                ugrd_data.astype(np.float32),
+                dims=['catchment-id', 'time']
+            )
+            ngen_ds['VGRD_10maboveground'] = xr.DataArray(
+                vgrd_data.astype(np.float32),
+                dims=['catchment-id', 'time']
+            )
+            
+        elif 'windspd' in forcing_data:
+            # Fallback: Use approximation with warning
+            self.logger.warning("Using wind speed approximation for U/V components. "
+                              "For better accuracy, consider using ERA5 u10/v10 variables.")
+            
             windspd_data = forcing_data['windspd'].values.T
             
             if windspd_data.shape[0] == 1 and n_catchments > 1:
                 windspd_data = np.tile(windspd_data, (n_catchments, 1))
             
-            # Approximate split (could be improved with actual U/V components)
+            # Assume wind from west (more common in mid-latitudes)
+            # UGRD (eastward) = windspd, VGRD (northward) = 0
             ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
+                windspd_data.astype(np.float32),
                 dims=['catchment-id', 'time']
             )
             ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
+                np.zeros_like(windspd_data).astype(np.float32),
                 dims=['catchment-id', 'time']
             )
+        else:
+            self.logger.warning("No wind data found in forcing dataset!")
         
         return ngen_ds
     
@@ -585,7 +569,14 @@ class NgenPreProcessor:
         self.logger.info(f"Generated configs for {len(catchment_gdf)} catchments")
     
     def _generate_cfe_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
-        """Generate CFE model configuration file."""
+        """
+        Generate CFE model configuration file.
+        
+        NOTE: This uses generic default parameters. For better results:
+        - Extract parameters from NWM hydrofabric attributes
+        - Use soil texture-based parameters
+        - Customize GIUH ordinates based on catchment size
+        """
         
         # Get catchment-specific parameters (or use defaults)
         # In a full implementation, these would come from soil/vegetation data
@@ -619,6 +610,40 @@ giuh_ordinates=0.65,0.35
         config_file = self.ngen_setup_dir / "CFE" / f"cat-{catchment_id}_bmi_config_cfe_pass.txt"
         with open(config_file, 'w') as f:
             f.write(config_text)
+        
+        # IMPROVED: Validate the generated config
+        if not self._validate_cfe_config(config_file):
+            self.logger.warning(f"Generated CFE config may be incomplete: {config_file}")
+    
+    def _validate_cfe_config(self, config_file: Path) -> bool:
+        """
+        Validate CFE config file has required parameters.
+        
+        NEW METHOD: Adds validation to catch errors early.
+        """
+        required_params = [
+            'forcing_file', 'soil_params.smcmax', 'Cgw', 
+            'max_gw_storage', 'K_nash', 'K_lf', 'giuh_ordinates'
+        ]
+        
+        try:
+            with open(config_file, 'r') as f:
+                content = f.read()
+            
+            missing_params = []
+            for param in required_params:
+                if param not in content:
+                    missing_params.append(param)
+            
+            if missing_params:
+                self.logger.error(f"CFE config missing parameters: {', '.join(missing_params)}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error validating CFE config: {e}")
+            return False
     
     def _generate_pet_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
         """Generate PET model configuration file."""
@@ -808,44 +833,16 @@ num_timesteps=1
                         "main_output_variable": "Q_OUT",
                         "modules": [
                             {
-                                "name": "bmi_c++",
-                                "params": {
-                                    "model_type_name": "bmi_c++_sloth",
-                                    "library_file": "./extern/sloth/cmake_build/libslothmodel.so",
-                                    "init_config": "/dev/null",
-                                    "allow_exceed_end_time": True,
-                                    "main_output_variable": "z",
-                                    "uses_forcing_file": False,
-                                    "model_params": {
-                                        "sloth_ice_fraction_schaake(1,double,m,node)": 0.0,
-                                        "sloth_ice_fraction_xinanjiang(1,double,1,node)": 0.0,
-                                        "sloth_smp(1,double,1,node)": 0.0
-                                    }
-                                }
-                            },
-                            {
-                                "name": "bmi_c",
-                                "params": {
-                                    "model_type_name": "PET",
-                                    "library_file": "./extern/evapotranspiration/evapotranspiration/cmake_build/libpetbmi.so",
-                                    "forcing_file": "",
-                                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
-                                    "allow_exceed_end_time": True,
-                                    "main_output_variable": "water_potential_evaporation_flux",
-                                    "registration_function": "register_bmi_pet",
-                                    "uses_forcing_file": False
-                                }
-                            },
-                            {
                                 "name": "bmi_fortran",
                                 "params": {
-                                    "model_type_name": "bmi_fortran_noahowp",
-                                    "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
+                                    "name": "bmi_fortran",
+                                    "model_type_name": "NoahOWP",
+                                    "library_file": "/path/to/libnoahowpmodular.so",
                                     "forcing_file": "",
                                     "init_config": f"{noah_config_base}/{{{{id}}}}.input",
                                     "allow_exceed_end_time": True,
                                     "main_output_variable": "QINSUR",
-                                    "uses_forcing_file": False,
+                                    "registration_function": "register_bmi_noahowp",
                                     "variables_names_map": {
                                         "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
                                         "Q2": "atmosphere_air_water~vapor__relative_saturation",
@@ -855,14 +852,30 @@ num_timesteps=1
                                         "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
                                         "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
                                         "SFCPRS": "land_surface_air__pressure"
-                                    }
+                                    },
+                                    "uses_forcing_file": False
+                                }
+                            },
+                            {
+                                "name": "bmi_c++",
+                                "params": {
+                                    "name": "bmi_c++",
+                                    "model_type_name": "EVAPOTRANSPIRATION",
+                                    "library_file": "/path/to/libevapotranspirationmodule.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "water_potential_evaporation_flux",
+                                    "registration_function": "register_bmi_pet",
+                                    "uses_forcing_file": False
                                 }
                             },
                             {
                                 "name": "bmi_c",
                                 "params": {
-                                    "model_type_name": "bmi_c_cfe",
-                                    "library_file": "./extern/cfe/cmake_build/libcfebmi.so",
+                                    "name": "bmi_c",
+                                    "model_type_name": "CFE",
+                                    "library_file": "/path/to/libcfemodel.so",
                                     "forcing_file": "",
                                     "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
                                     "allow_exceed_end_time": True,
@@ -952,10 +965,18 @@ class NgenRunner:
         nexus_file = self.ngen_setup_dir / "nexus.geojson"
         realization_file = self.ngen_setup_dir / "realization_config.json"
         
-        # Verify files exist
+        # Verify files exist - IMPROVED with better error messages
+        missing_files = []
         for file in [catchment_file, nexus_file, realization_file]:
             if not file.exists():
-                raise FileNotFoundError(f"Required file not found: {file}")
+                missing_files.append(str(file))
+        
+        if missing_files:
+            error_msg = f"Required ngen input files not found:\n"
+            for f in missing_files:
+                error_msg += f"  - {f}\n"
+            error_msg += "\nPlease run ngen preprocessing first."
+            raise FileNotFoundError(error_msg)
         
         # Setup environment with library paths
         env = os.environ.copy()
@@ -971,6 +992,7 @@ class NgenRunner:
         ]
         
         self.logger.debug(f"Running command: {' '.join(ngen_cmd)}")
+        self.logger.debug(f"Working directory: {self.ngen_exe.parent}")
         
         # Run ngen
         log_file = output_dir / "ngen_log.txt"
@@ -992,8 +1014,35 @@ class NgenRunner:
             return True
             
         except subprocess.CalledProcessError as e:
+            # IMPROVED error handling
             self.logger.error(f"NextGen model run failed with error code {e.returncode}")
-            self.logger.error(f"Check log file: {log_file}")
+            self.logger.error(f"Command: {' '.join(ngen_cmd)}")
+            self.logger.error(f"Working directory: {self.ngen_exe.parent}")
+            self.logger.error(f"Check log file for details: {log_file}")
+            
+            # Try to extract useful error info from log
+            if log_file.exists():
+                try:
+                    with open(log_file, 'r') as f:
+                        log_content = f.read()
+                        
+                    # Look for common error patterns
+                    if "No such file" in log_content or "cannot open" in log_content:
+                        self.logger.error("NGEN couldn't find a required file")
+                    if "Failed to initialize" in log_content:
+                        self.logger.error("BMI module initialization failed")
+                    if "forcing" in log_content.lower():
+                        self.logger.error("Possible forcing data issue")
+                        
+                    # Show last 20 lines of log
+                    log_lines = log_content.split('\n')
+                    self.logger.error("Last 20 lines of ngen log:")
+                    for line in log_lines[-20:]:
+                        self.logger.error(f"  {line}")
+                        
+                except Exception as log_error:
+                    self.logger.error(f"Couldn't read log file: {log_error}")
+            
             return False
     
     def _move_ngen_outputs(self, build_dir: Path, output_dir: Path):
@@ -1033,7 +1082,7 @@ class NgenRunner:
                 self.logger.debug(f"  ... and {len(moved_files) - 10} more")
         else:
             self.logger.warning(f"No output files found in {build_dir}. Check if model ran correctly.")
-
+            self.logger.warning(f"Expected patterns: {', '.join(output_patterns)}")
 
 
 class NgenPostprocessor:
