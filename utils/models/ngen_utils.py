@@ -430,9 +430,25 @@ class NgenPreProcessor:
         # Create ngen-formatted dataset
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
         
-        # Save to file with NETCDF4 format (supports native string type)
+        # Save to file with NETCDF4 format with proper encoding
         output_file = self.forcing_dir / "forcing.nc"
-        ngen_ds.to_netcdf(output_file, format='NETCDF4')
+
+        # Create encoding dictionary to handle string and numeric types properly
+        encoding = {
+            'ids': {'dtype': 'str'},  # Explicitly encode as string type
+            'Time': {'dtype': 'float64'},
+            'catchment-id': {'dtype': 'int32'},
+            'time': {'dtype': 'int32'}
+        }
+
+        # Add encoding for all forcing variables
+        for var in ['precip_rate', 'TMP_2maboveground', 'SPFH_2maboveground', 
+                    'PRES_surface', 'DSWRF_surface', 'DLWRF_surface',
+                    'UGRD_10maboveground', 'VGRD_10maboveground']:
+            if var in ngen_ds:
+                encoding[var] = {'dtype': 'float32', '_FillValue': np.nan}
+
+        ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
         
         # Close datasets
         forcing_data.close()
