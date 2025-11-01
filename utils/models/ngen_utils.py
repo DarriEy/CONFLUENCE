@@ -913,32 +913,53 @@ num_timesteps=1
 
         return None
 
-
-
-    def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
+    def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file):
         """
         Generate ngen realization configuration JSON.
-        Auto-detect BMI library .so paths under CONFLUENCE_data/installs/ngen (or NGEN_INSTALL_PATH).
-        Env var overrides:
-        NGEN_NOAH_LIB, NGEN_PET_LIB, NGEN_CFE_LIB
+
+        - forcing_file can be None | str | Path.
+        If None, we try: self.forcing_dir / "forcing.nc".
+        - Auto-detect BMI libs under CONFLUENCE_data/installs/ngen (or NGEN_INSTALL_PATH).
+        Env var overrides: NGEN_NOAH_LIB, NGEN_PET_LIB, NGEN_CFE_LIB
         """
         self.logger.info("Generating realization configuration")
 
-        forcing_abs_path = str(forcing_file.resolve())
+        # ---------- Coerce/resolve forcing path safely ----------
+        forcing_path = None
+        try:
+            if forcing_file is None:
+                candidate = self.forcing_dir / "forcing.nc"
+                if candidate.exists():
+                    forcing_path = candidate.resolve()
+                else:
+                    raise FileNotFoundError(
+                        f"Forcing file not provided and default not found: {candidate}"
+                    )
+            else:
+                # accept Path-like or string
+                forcing_path = Path(forcing_file).resolve()
+                if not forcing_path.exists():
+                    raise FileNotFoundError(f"Forcing path does not exist: {forcing_path}")
+        except Exception as e:
+            self.logger.error(f"Could not determine forcing file path: {e}")
+            raise
+
+        forcing_abs_path = str(forcing_path)
+
+        # ---------- Config bases ----------
         cfe_config_base = str((self.ngen_setup_dir / "CFE").resolve())
         pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
         noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
 
-        # Time bounds
+        # ---------- Time bounds ----------
         sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
-        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00')
         if sim_start == 'default': sim_start = '2000-01-01 00:00:00'
-        if sim_end == 'default': sim_end = '2000-12-31 23:00:00'
+        if sim_end   == 'default': sim_end   = '2000-12-31 23:00:00'
         sim_start = pd.to_datetime(sim_start).strftime('%Y-%m-%d %H:%M:%S')
-        sim_end = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
+        sim_end   = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
 
-        # ---- Auto-detect BMI libraries ----
-        # Try several common names per component
+        # ---------- Auto-detect BMI libraries ----------
         noah_patterns = [
             '*noah*owp*modular*.*so', '*surface*bmi*.so', '*libnoah*.so',
             '*noah*owp*modular*.*dylib', '*surface*bmi*.dylib', '*libnoah*.dylib'
@@ -953,20 +974,16 @@ num_timesteps=1
         ]
 
         noah_lib = self._find_bmi_library(noah_patterns)
-        pet_lib = self._find_bmi_library(pet_patterns)
-        cfe_lib = self._find_bmi_library(cfe_patterns)
+        pet_lib  = self._find_bmi_library(pet_patterns)
+        cfe_lib  = self._find_bmi_library(cfe_patterns)
 
-        # Log & warn if any unresolved
         if noah_lib: self.logger.info(f"NOAH BMI library: {noah_lib}")
         else:        self.logger.warning("NOAH BMI library not found. Set NGEN_NOAH_LIB or ensure build outputs are present.")
-
-        if pet_lib:  self.logger.info(f"PET BMI library: {pet_lib}")
+        if pet_lib:  self.logger.info(f"PET BMI library:  {pet_lib}")
         else:        self.logger.warning("PET BMI library not found. Set NGEN_PET_LIB or ensure build outputs are present.")
-
-        if cfe_lib:  self.logger.info(f"CFE BMI library: {cfe_lib}")
+        if cfe_lib:  self.logger.info(f"CFE BMI library:  {cfe_lib}")
         else:        self.logger.warning("CFE BMI library not found. Set NGEN_CFE_LIB or ensure build outputs are present.")
 
-        # Build modules config; leave empty string if missing (NGen will then error with a clear dlopen message)
         modules = [
             {
                 "name": "bmi_fortran",
@@ -1056,6 +1073,7 @@ num_timesteps=1
             json.dump(config, f, indent=2)
 
         self.logger.info(f"Created realization config: {config_file}")
+
 
 
 
