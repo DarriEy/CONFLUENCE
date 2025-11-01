@@ -363,206 +363,221 @@ class NgenPreProcessor:
         
         self.logger.info(f"Created catchment geopackage with {len(divides_gdf)} catchments: {gpkg_file}")
         return gpkg_file
-    
+        
     def prepare_forcing_data(self) -> Path:
         """
         Convert CONFLUENCE basin-averaged ERA5 forcing to ngen format.
-        
-        Processes:
-        1. Load all monthly forcing files
-        2. Merge across time
-        3. Map variable names (ERA5 → ngen)
-        4. Reorganize dimensions (hru, time) → (catchment-id, time)
-        5. Add catchment IDs
-        
-        Returns:
-            Path to ngen forcing NetCDF file
+
+        Steps:
+        1) load monthly forcing files
+        2) merge across time
+        3) subset to simulation window
+        4) map variables and reshape to (catchment, time)
+        5) write a clean NETCDF4 file
         """
         self.logger.info("Preparing forcing data for ngen")
-        
+
         # Load catchment IDs - must match divide_id format in geopackage (cat-X)
         catchment_file = self.catchment_path / self.catchment_name
         catchment_gdf = gpd.read_file(catchment_file)
         catchment_ids = [f"cat-{x}" for x in catchment_gdf[self.hru_id_col].astype(str).tolist()]
         n_catchments = len(catchment_ids)
-        
+
         self.logger.info(f"Processing forcing for {n_catchments} catchments")
-        
+
         # Get forcing files
         forcing_files = sorted(self.basin_forcing_dir.glob("*.nc"))
         if not forcing_files:
             raise FileNotFoundError(f"No forcing files found in {self.basin_forcing_dir}")
-        
+
         self.logger.info(f"Found {len(forcing_files)} forcing files")
-        
-        # Open all files and concatenate
-        datasets = []
-        for f in forcing_files:
-            ds = xr.open_dataset(f)
-            datasets.append(ds)
-        
-        # Concatenate along time dimension
-        forcing_data = xr.concat(datasets, dim='time')
-        
-        # Get time bounds from config - use defaults if not specified or set to 'default'
+
+        # Open/concat by time
+        forcing_data = xr.open_mfdataset(
+            [str(p) for p in forcing_files],
+            combine="by_coords",
+            parallel=False,
+            decode_times=True,
+            engine="netcdf4",
+        )
+
+        # Simulation window (handle 'default' in config)
         sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
-        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
-        
-        # Handle 'default' string
+        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00')
         if sim_start == 'default':
             sim_start = '2000-01-01 00:00:00'
         if sim_end == 'default':
             sim_end = '2000-12-31 23:00:00'
-        
-        # Always subset to simulation period
+
         start_time = pd.to_datetime(sim_start)
-        end_time = pd.to_datetime(sim_end)
-        
-        # Convert forcing time to datetime if needed
-        time_values = pd.to_datetime(forcing_data.time.values)
-        forcing_data['time'] = time_values
-        
-        # Select time slice for simulation period
+        end_time   = pd.to_datetime(sim_end)
+
+        # Ensure datetime64[ns]
+        forcing_data = forcing_data.assign_coords(
+            time=pd.to_datetime(forcing_data.time.values)
+        )
+
+        # Subset
         forcing_data = forcing_data.sel(time=slice(start_time, end_time))
-            
-        self.logger.info(f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}")
-        
+
+        self.logger.info(
+            f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}"
+        )
+
         # Create ngen-formatted dataset
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
-        
-        # Save to file with NETCDF4 format with proper encoding
+
+        # Output path
         output_file = self.forcing_dir / "forcing.nc"
 
-        # Create encoding dictionary to handle string and numeric types properly
-        # Build encoding dynamically from what's in the dataset
-        encoding = {}
+        # Build encoding dynamically only for variables that exist
+        encoding: Dict[str, Dict[str, Any]] = {}
 
-        # Downcast floating-point data vars to float32 and set fill values
+        # Downcast float data vars + set fill
         for name, da in ngen_ds.data_vars.items():
             if np.issubdtype(da.dtype, np.floating):
                 encoding[name] = {'dtype': 'float32', '_FillValue': np.nan}
 
-        # Let xarray handle datetime → CF time; don't force 'int32'
-        # If you *really* want integer epoch ns, keep it int64
-        if 'time' in ngen_ds.coords:
-            encoding['time'] = {'dtype': 'int64'}  # or omit entirely and let xarray manage
-
-
-        # Add encoding for all forcing variables
-        for var in ['precip_rate', 'TMP_2maboveground', 'SPFH_2maboveground', 
-                    'PRES_surface', 'DSWRF_surface', 'DLWRF_surface',
-                    'UGRD_10maboveground', 'VGRD_10maboveground']:
-            if var in ngen_ds:
-                encoding[var] = {'dtype': 'float32', '_FillValue': np.nan}
+        # Let xarray handle CF time encoding; no manual dtype needed for 'time'
+        # (If you insist on integer epoch, you could set dtype=int64, but CF is safer.)
 
         ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
-        
-        # Close datasets
+
+        # Close
         forcing_data.close()
-        for ds in datasets:
-            ds.close()
-        
-        self.logger.info(f"Created ngen forcing file: {output_file}")
+        self.logger.info(f"Wrote ngen forcing: {output_file}")
+
         return output_file
-    
-    def _create_ngen_forcing_dataset(self, forcing_data: xr.Dataset, catchment_ids: List[str]) -> xr.Dataset:
-        """
-        Create ngen-formatted forcing dataset with proper variable mapping.
+
         
-        IMPROVED: Now checks for actual U/V wind components from ERA5.
+    def _create_ngen_forcing_dataset(
+        self, forcing_data: xr.Dataset, catchment_ids: List[str]
+    ) -> xr.Dataset:
+        """
+        Create ngen-formatted forcing dataset with clean names:
+        * dimension: 'catchment'
+        * string coord: 'ids' (and a mirrored data variable 'ids' for compatibility)
+        * coordinate 'time' kept as datetime64; xarray will do CF-compliant encoding
+        Also maps ERA5 variables into the NGEN variable names.
         """
         n_catchments = len(catchment_ids)
-        n_times = len(forcing_data.time)
-        
-        # Create ngen dataset with required dimensions
+        n_times = forcing_data.dims.get('time', len(forcing_data.time))
+
+        # Initialize dataset
         ngen_ds = xr.Dataset()
-        
-        # Add catchment-id dimension
-        ngen_ds['catchment-id'] = xr.DataArray(
-            catchment_ids,
-            dims=['catchment-id']
+
+        # Clean dimension + string ids
+        CATCH_DIM = 'catchment'
+        ids_arr = np.array(catchment_ids, dtype=object)
+
+        ngen_ds = ngen_ds.assign_coords(
+            ids=(CATCH_DIM, ids_arr),
+            time=forcing_data.time.values.astype('datetime64[ns]'),
         )
-        
-        # Add time dimension (as int64 nanoseconds since epoch)
-        ngen_ds['time'] = xr.DataArray(
-            forcing_data.time.values.astype('datetime64[ns]').astype(np.int64),
-            dims=['time'],
-            attrs={'units': 'ns'}
-        )
-        
-        # Map and add forcing variables
-        # ERA5 → ngen variable mapping
+
+        # Optionally also expose ids as a data variable (some NGEN readers expect this)
+        ngen_ds['ids'] = xr.DataArray(ids_arr, dims=[CATCH_DIM])
+
+        # Variable mapping ERA5 → NGEN
+        # Adjust left-hand-side keys here if your ERA5 fields differ.
         var_mapping = {
-            'pptrate': 'precip_rate',
-            'airtemp': 'TMP_2maboveground',
-            'spechum': 'SPFH_2maboveground',
-            'airpres': 'PRES_surface',
-            'SWRadAtm': 'DSWRF_surface',
-            'LWRadAtm': 'DLWRF_surface'
+            'pptrate':            'precip_rate',          # mm/s or kg m-2 s-1 consistent with your pipeline
+            't2m':                'TMP_2maboveground',    # K
+            'd2m':                'SPFH_2maboveground',   # (if specific humidity already computed; else adjust)
+            'sp':                 'PRES_surface',         # Pa
+            'dswrf':              'DSWRF_surface',        # W m-2
+            'dlwrf':              'DLWRF_surface',        # W m-2
+            # Wind handled below (u10/v10 preferred; else approximate from windspd if present)
         }
-        
-        # Add variables as float32 to match ngen requirements
-        for era5_var, ngen_var in var_mapping.items():
-            if era5_var in forcing_data:
-                # Get data and transpose to (catchment, time)
-                data = forcing_data[era5_var].values.T  # (time, hru) → (hru, time)
-                
-                # Replicate for multiple catchments if needed
-                if data.shape[0] == 1 and n_catchments > 1:
-                    data = np.tile(data, (n_catchments, 1))
-                
-                ngen_ds[ngen_var] = xr.DataArray(
-                    data.astype(np.float32),  # Ensure float32
-                    dims=['catchment-id', 'time']
+
+        # Helper to tile/reshape (forcing files are basin-averaged; expand to all catchments)
+        def expand_to_catchments(arr_1d_time: np.ndarray) -> np.ndarray:
+            # Input expected shape: (time,)
+            arr_2d = np.tile(arr_1d_time[None, :], (n_catchments, 1))
+            return arr_2d
+
+        # Map scalar (time-only) variables
+        for era_name, ngen_name in var_mapping.items():
+            if era_name in forcing_data:
+                data = forcing_data[era_name].values
+                # Accept either (time,) or (something, time) already matched
+                if data.ndim == 1:
+                    data2d = expand_to_catchments(data)
+                elif data.ndim == 2 and 1 in data.shape:
+                    # squeeze singleton spatial dim then tile
+                    squeezed = np.squeeze(data)
+                    data2d = expand_to_catchments(squeezed)
+                else:
+                    # Already 2D? try to align (catchment, time)
+                    # If it's (time, hru) or similar, transpose if needed
+                    if data.shape[0] == n_times:
+                        data2d = data.T
+                    else:
+                        data2d = data
+
+                ngen_ds[ngen_name] = xr.DataArray(
+                    data2d.astype(np.float32),
+                    dims=[CATCH_DIM, 'time'],
                 )
-        
-        # Handle wind components - IMPROVED VERSION
-        # Check if ERA5 has actual U/V components
+
+        # Wind components
         if 'u10' in forcing_data and 'v10' in forcing_data:
-            # Use actual U/V components from ERA5
             self.logger.info("Using actual U/V wind components from ERA5")
-            
-            ugrd_data = forcing_data['u10'].values.T
-            vgrd_data = forcing_data['v10'].values.T
-            
-            if ugrd_data.shape[0] == 1 and n_catchments > 1:
-                ugrd_data = np.tile(ugrd_data, (n_catchments, 1))
-                vgrd_data = np.tile(vgrd_data, (n_catchments, 1))
-            
+            u = forcing_data['u10'].values
+            v = forcing_data['v10'].values
+
+            if u.ndim == 1:  # (time,)
+                u2d = expand_to_catchments(u)
+                v2d = expand_to_catchments(v)
+            elif u.ndim == 2 and 1 in u.shape:
+                u2d = expand_to_catchments(np.squeeze(u))
+                v2d = expand_to_catchments(np.squeeze(v))
+            else:
+                # Align to (catchment, time)
+                u2d = u.T if u.shape[0] == n_times else u
+                v2d = v.T if v.shape[0] == n_times else v
+
             ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                ugrd_data.astype(np.float32),
-                dims=['catchment-id', 'time']
+                u2d.astype(np.float32), dims=[CATCH_DIM, 'time']
             )
             ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                vgrd_data.astype(np.float32),
-                dims=['catchment-id', 'time']
+                v2d.astype(np.float32), dims=[CATCH_DIM, 'time']
             )
-            
+
         elif 'windspd' in forcing_data:
-            # Fallback: Use approximation with warning
-            self.logger.warning("Using wind speed approximation for U/V components. "
-                              "For better accuracy, consider using ERA5 u10/v10 variables.")
-            
-            windspd_data = forcing_data['windspd'].values.T
-            
-            if windspd_data.shape[0] == 1 and n_catchments > 1:
-                windspd_data = np.tile(windspd_data, (n_catchments, 1))
-            
-            # Assume wind from west (more common in mid-latitudes)
-            # UGRD (eastward) = windspd, VGRD (northward) = 0
+            # Fallback: split wind speed into fixed components (directionless); warn user
+            self.logger.warning(
+                "Using wind speed approximation for U/V components. "
+                "For better accuracy, consider using ERA5 u10/v10 variables."
+            )
+            w = forcing_data['windspd'].values
+            if w.ndim == 1:
+                u2d = expand_to_catchments(w / np.sqrt(2.0))
+                v2d = expand_to_catchments(w / np.sqrt(2.0))
+            elif w.ndim == 2 and 1 in w.shape:
+                base = np.squeeze(w) / np.sqrt(2.0)
+                u2d = expand_to_catchments(base)
+                v2d = expand_to_catchments(base)
+            else:
+                base = (w.T if w.shape[0] == n_times else w) / np.sqrt(2.0)
+                u2d, v2d = base.astype(np.float32), base.astype(np.float32)
+
             ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                windspd_data.astype(np.float32),
-                dims=['catchment-id', 'time']
+                u2d.astype(np.float32), dims=[CATCH_DIM, 'time']
             )
             ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                np.zeros_like(windspd_data).astype(np.float32),
-                dims=['catchment-id', 'time']
+                v2d.astype(np.float32), dims=[CATCH_DIM, 'time']
             )
         else:
-            self.logger.warning("No wind data found in forcing dataset!")
-        
+            self.logger.warning(
+                "No wind fields ('u10'/'v10' or 'windspd') found; "
+                "UGRD_10maboveground/VGRD_10maboveground not written."
+            )
+
+        ngen_ds = ngen_ds.assign_coords(**{'catchment-id': ('catchment', ngen_ds['ids'].values)})
+
         return ngen_ds
-    
+
     def generate_model_configs(self):
         """
         Generate model-specific configuration files for each catchment.
