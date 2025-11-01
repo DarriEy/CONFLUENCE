@@ -434,12 +434,19 @@ class NgenPreProcessor:
         output_file = self.forcing_dir / "forcing.nc"
 
         # Create encoding dictionary to handle string and numeric types properly
-        encoding = {
-            'ids': {'dtype': 'str'},  # Explicitly encode as string type
-            'Time': {'dtype': 'float64'},
-            'catchment-id': {'dtype': 'int32'},
-            'time': {'dtype': 'int32'}
-        }
+        # Build encoding dynamically from what's in the dataset
+        encoding = {}
+
+        # Downcast floating-point data vars to float32 and set fill values
+        for name, da in ngen_ds.data_vars.items():
+            if np.issubdtype(da.dtype, np.floating):
+                encoding[name] = {'dtype': 'float32', '_FillValue': np.nan}
+
+        # Let xarray handle datetime → CF time; don't force 'int32'
+        # If you *really* want integer epoch ns, keep it int64
+        if 'time' in ngen_ds.coords:
+            encoding['time'] = {'dtype': 'int64'}  # or omit entirely and let xarray manage
+
 
         # Add encoding for all forcing variables
         for var in ['precip_rate', 'TMP_2maboveground', 'SPFH_2maboveground', 
