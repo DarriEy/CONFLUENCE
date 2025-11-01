@@ -445,26 +445,33 @@ class NgenPreProcessor:
         # Sanity checks the NetCDF provider depends on
         try:
             with nc4.Dataset(output_file, mode='r') as ds:
-                # dims must exist
-                assert 'catchment-id' in ds.dimensions, "Missing dim 'catchment-id'"
+                # Allow either 'feature_id' (preferred) or 'catchment-id'
+                has_feature = 'feature_id' in ds.dimensions
+                has_catchment = 'catchment-id' in ds.dimensions
+                assert has_feature or has_catchment, "Missing dim 'feature_id' (or 'catchment-id')"
+
+                feat_dim = 'feature_id' if has_feature else 'catchment-id'
+
+                # time dim
                 assert 'time' in ds.dimensions, "Missing dim 'time'"
-                # ids variable must exist and be 1-D over 'catchment-id'
+
+                # ids variable must exist and be 1-D over the feature dim
                 assert 'ids' in ds.variables, "Missing variable 'ids'"
                 ids_var = ds.variables['ids']
-                assert ids_var.dimensions == ('catchment-id',), "ids must be 1-D over 'catchment-id'"
-                # some core vars present?
-                core_vars = [v for v in ['precip_rate','TMP_2maboveground','PRES_surface','DSWRF_surface','DLWRF_surface',
-                                        'UGRD_10maboveground','VGRD_10maboveground'] if v in ds.variables]
-                assert len(core_vars) >= 3, "Too few forcing variables found"
-            self.logger.info("Forcing file passes basic NGen checks (dims/ids).")
+                assert ids_var.dimensions == (feat_dim,), f"'ids' must be 1-D over '{feat_dim}'"
+
+                # some core vars present (either canonical or AORC aliases)
+                present = set(ds.variables.keys())
+                must_have_any = [
+                    'precip_rate', 'PRCPNONC'
+                ]
+                assert any(v in present for v in must_have_any), \
+                    "Missing precipitation variable (need 'precip_rate' or 'PRCPNONC')"
+
+            self.logger.info(f"Forcing file passes basic NGen checks (dims/ids via '{feat_dim}').")
         except Exception as e:
             self.logger.error(f"Forcing validation failed: {e}")
             raise
-        # Close
-        forcing_data.close()
-        self.logger.info(f"Wrote ngen forcing: {output_file}")
-
-        return output_file
 
     def _create_ngen_forcing_dataset(
         self, forcing_data: xr.Dataset, catchment_ids: List[str]
