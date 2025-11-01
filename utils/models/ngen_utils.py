@@ -531,7 +531,7 @@ class NgenPreProcessor:
 
         # wind fallback if no u10/v10 but windspd exists
         if ("UGRD_10maboveground" not in ds) and ("VGRD_10maboveground" not in ds) and ("windspd" in forcing_data):
-            self.logger.warning("Using wind speed approximation for U/V components. For better accuracy, consider ERA5 u10/v10.")
+            self.logger.warning("Using wind speed approximation for U/V components.")
             w = forcing_data["windspd"].values
             if w.ndim == 1:
                 base = expand_to_features(w / np.sqrt(2.0))
