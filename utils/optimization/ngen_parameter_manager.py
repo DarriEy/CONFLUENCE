@@ -131,8 +131,14 @@ class NgenParameterManager:
         bounds['smcmax'] = {'min': 0.3, 'max': 0.6}      # Maximum soil moisture (m3/m3)
         bounds['alpha_fc'] = {'min': 0.25, 'max': 0.95}  # Field capacity coefficient (-)
         bounds['expon'] = {'min': 1.0, 'max': 8.0}       # Exponent parameter (-)
-        bounds['Klf'] = {'min': 0.0, 'max': 1.0}         # Lateral flow coefficient (-)
-        bounds['Kn'] = {'min': 0.001, 'max': 0.5}        # Nash cascade coefficient (1/h)
+        bounds['K_lf'] = {'min': 0.001, 'max': 1.0}      # Lateral flow coefficient (1/hour)
+        bounds['K_nash'] = {'min': 0.001, 'max': 0.5}    # Nash cascade coefficient (1/h)
+        bounds['Klf'] = {'min': 0.001, 'max': 1.0}       # Alias for K_lf
+        bounds['Kn'] = {'min': 0.001, 'max': 0.5}        # Alias for K_nash
+
+        # Add missing groundwater parameter bounds
+        bounds['Cgw'] = {'min': 0.0001, 'max': 0.01}     # Groundwater coefficient (m/h)
+        bounds['max_gw_storage'] = {'min': 0.01, 'max': 0.5}  # Max GW storage (m)
         
         # NOAH-OWP parameters
         bounds['refkdt'] = {'min': 0.5, 'max': 5.0}      # Surface runoff parameter (-)
@@ -350,11 +356,29 @@ class NgenParameterManager:
 
             # Map DE parameter names to BMI keys in the file
             keymap = {
+                # Soil parameters
                 "bb": "soil_params.b",
                 "satdk": "soil_params.satdk",
                 "slop": "soil_params.slop",
                 "maxsmc": "soil_params.smcmax",
                 "smcmax": "soil_params.smcmax",
+                "wltsmc": "soil_params.wltsmc",
+                "satpsi": "soil_params.satpsi",
+                "expon": "soil_params.expon",  # Note: also exists as root-level param
+                
+                # Groundwater parameters
+                "Cgw": "Cgw",
+                "max_gw_storage": "max_gw_storage",
+                
+                # Routing parameters 
+                "K_nash": "K_nash",
+                "K_lf": "K_lf",
+                "Kn": "K_nash",      # Alias for K_nash
+                "Klf": "K_lf",       # Alias for K_lf
+                
+                # Other CFE parameters
+                "alpha_fc": "alpha_fc",
+                "refkdt": "refkdt",
             }
 
             # Helper: write numeric value preserving any trailing [units]
