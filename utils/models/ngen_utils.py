@@ -454,11 +454,10 @@ class NgenPreProcessor:
         self, forcing_data: xr.Dataset, catchment_ids: List[str]
     ) -> xr.Dataset:
         """
-        Create ngen-formatted forcing dataset with clean names:
-        * dimension: 'catchment'
-        * string coord: 'ids' (and a mirrored data variable 'ids' for compatibility)
-        * coordinate 'time' kept as datetime64; xarray will do CF-compliant encoding
-        Also maps ERA5 variables into the NGEN variable names.
+        Create ngen-formatted forcing dataset with names NGen expects:
+        * dimension: 'catchment-id'
+        * string data var: 'ids' with dims ('catchment-id',)
+        * coordinate 'time' as datetime64[ns] (xarray will write CF-compliant)
         """
         n_catchments = len(catchment_ids)
         n_times = forcing_data.dims.get('time', len(forcing_data.time))
@@ -466,117 +465,85 @@ class NgenPreProcessor:
         # Initialize dataset
         ngen_ds = xr.Dataset()
 
-        # Clean dimension + string ids
-        CATCH_DIM = 'catchment'
+        # REQUIRED by NGen NetCDF provider
+        CATCH_DIM = 'catchment-id'
         ids_arr = np.array(catchment_ids, dtype=object)
 
+        # coords
         ngen_ds = ngen_ds.assign_coords(
-            ids=(CATCH_DIM, ids_arr),
             time=forcing_data.time.values.astype('datetime64[ns]'),
         )
-
-        # Optionally also expose ids as a data variable (some NGEN readers expect this)
+        # string IDs as *data variable* over the 'catchment-id' dimension
         ngen_ds['ids'] = xr.DataArray(ids_arr, dims=[CATCH_DIM])
 
-        # Variable mapping ERA5 → NGEN
-        # Adjust left-hand-side keys here if your ERA5 fields differ.
+        # Variable mapping ERA5 → NGEN names
         var_mapping = {
-            'pptrate':            'precip_rate',          # mm/s or kg m-2 s-1 consistent with your pipeline
-            't2m':                'TMP_2maboveground',    # K
-            'd2m':                'SPFH_2maboveground',   # (if specific humidity already computed; else adjust)
-            'sp':                 'PRES_surface',         # Pa
-            'dswrf':              'DSWRF_surface',        # W m-2
-            'dlwrf':              'DLWRF_surface',        # W m-2
-            # Wind handled below (u10/v10 preferred; else approximate from windspd if present)
+            'pptrate': 'precip_rate',
+            't2m': 'TMP_2maboveground',
+            'd2m': 'SPFH_2maboveground',
+            'sp': 'PRES_surface',
+            'dswrf': 'DSWRF_surface',
+            'dlwrf': 'DLWRF_surface',
         }
 
-        # Helper to tile/reshape (forcing files are basin-averaged; expand to all catchments)
+        # Helper to tile (time,) → (catchment-id, time)
         def expand_to_catchments(arr_1d_time: np.ndarray) -> np.ndarray:
-            # Input expected shape: (time,)
-            arr_2d = np.tile(arr_1d_time[None, :], (n_catchments, 1))
-            return arr_2d
+            return np.tile(arr_1d_time[None, :], (n_catchments, 1))
 
         # Map scalar (time-only) variables
         for era_name, ngen_name in var_mapping.items():
             if era_name in forcing_data:
                 data = forcing_data[era_name].values
-                # Accept either (time,) or (something, time) already matched
                 if data.ndim == 1:
                     data2d = expand_to_catchments(data)
                 elif data.ndim == 2 and 1 in data.shape:
-                    # squeeze singleton spatial dim then tile
-                    squeezed = np.squeeze(data)
-                    data2d = expand_to_catchments(squeezed)
+                    data2d = expand_to_catchments(np.squeeze(data))
                 else:
-                    # Already 2D? try to align (catchment, time)
-                    # If it's (time, hru) or similar, transpose if needed
-                    if data.shape[0] == n_times:
-                        data2d = data.T
-                    else:
-                        data2d = data
+                    data2d = data.T if data.shape[0] == n_times else data
 
                 ngen_ds[ngen_name] = xr.DataArray(
                     data2d.astype(np.float32),
                     dims=[CATCH_DIM, 'time'],
                 )
 
-        # Wind components
+        # Wind
         if 'u10' in forcing_data and 'v10' in forcing_data:
             self.logger.info("Using actual U/V wind components from ERA5")
             u = forcing_data['u10'].values
             v = forcing_data['v10'].values
 
-            if u.ndim == 1:  # (time,)
+            if u.ndim == 1:
                 u2d = expand_to_catchments(u)
                 v2d = expand_to_catchments(v)
             elif u.ndim == 2 and 1 in u.shape:
                 u2d = expand_to_catchments(np.squeeze(u))
                 v2d = expand_to_catchments(np.squeeze(v))
             else:
-                # Align to (catchment, time)
                 u2d = u.T if u.shape[0] == n_times else u
                 v2d = v.T if v.shape[0] == n_times else v
 
-            ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                u2d.astype(np.float32), dims=[CATCH_DIM, 'time']
-            )
-            ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                v2d.astype(np.float32), dims=[CATCH_DIM, 'time']
-            )
+            ngen_ds['UGRD_10maboveground'] = xr.DataArray(u2d.astype(np.float32), dims=[CATCH_DIM, 'time'])
+            ngen_ds['VGRD_10maboveground'] = xr.DataArray(v2d.astype(np.float32), dims=[CATCH_DIM, 'time'])
 
         elif 'windspd' in forcing_data:
-            # Fallback: split wind speed into fixed components (directionless); warn user
             self.logger.warning(
-                "Using wind speed approximation for U/V components. "
-                "For better accuracy, consider using ERA5 u10/v10 variables."
+                "Using wind speed approximation for U/V components. For better accuracy, consider ERA5 u10/v10."
             )
             w = forcing_data['windspd'].values
             if w.ndim == 1:
-                u2d = expand_to_catchments(w / np.sqrt(2.0))
-                v2d = expand_to_catchments(w / np.sqrt(2.0))
+                base = expand_to_catchments(w / np.sqrt(2.0))
             elif w.ndim == 2 and 1 in w.shape:
-                base = np.squeeze(w) / np.sqrt(2.0)
-                u2d = expand_to_catchments(base)
-                v2d = expand_to_catchments(base)
+                base = expand_to_catchments(np.squeeze(w) / np.sqrt(2.0))
             else:
                 base = (w.T if w.shape[0] == n_times else w) / np.sqrt(2.0)
-                u2d, v2d = base.astype(np.float32), base.astype(np.float32)
 
-            ngen_ds['UGRD_10maboveground'] = xr.DataArray(
-                u2d.astype(np.float32), dims=[CATCH_DIM, 'time']
-            )
-            ngen_ds['VGRD_10maboveground'] = xr.DataArray(
-                v2d.astype(np.float32), dims=[CATCH_DIM, 'time']
-            )
+            ngen_ds['UGRD_10maboveground'] = xr.DataArray(base.astype(np.float32), dims=[CATCH_DIM, 'time'])
+            ngen_ds['VGRD_10maboveground'] = xr.DataArray(base.astype(np.float32), dims=[CATCH_DIM, 'time'])
         else:
-            self.logger.warning(
-                "No wind fields ('u10'/'v10' or 'windspd') found; "
-                "UGRD_10maboveground/VGRD_10maboveground not written."
-            )
-
-        ngen_ds = ngen_ds.assign_coords(**{'catchment-id': ('catchment', ngen_ds['ids'].values)})
+            self.logger.warning("No wind fields found; UGRD_10maboveground/VGRD_10maboveground not written.")
 
         return ngen_ds
+
 
     def generate_model_configs(self):
         """
