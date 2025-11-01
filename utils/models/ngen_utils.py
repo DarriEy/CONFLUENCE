@@ -843,42 +843,182 @@ num_timesteps=1
         with open(config_file, 'w') as f:
             f.write(config_text)
 
-    
+
+    def _get_ngen_root(self) -> Path:
+        """
+        Default NGen root where we search for BMI .so files:
+        <CONFLUENCE_data>/installs/ngen
+        If NGEN_INSTALL_PATH is set, use that instead.
+        """
+        ngen_install_path = self.config.get('NGEN_INSTALL_PATH', 'default')
+        if ngen_install_path and ngen_install_path != 'default':
+            return Path(ngen_install_path)
+        # Default
+        confluence_data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        return confluence_data_dir.parent / 'installs' / 'ngen'
+
+    def _find_bmi_library(self, name_patterns: List[str]) -> Optional[str]:
+        """
+        Search common build locations under the NGen root for a .so
+        matching any of the provided glob patterns. Env vars can override.
+        - CFE: NGEN_CFE_LIB
+        - NOAH: NGEN_NOAH_LIB
+        - PET: NGEN_PET_LIB
+        """
+        # env override
+        env_overrides = {
+            'cfe': os.environ.get('NGEN_CFE_LIB'),
+            'noah': os.environ.get('NGEN_NOAH_LIB'),
+            'pet': os.environ.get('NGEN_PET_LIB'),
+        }
+        # If any override matches requested patterns, use it
+        for v in env_overrides.values():
+            if v and any(Path(v).name.endswith(pat.replace('*', '')) or True for pat in name_patterns):
+                if Path(v).exists():
+                    return str(Path(v).resolve())
+
+        root = self._get_ngen_root()
+        # Places we commonly see built libs
+        candidate_dirs = [
+            root,
+            root / 'build',
+            root / 'extern',
+            # typical cmake build dirs
+            *[p for p in (root / 'extern').rglob('*') if p.is_dir() and any(s in p.name.lower() for s in ('build', 'cmake', 'lib'))]
+        ]
+
+        # Unique + existing
+        seen = set()
+        dirs = []
+        for d in candidate_dirs:
+            if d.exists():
+                rp = d.resolve()
+                if rp not in seen:
+                    seen.add(rp)
+                    dirs.append(rp)
+
+        # Search breadth-first; return first match
+        for d in dirs:
+            for pat in name_patterns:
+                for f in d.rglob(pat):
+                    if f.is_file() and f.suffix in ('.so', '.dylib'):
+                        return str(f.resolve())
+
+        return None
+
+
+
     def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
         """
         Generate ngen realization configuration JSON.
-        
-        This is the main configuration file that ngen uses to:
-        - Define model formulations for each catchment
-        - Specify input/output connections
-        - Configure model parameters
-        - Link to forcing data
+        Auto-detect BMI library .so paths under CONFLUENCE_data/installs/ngen (or NGEN_INSTALL_PATH).
+        Env var overrides:
+        NGEN_NOAH_LIB, NGEN_PET_LIB, NGEN_CFE_LIB
         """
         self.logger.info("Generating realization configuration")
-        
-        # Get absolute paths
+
         forcing_abs_path = str(forcing_file.resolve())
-        
-        # Model configuration directories
         cfe_config_base = str((self.ngen_setup_dir / "CFE").resolve())
         pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
         noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
-        
-        # Get simulation time bounds - handle 'default' string
+
+        # Time bounds
         sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
         sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
-        
-        if sim_start == 'default':
-            sim_start = '2000-01-01 00:00:00'
-        if sim_end == 'default':
-            sim_end = '2000-12-31 23:00:00'
-        
-        # Ensure time strings have seconds (some configs may omit them)
-        # Convert to datetime and back to ensure proper format
+        if sim_start == 'default': sim_start = '2000-01-01 00:00:00'
+        if sim_end == 'default': sim_end = '2000-12-31 23:00:00'
         sim_start = pd.to_datetime(sim_start).strftime('%Y-%m-%d %H:%M:%S')
         sim_end = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Create realization config
+
+        # ---- Auto-detect BMI libraries ----
+        # Try several common names per component
+        noah_patterns = [
+            '*noah*owp*modular*.*so', '*surface*bmi*.so', '*libnoah*.so',
+            '*noah*owp*modular*.*dylib', '*surface*bmi*.dylib', '*libnoah*.dylib'
+        ]
+        pet_patterns = [
+            '*evapo*transp*.*so', '*evapotranspiration*.*so', '*pet*bmi*.so',
+            '*evapo*transp*.*dylib', '*evapotranspiration*.*dylib', '*pet*bmi*.dylib'
+        ]
+        cfe_patterns = [
+            '*cfe*bmi*.so', '*libcfe*.so', '*bmi_cfe*.so',
+            '*cfe*bmi*.dylib', '*libcfe*.dylib', '*bmi_cfe*.dylib'
+        ]
+
+        noah_lib = self._find_bmi_library(noah_patterns)
+        pet_lib = self._find_bmi_library(pet_patterns)
+        cfe_lib = self._find_bmi_library(cfe_patterns)
+
+        # Log & warn if any unresolved
+        if noah_lib: self.logger.info(f"NOAH BMI library: {noah_lib}")
+        else:        self.logger.warning("NOAH BMI library not found. Set NGEN_NOAH_LIB or ensure build outputs are present.")
+
+        if pet_lib:  self.logger.info(f"PET BMI library: {pet_lib}")
+        else:        self.logger.warning("PET BMI library not found. Set NGEN_PET_LIB or ensure build outputs are present.")
+
+        if cfe_lib:  self.logger.info(f"CFE BMI library: {cfe_lib}")
+        else:        self.logger.warning("CFE BMI library not found. Set NGEN_CFE_LIB or ensure build outputs are present.")
+
+        # Build modules config; leave empty string if missing (NGen will then error with a clear dlopen message)
+        modules = [
+            {
+                "name": "bmi_fortran",
+                "params": {
+                    "name": "bmi_fortran",
+                    "model_type_name": "NoahOWP",
+                    "library_file": noah_lib or "",
+                    "forcing_file": "",
+                    "init_config": f"{noah_config_base}/{{{{id}}}}.input",
+                    "allow_exceed_end_time": True,
+                    "main_output_variable": "QINSUR",
+                    "registration_function": "register_bmi_noahowp",
+                    "variables_names_map": {
+                        "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
+                        "Q2": "atmosphere_air_water~vapor__specific_humidity",
+                        "SFCTMP": "land_surface_air__temperature",
+                        "UU": "land_surface_wind__x_component_of_velocity",
+                        "VV": "land_surface_wind__y_component_of_velocity",
+                        "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
+                        "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
+                        "SFCPRS": "land_surface_air__pressure"
+                    },
+                    "uses_forcing_file": False
+                }
+            },
+            {
+                "name": "bmi_c++",
+                "params": {
+                    "name": "bmi_c++",
+                    "model_type_name": "EVAPOTRANSPIRATION",
+                    "library_file": pet_lib or "",
+                    "forcing_file": "",
+                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
+                    "allow_exceed_end_time": True,
+                    "main_output_variable": "water_potential_evaporation_flux",
+                    "registration_function": "register_bmi_pet",
+                    "uses_forcing_file": False
+                }
+            },
+            {
+                "name": "bmi_c",
+                "params": {
+                    "name": "bmi_c",
+                    "model_type_name": "CFE",
+                    "library_file": cfe_lib or "",
+                    "forcing_file": "",
+                    "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
+                    "allow_exceed_end_time": True,
+                    "main_output_variable": "Q_OUT",
+                    "registration_function": "register_bmi_cfe",
+                    "variables_names_map": {
+                        "atmosphere_water__liquid_equivalent_precipitation_rate": "QINSUR",
+                        "water_potential_evaporation_flux": "water_potential_evaporation_flux"
+                    },
+                    "uses_forcing_file": False
+                }
+            }
+        ]
+
         config = {
             "global": {
                 "formulations": [{
@@ -888,67 +1028,7 @@ num_timesteps=1
                         "init_config": "",
                         "allow_exceed_end_time": True,
                         "main_output_variable": "Q_OUT",
-                        "modules": [
-                            {
-                                "name": "bmi_fortran",
-                                "params": {
-                                    "name": "bmi_fortran",
-                                    "model_type_name": "NoahOWP",
-                                    "library_file": "/path/to/libnoahowpmodular.so",
-                                    "forcing_file": "",
-                                    "init_config": f"{noah_config_base}/{{{{id}}}}.input",
-                                    "allow_exceed_end_time": True,
-                                    "main_output_variable": "QINSUR",
-                                    "registration_function": "register_bmi_noahowp",
-                                    "variables_names_map": {
-                                        "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
-                                        "Q2": "atmosphere_air_water~vapor__relative_saturation",
-                                        "SFCTMP": "land_surface_air__temperature",
-                                        "UU": "land_surface_wind__x_component_of_velocity",
-                                        "VV": "land_surface_wind__y_component_of_velocity",
-                                        "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
-                                        "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
-                                        "SFCPRS": "land_surface_air__pressure"
-                                    },
-                                    "uses_forcing_file": False
-                                }
-                            },
-                            {
-                                "name": "bmi_c++",
-                                "params": {
-                                    "name": "bmi_c++",
-                                    "model_type_name": "EVAPOTRANSPIRATION",
-                                    "library_file": "/path/to/libevapotranspirationmodule.so",
-                                    "forcing_file": "",
-                                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
-                                    "allow_exceed_end_time": True,
-                                    "main_output_variable": "water_potential_evaporation_flux",
-                                    "registration_function": "register_bmi_pet",
-                                    "uses_forcing_file": False
-                                }
-                            },
-                            {
-                                "name": "bmi_c",
-                                "params": {
-                                    "name": "bmi_c",
-                                    "model_type_name": "CFE",
-                                    "library_file": "/path/to/libcfemodel.so",
-                                    "forcing_file": "",
-                                    "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
-                                    "allow_exceed_end_time": True,
-                                    "main_output_variable": "Q_OUT",
-                                    "registration_function": "register_bmi_cfe",
-                                    "variables_names_map": {
-                                        "atmosphere_water__liquid_equivalent_precipitation_rate": "QINSUR",
-                                        "water_potential_evaporation_flux": "water_potential_evaporation_flux",
-                                        "ice_fraction_schaake": "sloth_ice_fraction_schaake",
-                                        "ice_fraction_xinanjiang": "sloth_ice_fraction_xinanjiang",
-                                        "soil_moisture_profile": "sloth_smp"
-                                    },
-                                    "uses_forcing_file": False
-                                }
-                            }
-                        ],
+                        "modules": modules,
                         "uses_forcing_file": False
                     }
                 }],
@@ -963,13 +1043,13 @@ num_timesteps=1
                 "output_interval": 3600
             }
         }
-        
-        # Save configuration
+
         config_file = self.ngen_setup_dir / "realization_config.json"
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)
-        
+
         self.logger.info(f"Created realization config: {config_file}")
+
 
 
 class NgenRunner:
