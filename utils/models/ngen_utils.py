@@ -466,100 +466,119 @@ class NgenPreProcessor:
 
         return output_file
 
-        
     def _create_ngen_forcing_dataset(
         self, forcing_data: xr.Dataset, catchment_ids: List[str]
     ) -> xr.Dataset:
         """
-        Create ngen-formatted forcing dataset with names NGen expects:
-        * dimension: 'catchment-id'
-        * string data var: 'ids' with dims ('catchment-id',)
-        * coordinate 'time' as datetime64[ns] (xarray will write CF-compliant)
+        Build an NGen-ready forcing file that satisfies both:
+        - NGen NetCDF provider's canonical names (incl. precip_rate), and
+        - AORC-style names expected by Noah/PET/CFE examples.
+        Output dims: ('feature_id','time'); string coord 'ids' on 'feature_id'.
         """
-        n_catchments = len(catchment_ids)
-        n_times = forcing_data.dims.get('time', len(forcing_data.time))
+        # ---------- prep ----------
+        n_cats = len(catchment_ids)
+        time_vals = forcing_data.time.values.astype('datetime64[ns]')
 
-        # Initialize dataset
-        ngen_ds = xr.Dataset()
+        # utility to expand (time,) → (feature_id,time)
+        def expand_to_features(arr_1d_time: np.ndarray) -> np.ndarray:
+            return np.tile(arr_1d_time[None, :], (n_cats, 1))
 
-        # REQUIRED by NGen NetCDF provider
-        CATCH_DIM = 'catchment-id'
-        ids_arr = np.array(catchment_ids, dtype=object)
-
-        # coords
-        ngen_ds = ngen_ds.assign_coords(
-            time=forcing_data.time.values.astype('datetime64[ns]'),
+        # start empty ds with the final dims we want
+        ds = xr.Dataset()
+        ds = ds.assign_coords(
+            feature_id=("feature_id", np.array(catchment_ids, dtype=object)),
+            time=time_vals,
         )
-        # string IDs as *data variable* over the 'catchment-id' dimension
-        ngen_ds['ids'] = xr.DataArray(ids_arr, dims=[CATCH_DIM])
+        # expose ids as both coord and data var for maximum compatibility
+        ds["ids"] = xr.DataArray(ds["feature_id"].values, dims=("feature_id",))
 
-        # Variable mapping ERA5 → NGEN names
-        var_mapping = {
-            'pptrate': 'precip_rate',
-            't2m': 'TMP_2maboveground',
-            'd2m': 'SPFH_2maboveground',
-            'sp': 'PRES_surface',
-            'dswrf': 'DSWRF_surface',
-            'dlwrf': 'DLWRF_surface',
+        # ---------- core mappings you already have ----------
+        # Source → canonical NetCDF names used by the provider
+        # (we'll also write AORC aliases below)
+        mapping = {
+            "pptrate": "precip_rate",           # kg m-2 s-1 (mm s-1)
+            "t2m": "TMP_2maboveground",         # K
+            "d2m": "DPT_2maboveground",         # K  (we'll still compute Q2 from d2m)
+            "sp": "PRES_surface",               # Pa
+            "dswrf": "DSWRF_surface",           # W m-2
+            "dlwrf": "DLWRF_surface",           # W m-2
+            "u10": "UGRD_10maboveground",       # m s-1
+            "v10": "VGRD_10maboveground",       # m s-1
+            "windspd": None,                    # optional fallback handled below
         }
 
-        # Helper to tile (time,) → (catchment-id, time)
-        def expand_to_catchments(arr_1d_time: np.ndarray) -> np.ndarray:
-            return np.tile(arr_1d_time[None, :], (n_catchments, 1))
-
-        # Map scalar (time-only) variables
-        for era_name, ngen_name in var_mapping.items():
-            if era_name in forcing_data:
-                data = forcing_data[era_name].values
-                if data.ndim == 1:
-                    data2d = expand_to_catchments(data)
-                elif data.ndim == 2 and 1 in data.shape:
-                    data2d = expand_to_catchments(np.squeeze(data))
-                else:
-                    data2d = data.T if data.shape[0] == n_times else data
-
-                ngen_ds[ngen_name] = xr.DataArray(
-                    data2d.astype(np.float32),
-                    dims=[CATCH_DIM, 'time'],
-                )
-
-        # Wind
-        if 'u10' in forcing_data and 'v10' in forcing_data:
-            self.logger.info("Using actual U/V wind components from ERA5")
-            u = forcing_data['u10'].values
-            v = forcing_data['v10'].values
-
-            if u.ndim == 1:
-                u2d = expand_to_catchments(u)
-                v2d = expand_to_catchments(v)
-            elif u.ndim == 2 and 1 in u.shape:
-                u2d = expand_to_catchments(np.squeeze(u))
-                v2d = expand_to_catchments(np.squeeze(v))
+        # write canonical variables (duplicated over features)
+        for src, tgt in mapping.items():
+            if tgt is None or (src not in forcing_data):
+                continue
+            arr = forcing_data[src].values
+            # handle (time,) or (1,time) inputs
+            if arr.ndim == 1:
+                arr2d = expand_to_features(arr)
+            elif arr.ndim == 2 and 1 in arr.shape:
+                arr2d = expand_to_features(np.squeeze(arr))
             else:
-                u2d = u.T if u.shape[0] == n_times else u
-                v2d = v.T if v.shape[0] == n_times else v
+                # assume already aligned; if (time,feat) flip
+                arr2d = arr.T if arr.shape[0] == forcing_data.dims.get("time", len(time_vals)) else arr
+            ds[tgt] = xr.DataArray(arr2d.astype(np.float32), dims=("feature_id", "time"))
 
-            ngen_ds['UGRD_10maboveground'] = xr.DataArray(u2d.astype(np.float32), dims=[CATCH_DIM, 'time'])
-            ngen_ds['VGRD_10maboveground'] = xr.DataArray(v2d.astype(np.float32), dims=[CATCH_DIM, 'time'])
-
-        elif 'windspd' in forcing_data:
-            self.logger.warning(
-                "Using wind speed approximation for U/V components. For better accuracy, consider ERA5 u10/v10."
-            )
-            w = forcing_data['windspd'].values
+        # wind fallback if no u10/v10 but windspd exists
+        if ("UGRD_10maboveground" not in ds) and ("VGRD_10maboveground" not in ds) and ("windspd" in forcing_data):
+            self.logger.warning("Using wind speed approximation for U/V components. For better accuracy, consider ERA5 u10/v10.")
+            w = forcing_data["windspd"].values
             if w.ndim == 1:
-                base = expand_to_catchments(w / np.sqrt(2.0))
+                base = expand_to_features(w / np.sqrt(2.0))
             elif w.ndim == 2 and 1 in w.shape:
-                base = expand_to_catchments(np.squeeze(w) / np.sqrt(2.0))
+                base = expand_to_features(np.squeeze(w) / np.sqrt(2.0))
             else:
-                base = (w.T if w.shape[0] == n_times else w) / np.sqrt(2.0)
+                base = (w.T if w.shape[0] == forcing_data.dims.get("time", len(time_vals)) else w) / np.sqrt(2.0)
+            ds["UGRD_10maboveground"] = xr.DataArray(base.astype(np.float32), dims=("feature_id", "time"))
+            ds["VGRD_10maboveground"] = xr.DataArray(base.astype(np.float32), dims=("feature_id", "time"))
 
-            ngen_ds['UGRD_10maboveground'] = xr.DataArray(base.astype(np.float32), dims=[CATCH_DIM, 'time'])
-            ngen_ds['VGRD_10maboveground'] = xr.DataArray(base.astype(np.float32), dims=[CATCH_DIM, 'time'])
+        # ---------- compute Q2 (specific humidity) from t2m, d2m, pressure ----------
+        if ("TMP_2maboveground" in ds) and ("DPT_2maboveground" in ds) and ("PRES_surface" in ds):
+            q2 = self._compute_q2_specific_humidity(
+                ds["TMP_2maboveground"].values,
+                ds["DPT_2maboveground"].values,
+                ds["PRES_surface"].values,
+            )
+            ds["Q2"] = xr.DataArray(q2, dims=("feature_id", "time"))
         else:
-            self.logger.warning("No wind fields found; UGRD_10maboveground/VGRD_10maboveground not written.")
+            # If we can’t compute Q2, still proceed; Noah/PET may derive internally,
+            # but having Q2 avoids provider lookups failing on some builds.
+            self.logger.info("Q2 not computed (need t2m, d2m, and surface pressure). Proceeding without it.")
 
-        return ngen_ds
+        # ---------- AORC aliases (duplicate variables so both naming schemes exist) ----------
+        # Precipitation
+        if "precip_rate" in ds:
+            ds["PRCPNONC"] = ds["precip_rate"]  # duplicate
+
+        # Temperature
+        if "TMP_2maboveground" in ds:
+            ds["SFCTMP"] = ds["TMP_2maboveground"]
+
+        # Pressure
+        if "PRES_surface" in ds:
+            ds["SFCPRS"] = ds["PRES_surface"]
+
+        # Shortwave/Longwave
+        if "DSWRF_surface" in ds:
+            ds["SOLDN"] = ds["DSWRF_surface"]
+        if "DLWRF_surface" in ds:
+            ds["LWDN"] = ds["DLWRF_surface"]
+
+        # Wind components
+        if "UGRD_10maboveground" in ds:
+            ds["UU"] = ds["UGRD_10maboveground"]
+        if "VGRD_10maboveground" in ds:
+            ds["VV"] = ds["VGRD_10maboveground"]
+
+        # ---------- final touch ----------
+        # Put a convenience alias coord many tools expect
+        ds = ds.assign_coords(**{"catchment-id": ("feature_id", ds["feature_id"].values)})
+
+        return ds
+
 
 
     def generate_model_configs(self):
@@ -636,7 +655,23 @@ giuh_ordinates=0.65,0.35
         # IMPROVED: Validate the generated config
         if not self._validate_cfe_config(config_file):
             self.logger.warning(f"Generated CFE config may be incomplete: {config_file}")
-    
+
+    def _compute_q2_specific_humidity(self, t2m_K: np.ndarray, d2m_K: np.ndarray, pres_Pa: np.ndarray) -> np.ndarray:
+        """
+        Compute specific humidity (Q2, kg/kg) at 2m from air temp (t2m, K),
+        dewpoint (d2m, K) and surface pressure (Pa).
+        Formula: q = 0.622 * e / (p - 0.378 * e), where e is vapor pressure (Pa).
+        e from dewpoint (Tetens, in Pa): e = 611.2 * exp(17.67 * Td_C / (Td_C + 243.5))
+        """
+        Td_C = d2m_K - 273.15
+        # Tetens (Pa)
+        e = 611.2 * np.exp(17.67 * Td_C / (Td_C + 243.5))
+        p = pres_Pa
+        # guard against weird/zero pressure
+        p = np.where(p <= 100.0, 101325.0, p)
+        q = 0.622 * e / (p - 0.378 * e)
+        return q.astype(np.float32)
+
     def _validate_cfe_config(self, config_file: Path) -> bool:
         """
         Validate CFE config file has required parameters.
