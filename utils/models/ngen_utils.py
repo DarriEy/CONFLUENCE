@@ -442,7 +442,24 @@ class NgenPreProcessor:
         # (If you insist on integer epoch, you could set dtype=int64, but CF is safer.)
 
         ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
-
+        # Sanity checks the NetCDF provider depends on
+        try:
+            with nc4.Dataset(output_file, mode='r') as ds:
+                # dims must exist
+                assert 'catchment-id' in ds.dimensions, "Missing dim 'catchment-id'"
+                assert 'time' in ds.dimensions, "Missing dim 'time'"
+                # ids variable must exist and be 1-D over 'catchment-id'
+                assert 'ids' in ds.variables, "Missing variable 'ids'"
+                ids_var = ds.variables['ids']
+                assert ids_var.dimensions == ('catchment-id',), "ids must be 1-D over 'catchment-id'"
+                # some core vars present?
+                core_vars = [v for v in ['precip_rate','TMP_2maboveground','PRES_surface','DSWRF_surface','DLWRF_surface',
+                                        'UGRD_10maboveground','VGRD_10maboveground'] if v in ds.variables]
+                assert len(core_vars) >= 3, "Too few forcing variables found"
+            self.logger.info("Forcing file passes basic NGen checks (dims/ids).")
+        except Exception as e:
+            self.logger.error(f"Forcing validation failed: {e}")
+            raise
         # Close
         forcing_data.close()
         self.logger.info(f"Wrote ngen forcing: {output_file}")
