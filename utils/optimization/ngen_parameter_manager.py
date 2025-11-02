@@ -110,14 +110,10 @@ class NgenParameterManager:
             params['PET'] = [p.strip() for p in pet_params_str.split(',') if p.strip()]
         
         return params
-    
-
 
     def _get_default_ngen_bounds(self) -> Dict[str, Dict[str, float]]:
         """
         Get default parameter bounds for ngen modules.
-        
-        FIXED: Added missing parameter bounds and corrected naming inconsistencies
         
         Returns:
             Dictionary of parameter bounds with 'min' and 'max' values
@@ -125,50 +121,50 @@ class NgenParameterManager:
         bounds = {}
         
         # CFE (Conceptual Functional Equivalent) parameters
-        bounds['maxsmc'] = {'min': 0.2, 'max': 0.7}      # Maximum soil moisture content (fraction)
-        bounds['wltsmc'] = {'min': 0.01, 'max': 0.3}     # Wilting point soil moisture (fraction)
-        bounds['satdk'] = {'min': 1e-7, 'max': 1e-4}     # Saturated hydraulic conductivity (m/s)
-        bounds['satpsi'] = {'min': 0.01, 'max': 1.0}     # Saturated soil potential (m)
-        bounds['bb'] = {'min': 2.0, 'max': 14.0}         # Pore size distribution index (-)
-        bounds['mult'] = {'min': 500.0, 'max': 5000.0}   # Multiplier parameter (mm)
-        bounds['slop'] = {'min': 0.0, 'max': 1.0}        # TOPMODEL slope parameter (-)
-        bounds['smcmax'] = {'min': 0.3, 'max': 0.6}      # Maximum soil moisture (m3/m3)
-        bounds['alpha_fc'] = {'min': 0.25, 'max': 0.95}  # Field capacity coefficient (-)
-        bounds['expon'] = {'min': 1.0, 'max': 8.0}       # Exponent parameter (-)
+        bounds['maxsmc'] = {'min': 0.3, 'max': 0.6}       # Maximum soil moisture content (fraction)
+        bounds['wltsmc'] = {'min': 0.02, 'max': 0.15}     # Wilting point soil moisture (fraction)
+        bounds['satdk'] = {'min': 1e-6, 'max': 5e-5}      # Saturated hydraulic conductivity (m/s)
+        bounds['satpsi'] = {'min': 0.05, 'max': 0.5}      # Saturated soil potential (m)
+        bounds['bb'] = {'min': 3.0, 'max': 12.0}          # Pore size distribution index (-)
+        bounds['mult'] = {'min': 500.0, 'max': 2000.0}    # TIGHTENED: Multiplier parameter (mm)
+        bounds['slop'] = {'min': 0.01, 'max': 0.5}        # TOPMODEL slope parameter (-)
+        bounds['smcmax'] = {'min': 0.3, 'max': 0.55}      # Maximum soil moisture (m3/m3)
+        bounds['alpha_fc'] = {'min': 0.3, 'max': 0.8}     # Field capacity coefficient (-)
+        bounds['expon'] = {'min': 1.0, 'max': 6.0}        # TIGHTENED: Exponent parameter (-)
         
-        bounds['K_lf'] = {'min': 0.001, 'max': 1.0}      # Lateral flow coefficient (1/h)
-        bounds['K_nash'] = {'min': 0.001, 'max': 0.5}    # Nash cascade coefficient (1/h)
-        bounds['Klf'] = {'min': 0.001, 'max': 1.0}       # Alias for K_lf
-        bounds['Kn'] = {'min': 0.001, 'max': 0.5}        # Alias for K_nash
+        bounds['K_lf'] = {'min': 0.01, 'max': 0.5}        # TIGHTENED: Lateral flow coefficient (1/h)
+        bounds['K_nash'] = {'min': 0.01, 'max': 0.4}      # Nash cascade coefficient (1/h)
+        bounds['Klf'] = {'min': 0.01, 'max': 0.5}         # Alias for K_lf
+        bounds['Kn'] = {'min': 0.01, 'max': 0.4}          # Alias for K_nash
         
-        bounds['Cgw'] = {'min': 0.0001, 'max': 0.01}     # Groundwater coefficient (m/h)
-        bounds['max_gw_storage'] = {'min': 0.01, 'max': 0.5}  # Maximum groundwater storage (m)
-        bounds['refkdt'] = {'min': 0.5, 'max': 5.0}      # Reference surface runoff parameter (-)
+        bounds['Cgw'] = {'min': 0.0001, 'max': 0.005}     # TIGHTENED: Groundwater coefficient (m/h)
+        bounds['max_gw_storage'] = {'min': 0.01, 'max': 0.3}  # TIGHTENED: Maximum groundwater storage (m)
+        bounds['refkdt'] = {'min': 0.5, 'max': 3.0}       # Reference surface runoff parameter (-)
         
-        # NOAH-OWP parameters
-        bounds['slope'] = {'min': 0.1, 'max': 1.0}       # Slope (-)
-        bounds['dksat'] = {'min': 1e-7, 'max': 1e-4}     # Saturated hydraulic conductivity (m/s)
-        bounds['psisat'] = {'min': 0.01, 'max': 1.0}     # Saturated soil potential (m)
-        bounds['bexp'] = {'min': 2.0, 'max': 14.0}       # Pore size distribution (-)
-        bounds['smcwlt'] = {'min': 0.01, 'max': 0.3}     # Wilting point (m3/m3)
-        bounds['smcref'] = {'min': 0.1, 'max': 0.5}      # Reference soil moisture (m3/m3)
-        bounds['noah_refdk'] = {'min': 1e-7, 'max': 1e-3}     # Reference saturated hydraulic conductivity (m/s)
-        bounds['noah_refkdt'] = {'min': 0.5, 'max': 5.0}      # Surface runoff parameter (-)
-        bounds['noah_czil'] = {'min': 0.02, 'max': 0.2}       # Zilitinkevich coefficient for roughness (-)
-        bounds['noah_z0'] = {'min': 0.001, 'max': 1.0}        # Roughness length (m)
-        bounds['noah_frzk'] = {'min': 0.0, 'max': 10.0}       # Frozen ground parameter (-)
-        bounds['noah_salp'] = {'min': -2.0, 'max': 2.0}       # Shape parameter for surface runoff (-)
-        bounds['rain_snow_thresh'] = {'min': -2.0, 'max': 2.0}  # Rain-snow partition temperature (C)
-        bounds['ZREF'] = {'min': 2.0, 'max': 10.0}        # Reference height (m)
+        # NOAH-OWP parameters (unchanged)
+        bounds['slope'] = {'min': 0.1, 'max': 1.0}
+        bounds['dksat'] = {'min': 1e-7, 'max': 1e-4}
+        bounds['psisat'] = {'min': 0.01, 'max': 1.0}
+        bounds['bexp'] = {'min': 2.0, 'max': 14.0}
+        bounds['smcwlt'] = {'min': 0.01, 'max': 0.3}
+        bounds['smcref'] = {'min': 0.1, 'max': 0.5}
+        bounds['noah_refdk'] = {'min': 1e-7, 'max': 1e-3}
+        bounds['noah_refkdt'] = {'min': 0.5, 'max': 5.0}
+        bounds['noah_czil'] = {'min': 0.02, 'max': 0.2}
+        bounds['noah_z0'] = {'min': 0.001, 'max': 1.0}
+        bounds['noah_frzk'] = {'min': 0.0, 'max': 10.0}
+        bounds['noah_salp'] = {'min': -2.0, 'max': 2.0}
+        bounds['rain_snow_thresh'] = {'min': -2.0, 'max': 2.0}
+        bounds['ZREF'] = {'min': 2.0, 'max': 10.0}
         
-        # PET (Potential Evapotranspiration) parameters
-        bounds['wind_speed_measurement_height_m'] = {'min': 2.0, 'max': 10.0}  # Wind measurement height (m)
-        bounds['humidity_measurement_height_m'] = {'min': 2.0, 'max': 10.0}    # Humidity measurement height (m)
-        bounds['pet_albedo'] = {'min': 0.05, 'max': 0.5}      # Surface albedo (-)
-        bounds['pet_z0_mom'] = {'min': 0.001, 'max': 1.0}     # Momentum roughness length (m)
-        bounds['pet_z0_heat'] = {'min': 0.0001, 'max': 0.1}   # Heat roughness length (m)
-        bounds['pet_veg_h'] = {'min': 0.1, 'max': 30.0}       # Vegetation height (m)
-        bounds['pet_d0'] = {'min': 0.0, 'max': 20.0}          # Zero-plane displacement height (m)
+        # PET parameters (unchanged)
+        bounds['wind_speed_measurement_height_m'] = {'min': 2.0, 'max': 10.0}
+        bounds['humidity_measurement_height_m'] = {'min': 2.0, 'max': 10.0}
+        bounds['pet_albedo'] = {'min': 0.05, 'max': 0.5}
+        bounds['pet_z0_mom'] = {'min': 0.001, 'max': 1.0}
+        bounds['pet_z0_heat'] = {'min': 0.0001, 'max': 0.1}
+        bounds['pet_veg_h'] = {'min': 0.1, 'max': 30.0}
+        bounds['pet_d0'] = {'min': 0.0, 'max': 20.0}
         
         return bounds
 
