@@ -439,7 +439,7 @@ class NgenPreProcessor:
         
         self.logger.info(f"Created ngen forcing file: {output_file}")
         return output_file
-    
+        
     def _create_ngen_forcing_dataset(self, forcing_data: xr.Dataset, catchment_ids: List[str]) -> xr.Dataset:
         """
         Create ngen-formatted forcing dataset with proper variable mapping.
@@ -478,17 +478,17 @@ class NgenPreProcessor:
         max_ns = 4102444800 * 1e9  # 2100-01-01 in nanoseconds
         if np.any(time_ns < min_ns) or np.any(time_ns > max_ns):
             raise ValueError(f"Time values out of reasonable range. Got min={time_ns.min()}, max={time_ns.max()}. "
-                           f"Expected between {min_ns} and {max_ns}")
+                        f"Expected between {min_ns} and {max_ns}")
         
-        # Create coordinate arrays
+        # FIXED: Use actual datetime64 values for time coordinate instead of integer indices
         catchment_coord = np.arange(n_catchments)
-        time_coord = np.arange(n_times)  # Simple indices for time dimension
+        time_coord = time_values  # CHANGED from np.arange(n_times)
         
-        # Initialize dataset with dimensions matching working example
+        # Initialize dataset with dimensions
         ngen_ds = xr.Dataset(
             coords={
                 'catchment-id': ('catchment-id', catchment_coord),
-                'time': ('time', time_coord),
+                'time': ('time', time_coord),  # Now using datetime64 values
                 'str_dim': ('str_dim', np.array([1]))  # Required dimension for ngen
             }
         )
