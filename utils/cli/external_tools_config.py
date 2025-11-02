@@ -202,7 +202,7 @@ fi
             'config_path_key': 'INSTALL_PATH_MIZUROUTE',
             'config_exe_key': 'EXE_NAME_MIZUROUTE',
             'default_path_suffix': 'installs/mizuRoute/route/bin',
-            'default_exe': 'runoff_route.exe',
+            'default_exe': 'mizuRoute.exe',
             'repository': 'https://github.com/ESCOMP/mizuRoute.git',
             'branch': 'serial',
             'install_dir': 'mizuRoute',
@@ -212,26 +212,28 @@ fi
 # Build mizuRoute - edit Makefile directly (it doesn't use env vars)
 cd route/build
 
-# Get F_MASTER (path to mizuRoute root)
+# Get absolute path to mizuRoute root (two levels up from route/build)
 F_MASTER_PATH="$(cd ../.. && pwd)"
+echo "F_MASTER will be set to: $F_MASTER_PATH"
 
-# Edit the Makefile in-place
-# Use perl for cross-platform compatibility (works on both Mac and Linux)
+# Edit the Makefile in-place - CRITICAL: F_MASTER needs trailing slash
 perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
 perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
-perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH|" Makefile
+perl -i -pe "s|^EXE\s*=\s*$|EXE = mizuRoute.exe|" Makefile
+perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
 perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
 # Show what we set
 echo "=== Makefile configuration ==="
-grep -E "^(FC|FC_EXE|F_MASTER|NCDF_PATH|isOpenMP)\s*=" Makefile | head -10
+grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF_PATH|isOpenMP)\s*=" Makefile | head -10
 
 # Clean any previous builds
 make clean || true
 
 # Build with explicit -j value
 JOBS="${NCORES:-4}"
+echo "Building with $JOBS parallel jobs..."
 make -j "$JOBS" || {
     echo "ERROR: mizuRoute build failed"
     echo "Build directory contents:"
@@ -240,7 +242,7 @@ make -j "$JOBS" || {
 }
 
 # Verify executable was created
-if [ -f "../bin/runoff_route.exe" ] || [ -f "../bin/mizuRoute.exe" ]; then
+if [ -f "../bin/mizuRoute.exe" ] || [ -f "../bin/mizuRoute.exe" ]; then
     echo "Build successful - executable created"
     ls -la ../bin/
 else
@@ -253,7 +255,7 @@ fi
             'dependencies': [],
             'test_command': None,
             'verify_install': {
-                'file_paths': ['route/bin/runoff_route.exe', 'route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
+                'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
                 'check_type': 'exists_any'
             },
             'order': 3
