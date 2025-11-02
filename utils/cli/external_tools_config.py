@@ -554,23 +554,55 @@ fi
 
 set -e
 
-# 1) Scrub any place the pair is treated as one item
-#   - handle quoted and unquoted forms across all CMake files (POSIX-safe, no bashisms)
-find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0 | xargs -0 sed -i.bak \
-  -e 's/"-fexceptions -pthread"/"-fexceptions";"-pthread"/g' \
-  -e 's/-fexceptions -pthread/-fexceptions;-pthread/g'
+# --- create tiny compiler shims that fix the bad token if it shows up ---
+WRAPDIR="$(pwd)/.ccwrap"; mkdir -p "$WRAPDIR"
 
-# 2) Configure & build
+REAL_GCC="$(command -v gcc)"
+REAL_GXX="$(command -v g++)"
+
+# g++ wrapper
+cat > "$WRAPDIR/g++" <<'EOF'
+#!/usr/bin/env bash
+# Split a single, quoted token "-fexceptions -pthread" into two args.
+fixed=()
+for arg in "$@"; do
+  if [ "$arg" = "-fexceptions -pthread" ]; then
+    fixed+=("-fexceptions" "-pthread")
+  else
+    fixed+=("$arg")
+  fi
+done
+# Use the real compiler path baked in at creation time:
+exec "__REAL_GXX__" "${fixed[@]}"
+EOF
+sed -i.bak "s|__REAL_GXX__|$REAL_GXX|g" "$WRAPDIR/g++"
+chmod +x "$WRAPDIR/g++"
+
+# gcc wrapper (just in case C codepaths see it too)
+cat > "$WRAPDIR/gcc" <<'EOF'
+#!/usr/bin/env bash
+fixed=()
+for arg in "$@"; do
+  if [ "$arg" = "-fexceptions -pthread" ]; then
+    fixed+=("-fexceptions" "-pthread")
+  else
+    fixed+=("$arg")
+  fi
+done
+exec "__REAL_GCC__" "${fixed[@]}"
+EOF
+sed -i.bak "s|__REAL_GCC__|$REAL_GCC|g" "$WRAPDIR/gcc"
+chmod +x "$WRAPDIR/gcc"
+
+# --- configure & build with the wrappers ---
+export CC="$WRAPDIR/gcc"
+export CXX="$WRAPDIR/g++"
+
 rm -rf build && mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
-
-# 2b) As an extra belt-and-suspenders fix, unquote in the cache if it got seeded there
-sed -i.bak 's/"-fexceptions -pthread"/-fexceptions -pthread/g' CMakeCache.txt || true
-
-# 3) Build
 cmake --build . -j ${NCORES:-4}
 
-# Stage TauDEM executables
+# stage TauDEM executables
 mkdir -p ../bin
 find ./src -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; 2>/dev/null || true
 find .   -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
