@@ -551,19 +551,27 @@ fi
             'install_dir': 'TauDEM',
             'build_commands': [
                 r'''
+# Replace your current TauDEM build snippet with this
 set -e
-# Fix TauDEM CMakeLists.txt bug with compiler flags (if present)
-if [ -f CMakeLists.txt ]; then
-    sed -i.bak 's/-fexceptions -pthread/-fexceptions;-pthread/g' CMakeLists.txt
-fi
+
+# Fix TauDEM CMakeLists/CMake modules where "-fexceptions -pthread" is passed as one item
+# Handle both quoted and unquoted forms, and do it recursively.
+while IFS= read -r -d '' f; do
+  # If it's quoted as one item: "-fexceptions -pthread"  ->  "-fexceptions";"-pthread"
+  sed -i.bak 's/"-fexceptions -pthread"/"-fexceptions";"-pthread"/g' "$f"
+  # If it’s an unquoted space-separated string used as a single list item:
+  sed -i.bak 's/-fexceptions -pthread/-fexceptions;-pthread/g' "$f"
+done < <(find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0)
+
 rm -rf build && mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
 cmake --build . -j ${NCORES:-4}
+
+# stage binaries
 mkdir -p ../bin
-# copy executables from src subdirectory
 find ./src -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; 2>/dev/null || true
-# fallback: try root level too
 find . -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
+
                 '''
             ],
             'dependencies': [],
