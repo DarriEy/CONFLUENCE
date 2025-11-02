@@ -303,7 +303,7 @@ make clean || true
 # Build with explicit -j value (don't run install target)
 JOBS="${NCORES:-4}"
 echo "Building with $JOBS parallel jobs..."
-make -j "$JOBS" mizuRoute.exe || {
+make -j "$JOBS" || {
     echo "ERROR: mizuRoute build failed"
     echo "Build directory contents:"
     ls -la . || true
