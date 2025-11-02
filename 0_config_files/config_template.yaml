@@ -163,13 +163,13 @@ EXPERIMENT_OUTPUT_FUSE: default                                # Directory for F
 SETTINGS_FUSE_PARAMS_TO_CALIBRATE: MAXWATR_1,MAXWATR_2,BASERTE,QB_POWR,TIMEDELAY,PERCRTE,FRACTEN,RTFRAC1,MBASE,MFMAX,MFMIN,PXTEMP,LAPSE
 FUSE_DECISION_OPTIONS:                                         # Model decisions to analyse in decision analysis, if more than 1 options are selected per category, all permuations will be evaluated
     RFERR: [additive_e, multiplc_e]                            # Rainfall error model, Options: additive_e (additive error), multiplc_e (multiplicative error)
-    ARCH1: [tension1_1]                                        # Upper soil layer architecture, Options: tension1_1 (single tension storage), tension2_1 (two tension stores), onestate_1 (single state no tension)
-    ARCH2: [tens2pll_2]                                        # Lower soil layer architecture, Options: tens2pll_2 (tension storage two parallel tanks), unlimfrc_2 (unlimited fraction rate), unlimpow_2 (unlimited power recession), fixedsiz_2 (fixed size tanks)
-    QSURF: [arno_x_vic, prms_varnt]                            # Surface runoff generation, Options: arno_x_vic (ARNO/VIC parameterization), prms_varnt (PRMS variant), tmdl_param (TOPMODEL parameterization)
-    QPERC: [perc_f2sat]                                        # Percolation between soil layers, Options: perc_f2sat (field capacity to saturation), perc_w2sat (wilting point to saturation), perc_lower (percolation to lower layer)
-    ESOIL: [sequential]                                        # Evaporation from soil, Options: sequential (sequential evaporation), rootweight (root-weighted evaporation)
-    QINTF: [intflwnone]                                        # Interflow from soil layers, Options: intflwnone (no interflow), intflwsome (interflow present)
-    Q_TDH: [rout_gamma]                                        # Routing scheme, Options: rout_gamma (gamma distribution routing), no_routing (no routing)
+    ARCH1: [tension1_1, tension2_1, onestate_1]                                        # Upper soil layer architecture, Options: tension1_1 (single tension storage), tension2_1 (two tension stores), onestate_1 (single state no tension)
+    ARCH2: [tens2pll_2, unlimfrc_2, unlimpow_2, fixedsiz_2]                                        # Lower soil layer architecture, Options: tens2pll_2 (tension storage two parallel tanks), unlimfrc_2 (unlimited fraction rate), unlimpow_2 (unlimited power recession), fixedsiz_2 (fixed size tanks)
+    QSURF: [arno_x_vic, prms_varnt, tmdl_param]                            # Surface runoff generation, Options: arno_x_vic (ARNO/VIC parameterization), prms_varnt (PRMS variant), tmdl_param (TOPMODEL parameterization)
+    QPERC: [perc_f2sat, perc_w2sat, perc_lower]                                        # Percolation between soil layers, Options: perc_f2sat (field capacity to saturation), perc_w2sat (wilting point to saturation), perc_lower (percolation to lower layer)
+    ESOIL: [sequential, rootweight]                                        # Evaporation from soil, Options: sequential (sequential evaporation), rootweight (root-weighted evaporation)
+    QINTF: [intflwnone, intflwsome]                                        # Interflow from soil layers, Options: intflwnone (no interflow), intflwsome (interflow present)
+    Q_TDH: [rout_gamma, no_routing]                                        # Routing scheme, Options: rout_gamma (gamma distribution routing), no_routing (no routing)
     SNOWM: [temp_index, no_snowmod]                            # Snow module, Options: temp_index (temperature index method), no_snowmod (no snow module)
 
 ###  4.3 Model Specific settings: GR 

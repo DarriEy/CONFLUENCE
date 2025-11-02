@@ -215,38 +215,41 @@ ls -la ../bin/ || true
         'fuse': {
             'description': 'Framework for Understanding Structural Errors',
             'config_path_key': 'FUSE_INSTALL_PATH',
-            'config_exe_key': 'FUSE_LIB',
-            'default_path_suffix': 'installs/fuse',
-            'default_exe': 'build/libfuse.a',
+            'config_exe_key': 'FUSE_EXE',
+            'default_path_suffix': 'installs/fuse/bin',
+            'default_exe': 'fuse.exe',
             'repository': 'https://github.com/naddor/fuse.git',
             'branch': None,
             'install_dir': 'fuse',
             'build_commands': [
                 common_env,
                 r'''
-# Use the upstream Makefile (handles module order). Provide paths via vars.
+# Build FUSE executable using the upstream Makefile
+# The Makefile expects F_MASTER to point to the fuse root directory
 cd build
 make clean || true
+
+# Set F_MASTER to the fuse root (parent of build/)
+export F_MASTER="$(cd .. && pwd)/"
+
+# Build with environment-provided paths
 make -j "${NCORES}" \
 FC="${FC}" \
-F_MASTER="$(cd .. && pwd)/" \
-NCDF_LIB_PATH="${NETCDF_FORTRAN}" \
-HDF_LIB_PATH="${HDF5_ROOT}" \
+F_MASTER="${F_MASTER}" \
+NCDF_LIB_PATH="${NETCDF_FORTRAN}/lib" \
+HDF_LIB_PATH="${HDF5_ROOT}/lib" \
 INCLUDE_PATH="${NETCDF_FORTRAN}"
 
-# Prefer the static lib (your validator checks build/libfuse.a). If only an exe is produced, accept it too.
-# Create lib if present
-[ -f libfuse.a ] && echo "Built libfuse.a" || true
-mkdir -p ../bin
-[ -f fuse.exe ] && mv -f fuse.exe ../bin/ || true
-ls -la . ../bin || true
+# Verify executable was created
+ls -la ../bin/ || true
+[ -f ../bin/fuse.exe ] && echo "✅ fuse.exe built successfully" || echo "⚠️ fuse.exe not found"
                 '''
             ],
             'dependencies': [],
             'test_command': None,
             'verify_install': {
-                'file_paths': ['build/libfuse.a', 'bin/fuse.exe'],
-                'check_type': 'exists_any'
+                'file_paths': ['bin/fuse.exe'],
+                'check_type': 'exists'
             },
             'order': 4
         },
