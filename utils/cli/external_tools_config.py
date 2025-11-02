@@ -129,40 +129,43 @@ cmake --build . --target install -j ${NCORES:-4}
             'requires': ['sundials'],
             'build_commands': [
                 r'''
-# Build SUMMA against SUNDIALS + NetCDF, auto-detect BLAS
+# Build SUMMA against SUNDIALS + NetCDF, leverage SUMMA's build scripts pattern
 set -e
-SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
-# Auto-detect OpenBLAS across platforms
-BLAS_ARGS=""
+# Check for OpenBLAS availability - determine whether to auto-detect or manually specify
+SPECIFY_LINKS=OFF
+EXTRA_ARGS=""
+
 if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/openblas" ]; then
-    # macOS Homebrew
-    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(brew --prefix)/opt/openblas"
-    echo "Found OpenBLAS via Homebrew"
-elif pkg-config --exists openblas 2>/dev/null; then
-    # Linux pkg-config
-    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(pkg-config --variable=libdir openblas)/.."
-    echo "Found OpenBLAS via pkg-config"
-elif [ -f "/usr/lib64/libopenblas.so" ] || [ -f "/usr/lib/libopenblas.so" ]; then
-    # Linux standard paths
-    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS"
-    echo "Found OpenBLAS in system paths"
+    # macOS Homebrew - has OpenBLAS, let CMake find it
+    echo "Found OpenBLAS via Homebrew - using auto-detection"
+    SPECIFY_LINKS=OFF
+elif command -v module >/dev/null 2>&1 && module list 2>&1 | grep -qi openblas; then
+    # HPC with openblas module loaded
+    echo "Found OpenBLAS module loaded - using auto-detection"
+    SPECIFY_LINKS=OFF
+elif pkg-config --exists openblas 2>/dev/null || [ -f "/usr/lib64/libopenblas.so" ] || [ -f "/usr/lib/libopenblas.so" ]; then
+    # Linux system OpenBLAS
+    echo "Found system OpenBLAS - using auto-detection"
+    SPECIFY_LINKS=OFF
 else
-    # Fallback: let CMake find any BLAS (reference, MKL, Accelerate, etc)
-    BLAS_ARGS="-DBLA_VENDOR=Generic"
-    echo "Using generic BLAS detection"
+    # No OpenBLAS found - fallback to generic LAPACK
+    echo "OpenBLAS not found - using manual LAPACK specification"
+    SPECIFY_LINKS=ON
+    export LIBRARY_LINKS='-llapack -lblas'
 fi
 
 rm -rf cmake_build && mkdir -p cmake_build
 cmake -S build -B cmake_build \
 -DUSE_SUNDIALS=ON \
 -DCMAKE_BUILD_TYPE=Release \
+-DSPECIFY_LAPACK_LINKS=$SPECIFY_LINKS \
 -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
 -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
 -DNETCDF_PATH="${NETCDF:-/usr}" \
 -DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}" \
-$BLAS_ARGS \
 -DCMAKE_Fortran_COMPILER=gfortran \
 -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
