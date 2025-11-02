@@ -344,8 +344,18 @@ else
   HDF_LIB_DIR="${HDF_PATH}/lib"
 fi
 
+# On Mac/Homebrew, NetCDF C and NetCDF-Fortran are separate packages
+# Add NetCDF C library path if it's different from NetCDF-Fortran
+NETCDF_C_LIB=""
+if command -v brew >/dev/null 2>&1; then
+  NETCDF_C_PATH="$(brew --prefix netcdf 2>/dev/null || echo "")"
+  if [ -n "$NETCDF_C_PATH" ] && [ "$NETCDF_C_PATH" != "$NCDF_PATH" ]; then
+    NETCDF_C_LIB="-L${NETCDF_C_PATH}/lib"
+  fi
+fi
+
 # Override the Makefile's LIBRARIES and INCLUDE variables
-LIBRARIES="-L${NCDF_LIB_DIR} -lnetcdff -lnetcdf -L${HDF_LIB_DIR} -lhdf5_hl -lhdf5"
+LIBRARIES="-L${NCDF_LIB_DIR} ${NETCDF_C_LIB} -lnetcdff -lnetcdf -L${HDF_LIB_DIR} -lhdf5_hl -lhdf5"
 INCLUDE="-I${NCDF_PATH}/include -I${HDF_PATH}/include"
 
 # Add legacy compiler flags for compatibility with old Fortran code
