@@ -207,8 +207,8 @@ fi
             'branch': 'serial',
             'install_dir': 'mizuRoute',
             'build_commands': [
-                common_env,
-                r'''
+    common_env,
+    r'''
 # Build mizuRoute - edit Makefile directly (it doesn't use env vars)
 cd route/build
 
@@ -269,52 +269,35 @@ else
     echo "Using same path for NetCDF C: ${NETCDF_C_PATH}"
 fi
 
-# Show original Makefile state - cast wide net
-echo "=== Makefile configuration (BEFORE editing) ==="
-grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
-echo "=== Makefile lines 30-50 (for debugging) ==="
-sed -n '30,50p' Makefile
-
-# Edit the Makefile in-place - try multiple possible variable names
+# Edit the Makefile in-place
 echo "=== Editing Makefile ==="
 perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
 perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
 perl -i -pe "s|^EXE\s*=\s*$|EXE = mizuRoute.exe|" Makefile
 perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
-# CRITICAL: NCDF_PATH has leading whitespace in ifeq blocks - match any leading space
 perl -i -pe "s|^\s*NCDF_PATH\s*=.*$| NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
 # Fix LIBNETCDF to include both netcdf-fortran and netcdf C library
-# This handles Mac where they're separate Homebrew installs
 if [ "${NETCDF_C_PATH}" != "${NETCDF_TO_USE}" ]; then
     echo "Fixing LIBNETCDF to include both netcdf-fortran and netcdf C paths"
-    # Multi-line replacement to handle continuation
     perl -i -0777 -pe "s|LIBNETCDF = -Wl,-rpath,\\\$\(NCDF_PATH\)/lib[^\n]*\\\\\n[^\n]*|LIBNETCDF = -Wl,-rpath,${NETCDF_TO_USE}/lib -Wl,-rpath,${NETCDF_C_PATH}/lib -L${NETCDF_TO_USE}/lib -L${NETCDF_C_PATH}/lib -lnetcdff -lnetcdf|s" Makefile
 fi
 
-# Show what we set
-echo "=== Makefile configuration (AFTER editing) ==="
-grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
-
-# Clean any previous builds
+# Clean and build
 make clean || true
-
-# Build serially (Makefile has inadequate dependency tracking for parallel)
-echo "Building serially..."
+echo "Building mizuRoute..."
 make 2>&1 | tee build.log || true
 
-# Check and move executable regardless of make exit code
-if [ -f "mizuRoute.exe" ]; then
-    echo "Build successful - moving executable to ../bin/"
-    mv mizuRoute.exe ../bin/
+# Check if executable exists in final location (Makefile moves it to ../bin)
+if [ -f "../bin/mizuRoute.exe" ]; then
+    echo "Build successful - executable at ../bin/mizuRoute.exe"
     ls -la ../bin/
 else
-    echo "ERROR: No executable found in build directory"
-    ls -la . || true
+    echo "ERROR: Executable not found at ../bin/mizuRoute.exe"
     exit 1
 fi
-                '''
+    '''
             ],
             'dependencies': [],
             'test_command': None,
