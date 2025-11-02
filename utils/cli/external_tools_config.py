@@ -746,4 +746,4 @@ if __name__ == "__main__":
     tools = get_external_tools_definitions()
     print(f"✅ Loaded {len(tools)} external tool definitions:")
     for name, info in sorted(tools.items(), key=lambda x: x[1]['order']):
-        print(f"   {info['order']:2d}. {name:12s} - {info['description'][:60]}")
+        print(f"   {info['order']:2d}. {name:12s} - {info['description'][:60]}") 
