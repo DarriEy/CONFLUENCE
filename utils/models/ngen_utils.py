@@ -56,7 +56,7 @@ class NgenPreProcessor:
         # Directories
         self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
         self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
-        self.forcing_dir = self.project_dir / "forcing" / "ngen_input"
+        self.forcing_dir = self.project_dir / "forcing" / "NGEN_input"
         
         # Shapefiles
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
