@@ -256,22 +256,27 @@ echo "Final NETCDF_TO_USE: ${NETCDF_TO_USE}"
 echo "Checking include directory:"
 ls -la "${NETCDF_TO_USE}/include/" 2>/dev/null | grep -E "netcdf|NETCDF" | head -5 || echo "Could not list includes"
 
-# Show original Makefile state
+# Show original Makefile state - cast wide net
 echo "=== Makefile configuration (BEFORE editing) ==="
-grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF_PATH|isOpenMP)\s*=" Makefile
+grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
+echo "=== Makefile lines 30-50 (for debugging) ==="
+sed -n '30,50p' Makefile
 
-# Edit the Makefile in-place - CRITICAL: F_MASTER needs trailing slash
+# Edit the Makefile in-place - try multiple possible variable names
 echo "=== Editing Makefile ==="
 perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
 perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
 perl -i -pe "s|^EXE\s*=\s*$|EXE = mizuRoute.exe|" Makefile
 perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
+# Try all possible NetCDF variable names
 perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
+perl -i -pe "s|^NCDF\s*=.*$|NCDF = ${NETCDF_TO_USE}|" Makefile  
+perl -i -pe "s|^NETCDF_PATH\s*=.*$|NETCDF_PATH = ${NETCDF_TO_USE}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
-# Show what we set - EXPANDED for debugging
-echo "=== Makefile configuration (after editing) ==="
-grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF_PATH|isOpenMP)\s*=" Makefile
+# Show what we set
+echo "=== Makefile configuration (AFTER editing) ==="
+grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
 
 # Clean any previous builds
 make clean || true
@@ -746,4 +751,4 @@ if __name__ == "__main__":
     tools = get_external_tools_definitions()
     print(f"✅ Loaded {len(tools)} external tool definitions:")
     for name, info in sorted(tools.items(), key=lambda x: x[1]['order']):
-        print(f"   {info['order']:2d}. {name:12s} - {info['description'][:60]}") 
+        print(f"   {info['order']:2d}. {name:12s} - {info['description'][:60]}")
