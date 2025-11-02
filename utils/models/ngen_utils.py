@@ -363,36 +363,35 @@ class NgenPreProcessor:
         
         self.logger.info(f"Created catchment geopackage with {len(divides_gdf)} catchments: {gpkg_file}")
         return gpkg_file
-        
+            
     def prepare_forcing_data(self) -> Path:
         """
-        Convert CONFLUENCE basin-averaged ERA5 forcing to ngen format.
+        Convert CONFLUENCE basin-averaged ERA5 forcing to NGen format.
 
         Steps:
         1) load monthly forcing files
         2) merge across time
         3) subset to simulation window
-        4) map variables and reshape to (catchment, time)
-        5) write a clean NETCDF4 file
+        4) map variables and reshape to (feature_id, time)
+        5) write a clean NETCDF4 file (ids as fixed-length CHAR)
+        6) validate core structure expected by NGen
         """
         self.logger.info("Preparing forcing data for ngen")
 
-        # Load catchment IDs - must match divide_id format in geopackage (cat-X)
+        # --- Load catchment IDs -> cat-<HRU_ID> (strings) ---
         catchment_file = self.catchment_path / self.catchment_name
         catchment_gdf = gpd.read_file(catchment_file)
         catchment_ids = [f"cat-{x}" for x in catchment_gdf[self.hru_id_col].astype(str).tolist()]
         n_catchments = len(catchment_ids)
-
         self.logger.info(f"Processing forcing for {n_catchments} catchments")
 
-        # Get forcing files
+        # --- Gather forcing files ---
         forcing_files = sorted(self.basin_forcing_dir.glob("*.nc"))
         if not forcing_files:
             raise FileNotFoundError(f"No forcing files found in {self.basin_forcing_dir}")
-
         self.logger.info(f"Found {len(forcing_files)} forcing files")
 
-        # Open/concat by time
+        # --- Open/concat by time ---
         forcing_data = xr.open_mfdataset(
             [str(p) for p in forcing_files],
             combine="by_coords",
@@ -401,9 +400,9 @@ class NgenPreProcessor:
             engine="netcdf4",
         )
 
-        # Simulation window (handle 'default' in config)
-        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
-        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00')
+        # --- Simulation window (handle 'default') ---
+        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00') or '2000-01-01 00:00:00'
+        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00') or '2000-12-31 23:00:00'
         if sim_start == 'default':
             sim_start = '2000-01-01 00:00:00'
         if sim_end == 'default':
@@ -412,179 +411,177 @@ class NgenPreProcessor:
         start_time = pd.to_datetime(sim_start)
         end_time   = pd.to_datetime(sim_end)
 
-        # Ensure datetime64[ns]
-        forcing_data = forcing_data.assign_coords(
-            time=pd.to_datetime(forcing_data.time.values)
-        )
-
-        # Subset
+        # Ensure datetime64[ns] on coord, then subset
+        forcing_data = forcing_data.assign_coords(time=pd.to_datetime(forcing_data.time.values))
         forcing_data = forcing_data.sel(time=slice(start_time, end_time))
 
+        # Log actual range available post-subset
         self.logger.info(
             f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}"
         )
 
-        # Create ngen-formatted dataset
+        # --- Create NGen forcing dataset (feature_id, time) with AORC/NOAH names ---
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
 
-        # Output path
+        # --- Write NETCDF4 (float32 for numeric vars; let CHAR stay as-is) ---
         output_file = self.forcing_dir / "forcing.nc"
-
-        # Build encoding dynamically only for variables that exist
         encoding: Dict[str, Dict[str, Any]] = {}
 
-        # Downcast float data vars + set fill
         for name, da in ngen_ds.data_vars.items():
-            if np.issubdtype(da.dtype, np.floating):
-                encoding[name] = {'dtype': 'float32', '_FillValue': np.nan}
-
-        # Let xarray handle CF time encoding; no manual dtype needed for 'time'
-        # (If you insist on integer epoch, you could set dtype=int64, but CF is safer.)
+            # numeric floats -> float32; leave CHAR (ids) alone
+            if da.dtype.kind == 'f':
+                encoding[name] = {'dtype': 'float32'}
+            # ints and CHAR need no explicit dtype here
 
         ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
-        # Sanity checks the NetCDF provider depends on
+
+        # We’re done with the source files
+        forcing_data.close()
+
+        # --- Validate the file structure as NGen expects ---
         try:
             with nc4.Dataset(output_file, mode='r') as ds:
-                # Allow either 'feature_id' (preferred) or 'catchment-id'
-                has_feature = 'feature_id' in ds.dimensions
-                has_catchment = 'catchment-id' in ds.dimensions
-                assert has_feature or has_catchment, "Missing dim 'feature_id' (or 'catchment-id')"
-
-                feat_dim = 'feature_id' if has_feature else 'catchment-id'
-
-                # time dim
+                # dimensions
+                assert 'feature_id' in ds.dimensions, "Missing dim 'feature_id'"
                 assert 'time' in ds.dimensions, "Missing dim 'time'"
-
-                # ids variable must exist and be 1-D over the feature dim
+                # ids as fixed-length CHAR with (feature_id, id_strlen)
                 assert 'ids' in ds.variables, "Missing variable 'ids'"
                 ids_var = ds.variables['ids']
-                assert ids_var.dimensions == (feat_dim,), f"'ids' must be 1-D over '{feat_dim}'"
-
-                # some core vars present (either canonical or AORC aliases)
-                present = set(ds.variables.keys())
-                must_have_any = [
-                    'precip_rate', 'PRCPNONC'
-                ]
-                assert any(v in present for v in must_have_any), \
-                    "Missing precipitation variable (need 'precip_rate' or 'PRCPNONC')"
-
-            self.logger.info(f"Forcing file passes basic NGen checks (dims/ids via '{feat_dim}').")
+                assert ids_var.dtype.kind == 'S', "'ids' must be a fixed-length CHAR array"
+                assert ids_var.dimensions == ('feature_id', 'id_strlen'), \
+                    "ids must have dims (feature_id, id_strlen)"
+                # At minimum, check for a couple of canonical variables
+                for req in ['PRCPNONC', 'SFCTMP', 'SFCPRS']:
+                    if req not in ds.variables:
+                        self.logger.warning(f"Missing expected forcing variable '{req}'.")
+            self.logger.info("Forcing file passes basic NGen checks (dims/ids via 'feature_id').")
         except Exception as e:
             self.logger.error(f"Forcing validation failed: {e}")
             raise
+
+        self.logger.info(f"Wrote ngen forcing: {output_file}")
+        return output_file
+
 
     def _create_ngen_forcing_dataset(
         self, forcing_data: xr.Dataset, catchment_ids: List[str]
     ) -> xr.Dataset:
         """
-        Build an NGen-ready forcing file that satisfies both:
-        - NGen NetCDF provider's canonical names (incl. precip_rate), and
-        - AORC-style names expected by Noah/PET/CFE examples.
-        Output dims: ('feature_id','time'); string coord 'ids' on 'feature_id'.
+        Build NGen-ready forcing with:
+        dims:  feature_id, time
+        vars:  PRCPNONC, SFCTMP, Q2, SFCPRS, SOLDN, LWDN, UU, VV
+        ids:   fixed-length CHAR array ids(feature_id, id_strlen)
         """
-        # ---------- prep ----------
-        n_cats = len(catchment_ids)
-        time_vals = forcing_data.time.values.astype('datetime64[ns]')
+        # ---------------- basics ----------------
+        FEATURE_DIM = "feature_id"
+        n_feat = len(catchment_ids)
 
-        # utility to expand (time,) → (feature_id,time)
+        # make a copy with a guaranteed ns-resolution time
+        fd = forcing_data.copy()
+        fd = fd.assign_coords(time=pd.to_datetime(fd.time.values))
+
+        # Helper to expand a (time,) array across features -> (feature_id, time)
         def expand_to_features(arr_1d_time: np.ndarray) -> np.ndarray:
-            return np.tile(arr_1d_time[None, :], (n_cats, 1))
+            return np.tile(arr_1d_time[None, :], (n_feat, 1))
 
-        # start empty ds with the final dims we want
-        ds = xr.Dataset()
-        ds = ds.assign_coords(
-            feature_id=("feature_id", np.array(catchment_ids, dtype=object)),
-            time=time_vals,
-        )
-        # expose ids as both coord and data var for maximum compatibility
-        ds["ids"] = xr.DataArray(ds["feature_id"].values, dims=("feature_id",))
+        # normalize a candidate dataarray (1D time or 2D singleton spatial) -> (feature_id, time)
+        def to_feat_time(da: xr.DataArray) -> np.ndarray:
+            v = da.values
+            if v.ndim == 1:                    # (time,)
+                return expand_to_features(v)
+            if v.ndim == 2 and 1 in v.shape:   # (1, time) or (time, 1)
+                return expand_to_features(np.squeeze(v))
+            # Already 2D with a time axis — align to (feature, time) if needed
+            time_len = fd.dims.get('time', len(fd.time))
+            return v.T if v.shape[0] == time_len else v
 
-        # ---------- core mappings you already have ----------
-        # Source → canonical NetCDF names used by the provider
-        # (we'll also write AORC aliases below)
-        mapping = {
-            "pptrate": "precip_rate",           # kg m-2 s-1 (mm s-1)
-            "t2m": "TMP_2maboveground",         # K
-            "d2m": "DPT_2maboveground",         # K  (we'll still compute Q2 from d2m)
-            "sp": "PRES_surface",               # Pa
-            "dswrf": "DSWRF_surface",           # W m-2
-            "dlwrf": "DLWRF_surface",           # W m-2
-            "u10": "UGRD_10maboveground",       # m s-1
-            "v10": "VGRD_10maboveground",       # m s-1
-            "windspd": None,                    # optional fallback handled below
-        }
+        # ---------------- assemble dataset ----------------
+        ngen = xr.Dataset(coords={"time": fd.time.values})
+        ngen = ngen.assign_coords({FEATURE_DIM: np.arange(n_feat, dtype=np.int32)})
 
-        # write canonical variables (duplicated over features)
-        for src, tgt in mapping.items():
-            if tgt is None or (src not in forcing_data):
-                continue
-            arr = forcing_data[src].values
-            # handle (time,) or (1,time) inputs
-            if arr.ndim == 1:
-                arr2d = expand_to_features(arr)
-            elif arr.ndim == 2 and 1 in arr.shape:
-                arr2d = expand_to_features(np.squeeze(arr))
-            else:
-                # assume already aligned; if (time,feat) flip
-                arr2d = arr.T if arr.shape[0] == forcing_data.dims.get("time", len(time_vals)) else arr
-            ds[tgt] = xr.DataArray(arr2d.astype(np.float32), dims=("feature_id", "time"))
-
-        # wind fallback if no u10/v10 but windspd exists
-        if ("UGRD_10maboveground" not in ds) and ("VGRD_10maboveground" not in ds) and ("windspd" in forcing_data):
-            self.logger.warning("Using wind speed approximation for U/V components.")
-            w = forcing_data["windspd"].values
-            if w.ndim == 1:
-                base = expand_to_features(w / np.sqrt(2.0))
-            elif w.ndim == 2 and 1 in w.shape:
-                base = expand_to_features(np.squeeze(w) / np.sqrt(2.0))
-            else:
-                base = (w.T if w.shape[0] == forcing_data.dims.get("time", len(time_vals)) else w) / np.sqrt(2.0)
-            ds["UGRD_10maboveground"] = xr.DataArray(base.astype(np.float32), dims=("feature_id", "time"))
-            ds["VGRD_10maboveground"] = xr.DataArray(base.astype(np.float32), dims=("feature_id", "time"))
-
-        # ---------- compute Q2 (specific humidity) from t2m, d2m, pressure ----------
-        if ("TMP_2maboveground" in ds) and ("DPT_2maboveground" in ds) and ("PRES_surface" in ds):
-            q2 = self._compute_q2_specific_humidity(
-                ds["TMP_2maboveground"].values,
-                ds["DPT_2maboveground"].values,
-                ds["PRES_surface"].values,
-            )
-            ds["Q2"] = xr.DataArray(q2, dims=("feature_id", "time"))
+        # ---- AORC/NOAH names ----
+        # Precipitation rate (prefer your 'pptrate'; else try common aliases)
+        if 'pptrate' in fd:
+            PRCP = to_feat_time(fd['pptrate'])
+            ngen['PRCPNONC'] = xr.DataArray(PRCP.astype(np.float32), dims=[FEATURE_DIM, 'time'])
         else:
-            # If we can’t compute Q2, still proceed; Noah/PET may derive internally,
-            # but having Q2 avoids provider lookups failing on some builds.
+            raise ValueError("Forcing is missing 'pptrate' needed for PRCPNONC.")
+
+        # 2 m temperature (K)
+        if 't2m' in fd:
+            SFCTMP = to_feat_time(fd['t2m'])
+            ngen['SFCTMP'] = xr.DataArray(SFCTMP.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        else:
+            self.logger.warning("No 't2m' found; SFCTMP will be missing.")
+
+        # Surface pressure (Pa)
+        if 'sp' in fd:
+            SFCPRS = to_feat_time(fd['sp'])
+            ngen['SFCPRS'] = xr.DataArray(SFCPRS.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        else:
+            self.logger.warning("No 'sp' found; SFCPRS will be missing.")
+
+        # Shortwave / longwave down (W m-2)
+        if 'dswrf' in fd:
+            SOLDN = to_feat_time(fd['dswrf'])
+            ngen['SOLDN'] = xr.DataArray(SOLDN.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        else:
+            self.logger.warning("No 'dswrf' found; SOLDN will be missing.")
+
+        if 'dlwrf' in fd:
+            LWDN = to_feat_time(fd['dlwrf'])
+            ngen['LWDN'] = xr.DataArray(LWDN.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        else:
+            self.logger.warning("No 'dlwrf' found; LWDN will be missing.")
+
+        # Wind components (10 m)
+        if 'u10' in fd and 'v10' in fd:
+            UU = to_feat_time(fd['u10'])
+            VV = to_feat_time(fd['v10'])
+            ngen['UU'] = xr.DataArray(UU.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+            ngen['VV'] = xr.DataArray(VV.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        elif 'windspd' in fd:
+            self.logger.warning("Using wind speed approximation for U/V components. For best results, provide ERA5 u10/v10.")
+            base = to_feat_time(fd['windspd']) / np.sqrt(2.0)
+            ngen['UU'] = xr.DataArray(base.astype(np.float32),  dims=[FEATURE_DIM, 'time'])
+            ngen['VV'] = xr.DataArray(base.astype(np.float32),  dims=[FEATURE_DIM, 'time'])
+        else:
+            self.logger.warning("No wind fields present; UU/VV will be missing.")
+
+        # Specific humidity at 2 m (Q2) from dewpoint + pressure if possible
+        #   e  = 6.112 * exp(17.67 * (Td-273.15) / (Td-29.65)) [hPa]  (Tetens approx)
+        #   q2 = 0.622 * (e/100) / (p - (1-0.622)*(e/100))            [kg/kg], with p in Pa
+        if 'd2m' in fd and 'sp' in fd:
+            Td = to_feat_time(fd['d2m'])         # K
+            p  = to_feat_time(fd['sp'])          # Pa
+            Td_C = Td - 273.15
+            e_hPa = 6.112 * np.exp(17.67 * Td_C / (Td_C + 243.5))
+            e_Pa = e_hPa * 100.0
+            q2 = 0.622 * e_Pa / (p - (1.0 - 0.622) * e_Pa)
+            ngen['Q2'] = xr.DataArray(q2.astype(np.float32), dims=[FEATURE_DIM, 'time'])
+        else:
             self.logger.info("Q2 not computed (need t2m, d2m, and surface pressure). Proceeding without it.")
 
-        # ---------- AORC aliases (duplicate variables so both naming schemes exist) ----------
-        # Precipitation
-        if "precip_rate" in ds:
-            ds["PRCPNONC"] = ds["precip_rate"]  # duplicate
+        # ---------------- stable CHAR ids ----------------
+        # Build fixed-length char array ids(feature_id, id_strlen)
+        ids = [str(x) for x in catchment_ids]
+        maxlen = max(max(len(s) for s in ids), 1)
+        char_arr = np.full((n_feat, maxlen), fill_value=' ', dtype='S1')
+        for i, s in enumerate(ids):
+            bs = np.frombuffer(s.encode('utf-8'), dtype='S1')
+            char_arr[i, :len(bs)] = bs
 
-        # Temperature
-        if "TMP_2maboveground" in ds:
-            ds["SFCTMP"] = ds["TMP_2maboveground"]
+        ngen = ngen.assign_coords({"id_strlen": np.arange(maxlen, dtype=np.int32)})
+        ngen['ids'] = xr.DataArray(char_arr, dims=[FEATURE_DIM, 'id_strlen'])
 
-        # Pressure
-        if "PRES_surface" in ds:
-            ds["SFCPRS"] = ds["PRES_surface"]
+        # also provide a convenient integer index coord
+        ngen = ngen.assign_coords({'feature_idx': (FEATURE_DIM, np.arange(n_feat, dtype=np.int32))})
 
-        # Shortwave/Longwave
-        if "DSWRF_surface" in ds:
-            ds["SOLDN"] = ds["DSWRF_surface"]
-        if "DLWRF_surface" in ds:
-            ds["LWDN"] = ds["DLWRF_surface"]
+        # Strongly prefer pure ASCII in CHAR vars
+        ngen['ids'].encoding.update(dict(char_dim='id_strlen'))
 
-        # Wind components
-        if "UGRD_10maboveground" in ds:
-            ds["UU"] = ds["UGRD_10maboveground"]
-        if "VGRD_10maboveground" in ds:
-            ds["VV"] = ds["VGRD_10maboveground"]
+        return ngen
 
-        # ---------- final touch ----------
-        # Put a convenience alias coord many tools expect
-        ds = ds.assign_coords(**{"catchment-id": ("feature_id", ds["feature_id"].values)})
-
-        return ds
 
 
 
