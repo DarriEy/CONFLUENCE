@@ -326,32 +326,73 @@ echo "   NCDF_PATH: ${NCDF_PATH}"
 echo "   HDF_PATH: ${HDF_PATH}"
 echo ""
 
-# Run the FUSE build - try multiple approaches
-# First try: just 'make' without 'all' target
-if make FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" -j "${NCORES:-4}"; then
-  echo "✅ Build completed with 'make'"
-elif make install FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" -j "${NCORES:-4}"; then
-  echo "✅ Build completed with 'make install'"  
+# Construct library and include paths to override Makefile's hardcoded values
+# Find the actual lib directory (could be lib or lib64)
+if [ -d "${NCDF_PATH}/lib64" ]; then
+  NCDF_LIB_DIR="${NCDF_PATH}/lib64"
+elif [ -d "${NCDF_PATH}/lib" ]; then
+  NCDF_LIB_DIR="${NCDF_PATH}/lib"
 else
-  echo "❌ Make failed. Checking for common issues..."
-  echo "   NetCDF includes: $(find ${NCDF_PATH}/include -name "netcdf*.mod" 2>/dev/null | head -3 || echo 'not found')"
-  echo "   NetCDF libs: $(ls ${NCDF_PATH}/lib*/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
-  echo ""
-  echo "   Checking what Make is trying to build:"
-  make -n FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" 2>&1 | head -10
-  exit 1
+  NCDF_LIB_DIR="${NCDF_PATH}/lib"
 fi
 
-# Stage binary to ../bin/
-mkdir -p ../bin
-if [ -f fuse.exe ]; then
+if [ -d "${HDF_PATH}/lib64" ]; then
+  HDF_LIB_DIR="${HDF_PATH}/lib64"
+elif [ -d "${HDF_PATH}/lib" ]; then
+  HDF_LIB_DIR="${HDF_PATH}/lib"
+else
+  HDF_LIB_DIR="${HDF_PATH}/lib"
+fi
+
+# Override the Makefile's LIBRARIES and INCLUDE variables
+LIBRARIES="-L${NCDF_LIB_DIR} -lnetcdff -lnetcdf -L${HDF_LIB_DIR} -lhdf5_hl -lhdf5"
+INCLUDE="-I${NCDF_PATH}/include -I${HDF_PATH}/include"
+
+echo "🔧 Library flags:"
+echo "   LIBRARIES: ${LIBRARIES}"
+echo "   INCLUDE: ${INCLUDE}"
+echo ""
+
+# Run the FUSE build with explicit library overrides
+if make \
+  FC="${FC}" \
+  F_MASTER="${F_MASTER}" \
+  LIBRARIES="${LIBRARIES}" \
+  INCLUDE="${INCLUDE}" \
+  -j "${NCORES:-4}"; then
+  echo "✅ Build completed"
+else
+  echo "❌ Make failed. Trying without parallel build..."
+  if make \
+    FC="${FC}" \
+    F_MASTER="${F_MASTER}" \
+    LIBRARIES="${LIBRARIES}" \
+    INCLUDE="${INCLUDE}"; then
+    echo "✅ Build completed (serial)"
+  else
+    echo "❌ Build failed"
+    echo ""
+    echo "Diagnostics:"
+    echo "   NetCDF lib: ${NCDF_LIB_DIR}"
+    echo "   HDF5 lib: ${HDF_LIB_DIR}"
+    echo "   NetCDF includes: $(ls ${NCDF_PATH}/include/netcdf*.mod 2>/dev/null | head -3 || echo 'not found')"
+    echo "   NetCDF libs: $(ls ${NCDF_LIB_DIR}/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
+    exit 1
+  fi
+fi
+
+# Check if binary was created (either in build dir or already moved to bin)
+if [ -f ../bin/fuse.exe ]; then
+  echo "✅ Binary in ../bin/fuse.exe"
+elif [ -f fuse.exe ]; then
+  echo "✅ Binary built, staging to ../bin/"
+  mkdir -p ../bin
   cp fuse.exe ../bin/
   echo "✅ Binary staged to ../bin/fuse.exe"
-elif [ -f ../bin/fuse.exe ]; then
-  echo "✅ Binary already in ../bin/fuse.exe"
 else
   echo "❌ fuse.exe not found after build"
-  ls -la . 2>/dev/null || true
+  echo "Checking build directory contents:"
+  ls -la . 2>/dev/null | grep -E "\.(exe|out|o)$" || echo "No executables found"
   exit 1
 fi
 
