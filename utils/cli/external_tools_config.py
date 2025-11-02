@@ -326,18 +326,21 @@ echo "   NCDF_PATH: ${NCDF_PATH}"
 echo "   HDF_PATH: ${HDF_PATH}"
 echo ""
 
-# Run the FUSE build
-make all \
-  FC="${FC}" \
-  F_MASTER="${F_MASTER}" \
-  NCDF_PATH="${NCDF_PATH}" \
-  HDF_PATH="${HDF_PATH}" \
-  -j "${NCORES:-4}" || {
-    echo "❌ Make failed. Checking for common issues..."
-    echo "   NetCDF includes: $(find ${NCDF_PATH}/include -name "netcdf*.mod" 2>/dev/null | head -3 || echo 'not found')"
-    echo "   NetCDF libs: $(ls ${NCDF_PATH}/lib*/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
-    exit 1
-  }
+# Run the FUSE build - try multiple approaches
+# First try: just 'make' without 'all' target
+if make FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" -j "${NCORES:-4}"; then
+  echo "✅ Build completed with 'make'"
+elif make install FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" -j "${NCORES:-4}"; then
+  echo "✅ Build completed with 'make install'"  
+else
+  echo "❌ Make failed. Checking for common issues..."
+  echo "   NetCDF includes: $(find ${NCDF_PATH}/include -name "netcdf*.mod" 2>/dev/null | head -3 || echo 'not found')"
+  echo "   NetCDF libs: $(ls ${NCDF_PATH}/lib*/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
+  echo ""
+  echo "   Checking what Make is trying to build:"
+  make -n FC="${FC}" F_MASTER="${F_MASTER}" NCDF_PATH="${NCDF_PATH}" HDF_PATH="${HDF_PATH}" 2>&1 | head -10
+  exit 1
+fi
 
 # Stage binary to ../bin/
 mkdir -p ../bin
