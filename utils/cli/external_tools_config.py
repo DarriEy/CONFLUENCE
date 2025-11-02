@@ -289,7 +289,8 @@ perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 # This handles Mac where they're separate Homebrew installs
 if [ "${NETCDF_C_PATH}" != "${NETCDF_TO_USE}" ]; then
     echo "Fixing LIBNETCDF to include both netcdf-fortran and netcdf C paths"
-    sed -i.bak "s|LIBNETCDF = -Wl,-rpath,\$(NCDF_PATH)/lib.*$|LIBNETCDF = -Wl,-rpath,${NETCDF_TO_USE}/lib -Wl,-rpath,${NETCDF_C_PATH}/lib -L${NETCDF_TO_USE}/lib -L${NETCDF_C_PATH}/lib -lnetcdff -lnetcdf|" Makefile
+    # Multi-line replacement to handle continuation
+    perl -i -0777 -pe "s|LIBNETCDF = -Wl,-rpath,\\\$\(NCDF_PATH\)/lib[^\n]*\\\\\n[^\n]*|LIBNETCDF = -Wl,-rpath,${NETCDF_TO_USE}/lib -Wl,-rpath,${NETCDF_C_PATH}/lib -L${NETCDF_TO_USE}/lib -L${NETCDF_C_PATH}/lib -lnetcdff -lnetcdf|s" Makefile
 fi
 
 # Show what we set
