@@ -225,16 +225,16 @@ ls -la ../bin/ || true
     r'''
 set -e
 
-# --- Common env (inline so it persists) ---
+# --- Common env (inline so it persists across the whole step) ---
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
 
-# Prefer system queries; fallback to /usr
-export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
-export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
-export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print $2}" || echo /usr)}"
+# From common env (with Homebrew/HPC fallbacks)
+export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf) || echo /usr)}"
+export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf-fortran) || echo /usr)}"
+export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | sed -n 's/^Installation point:[[:space:]]*//p' | head -n1 || echo /usr)}"
 
-# Map to FUSE's expected Makefile vars
+# Map to the variable names FUSE's Makefile actually uses
 export NCDF_PATH="$NETCDF_FORTRAN"
 export HDF_PATH="$HDF5_ROOT"
 
@@ -245,7 +245,7 @@ export NCORES="${NCORES:-4}"
 cd build
 make clean || true
 
-# FUSE expects F_MASTER to be parent of build/
+# FUSE expects F_MASTER to be the parent of build/
 export F_MASTER="$(cd .. && pwd)/"
 
 echo "Build environment:"
@@ -254,7 +254,7 @@ echo "  F_MASTER: ${F_MASTER}"
 echo "  NCDF_PATH: ${NCDF_PATH}"
 echo "  HDF_PATH: ${HDF_PATH}"
 
-# Upstream Makefile keys are FC, F_MASTER, NCDF_PATH, HDF_PATH
+# Use upstream Makefile keys (FC, F_MASTER, NCDF_PATH, HDF_PATH)
 make all \
   FC="${FC}" \
   F_MASTER="${F_MASTER}" \
@@ -262,10 +262,17 @@ make all \
   HDF_PATH="${HDF_PATH}" \
   -j "${NCORES}"
 
+# Stage the binary even if Makefile didn't 'install' it for us
+mkdir -p ../bin
+if [ -f fuse.exe ]; then
+  mv fuse.exe ../bin/
+fi
+
 # Verify
 ls -la ../bin/ || true
 test -f ../bin/fuse.exe
 ../bin/fuse.exe 2>&1 | head -5 || true
+
     '''
             ],
 
