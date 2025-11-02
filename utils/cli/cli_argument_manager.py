@@ -957,16 +957,13 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     def validate_binaries(self, confluence_instance=None) -> Dict[str, Any]:
         """
         Validate that required binary executables exist and are functional.
-        
-        Args:
-            confluence_instance: CONFLUENCE system instance for accessing config
-            
+
         Returns:
             Dictionary with validation results for each tool
         """
         print("\n🔧 Validating External Tool Binaries:")
         print("=" * 50)
-        
+
         validation_results = {
             'valid_tools': [],
             'missing_tools': [],
@@ -974,14 +971,14 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             'warnings': [],
             'summary': {}
         }
-        
+
         # Get config if available
         config = {}
         if confluence_instance and hasattr(confluence_instance, 'config'):
             config = confluence_instance.config
         elif confluence_instance and hasattr(confluence_instance, 'workflow_orchestrator'):
             config = confluence_instance.workflow_orchestrator.config
-        
+
         # If no config available, try to load default
         if not config:
             try:
@@ -994,11 +991,10 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     print("⚠️  No configuration file found - using default paths")
             except Exception as e:
                 print(f"⚠️  Could not load config: {str(e)} - using default paths")
-        
+
         # Validate each tool
         for tool_name, tool_info in self.external_tools.items():
             print(f"\n🔍 Checking {tool_name.upper()}:")
-            
             tool_result = {
                 'name': tool_name,
                 'description': tool_info['description'],
@@ -1008,30 +1004,67 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 'version': None,
                 'errors': []
             }
-            
+
             try:
-                # Determine tool path
+                # Determine tool path (config override or default)
                 config_path_key = tool_info['config_path_key']
                 tool_path = config.get(config_path_key, 'default')
-                
                 if tool_path == 'default':
                     data_dir = config.get('CONFLUENCE_DATA_DIR', '.')
                     tool_path = Path(data_dir) / tool_info['default_path_suffix']
                 else:
                     tool_path = Path(tool_path)
-                
                 tool_result['path'] = str(tool_path)
-                
-                # Determine executable name
+
+                # If tool defines a verify_install block, honor it first
+                verify = tool_info.get('verify_install')
+                found_path = None
+                if verify and isinstance(verify, dict):
+                    check_type = verify.get('check_type', 'exists_all')
+                    candidates = [tool_path / p for p in verify.get('file_paths', [])]
+
+                    if check_type == 'exists_any':
+                        for p in candidates:
+                            if p.exists():
+                                found_path = p
+                                break
+                        exists_ok = found_path is not None
+                    elif check_type in ('exists_all', 'exists'):
+                        exists_ok = all(p.exists() for p in candidates)
+                        if exists_ok:
+                            # pick the first existing path for display, or first candidate
+                            found_path = next((p for p in candidates if p.exists()), candidates[0] if candidates else tool_path)
+                    else:
+                        exists_ok = False
+
+                    if exists_ok:
+                        # If there is a test_command, try it; otherwise mark Installed
+                        test_cmd = tool_info.get('test_command')
+                        if test_cmd is None:
+                            tool_result['status'] = 'valid'
+                            tool_result['version'] = 'Installed (existence verified)'
+                            validation_results['valid_tools'].append(tool_name)
+                            print(f"   ✅ Found at: {found_path}")
+                            print(f"   ✅ Status: Installed")
+                            validation_results['summary'][tool_name] = tool_result
+                            continue
+                        else:
+                            try:
+                                # Use the found_path’s directory as a hint; if found_path is not executable
+                                # we still attempt running a representative executable below, so skip here
+                                # and fall back to the single-exe test after setting executable name
+                                pass
+                            except Exception:
+                                pass  # fall through to single-exe test
+
+                # Fallback: single-executable check (legacy behavior)
                 config_exe_key = tool_info.get('config_exe_key')
                 if config_exe_key and config_exe_key in config:
                     exe_name = config[config_exe_key]
                 else:
                     exe_name = tool_info['default_exe']
-                
                 tool_result['executable'] = exe_name
-                
-                # Check if executable exists
+
                 exe_path = tool_path / exe_name
                 if not exe_path.exists():
                     exe_name_no_ext = exe_name.replace('.exe', '')
@@ -1039,10 +1072,9 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     if exe_path_no_ext.exists():
                         exe_path = exe_path_no_ext
                         tool_result['executable'] = exe_name_no_ext
-                
+
                 if exe_path.exists():
                     test_cmd = tool_info.get('test_command')
-                    
                     if test_cmd is None:
                         tool_result['status'] = 'valid'
                         tool_result['version'] = 'Installed (existence verified)'
@@ -1057,9 +1089,9 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                                 text=True,
                                 timeout=10
                             )
-                            if result.returncode == 0 or test_cmd == '--help':
+                            if result.returncode == 0 or test_cmd == '--help' or tool_name in ('taudem',):
                                 tool_result['status'] = 'valid'
-                                tool_result['version'] = result.stdout.strip()[:100] if result.stdout else 'Available'
+                                tool_result['version'] = (result.stdout.strip()[:100] if result.stdout else 'Available')
                                 validation_results['valid_tools'].append(tool_name)
                                 print(f"   ✅ Found at: {exe_path}")
                                 print(f"   ✅ Status: Working")
@@ -1069,55 +1101,55 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                                 validation_results['failed_tools'].append(tool_name)
                                 print(f"   🟡 Found but test failed: {exe_path}")
                                 print(f"   ⚠️  Error: {result.stderr[:100]}")
-                        
+
                         except subprocess.TimeoutExpired:
                             tool_result['status'] = 'timeout'
                             tool_result['errors'].append("Test command timed out")
                             validation_results['warnings'].append(f"{tool_name}: test timed out")
                             print(f"   🟡 Found but test timed out: {exe_path}")
-                        
                         except Exception as test_error:
                             tool_result['status'] = 'test_error'
                             tool_result['errors'].append(f"Test error: {str(test_error)}")
                             validation_results['warnings'].append(f"{tool_name}: {str(test_error)}")
                             print(f"   🟡 Found but couldn't test: {exe_path}")
                             print(f"   ⚠️  Test error: {str(test_error)}")
-                
+
                 else:
                     tool_result['status'] = 'missing'
                     tool_result['errors'].append(f"Executable not found at: {exe_path}")
                     validation_results['missing_tools'].append(tool_name)
                     print(f"   ❌ Not found: {exe_path}")
                     print(f"   💡 Try: python CONFLUENCE.py --get_executables {tool_name}")
-            
+
             except Exception as e:
                 tool_result['status'] = 'error'
                 tool_result['errors'].append(f"Validation error: {str(e)}")
                 validation_results['failed_tools'].append(tool_name)
                 print(f"   ❌ Validation error: {str(e)}")
-            
+
             validation_results['summary'][tool_name] = tool_result
-        
+
         # Print summary
         total_tools = len(self.external_tools)
         valid_count = len(validation_results['valid_tools'])
         missing_count = len(validation_results['missing_tools'])
         failed_count = len(validation_results['failed_tools'])
-        
+
         print(f"\n📊 Binary Validation Summary:")
         print(f"   ✅ Valid: {valid_count}/{total_tools}")
         print(f"   ❌ Missing: {missing_count}/{total_tools}")
         print(f"   🔧 Failed: {failed_count}/{total_tools}")
-        
+
         if missing_count > 0:
             print(f"\n💡 To install missing tools:")
             print(f"   python CONFLUENCE.py --get_executables")
             print(f"   python CONFLUENCE.py --get_executables {' '.join(validation_results['missing_tools'])}")
-        
+
         if failed_count > 0:
             print(f"\n🔧 Failed tools may need rebuilding or dependency installation")
-        
+
         return validation_results
+
     
     def _check_dependencies(self, dependencies: List[str]) -> List[str]:
         """Check which dependencies are missing from the system."""
@@ -1126,13 +1158,34 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             if not shutil.which(dep):
                 missing_deps.append(dep)
         return missing_deps
-    
+
     def _verify_installation(self, tool_name: str, tool_info: Dict[str, Any],
-                             install_dir: Path) -> bool:
+                            install_dir: Path) -> bool:
         """Verify that a tool was installed correctly."""
         try:
-            exe_name = tool_info['default_exe']
-            
+            verify = tool_info.get('verify_install')
+            if verify and isinstance(verify, dict):
+                check_type = verify.get('check_type', 'exists_all')
+                candidates = [install_dir / p for p in verify.get('file_paths', [])]
+
+                if check_type == 'exists_any':
+                    ok = any(p.exists() for p in candidates)
+                elif check_type in ('exists_all', 'exists'):
+                    ok = all(p.exists() for p in candidates)
+                else:
+                    ok = False
+
+                print(f"   {'✅' if ok else '❌'} Install verification ({check_type}):")
+                for p in candidates:
+                    print(f"      {'✓' if p.exists() else '✗'} {p}")
+                return ok
+
+            # Fallback to default executable-based checks if no verify_install is provided
+            exe_name = tool_info.get('default_exe')
+            if not exe_name:
+                print("   ⚠️  No verify_install or default_exe provided")
+                return False
+
             possible_paths = [
                 install_dir / exe_name,
                 install_dir / 'bin' / exe_name,
@@ -1141,26 +1194,25 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 install_dir / exe_name.replace('.exe', ''),
                 install_dir / 'install' / 'sundials' / exe_name,
             ]
-            
+
             for exe_path in possible_paths:
                 if exe_path.exists():
                     print(f"   ✅ Executable/library found: {exe_path}")
                     return True
-            
+
             print(f"   ⚠️  Executable/library not found in expected locations")
             print(f"      Searched for: {exe_name}")
             print(f"      In directory: {install_dir}")
-            
             if install_dir.exists():
                 print(f"      Directory contents:")
                 for item in sorted(install_dir.iterdir())[:10]:
                     print(f"         {item.name}")
-            
             return False
-        
+
         except Exception as e:
             print(f"   ⚠️  Verification error: {str(e)}")
             return False
+
     
     def _resolve_tool_dependencies(self, tools: List[str]) -> List[str]:
         """

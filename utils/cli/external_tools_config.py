@@ -604,8 +604,32 @@ cmake --build . -j ${NCORES:-4}
 
 # stage TauDEM executables
 mkdir -p ../bin
-find ./src -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; 2>/dev/null || true
-find .   -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
+
+# Robustly copy all executable files from build/src to ../bin
+# -perm /111 matches files where ANY of the execute bits are set (portable on GNU find)
+if command -v find >/dev/null 2>&1; then
+  find ./src -maxdepth 1 -type f -perm /111 -exec cp -f {} ../bin/ \; 2>/dev/null || true
+else
+  # Fallback if 'find' is non-standard: copy everything and fix perms
+  for f in ./src/*; do
+    [ -f "$f" ] && cp -f "$f" ../bin/ || true
+  done
+fi
+
+# Ensure they are executable
+if ls ../bin/* >/dev/null 2>&1; then
+  chmod +x ../bin/* 2>/dev/null || true
+fi
+
+# Verify pitremove (canonical binary)
+if [ -x "../bin/pitremove" ] || [ -f "../bin/pitremove" ]; then
+  echo "✅ Staged TauDEM executables to ../bin/"
+  ls -la ../bin/ | head -50
+else
+  echo "❌ Executable staging failed; showing build/src contents:"
+  ls -la ./src | head -100
+  exit 1
+fi
 
                 '''
             ],
