@@ -212,40 +212,51 @@ ls -la ../bin/ || true
         # ================================================================
         # FUSE - Framework for Understanding Structural Errors
         # ================================================================
-        'fuse': {
-            'description': 'Framework for Understanding Structural Errors',
-            'config_path_key': 'FUSE_INSTALL_PATH',
-            'config_exe_key': 'FUSE_EXE',
-            'default_path_suffix': 'installs/fuse/bin',
-            'default_exe': 'fuse.exe',
-            'repository': 'https://github.com/CH-Earth/fuse.git',
-            'branch': None,
-            'install_dir': 'fuse',
-            'build_commands': [
-    r'''
+        "fuse": {
+            "description": "Framework for Understanding Structural Errors",
+            "config_path_key": "FUSE_INSTALL_PATH",
+            "config_exe_key": "FUSE_EXE",
+            "default_path_suffix": "installs/fuse/bin",
+            "default_exe": "fuse.exe",
+            "repository": "https://github.com/CH-Earth/fuse.git",
+            "branch": None,
+            "install_dir": "fuse",
+            "build_commands": [
+                r'''
 set -e
 
-# --- Common env (inline so it persists across the whole step) ---
+# --- Common environment setup (single shell so it persists) ---
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
 
-# From common env (with Homebrew/HPC fallbacks)
+# Prefer config tools; add Homebrew and HPC fallbacks
 export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf) || echo /usr)}"
 export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf-fortran) || echo /usr)}"
-export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | sed -n 's/^Installation point:[[:space:]]*//p' | head -n1 || echo /usr)}"
+export HDF5_ROOT="${HDF5_ROOT:-$(
+  h5cc -showconfig 2>/dev/null | sed -n 's/^Installation point:[[:space:]]*//p' | head -n1 \
+  || (command -v brew >/dev/null 2>&1 && brew --prefix hdf5) \
+  || echo /usr
+)}"
 
-# Map to the variable names FUSE's Makefile actually uses
+# Map to the variable names expected by the FUSE Makefile
 export NCDF_PATH="$NETCDF_FORTRAN"
 export HDF_PATH="$HDF5_ROOT"
 
-# Threads
-export NCORES="${NCORES:-4}"
+# Help the linker on mac/Homebrew
+if command -v brew >/dev/null 2>&1; then
+  export CPPFLAGS="${CPPFLAGS:+$CPPFLAGS }-I$(brew --prefix netcdf)/include -I$(brew --prefix netcdf-fortran)/include -I${HDF_PATH}/include"
+  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$(brew --prefix netcdf)/lib -L$(brew --prefix netcdf-fortran)/lib -L${HDF_PATH}/lib"
+fi
+
+# Guard: detect toolchain mismatch on HPC
+FC_VER=$("${FC}" -dumpfullversion 2>/dev/null || echo "")
+case "$NETCDF_FORTRAN" in *gcc-8.*)
+  case "$FC_VER" in 8.*) : ;; *) echo "Toolchain mismatch: NetCDF-Fortran built with GCC 8.x but FC=$FC_VER"; exit 2;; esac
+;; esac
 
 # --- Build ---
 cd build
 make clean || true
-
-# FUSE expects F_MASTER to be the parent of build/
 export F_MASTER="$(cd .. && pwd)/"
 
 echo "Build environment:"
@@ -254,36 +265,33 @@ echo "  F_MASTER: ${F_MASTER}"
 echo "  NCDF_PATH: ${NCDF_PATH}"
 echo "  HDF_PATH: ${HDF_PATH}"
 
-# Use upstream Makefile keys (FC, F_MASTER, NCDF_PATH, HDF_PATH)
+# Run the FUSE build
 make all \
   FC="${FC}" \
   F_MASTER="${F_MASTER}" \
   NCDF_PATH="${NCDF_PATH}" \
   HDF_PATH="${HDF_PATH}" \
-  -j "${NCORES}"
+  -j "${NCORES:-4}"
 
-# Stage the binary even if Makefile didn't 'install' it for us
+# Stage binary even if Makefile didn’t install it
 mkdir -p ../bin
-if [ -f fuse.exe ]; then
-  mv fuse.exe ../bin/
-fi
+[ -f fuse.exe ] && mv fuse.exe ../bin/ || true
 
 # Verify
 ls -la ../bin/ || true
 test -f ../bin/fuse.exe
 ../bin/fuse.exe 2>&1 | head -5 || true
-
-    '''
-            ],
-
-            'dependencies': [],
-            'test_command': None,
-            'verify_install': {
-                'file_paths': ['bin/fuse.exe'],
-                'check_type': 'exists'
-            },
-            'order': 4
+        '''
+        ],
+        "dependencies": [],
+        "test_command": None,
+        "verify_install": {
+            "file_paths": ["bin/fuse.exe"],
+            "check_type": "exists"
         },
+        "order": 4
+            },
+
 
         # ================================================================
         # TauDEM - Terrain Analysis
