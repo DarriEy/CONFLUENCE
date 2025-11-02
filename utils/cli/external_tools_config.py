@@ -552,10 +552,12 @@ fi
             'build_commands': [
                 r'''
 set -e
+# Fix TauDEM CMakeLists.txt bug with compiler flags (if present)
+if [ -f CMakeLists.txt ]; then
+    sed -i.bak 's/-fexceptions -pthread/-fexceptions;-pthread/g' CMakeLists.txt
+fi
 rm -rf build && mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CXX_FLAGS="-fexceptions -pthread" \
-      -S .. -B .
+cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
 cmake --build . -j ${NCORES:-4}
 mkdir -p ../bin
 # copy executables from src subdirectory
