@@ -225,15 +225,46 @@ ls -la ../bin/ || true
                 common_env,
                 r'''
 # Build FUSE executable using the upstream Makefile
-# The Makefile expects F_MASTER to point to the fuse root directory
 cd build
 make clean || true
 
 # Set F_MASTER to the fuse root (parent of build/)
 export F_MASTER="$(cd .. && pwd)/"
 
-# Build with environment-provided paths
-make -j "${NCORES}" \
+# Find HDF5 on HPC systems (check common HPC locations)
+if [ -z "$HDF5_ROOT" ]; then
+    # Try module environment first
+    for var in HDF5_ROOT HDF5_DIR HDF5HOME EBROOTHDF5; do
+        if [ -n "${!var}" ]; then
+            export HDF5_ROOT="${!var}"
+            echo "Found HDF5 via \$${var}: $HDF5_ROOT"
+            break
+        fi
+    done
+    
+    # If still not found, try to detect from loaded modules or common paths
+    if [ -z "$HDF5_ROOT" ]; then
+        for path in /apps/spack/*/apps/hdf5/*/lib /usr/lib64/hdf5 /usr/lib/x86_64-linux-gnu/hdf5/serial; do
+            if [ -d "$path" ]; then
+                export HDF5_ROOT="$(dirname "$path")"
+                echo "Detected HDF5 at: $HDF5_ROOT"
+                break
+            fi
+        done
+    fi
+    
+    # Last resort fallback
+    HDF5_ROOT="${HDF5_ROOT:-/usr}"
+fi
+
+echo "Build environment:"
+echo "  FC: ${FC}"
+echo "  F_MASTER: ${F_MASTER}"
+echo "  NETCDF_FORTRAN: ${NETCDF_FORTRAN}"
+echo "  HDF5_ROOT: ${HDF5_ROOT}"
+
+# Run the full build (make all handles compilation order correctly)
+make all \
 FC="${FC}" \
 F_MASTER="${F_MASTER}" \
 NCDF_LIB_PATH="${NETCDF_FORTRAN}/lib" \
@@ -242,7 +273,13 @@ INCLUDE_PATH="${NETCDF_FORTRAN}"
 
 # Verify executable was created
 ls -la ../bin/ || true
-[ -f ../bin/fuse.exe ] && echo "✅ fuse.exe built successfully" || echo "⚠️ fuse.exe not found"
+if [ -f ../bin/fuse.exe ]; then
+    echo "✅ fuse.exe built successfully"
+    ../bin/fuse.exe 2>&1 | head -5 || true
+else
+    echo "⚠️ fuse.exe not found"
+    exit 1
+fi
                 '''
             ],
             'dependencies': [],
