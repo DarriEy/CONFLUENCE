@@ -13,6 +13,7 @@ Classes:
 import os
 import sys
 import json
+import string
 import subprocess
 import numpy as np
 import pandas as pd
@@ -498,8 +499,14 @@ class NgenPreProcessor:
                 assert 'ids' in ds.variables, "Missing variable 'ids'"
                 ids_var = ds.variables['ids']
                 assert ids_var.dtype.kind == 'S', "'ids' must be a fixed-length CHAR array"
-                assert ids_var.dimensions == (CATCH_DIM, 'id_strlen'), \
-                    "ids must have dims (feature_id, id_strlen)"
+                
+                # Check dimensions - convert to tuple for comparison
+                actual_dims = tuple(ids_var.dimensions)
+                expected_dims = (CATCH_DIM, 'id_strlen')
+                if actual_dims != expected_dims:
+                    self.logger.error(f"ids dimensions mismatch: expected {expected_dims}, got {actual_dims}")
+                    raise AssertionError(f"ids must have dims {expected_dims}, but has {actual_dims}")
+                    
             self.logger.info("Forcing file passes basic NGen checks (dims/ids via 'feature_id').")
         except Exception as e:
             self.logger.error(f"Forcing validation failed: {e}")
