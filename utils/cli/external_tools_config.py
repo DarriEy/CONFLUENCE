@@ -209,32 +209,33 @@ fi
             'build_commands': [
                 common_env,
                 r'''
-# Build mizuRoute - set required Makefile variables
+# Build mizuRoute - edit Makefile directly (it doesn't use env vars)
 cd route/build
 
-# Set F_MASTER (path to mizuRoute root, before build/)
-export F_MASTER="$(cd ../.. && pwd)"
+# Get F_MASTER (path to mizuRoute root)
+F_MASTER_PATH="$(cd ../.. && pwd)"
 
-# Set compiler names explicitly  
-export FC=gnu
-export FC_EXE=gfortran
+# Edit the Makefile in-place
+# Use perl for cross-platform compatibility (works on both Mac and Linux)
+perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
+perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
+perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH|" Makefile
+perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF}|" Makefile
+perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
-# Set NetCDF paths
-export NCDF_PATH="${NETCDF}"
-
-# Optional: disable OpenMP if needed (set to 'no' by default, 'yes' to enable)
-export isOpenMP="${isOpenMP:-no}"
+# Show what we set
+echo "=== Makefile configuration ==="
+grep -E "^(FC|FC_EXE|F_MASTER|NCDF_PATH|isOpenMP)\s*=" Makefile | head -10
 
 # Clean any previous builds
 make clean || true
 
-# Build - the Makefile reads vars from environment
-make -j "${NCORES}" || {
+# Build with explicit -j value
+JOBS="${NCORES:-4}"
+make -j "$JOBS" || {
     echo "ERROR: mizuRoute build failed"
-    echo "Checking route/build directory:"
+    echo "Build directory contents:"
     ls -la . || true
-    echo "Checking Makefile:"
-    head -30 Makefile || true
     exit 1
 }
 
