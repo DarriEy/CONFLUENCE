@@ -212,9 +212,9 @@ fi
 # Build mizuRoute - edit Makefile directly (it doesn't use env vars)
 cd route/build
 
-# Get absolute path to mizuRoute root (two levels up from route/build)
-F_MASTER_PATH="$(cd ../.. && pwd)"
-echo "F_MASTER will be set to: $F_MASTER_PATH"
+# F_MASTER should point to the route directory (one level up from build)
+F_MASTER_PATH="$(cd .. && pwd)"
+echo "F_MASTER will be set to: $F_MASTER_PATH/"
 
 # Edit the Makefile in-place - CRITICAL: F_MASTER needs trailing slash
 perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
@@ -238,11 +238,13 @@ make -j "$JOBS" || {
     echo "ERROR: mizuRoute build failed"
     echo "Build directory contents:"
     ls -la . || true
+    echo "Checking if source files exist:"
+    ls -la ../src/ | head -10 || true
     exit 1
 }
 
 # Verify executable was created
-if [ -f "../bin/mizuRoute.exe" ] || [ -f "../bin/mizuRoute.exe" ]; then
+if [ -f "../bin/mizuRoute.exe" ]; then
     echo "Build successful - executable created"
     ls -la ../bin/
 else
@@ -255,8 +257,8 @@ fi
             'dependencies': [],
             'test_command': None,
             'verify_install': {
-                'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
-                'check_type': 'exists_any'
+                'file_paths': ['route/bin/mizuRoute.exe'],
+                'check_type': 'exists'
             },
             'order': 3
         },
