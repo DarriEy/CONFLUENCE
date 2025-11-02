@@ -8,12 +8,14 @@ Classes:
     NgenPreProcessor: Handles spatial preprocessing and configuration generation
     NgenRunner: Manages model execution
     NgenPostprocessor: Processes model outputs
+
+Author: CONFLUENCE Development Team
+Date: 2025
 """
 
 import os
 import sys
 import json
-import string
 import subprocess
 import numpy as np
 import pandas as pd
@@ -89,11 +91,6 @@ class NgenPreProcessor:
             CONFLUENCE_CODE_DIR/0_base_settings/NOAH/parameters/
         To:
             domain_dir/settings/ngen/NOAH/parameters/
-        
-        Note: These are generic CONUS tables. For best results:
-        - Verify soil_class_name matches your region
-        - Consider region-specific MPTABLE.TBL
-        - Check vegetation types in your domain
         """
         self.logger.info("Copying Noah-OWP parameter tables")
         
@@ -364,281 +361,201 @@ class NgenPreProcessor:
         
         self.logger.info(f"Created catchment geopackage with {len(divides_gdf)} catchments: {gpkg_file}")
         return gpkg_file
-                
+    
     def prepare_forcing_data(self) -> Path:
         """
-        Convert CONFLUENCE basin-averaged ERA5 forcing to NGen format.
-
-        Steps:
-        1) load monthly forcing files
-        2) merge across time
-        3) subset to simulation window
-        4) map variables and reshape to (feature_id, time)
-        5) write a clean NETCDF4 file (ids as fixed-length CHAR with dims (feature_id, id_strlen))
-        6) validate core structure expected by NGen
+        Convert CONFLUENCE basin-averaged ERA5 forcing to ngen format.
+        
+        Processes:
+        1. Load all monthly forcing files
+        2. Merge across time
+        3. Map variable names (ERA5 → ngen)
+        4. Reorganize dimensions (hru, time) → (catchment-id, time)
+        5. Add catchment IDs
+        
+        Returns:
+            Path to ngen forcing NetCDF file
         """
-        import string
         self.logger.info("Preparing forcing data for ngen")
-
-        # --- Load catchment IDs -> cat-<HRU_ID> (strings) ---
+        
+        # Load catchment IDs - must match divide_id format in geopackage (cat-X)
         catchment_file = self.catchment_path / self.catchment_name
         catchment_gdf = gpd.read_file(catchment_file)
         catchment_ids = [f"cat-{x}" for x in catchment_gdf[self.hru_id_col].astype(str).tolist()]
         n_catchments = len(catchment_ids)
-        if n_catchments == 0:
-            raise RuntimeError("No catchments found when building forcing.")
+        
         self.logger.info(f"Processing forcing for {n_catchments} catchments")
-
-        # --- Gather forcing files ---
+        
+        # Get forcing files
         forcing_files = sorted(self.basin_forcing_dir.glob("*.nc"))
         if not forcing_files:
             raise FileNotFoundError(f"No forcing files found in {self.basin_forcing_dir}")
+        
         self.logger.info(f"Found {len(forcing_files)} forcing files")
-
-        # --- Open/concat by time ---
-        forcing_data = xr.open_mfdataset(
-            [str(p) for p in forcing_files],
-            combine="by_coords",
-            parallel=False,
-            decode_times=True,
-            engine="netcdf4",
-        )
-
-        # --- Simulation window (handle 'default') ---
-        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00') or '2000-01-01 00:00:00'
-        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00') or '2000-12-31 23:00:00'
+        
+        # Open all files and concatenate
+        datasets = []
+        for f in forcing_files:
+            ds = xr.open_dataset(f)
+            datasets.append(ds)
+        
+        # Concatenate along time dimension
+        forcing_data = xr.concat(datasets, dim='time')
+        
+        # Get time bounds from config - use defaults if not specified or set to 'default'
+        sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
+        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        
+        # Handle 'default' string
         if sim_start == 'default':
             sim_start = '2000-01-01 00:00:00'
         if sim_end == 'default':
             sim_end = '2000-12-31 23:00:00'
-
+        
+        # Always subset to simulation period
         start_time = pd.to_datetime(sim_start)
-        end_time   = pd.to_datetime(sim_end)
-
-        # Ensure datetime64[ns] on coord, then subset
-        forcing_data = forcing_data.assign_coords(time=pd.to_datetime(forcing_data.time.values))
+        end_time = pd.to_datetime(sim_end)
+        
+        # Convert forcing time to datetime if needed
+        time_values = pd.to_datetime(forcing_data.time.values)
+        forcing_data['time'] = time_values
+        
+        # Select time slice for simulation period
         forcing_data = forcing_data.sel(time=slice(start_time, end_time))
-
-        # Log actual range available post-subset
-        self.logger.info(
-            f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}"
-        )
-
-        # --- Create NGen forcing dataset (feature_id, time) with AORC/NOAH names ---
+            
+        self.logger.info(f"Forcing time range: {forcing_data.time.values[0]} to {forcing_data.time.values[-1]}")
+        
+        # Create ngen-formatted dataset
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
-        # We’re done with source
-        forcing_data.close()
-
-        # --- Ensure dims are exactly ('feature_id','time') for data and
-        #     create 'ids' as fixed-length CHAR with dims ('feature_id','id_strlen') ---
-        CATCH_DIM = 'feature_id'
-
-        # 1) Make sure all data vars with catchment axis use 'feature_id' as the name
-        rename_map = {}
-        for v in ngen_ds.data_vars:
-            dims = list(ngen_ds[v].dims)
-            if 'catchment' in dims:
-                rename_map['catchment'] = CATCH_DIM
-                break
-        if rename_map:
-            ngen_ds = ngen_ds.rename(rename_map)
-
-        # 2) Ensure the dimension exists even before adding arrays
-        if CATCH_DIM not in ngen_ds.dims:
-            ngen_ds = ngen_ds.assign_coords({CATCH_DIM: np.arange(n_catchments)}).expand_dims({CATCH_DIM: n_catchments})
-
-        # 3) Build fixed-length CHAR matrix for ids
-        def _to_char_matrix(strings: List[str]) -> Tuple[np.ndarray, int]:
-            # Basic ASCII safety/pass-through; replace any whitespace control chars
-            cleaned = []
-            for s in strings:
-                s2 = ''.join(ch if ch in string.printable and ch not in '\r\n\t' else '_' for ch in s)
-                cleaned.append(s2)
-            L = max(1, max(len(s) for s in cleaned))
-            arr = np.full((len(cleaned), L), b' ', dtype='S1')
-            for i, s in enumerate(cleaned):
-                b = s.encode('ascii', errors='replace')  # 'replace' -> b'?'
-                arr[i, :len(b)] = np.frombuffer(b, dtype='S1')
-            return arr, L
-
-        char_ids, id_strlen = _to_char_matrix(catchment_ids)
-
-        # Add id_strlen as a proper dimension length
-        ngen_ds = ngen_ds.assign_coords(id_strlen=np.arange(id_strlen))
-        # Create/overwrite 'ids' as a CHAR array
-        ngen_ds['ids'] = xr.DataArray(
-            char_ids,
-            dims=(CATCH_DIM, 'id_strlen')
-        )
-
-        # Also include a human-friendly (vlen) string coord if helpful (not required by NGen)
-        # This stays as a coord and doesn't affect our CHAR variable.
-        ngen_ds = ngen_ds.assign_coords({CATCH_DIM: np.arange(n_catchments)})
-
-        # --- Encoding: float32 for numeric vars; CHAR S1 for ids ---
+        
+        # Save to file with NETCDF4 format (supports native string type)
         output_file = self.forcing_dir / "forcing.nc"
-        encoding: Dict[str, Dict[str, Any]] = {'ids': {'dtype': 'S1'}}
-
-        for name, da in ngen_ds.data_vars.items():
-            if name == 'ids':
-                continue
-            if da.dtype.kind == 'f':
-                encoding[name] = {'dtype': 'float32'}
-
-        # Write
-        ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
-
-        # --- Validate the file structure as NGen expects ---
-        try:
-            with nc4.Dataset(output_file, mode='r') as ds:
-                # dimensions
-                assert CATCH_DIM in ds.dimensions, f"Missing dim '{CATCH_DIM}'"
-                assert 'time' in ds.dimensions, "Missing dim 'time'"
-                assert 'id_strlen' in ds.dimensions, "Missing dim 'id_strlen'"
-                # ids as fixed-length CHAR with (feature_id, id_strlen)
-                assert 'ids' in ds.variables, "Missing variable 'ids'"
-                ids_var = ds.variables['ids']
-                assert ids_var.dtype.kind == 'S', "'ids' must be a fixed-length CHAR array"
-                
-                # Check dimensions - convert to tuple for comparison
-                actual_dims = tuple(ids_var.dimensions)
-                expected_dims = (CATCH_DIM, 'id_strlen')
-                if actual_dims != expected_dims:
-                    self.logger.error(f"ids dimensions mismatch: expected {expected_dims}, got {actual_dims}")
-                    raise AssertionError(f"ids must have dims {expected_dims}, but has {actual_dims}")
-                    
-            self.logger.info("Forcing file passes basic NGen checks (dims/ids via 'feature_id').")
-        except Exception as e:
-            self.logger.error(f"Forcing validation failed: {e}")
-            raise
-
-        self.logger.info(f"Wrote ngen forcing: {output_file}")
+        ngen_ds.to_netcdf(output_file, format='NETCDF4')
+        
+        # Close datasets
+        forcing_data.close()
+        for ds in datasets:
+            ds.close()
+        
+        self.logger.info(f"Created ngen forcing file: {output_file}")
         return output_file
-
-
-
-    def _create_ngen_forcing_dataset(
-        self, forcing_data: xr.Dataset, catchment_ids: List[str]
-    ) -> xr.Dataset:
+    
+    def _create_ngen_forcing_dataset(self, forcing_data: xr.Dataset, catchment_ids: List[str]) -> xr.Dataset:
         """
-        Build NGen-ready forcing with:
-        dims:  feature_id, time
-        vars:  PRCPNONC, SFCTMP, Q2, SFCPRS, SOLDN, LWDN, UU, VV
-        ids:   fixed-length CHAR array ids(feature_id, id_strlen)
+        Create ngen-formatted forcing dataset with proper variable mapping.
+        
+        Args:
+            forcing_data: Source forcing dataset (ERA5)
+            catchment_ids: List of catchment identifiers
+            
+        Returns:
+            ngen-formatted xarray Dataset
         """
-        # ---------------- basics ----------------
-        FEATURE_DIM = "feature_id"
-        n_feat = len(catchment_ids)
-
-        # make a copy with a guaranteed ns-resolution time
-        fd = forcing_data.copy()
-        fd = fd.assign_coords(time=pd.to_datetime(fd.time.values))
-
-        # Helper to expand a (time,) array across features -> (feature_id, time)
-        def expand_to_features(arr_1d_time: np.ndarray) -> np.ndarray:
-            return np.tile(arr_1d_time[None, :], (n_feat, 1))
-
-        # normalize a candidate dataarray (1D time or 2D singleton spatial) -> (feature_id, time)
-        def to_feat_time(da: xr.DataArray) -> np.ndarray:
-            v = da.values
-            if v.ndim == 1:                    # (time,)
-                return expand_to_features(v)
-            if v.ndim == 2 and 1 in v.shape:   # (1, time) or (time, 1)
-                return expand_to_features(np.squeeze(v))
-            # Already 2D with a time axis — align to (feature, time) if needed
-            time_len = fd.dims.get('time', len(fd.time))
-            return v.T if v.shape[0] == time_len else v
-
-        # ---------------- assemble dataset ----------------
-        ngen = xr.Dataset(coords={"time": fd.time.values})
-        ngen = ngen.assign_coords({FEATURE_DIM: np.arange(n_feat, dtype=np.int32)})
-
-        # ---- AORC/NOAH names ----
-        # Precipitation rate (prefer your 'pptrate'; else try common aliases)
-        if 'pptrate' in fd:
-            PRCP = to_feat_time(fd['pptrate'])
-            ngen['PRCPNONC'] = xr.DataArray(PRCP.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            raise ValueError("Forcing is missing 'pptrate' needed for PRCPNONC.")
-
-        # 2 m temperature (K)
-        if 't2m' in fd:
-            SFCTMP = to_feat_time(fd['t2m'])
-            ngen['SFCTMP'] = xr.DataArray(SFCTMP.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.warning("No 't2m' found; SFCTMP will be missing.")
-
-        # Surface pressure (Pa)
-        if 'sp' in fd:
-            SFCPRS = to_feat_time(fd['sp'])
-            ngen['SFCPRS'] = xr.DataArray(SFCPRS.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.warning("No 'sp' found; SFCPRS will be missing.")
-
-        # Shortwave / longwave down (W m-2)
-        if 'dswrf' in fd:
-            SOLDN = to_feat_time(fd['dswrf'])
-            ngen['SOLDN'] = xr.DataArray(SOLDN.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.warning("No 'dswrf' found; SOLDN will be missing.")
-
-        if 'dlwrf' in fd:
-            LWDN = to_feat_time(fd['dlwrf'])
-            ngen['LWDN'] = xr.DataArray(LWDN.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.warning("No 'dlwrf' found; LWDN will be missing.")
-
-        # Wind components (10 m)
-        if 'u10' in fd and 'v10' in fd:
-            UU = to_feat_time(fd['u10'])
-            VV = to_feat_time(fd['v10'])
-            ngen['UU'] = xr.DataArray(UU.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-            ngen['VV'] = xr.DataArray(VV.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        elif 'windspd' in fd:
-            self.logger.warning("Using wind speed approximation for U/V components. For best results, provide ERA5 u10/v10.")
-            base = to_feat_time(fd['windspd']) / np.sqrt(2.0)
-            ngen['UU'] = xr.DataArray(base.astype(np.float32),  dims=[FEATURE_DIM, 'time'])
-            ngen['VV'] = xr.DataArray(base.astype(np.float32),  dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.warning("No wind fields present; UU/VV will be missing.")
-
-        # Specific humidity at 2 m (Q2) from dewpoint + pressure if possible
-        #   e  = 6.112 * exp(17.67 * (Td-273.15) / (Td-29.65)) [hPa]  (Tetens approx)
-        #   q2 = 0.622 * (e/100) / (p - (1-0.622)*(e/100))            [kg/kg], with p in Pa
-        if 'd2m' in fd and 'sp' in fd:
-            Td = to_feat_time(fd['d2m'])         # K
-            p  = to_feat_time(fd['sp'])          # Pa
-            Td_C = Td - 273.15
-            e_hPa = 6.112 * np.exp(17.67 * Td_C / (Td_C + 243.5))
-            e_Pa = e_hPa * 100.0
-            q2 = 0.622 * e_Pa / (p - (1.0 - 0.622) * e_Pa)
-            ngen['Q2'] = xr.DataArray(q2.astype(np.float32), dims=[FEATURE_DIM, 'time'])
-        else:
-            self.logger.info("Q2 not computed (need t2m, d2m, and surface pressure). Proceeding without it.")
-
-        # ---------------- stable CHAR ids ----------------
-        # Build fixed-length char array ids(feature_id, id_strlen)
-        ids = [str(x) for x in catchment_ids]
-        maxlen = max(max(len(s) for s in ids), 1)
-        char_arr = np.full((n_feat, maxlen), fill_value=' ', dtype='S1')
-        for i, s in enumerate(ids):
-            bs = np.frombuffer(s.encode('utf-8'), dtype='S1')
-            char_arr[i, :len(bs)] = bs
-
-        ngen = ngen.assign_coords({"id_strlen": np.arange(maxlen, dtype=np.int32)})
-        ngen['ids'] = xr.DataArray(char_arr, dims=[FEATURE_DIM, 'id_strlen'])
-
-        # also provide a convenient integer index coord
-        ngen = ngen.assign_coords({'feature_idx': (FEATURE_DIM, np.arange(n_feat, dtype=np.int32))})
-
-        # Strongly prefer pure ASCII in CHAR vars
-        ngen['ids'].encoding.update(dict(char_dim='id_strlen'))
-
-        return ngen
-
-
-
-
+        n_catchments = len(catchment_ids)
+        n_times = len(forcing_data.time)
+        
+        # Convert time to nanoseconds since epoch (ngen format - matching working example)
+        time_values = forcing_data.time.values
+        
+        # Ensure we have datetime64 objects
+        if not np.issubdtype(time_values.dtype, np.datetime64):
+            # Try to decode using xarray's built-in time decoding
+            if 'units' in forcing_data.time.attrs:
+                time_values = xr.decode_cf(forcing_data).time.values
+            else:
+                # Fallback: assume hours since 1900-01-01 (common ERA5 format)
+                time_values = pd.to_datetime(time_values, unit='h', origin='1900-01-01').values
+        
+        # Verify we have datetime64 now
+        if not np.issubdtype(time_values.dtype, np.datetime64):
+            raise ValueError(f"Could not convert time to datetime64, got dtype: {time_values.dtype}")
+        
+        # Convert to nanoseconds since 1970-01-01 (Unix epoch)
+        time_ns = ((time_values - np.datetime64('1970-01-01T00:00:00')) / np.timedelta64(1, 'ns')).astype(np.int64)
+        
+        # Sanity check - values should be positive and reasonable (between 1970 and 2100)
+        min_ns = 0  # 1970-01-01
+        max_ns = 4102444800 * 1e9  # 2100-01-01 in nanoseconds
+        if np.any(time_ns < min_ns) or np.any(time_ns > max_ns):
+            raise ValueError(f"Time values out of reasonable range. Got min={time_ns.min()}, max={time_ns.max()}. "
+                           f"Expected between {min_ns} and {max_ns}")
+        
+        # Create coordinate arrays
+        catchment_coord = np.arange(n_catchments)
+        time_coord = np.arange(n_times)  # Simple indices for time dimension
+        
+        # Initialize dataset with dimensions matching working example
+        ngen_ds = xr.Dataset(
+            coords={
+                'catchment-id': ('catchment-id', catchment_coord),
+                'time': ('time', time_coord),
+                'str_dim': ('str_dim', np.array([1]))  # Required dimension for ngen
+            }
+        )
+        
+        # Add catchment IDs as native NetCDF4 string type
+        ngen_ds['ids'] = xr.DataArray(
+            np.array(catchment_ids, dtype=object),
+            dims=['catchment-id'],
+            attrs={'long_name': 'catchment identifiers'}
+        )
+        
+        # Add Time variable (capital T) with nanoseconds for each catchment-time pair
+        # Replicate time values for each catchment
+        time_data = np.tile(time_ns, (n_catchments, 1)).astype(np.float64)
+        ngen_ds['Time'] = xr.DataArray(
+            time_data,
+            dims=['catchment-id', 'time'],
+            attrs={'units': 'ns'}
+        )
+        
+        # Map and add forcing variables
+        # ERA5 → ngen variable mapping
+        var_mapping = {
+            'pptrate': 'precip_rate',
+            'airtemp': 'TMP_2maboveground',
+            'spechum': 'SPFH_2maboveground',
+            'airpres': 'PRES_surface',
+            'SWRadAtm': 'DSWRF_surface',
+            'LWRadAtm': 'DLWRF_surface'
+        }
+        
+        # Add variables as float32 to match ngen requirements
+        for era5_var, ngen_var in var_mapping.items():
+            if era5_var in forcing_data:
+                # Get data and transpose to (catchment, time)
+                data = forcing_data[era5_var].values.T  # (time, hru) → (hru, time)
+                
+                # Replicate for multiple catchments if needed
+                if data.shape[0] == 1 and n_catchments > 1:
+                    data = np.tile(data, (n_catchments, 1))
+                
+                ngen_ds[ngen_var] = xr.DataArray(
+                    data.astype(np.float32),  # Ensure float32
+                    dims=['catchment-id', 'time']
+                )
+        
+        # Handle wind components
+        # ERA5 provides windspd; ngen needs UGRD and VGRD
+        # Approximate: assume wind from west, so UGRD = windspd, VGRD = 0
+        if 'windspd' in forcing_data:
+            windspd_data = forcing_data['windspd'].values.T
+            
+            if windspd_data.shape[0] == 1 and n_catchments > 1:
+                windspd_data = np.tile(windspd_data, (n_catchments, 1))
+            
+            # Approximate split (could be improved with actual U/V components)
+            ngen_ds['UGRD_10maboveground'] = xr.DataArray(
+                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
+                dims=['catchment-id', 'time']
+            )
+            ngen_ds['VGRD_10maboveground'] = xr.DataArray(
+                (windspd_data * 0.707).astype(np.float32),  # Ensure float32
+                dims=['catchment-id', 'time']
+            )
+        
+        return ngen_ds
+    
     def generate_model_configs(self):
         """
         Generate model-specific configuration files for each catchment.
@@ -668,14 +585,7 @@ class NgenPreProcessor:
         self.logger.info(f"Generated configs for {len(catchment_gdf)} catchments")
     
     def _generate_cfe_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
-        """
-        Generate CFE model configuration file.
-        
-        NOTE: This uses generic default parameters. For better results:
-        - Extract parameters from NWM hydrofabric attributes
-        - Use soil texture-based parameters
-        - Customize GIUH ordinates based on catchment size
-        """
+        """Generate CFE model configuration file."""
         
         # Get catchment-specific parameters (or use defaults)
         # In a full implementation, these would come from soil/vegetation data
@@ -709,56 +619,6 @@ giuh_ordinates=0.65,0.35
         config_file = self.ngen_setup_dir / "CFE" / f"cat-{catchment_id}_bmi_config_cfe_pass.txt"
         with open(config_file, 'w') as f:
             f.write(config_text)
-        
-        # IMPROVED: Validate the generated config
-        if not self._validate_cfe_config(config_file):
-            self.logger.warning(f"Generated CFE config may be incomplete: {config_file}")
-
-    def _compute_q2_specific_humidity(self, t2m_K: np.ndarray, d2m_K: np.ndarray, pres_Pa: np.ndarray) -> np.ndarray:
-        """
-        Compute specific humidity (Q2, kg/kg) at 2m from air temp (t2m, K),
-        dewpoint (d2m, K) and surface pressure (Pa).
-        Formula: q = 0.622 * e / (p - 0.378 * e), where e is vapor pressure (Pa).
-        e from dewpoint (Tetens, in Pa): e = 611.2 * exp(17.67 * Td_C / (Td_C + 243.5))
-        """
-        Td_C = d2m_K - 273.15
-        # Tetens (Pa)
-        e = 611.2 * np.exp(17.67 * Td_C / (Td_C + 243.5))
-        p = pres_Pa
-        # guard against weird/zero pressure
-        p = np.where(p <= 100.0, 101325.0, p)
-        q = 0.622 * e / (p - 0.378 * e)
-        return q.astype(np.float32)
-
-    def _validate_cfe_config(self, config_file: Path) -> bool:
-        """
-        Validate CFE config file has required parameters.
-        
-        NEW METHOD: Adds validation to catch errors early.
-        """
-        required_params = [
-            'forcing_file', 'soil_params.smcmax', 'Cgw', 
-            'max_gw_storage', 'K_nash', 'K_lf', 'giuh_ordinates'
-        ]
-        
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read()
-            
-            missing_params = []
-            for param in required_params:
-                if param not in content:
-                    missing_params.append(param)
-            
-            if missing_params:
-                self.logger.error(f"CFE config missing parameters: {', '.join(missing_params)}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error validating CFE config: {e}")
-            return False
     
     def _generate_pet_config(self, catchment_id: str, catchment_row: gpd.GeoSeries):
         """Generate PET model configuration file."""
@@ -901,199 +761,42 @@ num_timesteps=1
         with open(config_file, 'w') as f:
             f.write(config_text)
 
-
-    def _get_ngen_root(self) -> Path:
-        """
-        Default NGen root where we search for BMI .so files:
-        <CONFLUENCE_data>/installs/ngen
-        If NGEN_INSTALL_PATH is set, use that instead.
-        """
-        ngen_install_path = self.config.get('NGEN_INSTALL_PATH', 'default')
-        if ngen_install_path and ngen_install_path != 'default':
-            return Path(ngen_install_path)
-        # Default
-        confluence_data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        return confluence_data_dir.parent / 'installs' / 'ngen'
-
-    def _find_bmi_library(self, name_patterns: List[str]) -> Optional[str]:
-        """
-        Search common build locations under the NGen root for a .so
-        matching any of the provided glob patterns. Env vars can override.
-        - CFE: NGEN_CFE_LIB
-        - NOAH: NGEN_NOAH_LIB
-        - PET: NGEN_PET_LIB
-        """
-        # env override
-        env_overrides = {
-            'cfe': os.environ.get('NGEN_CFE_LIB'),
-            'noah': os.environ.get('NGEN_NOAH_LIB'),
-            'pet': os.environ.get('NGEN_PET_LIB'),
-        }
-        # If any override matches requested patterns, use it
-        for v in env_overrides.values():
-            if v and any(Path(v).name.endswith(pat.replace('*', '')) or True for pat in name_patterns):
-                if Path(v).exists():
-                    return str(Path(v).resolve())
-
-        root = self._get_ngen_root()
-        # Places we commonly see built libs
-        candidate_dirs = [
-            root,
-            root / 'build',
-            root / 'extern',
-            # typical cmake build dirs
-            *[p for p in (root / 'extern').rglob('*') if p.is_dir() and any(s in p.name.lower() for s in ('build', 'cmake', 'lib'))]
-        ]
-
-        # Unique + existing
-        seen = set()
-        dirs = []
-        for d in candidate_dirs:
-            if d.exists():
-                rp = d.resolve()
-                if rp not in seen:
-                    seen.add(rp)
-                    dirs.append(rp)
-
-        # Search breadth-first; return first match
-        for d in dirs:
-            for pat in name_patterns:
-                for f in d.rglob(pat):
-                    if f.is_file() and f.suffix in ('.so', '.dylib'):
-                        return str(f.resolve())
-
-        return None
-
-    def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file):
+    
+    def generate_realization_config(self, catchment_file: Path, nexus_file: Path, forcing_file: Path):
         """
         Generate ngen realization configuration JSON.
-
-        - forcing_file can be None | str | Path.
-        If None, we try: self.forcing_dir / "forcing.nc".
-        - Auto-detect BMI libs under CONFLUENCE_data/installs/ngen (or NGEN_INSTALL_PATH).
-        Env var overrides: NGEN_NOAH_LIB, NGEN_PET_LIB, NGEN_CFE_LIB
+        
+        This is the main configuration file that ngen uses to:
+        - Define model formulations for each catchment
+        - Specify input/output connections
+        - Configure model parameters
+        - Link to forcing data
         """
         self.logger.info("Generating realization configuration")
-
-        # ---------- Coerce/resolve forcing path safely ----------
-        forcing_path = None
-        try:
-            if forcing_file is None:
-                candidate = self.forcing_dir / "forcing.nc"
-                if candidate.exists():
-                    forcing_path = candidate.resolve()
-                else:
-                    raise FileNotFoundError(
-                        f"Forcing file not provided and default not found: {candidate}"
-                    )
-            else:
-                # accept Path-like or string
-                forcing_path = Path(forcing_file).resolve()
-                if not forcing_path.exists():
-                    raise FileNotFoundError(f"Forcing path does not exist: {forcing_path}")
-        except Exception as e:
-            self.logger.error(f"Could not determine forcing file path: {e}")
-            raise
-
-        forcing_abs_path = str(forcing_path)
-
-        # ---------- Config bases ----------
+        
+        # Get absolute paths
+        forcing_abs_path = str(forcing_file.resolve())
+        
+        # Model configuration directories
         cfe_config_base = str((self.ngen_setup_dir / "CFE").resolve())
         pet_config_base = str((self.ngen_setup_dir / "PET").resolve())
         noah_config_base = str((self.ngen_setup_dir / "NOAH").resolve())
-
-        # ---------- Time bounds ----------
+        
+        # Get simulation time bounds - handle 'default' string
         sim_start = self.config.get('EXPERIMENT_TIME_START', '2000-01-01 00:00:00')
-        sim_end   = self.config.get('EXPERIMENT_TIME_END',   '2000-12-31 23:00:00')
-        if sim_start == 'default': sim_start = '2000-01-01 00:00:00'
-        if sim_end   == 'default': sim_end   = '2000-12-31 23:00:00'
+        sim_end = self.config.get('EXPERIMENT_TIME_END', '2000-12-31 23:00:00')
+        
+        if sim_start == 'default':
+            sim_start = '2000-01-01 00:00:00'
+        if sim_end == 'default':
+            sim_end = '2000-12-31 23:00:00'
+        
+        # Ensure time strings have seconds (some configs may omit them)
+        # Convert to datetime and back to ensure proper format
         sim_start = pd.to_datetime(sim_start).strftime('%Y-%m-%d %H:%M:%S')
-        sim_end   = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
-
-        # ---------- Auto-detect BMI libraries ----------
-        noah_patterns = [
-            '*noah*owp*modular*.*so', '*surface*bmi*.so', '*libnoah*.so',
-            '*noah*owp*modular*.*dylib', '*surface*bmi*.dylib', '*libnoah*.dylib'
-        ]
-        pet_patterns = [
-            '*evapo*transp*.*so', '*evapotranspiration*.*so', '*pet*bmi*.so',
-            '*evapo*transp*.*dylib', '*evapotranspiration*.*dylib', '*pet*bmi*.dylib'
-        ]
-        cfe_patterns = [
-            '*cfe*bmi*.so', '*libcfe*.so', '*bmi_cfe*.so',
-            '*cfe*bmi*.dylib', '*libcfe*.dylib', '*bmi_cfe*.dylib'
-        ]
-
-        noah_lib = self._find_bmi_library(noah_patterns)
-        pet_lib  = self._find_bmi_library(pet_patterns)
-        cfe_lib  = self._find_bmi_library(cfe_patterns)
-
-        if noah_lib: self.logger.info(f"NOAH BMI library: {noah_lib}")
-        else:        self.logger.warning("NOAH BMI library not found. Set NGEN_NOAH_LIB or ensure build outputs are present.")
-        if pet_lib:  self.logger.info(f"PET BMI library:  {pet_lib}")
-        else:        self.logger.warning("PET BMI library not found. Set NGEN_PET_LIB or ensure build outputs are present.")
-        if cfe_lib:  self.logger.info(f"CFE BMI library:  {cfe_lib}")
-        else:        self.logger.warning("CFE BMI library not found. Set NGEN_CFE_LIB or ensure build outputs are present.")
-
-        modules = [
-            {
-                "name": "bmi_fortran",
-                "params": {
-                    "name": "bmi_fortran",
-                    "model_type_name": "NoahOWP",
-                    "library_file": noah_lib or "",
-                    "forcing_file": "",
-                    "init_config": f"{noah_config_base}/{{{{id}}}}.input",
-                    "allow_exceed_end_time": True,
-                    "main_output_variable": "QINSUR",
-                    "registration_function": "register_bmi_noahowp",
-                    "variables_names_map": {
-                        "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
-                        "Q2": "atmosphere_air_water~vapor__specific_humidity",
-                        "SFCTMP": "land_surface_air__temperature",
-                        "UU": "land_surface_wind__x_component_of_velocity",
-                        "VV": "land_surface_wind__y_component_of_velocity",
-                        "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
-                        "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
-                        "SFCPRS": "land_surface_air__pressure"
-                    },
-                    "uses_forcing_file": False
-                }
-            },
-            {
-                "name": "bmi_c++",
-                "params": {
-                    "name": "bmi_c++",
-                    "model_type_name": "EVAPOTRANSPIRATION",
-                    "library_file": pet_lib or "",
-                    "forcing_file": "",
-                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
-                    "allow_exceed_end_time": True,
-                    "main_output_variable": "water_potential_evaporation_flux",
-                    "registration_function": "register_bmi_pet",
-                    "uses_forcing_file": False
-                }
-            },
-            {
-                "name": "bmi_c",
-                "params": {
-                    "name": "bmi_c",
-                    "model_type_name": "CFE",
-                    "library_file": cfe_lib or "",
-                    "forcing_file": "",
-                    "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
-                    "allow_exceed_end_time": True,
-                    "main_output_variable": "Q_OUT",
-                    "registration_function": "register_bmi_cfe",
-                    "variables_names_map": {
-                        "atmosphere_water__liquid_equivalent_precipitation_rate": "QINSUR",
-                        "water_potential_evaporation_flux": "water_potential_evaporation_flux"
-                    },
-                    "uses_forcing_file": False
-                }
-            }
-        ]
-
+        sim_end = pd.to_datetime(sim_end).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Create realization config
         config = {
             "global": {
                 "formulations": [{
@@ -1103,7 +806,79 @@ num_timesteps=1
                         "init_config": "",
                         "allow_exceed_end_time": True,
                         "main_output_variable": "Q_OUT",
-                        "modules": modules,
+                        "modules": [
+                            {
+                                "name": "bmi_c++",
+                                "params": {
+                                    "model_type_name": "bmi_c++_sloth",
+                                    "library_file": "./extern/sloth/cmake_build/libslothmodel.so",
+                                    "init_config": "/dev/null",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "z",
+                                    "uses_forcing_file": False,
+                                    "model_params": {
+                                        "sloth_ice_fraction_schaake(1,double,m,node)": 0.0,
+                                        "sloth_ice_fraction_xinanjiang(1,double,1,node)": 0.0,
+                                        "sloth_smp(1,double,1,node)": 0.0
+                                    }
+                                }
+                            },
+                            {
+                                "name": "bmi_c",
+                                "params": {
+                                    "model_type_name": "PET",
+                                    "library_file": "./extern/evapotranspiration/evapotranspiration/cmake_build/libpetbmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{pet_config_base}/{{{{id}}}}_pet_config.txt",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "water_potential_evaporation_flux",
+                                    "registration_function": "register_bmi_pet",
+                                    "uses_forcing_file": False
+                                }
+                            },
+                            {
+                                "name": "bmi_fortran",
+                                "params": {
+                                    "model_type_name": "bmi_fortran_noahowp",
+                                    "library_file": "./extern/noah-owp-modular/cmake_build/libsurfacebmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{noah_config_base}/{{{{id}}}}.input",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "QINSUR",
+                                    "uses_forcing_file": False,
+                                    "variables_names_map": {
+                                        "PRCPNONC": "atmosphere_water__liquid_equivalent_precipitation_rate",
+                                        "Q2": "atmosphere_air_water~vapor__relative_saturation",
+                                        "SFCTMP": "land_surface_air__temperature",
+                                        "UU": "land_surface_wind__x_component_of_velocity",
+                                        "VV": "land_surface_wind__y_component_of_velocity",
+                                        "LWDN": "land_surface_radiation~incoming~longwave__energy_flux",
+                                        "SOLDN": "land_surface_radiation~incoming~shortwave__energy_flux",
+                                        "SFCPRS": "land_surface_air__pressure"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "bmi_c",
+                                "params": {
+                                    "model_type_name": "bmi_c_cfe",
+                                    "library_file": "./extern/cfe/cmake_build/libcfebmi.so",
+                                    "forcing_file": "",
+                                    "init_config": f"{cfe_config_base}/{{{{id}}}}_bmi_config_cfe_pass.txt",
+                                    "allow_exceed_end_time": True,
+                                    "main_output_variable": "Q_OUT",
+                                    "registration_function": "register_bmi_cfe",
+                                    "variables_names_map": {
+                                        "atmosphere_water__liquid_equivalent_precipitation_rate": "QINSUR",
+                                        "water_potential_evaporation_flux": "water_potential_evaporation_flux",
+                                        "ice_fraction_schaake": "sloth_ice_fraction_schaake",
+                                        "ice_fraction_xinanjiang": "sloth_ice_fraction_xinanjiang",
+                                        "soil_moisture_profile": "sloth_smp"
+                                    },
+                                    "uses_forcing_file": False
+                                }
+                            }
+                        ],
                         "uses_forcing_file": False
                     }
                 }],
@@ -1118,14 +893,13 @@ num_timesteps=1
                 "output_interval": 3600
             }
         }
-
+        
+        # Save configuration
         config_file = self.ngen_setup_dir / "realization_config.json"
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)
-
+        
         self.logger.info(f"Created realization config: {config_file}")
-
-
 
 
 class NgenRunner:
@@ -1178,18 +952,10 @@ class NgenRunner:
         nexus_file = self.ngen_setup_dir / "nexus.geojson"
         realization_file = self.ngen_setup_dir / "realization_config.json"
         
-        # Verify files exist - IMPROVED with better error messages
-        missing_files = []
+        # Verify files exist
         for file in [catchment_file, nexus_file, realization_file]:
             if not file.exists():
-                missing_files.append(str(file))
-        
-        if missing_files:
-            error_msg = f"Required ngen input files not found:\n"
-            for f in missing_files:
-                error_msg += f"  - {f}\n"
-            error_msg += "\nPlease run ngen preprocessing first."
-            raise FileNotFoundError(error_msg)
+                raise FileNotFoundError(f"Required file not found: {file}")
         
         # Setup environment with library paths
         env = os.environ.copy()
@@ -1205,7 +971,6 @@ class NgenRunner:
         ]
         
         self.logger.debug(f"Running command: {' '.join(ngen_cmd)}")
-        self.logger.debug(f"Working directory: {self.ngen_exe.parent}")
         
         # Run ngen
         log_file = output_dir / "ngen_log.txt"
@@ -1227,35 +992,8 @@ class NgenRunner:
             return True
             
         except subprocess.CalledProcessError as e:
-            # IMPROVED error handling
             self.logger.error(f"NextGen model run failed with error code {e.returncode}")
-            self.logger.error(f"Command: {' '.join(ngen_cmd)}")
-            self.logger.error(f"Working directory: {self.ngen_exe.parent}")
-            self.logger.error(f"Check log file for details: {log_file}")
-            
-            # Try to extract useful error info from log
-            if log_file.exists():
-                try:
-                    with open(log_file, 'r') as f:
-                        log_content = f.read()
-                        
-                    # Look for common error patterns
-                    if "No such file" in log_content or "cannot open" in log_content:
-                        self.logger.error("NGEN couldn't find a required file")
-                    if "Failed to initialize" in log_content:
-                        self.logger.error("BMI module initialization failed")
-                    if "forcing" in log_content.lower():
-                        self.logger.error("Possible forcing data issue")
-                        
-                    # Show last 20 lines of log
-                    log_lines = log_content.split('\n')
-                    self.logger.error("Last 20 lines of ngen log:")
-                    for line in log_lines[-20:]:
-                        self.logger.error(f"  {line}")
-                        
-                except Exception as log_error:
-                    self.logger.error(f"Couldn't read log file: {log_error}")
-            
+            self.logger.error(f"Check log file: {log_file}")
             return False
     
     def _move_ngen_outputs(self, build_dir: Path, output_dir: Path):
@@ -1295,7 +1033,7 @@ class NgenRunner:
                 self.logger.debug(f"  ... and {len(moved_files) - 10} more")
         else:
             self.logger.warning(f"No output files found in {build_dir}. Check if model ran correctly.")
-            self.logger.warning(f"Expected patterns: {', '.join(output_patterns)}")
+
 
 
 class NgenPostprocessor:
