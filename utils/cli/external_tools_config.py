@@ -73,7 +73,7 @@ def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
             'config_path_key': 'SUNDIALS_INSTALL_PATH',
             'config_exe_key': 'SUNDIALS_DIR',
             'default_path_suffix': 'installs/sundials/install/sundials/',
-            'default_exe': 'lib/libsundials_core.a',
+            'default_exe': 'lib64/libsundials_core.a',
             'repository': None,
             'branch': None,
             'install_dir': 'sundials',
