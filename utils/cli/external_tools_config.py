@@ -212,16 +212,58 @@ fi
 # Build mizuRoute - edit Makefile directly (it doesn't use env vars)
 cd route/build
 
+# Create bin directory if it doesn't exist
+mkdir -p ../bin
+
 # F_MASTER should point to the route directory (one level up from build)
 F_MASTER_PATH="$(cd .. && pwd)"
 echo "F_MASTER will be set to: $F_MASTER_PATH/"
+
+# Detect NetCDF - we need the Fortran interface which has netcdf.mod
+# Try NETCDF_FORTRAN first, then NETCDF, then search common locations
+NETCDF_TO_USE="${NETCDF}"
+
+# Function to check if a path has netcdf fortran modules
+has_netcdf_fortran() {
+    local check_path="$1"
+    if [ -d "$check_path/include" ]; then
+        # Check for netcdf.mod (case insensitive on Mac)
+        if ls "$check_path/include/" 2>/dev/null | grep -qi "netcdf.mod"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Try NETCDF_FORTRAN first (it's specifically for Fortran)
+if has_netcdf_fortran "${NETCDF_FORTRAN}"; then
+    NETCDF_TO_USE="${NETCDF_FORTRAN}"
+    echo "Using NETCDF_FORTRAN: ${NETCDF_FORTRAN}"
+elif has_netcdf_fortran "${NETCDF}"; then
+    NETCDF_TO_USE="${NETCDF}"
+    echo "Using NETCDF: ${NETCDF}"
+else
+    echo "WARNING: No valid NetCDF Fortran installation found in NETCDF=${NETCDF} or NETCDF_FORTRAN=${NETCDF_FORTRAN}"
+    # Try common Mac/Linux locations
+    for try_path in /opt/homebrew/opt/netcdf-fortran /opt/homebrew/opt/netcdf /usr/local/opt/netcdf-fortran /usr/local/opt/netcdf /usr/local /usr; do
+        if has_netcdf_fortran "$try_path"; then
+            NETCDF_TO_USE="$try_path"
+            echo "Found NetCDF Fortran at: $NETCDF_TO_USE"
+            break
+        fi
+    done
+fi
+
+echo "Using NETCDF: ${NETCDF_TO_USE}"
+echo "NetCDF include directory contents:"
+ls -la "${NETCDF_TO_USE}/include/" 2>/dev/null | grep -i netcdf | head -5 || echo "Could not list NetCDF includes"
 
 # Edit the Makefile in-place - CRITICAL: F_MASTER needs trailing slash
 perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
 perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
 perl -i -pe "s|^EXE\s*=\s*$|EXE = mizuRoute.exe|" Makefile
 perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
-perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF}|" Makefile
+perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
 # Show what we set
