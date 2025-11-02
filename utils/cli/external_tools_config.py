@@ -348,44 +348,54 @@ fi
 LIBRARIES="-L${NCDF_LIB_DIR} -lnetcdff -lnetcdf -L${HDF_LIB_DIR} -lhdf5_hl -lhdf5"
 INCLUDE="-I${NCDF_PATH}/include -I${HDF_PATH}/include"
 
+# Add legacy compiler flags for compatibility with old Fortran code
+# -fallow-argument-mismatch: allows rank/type mismatches (needed for NetCDF calls)
+# -std=legacy: allows old Fortran features like PAUSE
+EXTRA_FLAGS="-fallow-argument-mismatch -std=legacy"
+FLAGS_NORMA="-O3 -ffree-line-length-none -fmax-errors=0 -cpp ${EXTRA_FLAGS}"
+FLAGS_FIXED="-O2 -c -ffixed-form ${EXTRA_FLAGS}"
+
 echo "🔧 Library flags:"
 echo "   LIBRARIES: ${LIBRARIES}"
 echo "   INCLUDE: ${INCLUDE}"
+echo "   FLAGS_NORMA: ${FLAGS_NORMA}"
 echo ""
 
-# Run the FUSE build with explicit library overrides
+# Build sce_16plus.o first separately to avoid the broken Makefile rule
+# We're already in the build directory from the earlier 'cd build' command
+echo "🔨 Pre-compiling sce_16plus.f..."
+${FC} ${FLAGS_FIXED} -o sce_16plus.o "FUSE_SRC/FUSE_SCE/sce_16plus.f" || {
+  echo "❌ Failed to compile sce_16plus.f"
+  exit 1
+}
+echo "✅ sce_16plus.o compiled"
+
+# Now run make with overrides (without -j to avoid race conditions)
+echo "🔨 Building FUSE..."
 if make \
   FC="${FC}" \
   F_MASTER="${F_MASTER}" \
   LIBRARIES="${LIBRARIES}" \
   INCLUDE="${INCLUDE}" \
-  -j "${NCORES:-4}"; then
+  FLAGS_NORMA="${FLAGS_NORMA}" \
+  FLAGS_FIXED="${FLAGS_FIXED}"; then
   echo "✅ Build completed"
 else
-  echo "❌ Make failed. Trying without parallel build..."
-  if make \
-    FC="${FC}" \
-    F_MASTER="${F_MASTER}" \
-    LIBRARIES="${LIBRARIES}" \
-    INCLUDE="${INCLUDE}"; then
-    echo "✅ Build completed (serial)"
-  else
-    echo "❌ Build failed"
-    echo ""
-    echo "Diagnostics:"
-    echo "   NetCDF lib: ${NCDF_LIB_DIR}"
-    echo "   HDF5 lib: ${HDF_LIB_DIR}"
-    echo "   NetCDF includes: $(ls ${NCDF_PATH}/include/netcdf*.mod 2>/dev/null | head -3 || echo 'not found')"
-    echo "   NetCDF libs: $(ls ${NCDF_LIB_DIR}/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
-    exit 1
-  fi
+  echo "❌ Build failed"
+  echo ""
+  echo "Diagnostics:"
+  echo "   NetCDF lib: ${NCDF_LIB_DIR}"
+  echo "   HDF5 lib: ${HDF_LIB_DIR}"
+  echo "   NetCDF includes: $(ls ${NCDF_PATH}/include/netcdf*.mod 2>/dev/null | head -3 || echo 'not found')"
+  echo "   NetCDF libs: $(ls ${NCDF_LIB_DIR}/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
+  exit 1
 fi
 
-# Check if binary was created (either in build dir or already moved to bin)
+# Check if binary was created (we're in build dir, so bin is ../bin)
 if [ -f ../bin/fuse.exe ]; then
   echo "✅ Binary in ../bin/fuse.exe"
 elif [ -f fuse.exe ]; then
-  echo "✅ Binary built, staging to ../bin/"
+  echo "✅ Binary built in build dir, staging to ../bin/"
   mkdir -p ../bin
   cp fuse.exe ../bin/
   echo "✅ Binary staged to ../bin/fuse.exe"
@@ -396,11 +406,12 @@ else
   exit 1
 fi
 
-# Verify the binary
+# Verify the binary (we're in build dir)
 if [ -f ../bin/fuse.exe ]; then
   echo ""
   echo "🧪 Testing binary..."
   ../bin/fuse.exe 2>&1 | head -5 || true
+  echo "✅ FUSE build successful"
 else
   echo "❌ Verification failed: ../bin/fuse.exe not found"
   exit 1
