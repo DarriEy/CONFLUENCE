@@ -552,12 +552,16 @@ fi
             'build_commands': [
                 r'''
 set -e
-rm -rf build && mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
+rm -rf build && mkdir -p build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_FLAGS="-fexceptions -pthread" \
+      -S .. -B .
 cmake --build . -j ${NCORES:-4}
 mkdir -p ../bin
-# copy common executables
-find . -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; || true
+# copy executables from src subdirectory
+find ./src -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; 2>/dev/null || true
+# fallback: try root level too
+find . -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
                 '''
             ],
             'dependencies': [],
