@@ -172,19 +172,23 @@ cmake -S build -B cmake_build \
 # Build all targets (repo scripts use 'all', not 'summa_sundials')
 cmake --build cmake_build --target all -j ${NCORES:-4}
 
-mkdir -p bin
-if [ -f "cmake_build/bin/summa_sundials.exe" ]; then
-cp cmake_build/bin/summa_sundials.exe bin/
-ln -sf summa_sundials.exe bin/summa.exe
+# Create symlink - binary goes directly to bin/, not cmake_build/bin/
+if [ -f "bin/summa_sundials.exe" ]; then
+    cd bin && ln -sf summa_sundials.exe summa.exe && cd ..
+elif [ -f "cmake_build/bin/summa_sundials.exe" ]; then
+    mkdir -p bin
+    cp cmake_build/bin/summa_sundials.exe bin/
+    cd bin && ln -sf summa_sundials.exe summa.exe && cd ..
 elif [ -f "cmake_build/bin/summa.exe" ]; then
-cp cmake_build/bin/summa.exe bin/
+    mkdir -p bin
+    cp cmake_build/bin/summa.exe bin/
 fi
                 '''
             ],
             'dependencies': [],
             'test_command': '--version',
             'verify_install': {
-                'file_paths': ['bin/summa.exe', 'cmake_build/bin/summa.exe', 'cmake_build/bin/summa_sundials.exe'],
+                'file_paths': ['bin/summa.exe', 'bin/summa_sundials.exe', 'cmake_build/bin/summa.exe', 'cmake_build/bin/summa_sundials.exe'],
                 'check_type': 'exists_any'
             },
             'order': 2
