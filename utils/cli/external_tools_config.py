@@ -225,45 +225,106 @@ ls -la ../bin/ || true
                 r'''
 set -e
 
-# --- Common environment setup (single shell so it persists) ---
+# --- Compiler configuration ---
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
 
-# Prefer config tools; add Homebrew and HPC fallbacks
-export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf) || echo /usr)}"
-export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || (command -v brew >/dev/null 2>&1 && brew --prefix netcdf-fortran) || echo /usr)}"
-export HDF5_ROOT="${HDF5_ROOT:-$(
-  h5cc -showconfig 2>/dev/null | sed -n 's/^Installation point:[[:space:]]*//p' | head -n1 \
-  || (command -v brew >/dev/null 2>&1 && brew --prefix hdf5) \
-  || echo /usr
-)}"
+# --- NetCDF detection with multiple fallback strategies ---
+# Try nf-config first, then nc-config, then environment variables, then Homebrew, then common paths
+if command -v nf-config >/dev/null 2>&1; then
+  export NETCDF_FORTRAN="$(nf-config --prefix 2>/dev/null)"
+elif command -v nc-config >/dev/null 2>&1; then
+  export NETCDF_FORTRAN="$(nc-config --prefix 2>/dev/null)"
+elif [ -n "$NETCDF_FORTRAN" ]; then
+  : # Use existing environment variable
+elif command -v brew >/dev/null 2>&1 && brew --prefix netcdf-fortran >/dev/null 2>&1; then
+  export NETCDF_FORTRAN="$(brew --prefix netcdf-fortran)"
+else
+  # Common HPC module paths
+  for path in /usr $HOME/.local /opt/netcdf-fortran /opt/netcdf; do
+    if [ -d "$path/include" ] && [ -d "$path/lib" ]; then
+      export NETCDF_FORTRAN="$path"
+      break
+    fi
+  done
+fi
+export NETCDF_FORTRAN="${NETCDF_FORTRAN:-/usr}"
 
-# Map to the variable names expected by the FUSE Makefile
+# NetCDF C library (often same as Fortran, but not always)
+if command -v nc-config >/dev/null 2>&1; then
+  export NETCDF="$(nc-config --prefix 2>/dev/null)"
+elif [ -n "$NETCDF" ]; then
+  : # Use existing environment variable
+elif command -v brew >/dev/null 2>&1 && brew --prefix netcdf >/dev/null 2>&1; then
+  export NETCDF="$(brew --prefix netcdf)"
+else
+  export NETCDF="$NETCDF_FORTRAN"
+fi
+
+# --- HDF5 detection with robust fallbacks ---
+if command -v h5cc >/dev/null 2>&1; then
+  export HDF5_ROOT="$(h5cc -showconfig 2>/dev/null | grep -i "Installation point" | sed 's/.*: *//' | head -n1)"
+fi
+if [ -z "$HDF5_ROOT" ] || [ ! -d "$HDF5_ROOT" ]; then
+  if [ -n "$HDF5_ROOT" ]; then
+    : # Use existing environment variable
+  elif command -v brew >/dev/null 2>&1 && brew --prefix hdf5 >/dev/null 2>&1; then
+    export HDF5_ROOT="$(brew --prefix hdf5)"
+  else
+    # Try common paths
+    for path in /usr $HOME/.local /opt/hdf5; do
+      if [ -d "$path/include" ] && [ -d "$path/lib" ]; then
+        export HDF5_ROOT="$path"
+        break
+      fi
+    done
+  fi
+fi
+export HDF5_ROOT="${HDF5_ROOT:-/usr}"
+
+# Map to FUSE Makefile variable names
 export NCDF_PATH="$NETCDF_FORTRAN"
 export HDF_PATH="$HDF5_ROOT"
 
-# Help the linker on mac/Homebrew
+# --- Platform-specific linker flags ---
 if command -v brew >/dev/null 2>&1; then
-  export CPPFLAGS="${CPPFLAGS:+$CPPFLAGS }-I$(brew --prefix netcdf)/include -I$(brew --prefix netcdf-fortran)/include -I${HDF_PATH}/include"
-  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$(brew --prefix netcdf)/lib -L$(brew --prefix netcdf-fortran)/lib -L${HDF_PATH}/lib"
+  # macOS with Homebrew
+  export CPPFLAGS="${CPPFLAGS:+$CPPFLAGS }-I$(brew --prefix netcdf)/include -I$(brew --prefix netcdf-fortran)/include"
+  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$(brew --prefix netcdf)/lib -L$(brew --prefix netcdf-fortran)/lib"
+  if [ -d "$HDF_PATH/include" ]; then
+    export CPPFLAGS="${CPPFLAGS} -I${HDF_PATH}/include"
+    export LDFLAGS="${LDFLAGS} -L${HDF_PATH}/lib"
+  fi
 fi
 
-# Guard: detect toolchain mismatch on HPC
-FC_VER=$("${FC}" -dumpfullversion 2>/dev/null || echo "")
-case "$NETCDF_FORTRAN" in *gcc-8.*)
-  case "$FC_VER" in 8.*) : ;; *) echo "Toolchain mismatch: NetCDF-Fortran built with GCC 8.x but FC=$FC_VER"; exit 2;; esac
-;; esac
+# --- Warning for toolchain mismatches (non-fatal) ---
+FC_VER=$("${FC}" -dumpfullversion 2>/dev/null || "${FC}" --version 2>/dev/null | head -n1 || echo "unknown")
+echo "ℹ️  Compiler: ${FC} (${FC_VER})"
+echo "ℹ️  NetCDF-Fortran: ${NETCDF_FORTRAN}"
+# Check for major version mismatch but only warn
+case "$NETCDF_FORTRAN" in 
+  *gcc-[0-9]*)
+    NETCDF_GCC_VER=$(echo "$NETCDF_FORTRAN" | grep -o 'gcc-[0-9][0-9]*' | cut -d- -f2)
+    FC_MAJOR=$(echo "$FC_VER" | grep -o '^[0-9][0-9]*' || echo "0")
+    if [ -n "$NETCDF_GCC_VER" ] && [ -n "$FC_MAJOR" ] && [ "$NETCDF_GCC_VER" != "$FC_MAJOR" ]; then
+      echo "⚠️  Warning: NetCDF built with GCC ${NETCDF_GCC_VER} but using compiler version ${FC_MAJOR}"
+      echo "   This may cause issues. Consider loading matching modules if available."
+    fi
+  ;;
+esac
 
 # --- Build ---
 cd build
-make clean || true
+make clean 2>/dev/null || true
 export F_MASTER="$(cd .. && pwd)/"
 
-echo "Build environment:"
-echo "  FC: ${FC}"
-echo "  F_MASTER: ${F_MASTER}"
-echo "  NCDF_PATH: ${NCDF_PATH}"
-echo "  HDF_PATH: ${HDF_PATH}"
+echo ""
+echo "🔨 Build environment:"
+echo "   FC: ${FC}"
+echo "   F_MASTER: ${F_MASTER}"
+echo "   NCDF_PATH: ${NCDF_PATH}"
+echo "   HDF_PATH: ${HDF_PATH}"
+echo ""
 
 # Run the FUSE build
 make all \
@@ -271,16 +332,35 @@ make all \
   F_MASTER="${F_MASTER}" \
   NCDF_PATH="${NCDF_PATH}" \
   HDF_PATH="${HDF_PATH}" \
-  -j "${NCORES:-4}"
+  -j "${NCORES:-4}" || {
+    echo "❌ Make failed. Checking for common issues..."
+    echo "   NetCDF includes: $(find ${NCDF_PATH}/include -name "netcdf*.mod" 2>/dev/null | head -3 || echo 'not found')"
+    echo "   NetCDF libs: $(ls ${NCDF_PATH}/lib*/libnetcdff.* 2>/dev/null | head -3 || echo 'not found')"
+    exit 1
+  }
 
-# Stage binary even if Makefile didn’t install it
+# Stage binary to ../bin/
 mkdir -p ../bin
-[ -f fuse.exe ] && mv fuse.exe ../bin/ || true
+if [ -f fuse.exe ]; then
+  cp fuse.exe ../bin/
+  echo "✅ Binary staged to ../bin/fuse.exe"
+elif [ -f ../bin/fuse.exe ]; then
+  echo "✅ Binary already in ../bin/fuse.exe"
+else
+  echo "❌ fuse.exe not found after build"
+  ls -la . 2>/dev/null || true
+  exit 1
+fi
 
-# Verify
-ls -la ../bin/ || true
-test -f ../bin/fuse.exe
-../bin/fuse.exe 2>&1 | head -5 || true
+# Verify the binary
+if [ -f ../bin/fuse.exe ]; then
+  echo ""
+  echo "🧪 Testing binary..."
+  ../bin/fuse.exe 2>&1 | head -5 || true
+else
+  echo "❌ Verification failed: ../bin/fuse.exe not found"
+  exit 1
+fi
         '''
         ],
         "dependencies": [],
