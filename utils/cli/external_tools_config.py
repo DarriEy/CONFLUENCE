@@ -300,10 +300,10 @@ grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
 # Clean any previous builds
 make clean || true
 
-# Build with explicit -j value
+# Build with explicit -j value (don't run install target)
 JOBS="${NCORES:-4}"
 echo "Building with $JOBS parallel jobs..."
-make -j "$JOBS" || {
+make -j "$JOBS" mizuRoute.exe || {
     echo "ERROR: mizuRoute build failed"
     echo "Build directory contents:"
     ls -la . || true
@@ -312,13 +312,14 @@ make -j "$JOBS" || {
     exit 1
 }
 
-# Verify executable was created
-if [ -f "../bin/mizuRoute.exe" ]; then
-    echo "Build successful - executable created"
+# Manually move executable to bin directory
+if [ -f "mizuRoute.exe" ]; then
+    echo "Build successful - moving executable to ../bin/"
+    mv mizuRoute.exe ../bin/
     ls -la ../bin/
 else
-    echo "ERROR: No executable found in route/bin/"
-    ls -la ../bin/ || true
+    echo "ERROR: No executable found in build directory"
+    ls -la . || true
     exit 1
 fi
                 '''
