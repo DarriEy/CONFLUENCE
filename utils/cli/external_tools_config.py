@@ -129,16 +129,29 @@ cmake --build . --target install -j ${NCORES:-4}
             'requires': ['sundials'],
             'build_commands': [
                 r'''
-# Build SUMMA against SUNDIALS + NetCDF, prefer OpenBLAS on macOS/Homebrew
+# Build SUMMA against SUNDIALS + NetCDF, auto-detect BLAS
 set -e
 SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
-if [ -d "$SUNDIALS_DIR/lib64" ]; then SUND_LIB="$SUNDIALS_DIR/lib64"; else SUND_LIB="$SUNDIALS_DIR/lib"; fi
 
-# Homebrew OpenBLAS (mac)
-OPENBLAS_ARG=""
+# Auto-detect OpenBLAS across platforms
+BLAS_ARGS=""
 if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/openblas" ]; then
-OPENBLAS_ARG="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(brew --prefix)/opt/openblas"
+    # macOS Homebrew
+    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(brew --prefix)/opt/openblas"
+    echo "Found OpenBLAS via Homebrew"
+elif pkg-config --exists openblas 2>/dev/null; then
+    # Linux pkg-config
+    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS -DOpenBLAS_DIR=$(pkg-config --variable=libdir openblas)/.."
+    echo "Found OpenBLAS via pkg-config"
+elif [ -f "/usr/lib64/libopenblas.so" ] || [ -f "/usr/lib/libopenblas.so" ]; then
+    # Linux standard paths
+    BLAS_ARGS="-DBLA_VENDOR=OpenBLAS"
+    echo "Found OpenBLAS in system paths"
+else
+    # Fallback: let CMake find any BLAS (reference, MKL, Accelerate, etc)
+    BLAS_ARGS="-DBLA_VENDOR=Generic"
+    echo "Using generic BLAS detection"
 fi
 
 rm -rf cmake_build && mkdir -p cmake_build
@@ -149,7 +162,7 @@ cmake -S build -B cmake_build \
 -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
 -DNETCDF_PATH="${NETCDF:-/usr}" \
 -DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}" \
-$OPENBLAS_ARG \
+$BLAS_ARGS \
 -DCMAKE_Fortran_COMPILER=gfortran \
 -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
