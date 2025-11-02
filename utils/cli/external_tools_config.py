@@ -134,25 +134,25 @@ set -e
 export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
 
-# Check for OpenBLAS availability - determine whether to auto-detect or manually specify
+# Determine LAPACK strategy based on platform
 SPECIFY_LINKS=OFF
-EXTRA_ARGS=""
 
-if command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix)/opt/openblas" ]; then
-    # macOS Homebrew - has OpenBLAS, let CMake find it
-    echo "Found OpenBLAS via Homebrew - using auto-detection"
-    SPECIFY_LINKS=OFF
+# macOS: Use manual LAPACK specification (Homebrew OpenBLAS isn't reliably detected by CMake)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macOS detected - using manual LAPACK specification"
+    SPECIFY_LINKS=ON
+    export LIBRARY_LINKS='-llapack'
+# HPC with OpenBLAS module loaded
 elif command -v module >/dev/null 2>&1 && module list 2>&1 | grep -qi openblas; then
-    # HPC with openblas module loaded
-    echo "Found OpenBLAS module loaded - using auto-detection"
+    echo "OpenBLAS module loaded - using auto-detection"
     SPECIFY_LINKS=OFF
+# Linux with system OpenBLAS
 elif pkg-config --exists openblas 2>/dev/null || [ -f "/usr/lib64/libopenblas.so" ] || [ -f "/usr/lib/libopenblas.so" ]; then
-    # Linux system OpenBLAS
-    echo "Found system OpenBLAS - using auto-detection"
+    echo "System OpenBLAS found - using auto-detection"
     SPECIFY_LINKS=OFF
 else
-    # No OpenBLAS found - fallback to generic LAPACK
-    echo "OpenBLAS not found - using manual LAPACK specification"
+    # Fallback to manual LAPACK
+    echo "Using manual LAPACK specification"
     SPECIFY_LINKS=ON
     export LIBRARY_LINKS='-llapack -lblas'
 fi
@@ -169,7 +169,8 @@ cmake -S build -B cmake_build \
 -DCMAKE_Fortran_COMPILER=gfortran \
 -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
-cmake --build cmake_build --target summa_sundials -j ${NCORES:-4}
+# Build all targets (repo scripts use 'all', not 'summa_sundials')
+cmake --build cmake_build --target all -j ${NCORES:-4}
 
 mkdir -p bin
 if [ -f "cmake_build/bin/summa_sundials.exe" ]; then
