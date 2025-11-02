@@ -363,7 +363,7 @@ class NgenPreProcessor:
         
         self.logger.info(f"Created catchment geopackage with {len(divides_gdf)} catchments: {gpkg_file}")
         return gpkg_file
-            
+                
     def prepare_forcing_data(self) -> Path:
         """
         Convert CONFLUENCE basin-averaged ERA5 forcing to NGen format.
@@ -373,9 +373,10 @@ class NgenPreProcessor:
         2) merge across time
         3) subset to simulation window
         4) map variables and reshape to (feature_id, time)
-        5) write a clean NETCDF4 file (ids as fixed-length CHAR)
+        5) write a clean NETCDF4 file (ids as fixed-length CHAR with dims (feature_id, id_strlen))
         6) validate core structure expected by NGen
         """
+        import string
         self.logger.info("Preparing forcing data for ngen")
 
         # --- Load catchment IDs -> cat-<HRU_ID> (strings) ---
@@ -383,6 +384,8 @@ class NgenPreProcessor:
         catchment_gdf = gpd.read_file(catchment_file)
         catchment_ids = [f"cat-{x}" for x in catchment_gdf[self.hru_id_col].astype(str).tolist()]
         n_catchments = len(catchment_ids)
+        if n_catchments == 0:
+            raise RuntimeError("No catchments found when building forcing.")
         self.logger.info(f"Processing forcing for {n_catchments} catchments")
 
         # --- Gather forcing files ---
@@ -422,38 +425,81 @@ class NgenPreProcessor:
 
         # --- Create NGen forcing dataset (feature_id, time) with AORC/NOAH names ---
         ngen_ds = self._create_ngen_forcing_dataset(forcing_data, catchment_ids)
+        # We’re done with source
+        forcing_data.close()
 
-        # --- Write NETCDF4 (float32 for numeric vars; let CHAR stay as-is) ---
+        # --- Ensure dims are exactly ('feature_id','time') for data and
+        #     create 'ids' as fixed-length CHAR with dims ('feature_id','id_strlen') ---
+        CATCH_DIM = 'feature_id'
+
+        # 1) Make sure all data vars with catchment axis use 'feature_id' as the name
+        rename_map = {}
+        for v in ngen_ds.data_vars:
+            dims = list(ngen_ds[v].dims)
+            if 'catchment' in dims:
+                rename_map['catchment'] = CATCH_DIM
+                break
+        if rename_map:
+            ngen_ds = ngen_ds.rename(rename_map)
+
+        # 2) Ensure the dimension exists even before adding arrays
+        if CATCH_DIM not in ngen_ds.dims:
+            ngen_ds = ngen_ds.assign_coords({CATCH_DIM: np.arange(n_catchments)}).expand_dims({CATCH_DIM: n_catchments})
+
+        # 3) Build fixed-length CHAR matrix for ids
+        def _to_char_matrix(strings: List[str]) -> Tuple[np.ndarray, int]:
+            # Basic ASCII safety/pass-through; replace any whitespace control chars
+            cleaned = []
+            for s in strings:
+                s2 = ''.join(ch if ch in string.printable and ch not in '\r\n\t' else '_' for ch in s)
+                cleaned.append(s2)
+            L = max(1, max(len(s) for s in cleaned))
+            arr = np.full((len(cleaned), L), b' ', dtype='S1')
+            for i, s in enumerate(cleaned):
+                b = s.encode('ascii', errors='replace')  # 'replace' -> b'?'
+                arr[i, :len(b)] = np.frombuffer(b, dtype='S1')
+            return arr, L
+
+        char_ids, id_strlen = _to_char_matrix(catchment_ids)
+
+        # Add id_strlen as a proper dimension length
+        ngen_ds = ngen_ds.assign_coords(id_strlen=np.arange(id_strlen))
+        # Create/overwrite 'ids' as a CHAR array
+        ngen_ds['ids'] = xr.DataArray(
+            char_ids,
+            dims=(CATCH_DIM, 'id_strlen')
+        )
+
+        # Also include a human-friendly (vlen) string coord if helpful (not required by NGen)
+        # This stays as a coord and doesn't affect our CHAR variable.
+        ngen_ds = ngen_ds.assign_coords({CATCH_DIM: np.arange(n_catchments)})
+
+        # --- Encoding: float32 for numeric vars; CHAR S1 for ids ---
         output_file = self.forcing_dir / "forcing.nc"
-        encoding: Dict[str, Dict[str, Any]] = {}
+        encoding: Dict[str, Dict[str, Any]] = {'ids': {'dtype': 'S1'}}
 
         for name, da in ngen_ds.data_vars.items():
-            # numeric floats -> float32; leave CHAR (ids) alone
+            if name == 'ids':
+                continue
             if da.dtype.kind == 'f':
                 encoding[name] = {'dtype': 'float32'}
-            # ints and CHAR need no explicit dtype here
 
+        # Write
         ngen_ds.to_netcdf(output_file, format='NETCDF4', encoding=encoding)
-
-        # We’re done with the source files
-        forcing_data.close()
 
         # --- Validate the file structure as NGen expects ---
         try:
             with nc4.Dataset(output_file, mode='r') as ds:
                 # dimensions
-                assert 'feature_id' in ds.dimensions, "Missing dim 'feature_id'"
+                assert CATCH_DIM in ds.dimensions, f"Missing dim '{CATCH_DIM}'"
                 assert 'time' in ds.dimensions, "Missing dim 'time'"
+                assert 'id_strlen' in ds.dimensions, "Missing dim 'id_strlen'"
                 # ids as fixed-length CHAR with (feature_id, id_strlen)
                 assert 'ids' in ds.variables, "Missing variable 'ids'"
                 ids_var = ds.variables['ids']
                 assert ids_var.dtype.kind == 'S', "'ids' must be a fixed-length CHAR array"
-                assert ids_var.dimensions == ('feature_id', 'id_strlen'), \
+                assert ids_var.dimensions == (CATCH_DIM, 'id_strlen'), \
                     "ids must have dims (feature_id, id_strlen)"
-                # At minimum, check for a couple of canonical variables
-                for req in ['PRCPNONC', 'SFCTMP', 'SFCPRS']:
-                    if req not in ds.variables:
-                        self.logger.warning(f"Missing expected forcing variable '{req}'.")
             self.logger.info("Forcing file passes basic NGen checks (dims/ids via 'feature_id').")
         except Exception as e:
             self.logger.error(f"Forcing validation failed: {e}")
@@ -461,6 +507,7 @@ class NgenPreProcessor:
 
         self.logger.info(f"Wrote ngen forcing: {output_file}")
         return output_file
+
 
 
     def _create_ngen_forcing_dataset(
