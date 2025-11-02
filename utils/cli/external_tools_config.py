@@ -256,6 +256,19 @@ echo "Final NETCDF_TO_USE: ${NETCDF_TO_USE}"
 echo "Checking include directory:"
 ls -la "${NETCDF_TO_USE}/include/" 2>/dev/null | grep -E "netcdf|NETCDF" | head -5 || echo "Could not list includes"
 
+# Also find the NetCDF C library (different from Fortran on Mac)
+echo "=== Finding NetCDF C library ==="
+if command -v nc-config >/dev/null 2>&1; then
+    NETCDF_C_PATH="$(nc-config --prefix)"
+    echo "Found nc-config, NetCDF C at: ${NETCDF_C_PATH}"
+elif [ -d "/opt/homebrew/opt/netcdf" ]; then
+    NETCDF_C_PATH="/opt/homebrew/opt/netcdf"
+    echo "Found NetCDF C at: ${NETCDF_C_PATH}"
+else
+    NETCDF_C_PATH="${NETCDF_TO_USE}"
+    echo "Using same path for NetCDF C: ${NETCDF_C_PATH}"
+fi
+
 # Show original Makefile state - cast wide net
 echo "=== Makefile configuration (BEFORE editing) ==="
 grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
@@ -271,6 +284,13 @@ perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
 # CRITICAL: NCDF_PATH has leading whitespace in ifeq blocks - match any leading space
 perl -i -pe "s|^\s*NCDF_PATH\s*=.*$| NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
+
+# Fix LIBNETCDF to include both netcdf-fortran and netcdf C library
+# This handles Mac where they're separate Homebrew installs
+if [ "${NETCDF_C_PATH}" != "${NETCDF_TO_USE}" ]; then
+    echo "Fixing LIBNETCDF to include both netcdf-fortran and netcdf C paths"
+    sed -i.bak "s|LIBNETCDF = -Wl,-rpath,\$(NCDF_PATH)/lib.*$|LIBNETCDF = -Wl,-rpath,${NETCDF_TO_USE}/lib -Wl,-rpath,${NETCDF_C_PATH}/lib -L${NETCDF_TO_USE}/lib -L${NETCDF_C_PATH}/lib -lnetcdff -lnetcdf|" Makefile
+fi
 
 # Show what we set
 echo "=== Makefile configuration (AFTER editing) ==="
