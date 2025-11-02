@@ -551,26 +551,29 @@ fi
             'install_dir': 'TauDEM',
             'build_commands': [
                 r'''
-# Replace your current TauDEM build snippet with this
+
 set -e
 
-# Fix TauDEM CMakeLists/CMake modules where "-fexceptions -pthread" is passed as one item
-# Handle both quoted and unquoted forms, and do it recursively.
-while IFS= read -r -d '' f; do
-  # If it's quoted as one item: "-fexceptions -pthread"  ->  "-fexceptions";"-pthread"
-  sed -i.bak 's/"-fexceptions -pthread"/"-fexceptions";"-pthread"/g' "$f"
-  # If it’s an unquoted space-separated string used as a single list item:
-  sed -i.bak 's/-fexceptions -pthread/-fexceptions;-pthread/g' "$f"
-done < <(find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0)
+# 1) Scrub any place the pair is treated as one item
+#   - handle quoted and unquoted forms across all CMake files (POSIX-safe, no bashisms)
+find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -print0 | xargs -0 sed -i.bak \
+  -e 's/"-fexceptions -pthread"/"-fexceptions";"-pthread"/g' \
+  -e 's/-fexceptions -pthread/-fexceptions;-pthread/g'
 
+# 2) Configure & build
 rm -rf build && mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
+
+# 2b) As an extra belt-and-suspenders fix, unquote in the cache if it got seeded there
+sed -i.bak 's/"-fexceptions -pthread"/-fexceptions -pthread/g' CMakeCache.txt || true
+
+# 3) Build
 cmake --build . -j ${NCORES:-4}
 
-# stage binaries
+# Stage TauDEM executables
 mkdir -p ../bin
 find ./src -maxdepth 1 -type f -perm -111 -exec cp {} ../bin/ \; 2>/dev/null || true
-find . -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
+find .   -maxdepth 1 -type f -perm -111 ! -name "CMake*" -exec cp {} ../bin/ \; 2>/dev/null || true
 
                 '''
             ],
