@@ -268,10 +268,8 @@ perl -i -pe "s|^FC\s*=\s*$|FC = gnu|" Makefile
 perl -i -pe "s|^FC_EXE\s*=\s*$|FC_EXE = ${FC_EXE:-gfortran}|" Makefile
 perl -i -pe "s|^EXE\s*=\s*$|EXE = mizuRoute.exe|" Makefile
 perl -i -pe "s|^F_MASTER\s*=.*$|F_MASTER = $F_MASTER_PATH/|" Makefile
-# Try all possible NetCDF variable names
-perl -i -pe "s|^NCDF_PATH\s*=.*$|NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
-perl -i -pe "s|^NCDF\s*=.*$|NCDF = ${NETCDF_TO_USE}|" Makefile  
-perl -i -pe "s|^NETCDF_PATH\s*=.*$|NETCDF_PATH = ${NETCDF_TO_USE}|" Makefile
+# CRITICAL: NCDF_PATH has leading whitespace in ifeq blocks - match any leading space
+perl -i -pe "s|^\s*NCDF_PATH\s*=.*$| NCDF_PATH = ${NETCDF_TO_USE}|" Makefile
 perl -i -pe "s|^isOpenMP\s*=.*$|isOpenMP = no|" Makefile
 
 # Show what we set
