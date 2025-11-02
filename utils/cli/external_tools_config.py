@@ -300,11 +300,9 @@ grep -E "^(FC|FC_EXE|EXE|F_MASTER|NCDF|isOpenMP)" Makefile | head -20
 # Clean any previous builds
 make clean || true
 
-# Build with explicit -j value
-JOBS="${NCORES:-4}"
-echo "Building with $JOBS parallel jobs..."
-# Build - may fail on install step but exe is created
-make -j "$JOBS" 2>&1 | tee build.log || true
+# Build serially (Makefile has inadequate dependency tracking for parallel)
+echo "Building serially..."
+make 2>&1 | tee build.log || true
 
 # Check and move executable regardless of make exit code
 if [ -f "mizuRoute.exe" ]; then
