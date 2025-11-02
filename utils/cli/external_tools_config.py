@@ -202,29 +202,57 @@ fi
             'config_path_key': 'INSTALL_PATH_MIZUROUTE',
             'config_exe_key': 'EXE_NAME_MIZUROUTE',
             'default_path_suffix': 'installs/mizuRoute/route/bin',
-            'default_exe': 'mizuRoute.exe',
+            'default_exe': 'runoff_route.exe',
             'repository': 'https://github.com/ESCOMP/mizuRoute.git',
             'branch': 'serial',
             'install_dir': 'mizuRoute',
             'build_commands': [
                 common_env,
                 r'''
-# Build without editing Makefiles; satisfy FC sanity check
+# Build mizuRoute - set required Makefile variables
 cd route/build
-make clean || true
-make -j "${NCORES}" \
-FC="${FC}" FC_EXE="${FC_EXE}" \
-NETCDF="${NETCDF}" NETCDF_FORTRAN="${NETCDF_FORTRAN}"
 
-# show outputs
-ls -la ../bin/ || true
-# accept any of the known exe names
+# Set F_MASTER (path to mizuRoute root, before build/)
+export F_MASTER="$(cd ../.. && pwd)"
+
+# Set compiler names explicitly  
+export FC=gnu
+export FC_EXE=gfortran
+
+# Set NetCDF paths
+export NCDF_PATH="${NETCDF}"
+
+# Optional: disable OpenMP if needed (set to 'no' by default, 'yes' to enable)
+export isOpenMP="${isOpenMP:-no}"
+
+# Clean any previous builds
+make clean || true
+
+# Build - the Makefile reads vars from environment
+make -j "${NCORES}" || {
+    echo "ERROR: mizuRoute build failed"
+    echo "Checking route/build directory:"
+    ls -la . || true
+    echo "Checking Makefile:"
+    head -30 Makefile || true
+    exit 1
+}
+
+# Verify executable was created
+if [ -f "../bin/runoff_route.exe" ] || [ -f "../bin/mizuRoute.exe" ]; then
+    echo "Build successful - executable created"
+    ls -la ../bin/
+else
+    echo "ERROR: No executable found in route/bin/"
+    ls -la ../bin/ || true
+    exit 1
+fi
                 '''
             ],
             'dependencies': [],
             'test_command': None,
             'verify_install': {
-                'file_paths': ['route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe', 'route/bin/runoff_route.exe'],
+                'file_paths': ['route/bin/runoff_route.exe', 'route/bin/mizuRoute.exe', 'route/bin/mizuroute.exe'],
                 'check_type': 'exists_any'
             },
             'order': 3
