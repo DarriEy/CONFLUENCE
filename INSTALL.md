@@ -59,6 +59,8 @@ module load gcc/14.2.0
 module load openmpi/4.1.6
 module load gdal/3.10.0
 module load conda/2024.09
+module load openblas/0.3.17
+module load netcdf-fortran/4.5.3
 ```
 
 ### B) **ARC (University of Calgary)**
