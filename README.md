@@ -26,24 +26,14 @@ CONFLUENCE is a computational environmental modeling platform that streamlines t
 
 ## Quick Start
 
-### Installation
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/DarriEy/CONFLUENCE.git
-   cd CONFLUENCE
-   ```
+## 📦 Installation & Environment Setup
 
-2. **Run the automated installer:**
-   ```bash
-   ./confluence --install
-   ```
+**Environment setup varies by system.** CONFLUENCE will try to set up external tools automatically, but we cannot guarantee it in all environments.
 
-   This will:
-   - Create a Python virtual environment
-   - Install all required dependencies
-   - Download and install external modeling tools
-   - Validate the installation
+Please See [INSTALL.md](INSTALL.md) for platform‑specific instructions (Anvil, ARC UCalgary, FIR, macOS), prerequisites, and our support stance.
+```
+
 
 ### Basic Usage
 
