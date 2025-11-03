@@ -74,12 +74,6 @@ class CONFLUENCE:
             config_overrides: Dictionary of configuration overrides from CLI
             debug_mode: Whether to enable debug mode
         """
-
-        self.logger.info(f"CONFLUENCE initialized with config: {config_path}")
-        if self.config_overrides:
-            self.logger.info(f"Configuration overrides applied: {list(self.config_overrides.keys())}")
-
-
         self.config_path = config_path
         self.debug_mode = debug_mode
         self.config_overrides = config_overrides or {}
@@ -90,7 +84,12 @@ class CONFLUENCE:
         # Initialize logging
         self.logging_manager = LoggingManager(self.config, debug_mode=debug_mode)
         self.logger = self.logging_manager.logger
-        
+
+        self.logger.info(f"CONFLUENCE initialized with config: {config_path}")
+        if self.config_overrides:
+            self.logger.info(f"Configuration overrides applied: {list(self.config_overrides.keys())}")
+
+
         # Initialize managers
         self.managers = self._initialize_managers()
         
