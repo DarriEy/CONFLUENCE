@@ -739,12 +739,12 @@ git submodule update --init --recursive -- test/googletest extern/pybind11 || tr
 rm -rf cmake_build
 
 # First try with Python ON
-if cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=ON -S . -B cmake_build; then
+if cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=ON -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build; then
 echo "Configured with Python ON"
 else
 echo "CMake failed with Python ON; retrying with Python OFF"
 rm -rf cmake_build
-cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=OFF -S . -B cmake_build
+cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=OFF -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build
 fi
 
 cmake --build cmake_build --target ngen -j ${NCORES:-4}
