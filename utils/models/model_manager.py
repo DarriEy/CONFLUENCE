@@ -184,7 +184,7 @@ class ModelManager:
                 preprocessor.run_preprocessing()
 
                 # ----- Routing preprocessing hooks -----
-                routing_delineation = self.config.get('ROUTING_DELINEATION', 'river_network')
+                routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped')
                 domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped')
                 needs_mizuroute = self._needs_mizuroute_routing(domain_method, routing_delineation)
 
