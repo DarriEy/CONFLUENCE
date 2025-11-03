@@ -71,7 +71,8 @@ class GeofabricDelineator:
 
         if dem_path == 'default':
             return self.project_dir / 'attributes' / 'elevation' / 'dem' / dem_name
-        return Path(dem_path)
+
+        return Path(dem_path / dem_name)
 
     def _set_taudem_path(self):
         taudem_dir = self.config['TAUDEM_DIR']
