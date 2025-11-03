@@ -631,7 +631,7 @@ fi
                 '''
             ],
             'dependencies': [],
-            'test_command': '--help',
+            'test_command': None,
             'verify_install': {
                 'file_paths': ['bin/pitremove'],
                 'check_type': 'exists'
