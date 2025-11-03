@@ -184,8 +184,6 @@ class VariableHandler:
         self.dataset = dataset if dataset is not None else config.get('FORCING_DATASET')
         self.model = model if model is not None else config.get('HYDROLOGICAL_MODEL')
         
-        self.logger.info(f"Initializing VariableHandler for dataset: {self.dataset} and model: {self.model}")
-        
         # Initialize pint for unit handling
         self.ureg = pint.UnitRegistry()
         pint_xarray.setup_registry(self.ureg)

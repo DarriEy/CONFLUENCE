@@ -62,10 +62,6 @@ class GeofabricDelineator:
         
         # Check if drop analysis should be performed for threshold optimization
         self.use_drop_analysis = self.config.get('USE_DROP_ANALYSIS', False)
-        if self.use_drop_analysis:
-            self.logger.info("Drop analysis enabled for threshold optimization")
-        
-        self.logger.info(f"Using delineation method: {self.delineation_method}")
 
     def _get_dem_path(self) -> Path:
         dem_path = self.config.get('DEM_PATH')

@@ -74,6 +74,12 @@ class CONFLUENCE:
             config_overrides: Dictionary of configuration overrides from CLI
             debug_mode: Whether to enable debug mode
         """
+
+        self.logger.info(f"CONFLUENCE initialized with config: {config_path}")
+        if self.config_overrides:
+            self.logger.info(f"Configuration overrides applied: {list(self.config_overrides.keys())}")
+
+
         self.config_path = config_path
         self.debug_mode = debug_mode
         self.config_overrides = config_overrides or {}
@@ -93,9 +99,6 @@ class CONFLUENCE:
             self.managers, self.config, self.logger
         )
         
-        self.logger.info(f"CONFLUENCE initialized with config: {config_path}")
-        if self.config_overrides:
-            self.logger.info(f"Configuration overrides applied: {list(self.config_overrides.keys())}")
     
     def _load_and_merge_config(self) -> Dict[str, Any]:
         """Load configuration file and apply CLI overrides."""

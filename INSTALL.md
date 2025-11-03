@@ -61,6 +61,7 @@ module load gdal/3.10.0
 module load conda/2024.09
 module load openblas/0.3.17
 module load netcdf-fortran/4.5.3
+module load udunits/2.2.28
 ```
 
 ### B) **ARC (University of Calgary)**
@@ -70,7 +71,10 @@ module load netcdf-fortran/4.5.3
 module unuse $MODULEPATH
 module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
 
+module load gcc/14.2.0
+module load cmake
 module load netcdf-fortran/4.6.1
+module load netcdf-c/4.9.2
 module load openblas/0.3.27
 module load hdf5/1.14.3
 module load gdal/3.9.2
