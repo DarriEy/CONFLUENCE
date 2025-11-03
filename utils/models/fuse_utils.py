@@ -2772,11 +2772,14 @@ class FUSERunner:
             # Run FUSE with default parameters
             success = self._execute_fuse('run_def')
 
-            # Run FUSE and calibrate with sce
-            success = self._execute_fuse('calib_sce')
+            try:
+                # Run FUSE and calibrate with sce
+                success = self._execute_fuse('calib_sce')
 
-            # Run FUSE with best parameters
-            success = self._execute_fuse('run_best')
+                # Run FUSE with best parameters
+                success = self._execute_fuse('run_best')
+            except: 
+                self.logger.warning('FUSE internal calibration failed')
 
             if success:
                 # Ensure the expected output file exists
