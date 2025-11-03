@@ -707,61 +707,10 @@ chmod +x extract-dataset.sh
             'install_dir': 'ngen',
             'build_commands': [
                 r'''
-set -euo pipefail
-echo "Building ngen with explicit SQLite support…"
+set -e
+echo "Building ngen..."
 
-# --- Optional: load the site module for sqlite (safe if already loaded) ---
-if command -v module >/dev/null 2>&1; then
-  module load sqlite/3.35.5 || true
-fi
-
-# --- Discover SQLite prefix from the module environment ---
-# Priority 1: EasyBuild-style var
-SQLITE_PREFIX="${EBROOTSQLITE:-}"
-# Priority 2: Parse 'module show' for include/lib hints (works on Lmod/Tcl)
-if [ -z "${SQLITE_PREFIX}" ] && command -v module >/dev/null 2>&1; then
-  moddump="$(module show sqlite/3.35.5 2>&1 || true)"
-  incdir="$(printf "%s" "$moddump" | sed -n 's/.*-I\([^ ]*\).*/\1/p' | head -1)"
-  libdir="$(printf "%s" "$moddump" | sed -n 's/.*-L\([^ ]*\).*/\1/p' | head -1)"
-  if [ -n "$incdir" ] && [ -n "$libdir" ]; then
-    # assume standard layout when both are siblings
-    SQLITE_PREFIX="$(cd "$libdir/.." && pwd)"
-  fi
-fi
-# Priority 3: pkg-config (cluster images often install .pc files)
-if [ -z "${SQLITE_PREFIX}" ] && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sqlite3; then
-  incdir="$(pkg-config --cflags sqlite3 | sed -n 's/.*-I\([^ ]*\).*/\1/p' | head -1)"
-  libdir="$(pkg-config --libs   sqlite3 | sed -n 's/.*-L\([^ ]*\).*/\1/p' | head -1)"
-  if [ -n "$incdir" ] && [ -n "$libdir" ]; then
-    SQLITE_PREFIX="$(cd "$libdir/.." && pwd)"
-  fi
-fi
-# Fallback: common locations
-if [ -z "${SQLITE_PREFIX}" ]; then
-  for p in /usr /usr/local; do
-    if [ -f "$p/include/sqlite3.h" ] && ls "$p/lib"/libsqlite3.* >/dev/null 2>&1; then
-      SQLITE_PREFIX="$p"; break
-    fi
-  done
-fi
-
-# Finalize include/lib paths for CMake
-: "${SQLITE_PREFIX:?Could not locate SQLite prefix. Ensure sqlite module is loaded or set EBROOTSQLITE.}"
-SQLITE_INC="${SQLITE_PREFIX}/include"
-# Prefer lib64 when present
-if   [ -d "${SQLITE_PREFIX}/lib64" ]; then SQLITE_LIBDIR="${SQLITE_PREFIX}/lib64"
-elif [ -d "${SQLITE_PREFIX}/lib"   ]; then SQLITE_LIBDIR="${SQLITE_PREFIX}/lib"
-else SQLITE_LIBDIR="${SQLITE_PREFIX}/lib"; fi
-SQLITE_LIB="${SQLITE_LIBDIR}/libsqlite3.so"
-# macOS dylib fallback (harmless if missing)
-[ -f "${SQLITE_LIBDIR}/libsqlite3.dylib" ] && SQLITE_LIB="${SQLITE_LIBDIR}/libsqlite3.dylib"
-
-echo "SQLite prefix: $SQLITE_PREFIX"
-echo "  include: $SQLITE_INC"
-echo "  libdir : $SQLITE_LIBDIR"
-echo "  lib    : $SQLITE_LIB"
-
-# --- Python tooling sanity (same as before) ---
+# Make sure CMake sees a supported NumPy, and ignore user-site
 export PYTHONNOUSERSITE=1
 python -m pip install --upgrade "pip<24.1" >/dev/null 2>&1 || true
 python - <<'PY' || (python -m pip install "numpy<2" "setuptools<70" && true)
@@ -774,51 +723,32 @@ import numpy as np
 print("Using NumPy:", np.__version__)
 PY
 
-# --- Boost (local, pinned to 1.79.0 as before) ---
+# Boost (local)
 if [ ! -d "boost_1_79_0" ]; then
-  echo "Fetching Boost 1.79.0…"
-  (wget -q https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2 -O boost_1_79_0.tar.bz2 \
-   || curl -fsSL -o boost_1_79_0.tar.bz2 https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2)
-  tar -xjf boost_1_79_0.tar.bz2 && rm -f boost_1_79_0.tar.bz2
+echo "Fetching Boost 1.79.0..."
+(wget -q https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2 -O boost_1_79_0.tar.bz2 \
+    || curl -fsSL -o boost_1_79_0.tar.bz2 https://downloads.sourceforge.net/project/boost/boost/1.79.0/boost_1_79_0.tar.bz2)
+tar -xjf boost_1_79_0.tar.bz2 && rm -f boost_1_79_0.tar.bz2
 fi
 export BOOST_ROOT="$(pwd)/boost_1_79_0"
 export CXX=${CXX:-g++}
 
-# --- Submodules needed ---
+# Submodules needed
 git submodule update --init --recursive -- test/googletest extern/pybind11 || true
 
-# --- Force a clean reconfigure so CMake re-detects SQLite ---
 rm -rf cmake_build
 
-# Try Python ON first, but hard-wire SQLite include/lib so CMake cannot disable it
-CONFIG_ARGS=(
-  -DCMAKE_BUILD_TYPE=Release
-  -DBOOST_ROOT="$BOOST_ROOT"
-  -DNGEN_WITH_SQLITE3=ON
-  -DSQLITE3_INCLUDE_DIR="$SQLITE_INC"
-  -DSQLITE3_LIBRARY="$SQLITE_LIB"
-)
-
-if cmake "${CONFIG_ARGS[@]}" -DNGEN_WITH_PYTHON=ON  -S . -B cmake_build; then
-  echo "Configured with Python ON"
+# First try with Python ON
+if cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=ON -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build; then
+echo "Configured with Python ON"
 else
-  echo "Retrying configure with Python OFF"
-  rm -rf cmake_build
-  cmake "${CONFIG_ARGS[@]}" -DNGEN_WITH_PYTHON=OFF -S . -B cmake_build
+echo "CMake failed with Python ON; retrying with Python OFF"
+rm -rf cmake_build
+cmake -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=OFF -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build
 fi
 
-# --- Build ---
 cmake --build cmake_build --target ngen -j ${NCORES:-4}
-
-# --- Basic runtime/link sanity checks ---
-echo "Checking linkage to libsqlite3…"
-(if command -v ldd >/dev/null 2>&1; then ldd ./cmake_build/ngen | grep -i sqlite || true
- elif command -v otool >/dev/null 2>&1; then otool -L ./cmake_build/ngen | grep -i sqlite || true
- fi) || true
-
-# Smoke test (non-fatal)
 ./cmake_build/ngen --help >/dev/null || true
-
                 '''
             ],
             'dependencies': [],
