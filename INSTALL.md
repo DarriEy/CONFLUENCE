@@ -142,36 +142,7 @@ export FC=$(brew --prefix)/bin/gfortran-14
 
 > If you must manage the venv manually: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 
-### D) Verify toolchain (optional but useful)
-```bash
-which mpicc && mpicc --version
-which gdal-config && gdal-config --version --cflags --libs
-nc-config --all | sed -n '1,80p'
-nf-config --all | sed -n '1,80p'
-```
-
-## 5) Troubleshooting
-
-- **Linker or header not found**: ensure the corresponding module is loaded (HPC) or Homebrew package is installed (macOS). Re-run `cmake` after fixing modules.
-- **MPI variants**: if you switch between MPICH and OpenMPI, clean the build directory for external tools before rebuilding.
-- **Permission errors on shared filesystems**: set `CONFLUENCE_DATA_DIR` to a path you own with enough quota/inodes.
-- **Apple Silicon**: avoid mixing x86_64 formulae with arm64. `brew config` shows architecture.
-
-
 ---
 
-## 6) Full install flow (summary)
-```bash
-# 0) (HPC) load modules  OR  (macOS) brew install packages
-# 1) Clone
-git clone https://github.com/DarriEy/CONFLUENCE.git && cd CONFLUENCE
-# 2) Optional data dir
-export CONFLUENCE_DATA_DIR=$PWD/CONFLUENCE_data
-# 3) One command installer (creates .venv and installs with pip)
-./confluence --install
-```
-
----
-
-## 7) Support stance
+## Support stance
 - We aim for a one‑command setup, but **we cannot guarantee** success on every system. 
