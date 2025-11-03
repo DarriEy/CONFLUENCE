@@ -150,10 +150,6 @@ nc-config --all | sed -n '1,80p'
 nf-config --all | sed -n '1,80p'
 ```
 
-```
-
----
-
 ## 5) Troubleshooting
 
 - **Linker or header not found**: ensure the corresponding module is loaded (HPC) or Homebrew package is installed (macOS). Re-run `cmake` after fixing modules.
