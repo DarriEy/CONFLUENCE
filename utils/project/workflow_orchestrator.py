@@ -91,7 +91,7 @@ class WorkflowOrchestrator:
             # --- Project Initialization ---
             (
                 self.managers['project'].setup_project,
-                lambda: (self.project_dir / 'shapefiles_').exists(),
+                lambda: (self.project_dir / 'shapefiles').exists(),
                 "Setting up project structure and directories"
             ),
             
@@ -194,7 +194,6 @@ class WorkflowOrchestrator:
                 "Running parameter sensitivity analysis"
             ),
             
-            # --- Result Analysis and Evaluation ---
             (
                 self.managers['model'].postprocess_results,
                 lambda: (self.project_dir / "results" / "postprocessed.csv").exists(),
@@ -202,51 +201,59 @@ class WorkflowOrchestrator:
             ),
         ]
     
-    def run_workflow(self) -> None:
+    def run_workflow(self, force_run: bool = False):
         """
-        Execute the complete CONFLUENCE workflow with enhanced logging.
+        Run the complete workflow according to the defined steps.
         
-        This method represents the main execution point of the CONFLUENCE system,
-        running through all workflow steps in sequence. For each step, it:
-        1. Checks if the step has already been completed (unless forced to rerun)
-        2. Executes the step if necessary
-        3. Tracks execution time and status
-        4. Handles any errors according to configuration settings
+        This method executes each step in the workflow sequence, handling:
+        - Conditional execution based on existing outputs
+        - Error handling with configurable stop-on-error behavior
+        - Progress tracking and timing information
+        - Comprehensive logging of each operation
         
-        The method provides detailed logging throughout the execution process and
-        generates a summary report upon completion.
+        The workflow can be configured to:
+        - Skip steps that have already been completed (default)
+        - Force re-execution of all steps (force_run=True)
+        - Continue or stop on errors (based on STOP_ON_ERROR config)
+        
+        Args:
+            force_run (bool): If True, forces execution of all steps even if outputs exist.
+                            If False (default), skips steps with existing outputs.
+        
+        Raises:
+            Exception: If a step fails and STOP_ON_ERROR is True in configuration
+            
+        Note:
+            The method provides detailed logging throughout execution, including:
+            - Step headers with progress indicators
+            - Execution timing for each step
+            - Clear success/skip/failure indicators
+            - Final summary statistics
         """
-        # Log workflow header
+        # Check prerequisites
+        if not self.validate_workflow_prerequisites():
+            raise ValueError("Workflow prerequisites not met")
+        
+        # Log workflow start
+        start_time = datetime.now()
         if self.logging_manager:
-            header = self.logging_manager.format_section_header(
-                f"CONFLUENCE WORKFLOW │ {self.domain_name} │ {self.experiment_id}"
-            )
+            header = self.logging_manager.format_section_header("CONFLUENCE WORKFLOW EXECUTION")
             self.logger.info(header)
         else:
+            self.logger.info("\n" + "=" * 60)
+            self.logger.info("Starting CONFLUENCE Workflow Execution")
+            self.logger.info(f"Domain: {self.domain_name}")
+            self.logger.info(f"Experiment: {self.experiment_id}")
             self.logger.info("=" * 60)
-            self.logger.info(f"Starting CONFLUENCE workflow for domain: {self.domain_name}")
-            self.logger.info(f"Experiment ID: {self.experiment_id}")
-            self.logger.info("=" * 60)
-        
-        # Log start time and configuration
-        start_time = datetime.now()
-        self.logger.info(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Get force run setting
-        force_run = self.config.get('FORCE_RUN_ALL_STEPS', False)
-        if force_run:
-            self.logger.info("⚠ FORCE_RUN_ALL_STEPS enabled - all steps will execute")
         
         # Get workflow steps
         workflow_steps = self.define_workflow_steps()
         total_steps = len(workflow_steps)
-        
-        # Track execution status
         completed_steps = 0
         skipped_steps = 0
         failed_steps = 0
         
-        # Execute workflow
+        # Execute each step
         for idx, (step_func, check_func, description) in enumerate(workflow_steps, 1):
             step_name = step_func.__name__
             

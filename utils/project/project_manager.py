@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 import geopandas as gpd
 from shapely.geometry import Point
 
+
 class ProjectManager:
     """
     Manages project-level operations including directory structure and initialization.
@@ -18,7 +19,6 @@ class ProjectManager:
     Key responsibilities:
     - Creating the project directory structure
     - Generating pour point shapefiles from coordinates
-    - Handling special cases like point-scale simulations
     - Validating project structure integrity
     - Providing project metadata to other components
     
@@ -33,10 +33,10 @@ class ProjectManager:
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
-        Initialize the Project Manager.
+        Initialize the ProjectManager.
         
         Creates a ProjectManager instance with the provided configuration and logger.
-        This sets up the basic paths and identifiers needed for project management.
+        Sets up the basic paths and identifiers needed for project management.
         
         Args:
             config (Dict[str, Any]): Configuration dictionary containing project settings
@@ -56,11 +56,7 @@ class ProjectManager:
         Creates the main project directory and all required subdirectories based on 
         a predefined structure. This structure includes directories for:
         - Shapefiles (pour point, catchment, river network, river basins)
-        - Observations and streamflow data
-        - Documentation
         - Attribute data
-        
-        For point-scale simulations, this method also updates the bounding box coordinates.
         
         Returns:
             Path: Path to the created project directory
@@ -70,14 +66,16 @@ class ProjectManager:
         """
         self.logger.info(f"Setting up project for domain: {self.domain_name}")
         
+        # Create main project directory
         self.project_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create directory structure
+        # Define directory structure
         directories = {
             'shapefiles': ['pour_point', 'catchment', 'river_network', 'river_basins'],
             'attributes': []
         }
         
+        # Create directory structure
         for main_dir, subdirs in directories.items():
             main_path = self.project_dir / main_dir
             main_path.mkdir(parents=True, exist_ok=True)
@@ -89,59 +87,66 @@ class ProjectManager:
     
     def create_pour_point(self) -> Optional[Path]:
         """
-        Create pour point shapefile from coordinates if needed.
+        Create pour point shapefile from coordinates if specified.
         
-        If pour point coordinates are specified in the configuration, this method
-        creates a GeoDataFrame with a single point geometry and saves it as a
-        shapefile at the appropriate location. If 'default' is specified in the
-        configuration, it assumes a user-provided pour point shapefile exists.
+        If pour point coordinates are specified in the configuration, creates
+        a GeoDataFrame with a single point geometry and saves it as a shapefile
+        at the appropriate location. If 'default' is specified, assumes a 
+        user-provided pour point shapefile exists.
         
         Returns:
             Optional[Path]: Path to the created pour point shapefile if successful,
-                           None if using a user-provided shapefile or if creation fails
+                          None if using a user-provided shapefile or if creation fails
                            
         Raises:
             ValueError: If the pour point coordinates are in an invalid format
             Exception: For other errors during shapefile creation
         """
+        # Check if using user-provided shapefile
         if self.config.get('POUR_POINT_COORDS', 'default').lower() == 'default':
             self.logger.info("Using user-provided pour point shapefile")
             return None
         
         try:
+            # Parse coordinates
             lat, lon = map(float, self.config['POUR_POINT_COORDS'].split('/'))
-            point = Point(lon, lat)
+            point = Point(lon, lat)  # Note: Point takes (lon, lat) order
+            
+            # Create GeoDataFrame
             gdf = gpd.GeoDataFrame({'geometry': [point]}, crs="EPSG:4326")
             
+            # Determine output path
             output_path = self.project_dir / "shapefiles" / "pour_point"
-            if self.config.get('POUR_POINT_SHP_PATH') != 'default':
+            if self.config.get('POUR_POINT_SHP_PATH', 'default') != 'default':
                 output_path = Path(self.config['POUR_POINT_SHP_PATH'])
             
+            # Determine shapefile name
             pour_point_shp_name = f"{self.domain_name}_pourPoint.shp"
-            if self.config.get('POUR_POINT_SHP_NAME') != 'default':
+            if self.config.get('POUR_POINT_SHP_NAME', 'default') != 'default':
                 pour_point_shp_name = self.config['POUR_POINT_SHP_NAME']
             
+            # Ensure output directory exists
             output_path.mkdir(parents=True, exist_ok=True)
             output_file = output_path / pour_point_shp_name
             
+            # Save shapefile
             gdf.to_file(output_file)
             self.logger.info(f"Pour point shapefile created successfully: {output_file}")
             return output_file
             
-        except ValueError:
+        except ValueError as e:
             self.logger.error("Invalid pour point coordinates format. Expected 'lat/lon'.")
+            return None
         except Exception as e:
             self.logger.error(f"Error creating pour point shapefile: {str(e)}")
-        
-        return None
+            return None
     
     def get_project_info(self) -> Dict[str, Any]:
         """
         Get information about the project configuration.
         
-        This method collects key project metadata into a dictionary, which can be
-        used for reporting, logging, or providing status information to other
-        components of the CONFLUENCE system.
+        Collects key project metadata into a dictionary for reporting,
+        logging, or providing status information to other components.
         
         The returned information includes:
         - Domain name
@@ -149,7 +154,6 @@ class ProjectManager:
         - Project directory path
         - Data directory path
         - Pour point coordinates
-        - Structure validation status
         
         Returns:
             Dict[str, Any]: Dictionary containing project information

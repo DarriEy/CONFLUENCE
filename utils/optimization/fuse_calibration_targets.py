@@ -271,7 +271,7 @@ class FUSECalibrationTarget:
             self.logger.debug(f"Reading FUSE simulation from: {sim_file}")
             
             # Read FUSE simulation output
-            with xr.open_dataset(sim_file) as ds:
+            with xr.open_dataset(sim_file, decode_timedelta=True) as ds:
                 self.logger.debug(f"Dataset variables: {list(ds.variables.keys())}")
                 
                 # Get the appropriate runoff variable

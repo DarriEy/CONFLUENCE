@@ -248,7 +248,7 @@ class BenchmarkPreprocessor:
         """Load and process forcing data, returning hourly dataframe."""
         forcing_path = self.project_dir / "forcing" / "basin_averaged_data"
         # Use open_mfdataset to load all netCDF files at once efficiently
-        combined_ds = xr.open_mfdataset(list(forcing_path.glob("*.nc")), combine='by_coords')
+        combined_ds = xr.open_mfdataset(list(forcing_path.glob("*.nc")), combine='by_coords', data_vars='all')
         
         # Average across HRUs
         averaged_ds = combined_ds.mean(dim='hru')

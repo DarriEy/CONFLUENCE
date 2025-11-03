@@ -4,10 +4,11 @@ from pathlib import Path
 import logging
 import sys
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import json
 import yaml
 import warnings
+import os
 
 # Suppress pyogrio field width warnings (non-fatal - data is still written)
 warnings.filterwarnings('ignore', 
@@ -100,7 +101,7 @@ class LoggingManager:
         The log file is named with a timestamp to ensure uniqueness across runs.
         
         Args:
-            log_level (Optional[str]): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            log_level (Optional[str]): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
                                       If None, uses the level from configuration
             
         Returns:
@@ -175,9 +176,9 @@ class LoggingManager:
         
         # Log startup information
         logger.info("=" * 60)
-        logger.info(f"CONFLUENCE Logging Initialized")
+        logger.info("CONFLUENCE Logging Initialized")
         if self.debug_mode:
-            logger.info(f"DEBUG MODE: Enabled")
+            logger.info("DEBUG MODE: Enabled")
         logger.info(f"Domain: {self.domain_name}")
         logger.info(f"Experiment ID: {self.config.get('EXPERIMENT_ID', 'N/A')}")
         logger.info(f"Log Level: {log_level}")
@@ -186,199 +187,232 @@ class LoggingManager:
         
         return logger
     
-    def format_step_header(self, step_num: int, total_steps: int, step_name: str) -> str:
-        """
-        Create a formatted header for workflow steps.
-        
-        Args:
-            step_num: Current step number
-            total_steps: Total number of steps
-            step_name: Name of the current step
-            
-        Returns:
-            Formatted header string
-        """
-        progress = f"[{step_num:2d}/{total_steps:2d}]"
-        separator = "─" * 50
-        return f"\n┌{separator}┐\n│ {progress} {step_name:<40} │\n└{separator}┘"
-    
-    def format_step_completion(self, step_name: str, duration: str, status: str = "✓") -> str:
-        """
-        Create a formatted completion message for workflow steps.
-        
-        Args:
-            step_name: Name of the completed step
-            duration: Time taken for the step
-            status: Status symbol (✓, ✗, →)
-            
-        Returns:
-            Formatted completion message
-        """
-        return f"{status} {step_name} │ {duration}"
-    
-    def format_section_header(self, section_name: str) -> str:
-        """
-        Create a formatted section header.
-        
-        Args:
-            section_name: Name of the section
-            
-        Returns:
-            Formatted section header
-        """
-        separator = "╔" * 60
-        return f"\n{separator}\n╠ {section_name:<56} ╣\n{separator}"
-    
     def log_configuration(self) -> Path:
         """
-        Log the configuration file to the log directory.
+        Log the current configuration to a YAML file for reproducibility.
         
-        This method preserves the configuration used for the current run by
-        saving it to a file in the log directory. This is critical for
-        reproducibility and debugging, as it captures the exact settings
-        used for each experiment.
+        This method captures the complete configuration used for the current run
+        and saves it to a timestamped YAML file. This is essential for
+        reproducibility and debugging, as it preserves the exact settings used
+        for each model run.
         
-        The configuration can be saved in either YAML or JSON format, depending
-        on the CONFIG_FORMAT setting. Additionally, a 'latest' symlink is created
-        for easy access to the most recent configuration.
+        The configuration is saved with masked sensitive information (such as
+        passwords or API keys, though none are currently expected in CONFLUENCE).
         
         Returns:
-            Path: Path to the logged configuration file
+            Path: Path to the saved configuration file
             
         Raises:
-            PermissionError: If the configuration file cannot be written
-            OSError: If the symlink cannot be created
-            Exception: For other errors during configuration logging
+            PermissionError: If configuration file cannot be written
+            IOError: If file writing operations fail
         """
-        # Create timestamp for config log
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Create timestamp for config file
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        config_file = self.log_dir / f'config_{self.domain_name}_{current_time}.yaml'
         
-        # Determine config format and extension
-        config_format = self.config.get('CONFIG_FORMAT', 'yaml')
-        extension = 'yaml' if config_format == 'yaml' else 'json'
+        # Create a copy and mask sensitive information
+        config_to_log = self.config.copy()
         
-        # Create config log file path
-        config_log_file = self.log_dir / f'config_{self.domain_name}_{timestamp}.{extension}'
+        # Mask any potential sensitive fields (add as needed)
+        sensitive_fields = ['PASSWORD', 'API_KEY', 'SECRET']
+        for field in sensitive_fields:
+            if field in config_to_log:
+                config_to_log[field] = '***MASKED***'
         
-        try:
-            # Log configuration in appropriate format
-            with open(config_log_file, 'w') as f:
-                if config_format == 'yaml':
-                    yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
-                else:
-                    json.dump(self.config, f, indent=4)
-            
-            self.logger.info(f"Configuration logged to: {config_log_file}")
-            
-            # Also create a 'latest' symlink for easy access
-            latest_link = self.log_dir / f'config_latest.{extension}'
-            if latest_link.exists():
-                latest_link.unlink()
-            latest_link.symlink_to(config_log_file.name)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to log configuration: {str(e)}")
-            raise
+        # Add metadata
+        metadata = {
+            'logged_at': current_time,
+            'confluence_version': '1.0.0',  # Update with actual version
+            'debug_mode': self.debug_mode,
+            'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        }
+        config_to_log['_metadata'] = metadata
         
-        return config_log_file
+        # Save configuration
+        with open(config_file, 'w') as f:
+            yaml.dump(config_to_log, f, default_flow_style=False, sort_keys=False)
+        
+        self.logger.info(f"Configuration logged to: {config_file}")
+        return config_file
     
-    def setup_module_logger(self, module_name: str, log_level: Optional[str] = None) -> logging.Logger:
+    def create_module_logger(self, module_name: str, 
+                           log_level: Optional[str] = None) -> logging.Logger:
         """
-        Set up a logger for a specific module with dedicated log file.
+        Create a logger for a specific module with its own file handler.
         
-        This method creates a module-specific logger that allows for fine-grained
-        control over logging verbosity on a per-module basis. Each module logger
-        writes to its own log file while also propagating messages to the main
-        logger for consolidated logging.
+        This method creates module-specific loggers that inherit from the main
+        CONFLUENCE logger but have their own log files. This allows for
+        module-specific debugging and analysis without cluttering the main log.
         
-        Module-specific log levels can be specified in the configuration using
-        the pattern MODULE_NAME_LOG_LEVEL (e.g., DOMAIN_LOG_LEVEL). If not specified,
-        the method falls back to the global log level.
+        Module loggers use the same formatters as the main logger but can have
+        different log levels if needed.
         
         Args:
-            module_name (str): Name of the module (e.g., 'domain', 'data', 'model')
-            log_level (Optional[str]): Logging level for this module
-                                      If None, uses module-specific or global level
+            module_name (str): Name of the module requiring a logger
+            log_level (Optional[str]): Logging level for this specific module.
+                                      If None, inherits from main logger
             
         Returns:
-            logging.Logger: Configured logger for the module
+            logging.Logger: Configured module-specific logger
             
         Raises:
-            ValueError: If an invalid log level is specified
-            PermissionError: If log file cannot be created due to permissions
+            ValueError: If module_name is empty or contains invalid characters
+            PermissionError: If module log file cannot be created
         """
-        # Create module-specific log file
+        # Create module logger as child of main logger
+        module_logger = logging.getLogger(f'confluence.{module_name}')
+        
+        # Set level
+        if log_level:
+            module_logger.setLevel(getattr(logging, log_level.upper()))
+        
+        # Don't add handlers if they already exist (avoid duplicates)
+        if module_logger.handlers:
+            return module_logger
+        
+        # Create timestamp for log file
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = self.log_dir / f'{module_name}_{self.domain_name}_{current_time}.log'
         
-        # Get log level
-        if log_level is None:
-            log_level = self.config.get(f'{module_name.upper()}_LOG_LEVEL', 
-                                      self.config.get('LOG_LEVEL', 'INFO'))
+        # Create file handler for module
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
         
-        # Create module logger as child of main logger
-        logger_name = f'confluence.{module_name}'
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(getattr(logging, log_level.upper()))
-        logger.handlers.clear()
-        
-        # Create formatter
+        # Use same detailed formatter as main logger
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
-        # File handler for module-specific logs
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
         
-        # Add handler
-        logger.addHandler(file_handler)
+        # Add handler to module logger
+        module_logger.addHandler(file_handler)
         
-        # Propagate to main confluence logger (not root)
-        logger.propagate = True
+        # Log creation
+        module_logger.info(f"Module logger initialized for: {module_name}")
         
-        return logger
+        return module_logger
     
-    def create_run_summary(self, start_time: datetime, end_time: datetime, 
-                          status: Dict[str, Any]) -> Path:
+    def log_step_header(self, step_number: int, total_steps: int, 
+                       step_name: str, description: str = "") -> None:
         """
-        Create a summary file for the run with execution statistics.
+        Log a formatted header for a workflow step.
         
-        This method generates a JSON file containing a summary of the workflow
-        execution, including timing information, configuration settings, and
-        execution status. This summary is valuable for tracking experiment
-        history, performance analysis, and troubleshooting.
-        
-        The summary includes:
-        - Domain and experiment identifiers
-        - Start and end times
-        - Execution duration
-        - Workflow status (completion of steps)
-        - Key configuration settings
+        This method creates visually distinct headers for workflow steps to improve
+        log readability. It uses box drawing characters to create a clear visual
+        separation between different workflow stages.
         
         Args:
-            start_time (datetime): Workflow start time
-            end_time (datetime): Workflow end time
-            status (Dict[str, Any]): Workflow status dictionary with execution details
+            step_number (int): Current step number
+            total_steps (int): Total number of steps in the workflow
+            step_name (str): Name of the current step
+            description (str): Optional detailed description of the step
+            
+        Raises:
+            ValueError: If step_number > total_steps or if values are negative
+        """
+        # Create the step header with box drawing characters
+        header = f"""
+┌{'─' * 58}┐
+│ Step {step_number}/{total_steps}: {step_name:<46} │
+│ {description:<56} │
+└{'─' * 58}┘"""
+        
+        # Log without timestamp (formatted message)
+        for line in header.strip().split('\n'):
+            self.logger.info(line)
+    
+    def log_substep(self, message: str, level: str = 'INFO') -> None:
+        """
+        Log a substep or progress message with consistent formatting.
+        
+        This method provides consistent formatting for substep messages within
+        a larger workflow step. It uses arrow indicators to show progression
+        and maintains visual consistency throughout the logs.
+        
+        Args:
+            message (str): The message to log
+            level (str): Logging level (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+            
+        Raises:
+            ValueError: If an invalid logging level is specified
+        """
+        formatted_message = f"  → {message}"
+        log_method = getattr(self.logger, level.lower())
+        log_method(formatted_message)
+    
+    def log_completion(self, success: bool = True, message: str = "", 
+                      duration: Optional[float] = None) -> None:
+        """
+        Log the completion of a step or operation.
+        
+        This method logs the completion status of an operation with visual
+        indicators for success or failure. It can also include execution time
+        if provided.
+        
+        Args:
+            success (bool): Whether the operation completed successfully
+            message (str): Optional completion message
+            duration (Optional[float]): Execution time in seconds
+            
+        Raises:
+            ValueError: If duration is negative
+        """
+        status_symbol = "✓" if success else "✗"
+        status_text = "Complete" if success else "Failed"
+        
+        completion_msg = f"  {status_symbol} {status_text}"
+        if message:
+            completion_msg += f": {message}"
+        if duration is not None:
+            completion_msg += f" (Duration: {duration:.2f}s)"
+        
+        if success:
+            self.logger.info(completion_msg)
+        else:
+            self.logger.error(completion_msg)
+    
+    def create_run_summary(self, steps_completed: List[str], 
+                          errors: List[Dict[str, Any]],
+                          warnings: List[str],
+                          execution_time: float,
+                          status: str = 'completed') -> Path:
+        """
+        Create a summary JSON file for the entire run.
+        
+        This method creates a comprehensive summary of a CONFLUENCE run, including
+        all completed steps, any errors or warnings encountered, and overall
+        execution statistics. The summary is saved as a JSON file for easy
+        parsing and analysis.
+        
+        Args:
+            steps_completed (List[str]): List of successfully completed step names
+            errors (List[Dict[str, Any]]): List of error dictionaries with details
+            warnings (List[str]): List of warning messages
+            execution_time (float): Total execution time in seconds
+            status (str): Overall run status ('completed', 'failed', 'partial')
             
         Returns:
             Path: Path to the created summary file
             
         Raises:
-            PermissionError: If the summary file cannot be written
-            TypeError: If the status dictionary contains non-serializable objects
+            IOError: If summary file cannot be written
+            ValueError: If execution_time is negative
         """
         summary_file = self.log_dir / f'run_summary_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
         
         summary = {
-            'domain_name': self.domain_name,
-            'experiment_id': self.config.get('EXPERIMENT_ID'),
-            'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat(),
-            'duration': str(end_time - start_time),
-            'debug_mode': self.debug_mode,  # Add debug mode to summary
+            'timestamp': datetime.now().isoformat(),
+            'domain': self.domain_name,
+            'experiment_id': self.config.get('EXPERIMENT_ID', 'N/A'),
+            'execution_time_seconds': execution_time,
+            'steps_completed': steps_completed,
+            'total_steps_completed': len(steps_completed),
+            'errors': errors,
+            'total_errors': len(errors),
+            'warnings': warnings,
+            'total_warnings': len(warnings),
+            'debug_mode': self.debug_mode,
             'status': status,
             'configuration': {
                 'hydrological_model': self.config.get('HYDROLOGICAL_MODEL'),
@@ -407,7 +441,7 @@ class LoggingManager:
         and current timestamp.
         
         Args:
-            archive_name (Optional[str]): Name for the archive file
+            archive_name (Optional[str]): Name for the archive file.
                                          If None, a name is generated automatically
             
         Returns:
@@ -416,7 +450,7 @@ class LoggingManager:
         Raises:
             PermissionError: If the archive cannot be created
             ImportError: If the shutil module is not available
-            Exception: For other errors during archiving
+            IOError: For other errors during archiving
         """
         import shutil
         
@@ -478,18 +512,32 @@ class LoggingManager:
         completions, and progress indicators.
         """
         
-        # ANSI color codes for different log levels
-        COLORS = {
-            'DEBUG': '\033[36m',    # Cyan
-            'INFO': '\033[32m',     # Green
-            'WARNING': '\033[33m',  # Yellow
-            'ERROR': '\033[31m',    # Red
-            'CRITICAL': '\033[35m', # Magenta
-        }
-        RESET = '\033[0m'
+        # ANSI color codes for different log levels (with cross-platform check)
+        use_colors = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty() and os.name != 'nt'
         
-        def format(self, record):
-            """Format log record with enhanced visual styling."""
+        if use_colors:
+            COLORS = {
+                'DEBUG': '\033[36m',    # Cyan
+                'INFO': '\033[32m',     # Green
+                'WARNING': '\033[33m',  # Yellow
+                'ERROR': '\033[31m',    # Red
+                'CRITICAL': '\033[35m', # Magenta
+            }
+            RESET = '\033[0m'
+        else:
+            COLORS = {}
+            RESET = ''
+        
+        def format(self, record: logging.LogRecord) -> str:
+            """
+            Format log record with enhanced visual styling.
+            
+            Args:
+                record (logging.LogRecord): The log record to format
+                
+            Returns:
+                str: Formatted log message
+            """
             # Get the basic formatted message
             message = record.getMessage()
             
@@ -498,7 +546,7 @@ class LoggingManager:
             # Step headers (messages starting with "Step X/Y:" or containing step patterns)
             if (message.startswith("Step ") and "/" in message and ":" in message) or \
                (message.startswith("┌") or message.startswith("│") or message.startswith("└")):
-                # Return step headers without timestamp or bullets, just the message
+                # Return step headers without timestamp or bullets
                 return message
             
             # Section separators (messages with lots of = signs)
@@ -521,7 +569,7 @@ class LoggingManager:
             # Regular info messages
             else:
                 # Add color coding for log levels (if terminal supports it)
-                if hasattr(sys.stdout, 'isatty') and sys.stdout.isatty():
+                if self.use_colors:
                     level_color = self.COLORS.get(record.levelname, '')
                     if level_color and record.levelname == 'INFO':
                         level_indicator = f"{level_color}●{self.RESET}"
@@ -546,7 +594,7 @@ class LoggingManager:
         ensuring that complete logging information is still preserved.
         """
         
-        def filter(self, record):
+        def filter(self, record: logging.LogRecord) -> bool:
             """
             Filter log records based on level and module.
             
@@ -555,7 +603,7 @@ class LoggingManager:
             known to be verbose.
             
             Args:
-                record: Log record to be evaluated
+                record (logging.LogRecord): Log record to be evaluated
                 
             Returns:
                 bool: True if the record should be displayed, False otherwise

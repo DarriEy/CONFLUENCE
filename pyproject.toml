@@ -47,7 +47,6 @@ dependencies = [
 # Full feature set from your requirements.txt
 full = [
     "pint_xarray>=0.4",
-    "pyarrow",
     "distributed", 
     "torch>=2.4.1",
     "scikit-learn>=1.5.2",

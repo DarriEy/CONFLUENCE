@@ -528,7 +528,7 @@ class FUSEOptimizer:
             optimizer = optim.Adam([x], lr=initial_lr)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='min' if self.optimization_metric.upper() in ['RMSE', 'MAE'] else 'max',
-                factor=0.7, patience=3, min_lr=lr * 0.1, verbose=False
+                factor=0.7, patience=3, min_lr=lr * 0.1
             )
             self.logger.info(f"Using Adam with initial LR: {initial_lr:.6f}")
             
@@ -869,7 +869,7 @@ class FUSEOptimizer:
             
             output_file = sorted(output_files)[-1]  # Most recent
             
-            with xr.open_dataset(output_file) as ds:
+            with xr.open_dataset(output_file, decode_timedelta=True) as ds:
                 # Check if jacobian data exists
                 if 'numjacobian' not in ds.data_vars:
                     self.logger.debug("numjacobian not found in FUSE output - using finite differences")

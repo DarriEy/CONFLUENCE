@@ -3026,7 +3026,7 @@ class FuseDecisionAnalyzer:
             self.observed_streamflow = dfObs['discharge_cms'].resample('d').mean()
 
         # Read simulations
-        dfSim = xr.open_dataset(sim_file_path)
+        dfSim = xr.open_dataset(sim_file_path, decode_timedelta=True)
         dfSim = dfSim['q_routed'].isel(
                                 param_set=0,
                                 latitude=0,
