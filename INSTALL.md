@@ -118,7 +118,6 @@ xcode-select --install
 ```bash
 brew update
 brew install cmake gcc open-mpi gdal hdf5 netcdf netcdf-fortran openblas lapack cdo
-# Optional
 brew install r
 ```
 
@@ -138,7 +137,7 @@ export FC=$(brew --prefix)/bin/gfortran-14
 ./confluence --install
 ```
 
-> If you *must* manage the venv manually: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+> If you must manage the venv manually: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 
 ### D) Verify toolchain (optional but useful)
 ```bash
@@ -148,33 +147,21 @@ nc-config --all | sed -n '1,80p'
 nf-config --all | sed -n '1,80p'
 ```
 
----
-
-## 5) External Tools Notes
-
-### SUNDIALS
-- CONFLUENCE verifies **either** `lib/` **or** `lib64/` for SUNDIALS static libs and headers. If your platform only provides one of these, it will still validate.
-
-### TauDEM
-- The build places binaries in `installs/TauDEM/build/src/` and CONFLUENCE stages them to `installs/TauDEM/bin/` automatically on success. If validation fails, check both locations:
-```bash
-ls -la $CONFLUENCE_DATA_DIR/installs/TauDEM/build/src/
-ls -la $CONFLUENCE_DATA_DIR/installs/TauDEM/bin/
 ```
 
 ---
 
-## 6) Troubleshooting
+## 5) Troubleshooting
 
 - **Linker or header not found**: ensure the corresponding module is loaded (HPC) or Homebrew package is installed (macOS). Re-run `cmake` after fixing modules.
 - **MPI variants**: if you switch between MPICH and OpenMPI, clean the build directory for external tools before rebuilding.
 - **Permission errors on shared filesystems**: set `CONFLUENCE_DATA_DIR` to a path you own with enough quota/inodes.
 - **Apple Silicon**: avoid mixing x86_64 formulae with arm64. `brew config` shows architecture.
-- **Python GDAL bindings**: generally not required by CONFLUENCE core. If you need them, prefer `pip install gdal` inside your venv, or use the Brew-provided headers for compilation needs.
+
 
 ---
 
-## 7) Full install flow (summary)
+## 6) Full install flow (summary)
 ```bash
 # 0) (HPC) load modules  OR  (macOS) brew install packages
 # 1) Clone
@@ -187,5 +174,5 @@ export CONFLUENCE_DATA_DIR=$PWD/CONFLUENCE_data
 
 ---
 
-## 8) Support stance
+## 7) Support stance
 - We aim for a one‑command setup, but **we cannot guarantee** success on every system. 
