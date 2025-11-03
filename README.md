@@ -32,12 +32,11 @@ CONFLUENCE is a computational environmental modeling platform that streamlines t
 **Environment setup varies by system.** CONFLUENCE will try to set up external tools automatically, but we cannot guarantee it in all environments.
 
 Please See [INSTALL.md](INSTALL.md) for platform‑specific instructions (Anvil, ARC UCalgary, FIR, macOS), prerequisites, and our support stance.
-```
 
 
 ### Basic Usage
 
-CONFLUENCE provides a convenient shell wrapper for easy execution:
+CONFLUENCE provides a shell wrapper for easy execution:
 
 ```bash
 # Show available options
