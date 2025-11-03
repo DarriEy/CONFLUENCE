@@ -1639,6 +1639,7 @@ class gistoolRunner:
             f"--cluster={self.config['CLUSTER_JSON']}"
         ] 
         
+        self.logger.info(f'gistool command: {gistool_command}')
         if start_date and end_date:
             gistool_command.extend([
                 f"--start-date={start_date}",

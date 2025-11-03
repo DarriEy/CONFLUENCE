@@ -509,7 +509,7 @@ class FUSEPreProcessor:
             
             variable_handler = VariableHandler(config=self.config, logger=self.logger, 
                                             dataset=self.config['FORCING_DATASET'], model='FUSE')
-            ds = xr.open_mfdataset(forcing_files)
+            ds = xr.open_mfdataset(forcing_files, data_vars='all')
             ds = variable_handler.process_forcing_data(ds)
             
             # Spatial organization based on mode BEFORE resampling
