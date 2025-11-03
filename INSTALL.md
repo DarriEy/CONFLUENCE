@@ -24,8 +24,6 @@
 
 **Environment variables you may set** (optional but sometimes helpful)
 ```bash
-# Tell CONFLUENCE where to stage external tools & data
-export CONFLUENCE_DATA_DIR=/path/to/CONFLUENCE_data
 
 # If you need to force compilers (esp. on macOS/Homebrew)
 export CC=gcc
@@ -70,7 +68,6 @@ module load conda/2024.09
 module unuse $MODULEPATH
 module use /work/comphyd_lab/local/modules/spack/2024v5/modules/linux-rocky8-x86_64/Core/
 
-# module restore confluence_modules   # (optional) if you saved a collection
 module load netcdf-fortran/4.6.1
 module load openblas/0.3.27
 module load hdf5/1.14.3
