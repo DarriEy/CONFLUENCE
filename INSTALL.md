@@ -11,16 +11,15 @@
 - C/C++ compiler (GCC/Clang)
 - Fortran compiler (gfortran)
 - CMake ≥ 3.20
-- Make/Ninja
 - MPI implementation (OpenMPI or MPICH)
 
 **Core libraries / tools**
 - GDAL (headers + libs)
 - HDF5, NetCDF (C + Fortran)
-- BLAS/LAPACK (OpenBLAS or Netlib)
+- BLAS/LAPACK 
 - Python 3.11; **pip** (the installer will create & manage a virtualenv automatically)
-- R (optional, for R-based workflows)
-- CDO (optional, for climate operators)
+- R (for R-based workflows)
+- CDO 
 
 **Environment variables you may set** (optional but sometimes helpful)
 ```bash
