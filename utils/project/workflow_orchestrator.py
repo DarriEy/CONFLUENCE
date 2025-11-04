@@ -1,4 +1,4 @@
-# In utils/workflow_utils/workflow_orchestrator.py
+# In utils/project/workflow_orchestrator.py
 
 from pathlib import Path
 import logging

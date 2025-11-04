@@ -14,7 +14,6 @@ import csv
 from datetime import datetime
 import time
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.data.variable_utils import VariableHandler # type: ignore
 
 class DataAcquisitionProcessor:
