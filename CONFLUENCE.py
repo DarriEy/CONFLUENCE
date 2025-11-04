@@ -191,15 +191,14 @@ class CONFLUENCE:
                 'acquire_attributes': 'acquire_attributes',
                 'define_domain': 'define_domain',
                 'discretize_domain': 'discretize_domain',
-                'setup_model': 'preprocess_models',  # Maps to actual function name
-                'run_model': 'run_models',           # Fixed: maps to plural function name
-                'calibrate_model': 'calibrate_model', # Direct mapping
+                'setup_model': 'preprocess_models',  
+                'run_model': 'run_models',           
+                'calibrate_model': 'calibrate_model', 
                 'run_emulation': 'run_emulation',
                 'run_benchmarking': 'run_benchmarking',
                 'run_decision_analysis': 'run_decision_analysis',
                 'run_sensitivity_analysis': 'run_sensitivity_analysis',
                 'postprocess_results': 'postprocess_results',
-                # Additional mappings for data processing steps
                 'process_observed_data': 'process_observed_data',
                 'acquire_forcings': 'acquire_forcings',
                 'model_agnostic_preprocessing': 'run_model_agnostic_preprocessing',

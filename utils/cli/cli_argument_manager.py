@@ -40,6 +40,13 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from utils.cli.external_tools_config import get_external_tools_definitions
 
+try:
+    from ruamel.yaml import YAML
+    _YAML_RT = YAML(typ="rt")  # round-trip to preserve comments/formatting
+    _YAML_RT.preserve_quotes = True
+except Exception:
+    _YAML_RT = None
+
 
 class CLIArgumentManager:
     """
@@ -1270,20 +1277,13 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     def _ensure_valid_config_paths(self, config: Dict[str, Any], config_path: Path) -> Dict[str, Any]:
         """
         Ensure CONFLUENCE_DATA_DIR and CONFLUENCE_CODE_DIR paths exist and are valid.
-        
-        Args:
-            config: Configuration dictionary
-            config_path: Path to the config file
-            
-        Returns:
-            Updated configuration dictionary
         """
         data_dir = config.get('CONFLUENCE_DATA_DIR')
         code_dir = config.get('CONFLUENCE_CODE_DIR')
-        
+
         data_dir_valid = False
         code_dir_valid = False
-        
+
         # Check if CONFLUENCE_DATA_DIR exists and is accessible
         if data_dir:
             try:
@@ -1304,7 +1304,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                         pass
             except Exception:
                 pass
-        
+
         # Check if CONFLUENCE_CODE_DIR exists and is accessible
         if code_dir:
             try:
@@ -1313,43 +1313,52 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     code_dir_valid = True
             except Exception:
                 pass
-        
+
         # If either path is invalid, update config
         if not data_dir_valid or not code_dir_valid:
             print(f"\n⚠️  Detected invalid or inaccessible paths in config template:")
-            
+
             if not code_dir_valid:
                 print(f"   📂 CONFLUENCE_CODE_DIR: {code_dir} (inaccessible)")
-            
+
             if not data_dir_valid:
                 print(f"   📂 CONFLUENCE_DATA_DIR: {data_dir} (inaccessible)")
-            
+
             print(f"\n🔧 Auto-configuring paths for fresh installation...")
-            
+
             if not code_dir_valid:
                 new_code_dir = Path.cwd().resolve()
                 config['CONFLUENCE_CODE_DIR'] = str(new_code_dir)
                 print(f"   ✅ CONFLUENCE_CODE_DIR set to: {new_code_dir}")
-            
+
             if not data_dir_valid:
                 new_data_dir = (Path.cwd().parent / 'CONFLUENCE_data').resolve()
                 config['CONFLUENCE_DATA_DIR'] = str(new_data_dir)
-                
+
                 try:
                     new_data_dir.mkdir(parents=True, exist_ok=True)
                     print(f"   ✅ CONFLUENCE_DATA_DIR set to: {new_data_dir}")
                     print(f"   📁 Created data directory")
                 except Exception as e:
                     print(f"   ⚠️  Could not create data directory: {e}")
-            
+
+            # ---- backup + overwrite (minimal change) ----
             try:
-                with open(config_path, 'w') as f:
-                    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-                print(f"   💾 Updated config template saved to: {config_path}")
-            except Exception as e:
-                print(f"   ⚠️  Could not save updated config: {e}")
-        
-        return config
+                # Make a single rolling backup named "<stem>_backup.yaml"
+                # e.g., config_template.yaml -> config_template_backup.yaml
+                backup_path = config_path.with_name(f"{config_path.stem}_backup{config_path.suffix}")
+                if config_path.exists():
+                    shutil.copy2(config_path, backup_path)
+                    print(f"   📦 Backup created: {backup_path}")
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+            print(f"   💾 Updated config template saved to: {config_path}")
+        except Exception as e:
+            print(f"   ⚠️  Could not save updated config: {e}")
+
+    return config
     
     def handle_binary_management(cli_manager, execution_plan, confluence_instance=None):
         """
