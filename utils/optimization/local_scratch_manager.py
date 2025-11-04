@@ -232,21 +232,26 @@ class LocalScratchManager:
     
     def _copy_mizuroute_settings_to_scratch(self) -> None:
         """Copy mizuRoute settings to scratch."""
-        source_dir = self.project_dir / "settings" / "mizuRoute"
-        dest_dir = self.scratch_project_dir / "settings" / "mizuRoute"
-        
-        if not source_dir.exists():
-            self.logger.warning(f"mizuRoute settings directory not found: {source_dir}")
+        if self.config['DOMAIN_DEFINITION_METHOD'] != 'lumped' and self.config['ROUTING_DELINEATION'] != 'lumped': 
+
+            source_dir = self.project_dir / "settings" / "mizuRoute"
+            dest_dir = self.scratch_project_dir / "settings" / "mizuRoute"
+            
+            if not source_dir.exists():
+                self.logger.warning(f"mizuRoute settings directory not found: {source_dir}")
+                return
+            
+            self.logger.info(f"Copying mizuRoute settings: {source_dir} -> {dest_dir}")
+            self._rsync_directory(source_dir, dest_dir)
+            
+            # Verify critical file
+            topology_file = dest_dir / "topology.nc"
+            if not topology_file.exists():
+                self.logger.error(f"Critical file missing after copy: {topology_file}")
+                raise FileNotFoundError(f"topology.nc not found in {dest_dir}")
+        else:
+            self.logger.info('lumped model no need to copy routing files')
             return
-        
-        self.logger.info(f"Copying mizuRoute settings: {source_dir} -> {dest_dir}")
-        self._rsync_directory(source_dir, dest_dir)
-        
-        # Verify critical file
-        topology_file = dest_dir / "topology.nc"
-        if not topology_file.exists():
-            self.logger.error(f"Critical file missing after copy: {topology_file}")
-            raise FileNotFoundError(f"topology.nc not found in {dest_dir}")
     
     def _rsync_directory(self, source: Path, dest: Path) -> None:
         """
