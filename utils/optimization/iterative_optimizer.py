@@ -1056,7 +1056,9 @@ class BaseOptimizer(ABC):
             if self.scratch_manager.setup_scratch_space():
                 self.data_dir = self.scratch_manager.get_effective_data_dir()
                 self.project_dir = self.scratch_manager.get_effective_project_dir()
+
         self.optimization_dir = self.project_dir / "simulations" / f"run_{self.algorithm_name}"
+        self.logger.info(f"optimization_dir set to: {self.optimization_dir}")  # AND THIS
         self.summa_sim_dir = self.optimization_dir / "SUMMA"
         self.mizuroute_sim_dir = self.optimization_dir / "mizuRoute"
         self.optimization_settings_dir = self.optimization_dir / "settings" / "SUMMA"
