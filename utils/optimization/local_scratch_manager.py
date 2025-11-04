@@ -232,7 +232,7 @@ class LocalScratchManager:
     
     def _copy_mizuroute_settings_to_scratch(self) -> None:
         """Copy mizuRoute settings to scratch."""
-        if self.config['DOMAIN_DEFINITION_METHOD'] != 'lumped' and self.config['ROUTING_DELINEATION'] != 'lumped': 
+        if self.config['ROUTING_DELINEATION'] != 'lumped': 
 
             source_dir = self.project_dir / "settings" / "mizuRoute"
             dest_dir = self.scratch_project_dir / "settings" / "mizuRoute"
