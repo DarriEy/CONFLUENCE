@@ -33,7 +33,6 @@ For more information, see the documentation at:
     https://github.com/DarriEy/CONFLUENCE
 
 License: GPL-3.0 License
-Version: 1.0.0
 """
 
 from pathlib import Path
@@ -607,7 +606,7 @@ def main() -> None:
     
     except Exception as e:
         print(f"Error running CONFLUENCE: {str(e)}")
-        if hasattr(args, 'debug') and args.debug:
+        if 'args' in locals() and getattr(args, 'debug', False):
             import traceback
             traceback.print_exc()
         sys.exit(2)
