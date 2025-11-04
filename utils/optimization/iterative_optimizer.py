@@ -94,7 +94,7 @@ from fuse_worker_functions import (
 
 
 from ngen_optimiser import NgenOptimizer
-
+from utils.optimization.local_scratch_manager import LocalScratchManager
 
 # ============= PARAMETER MANAGEMENT =============
 
@@ -1048,7 +1048,14 @@ class BaseOptimizer(ABC):
         self.experiment_id = self.config.get('EXPERIMENT_ID')
         
         # Algorithm-specific directory setup
+        # Initialize scratch manager
         self.algorithm_name = self.get_algorithm_name().lower()
+        self.scratch_manager = LocalScratchManager(config, logger, self.project_dir, self.algorithm_name)
+
+        if self.scratch_manager.use_scratch:
+            if self.scratch_manager.setup_scratch_space():
+                self.data_dir = self.scratch_manager.get_effective_data_dir()
+                self.project_dir = self.scratch_manager.get_effective_project_dir()
         self.optimization_dir = self.project_dir / "simulations" / f"run_{self.algorithm_name}"
         self.summa_sim_dir = self.optimization_dir / "SUMMA"
         self.mizuroute_sim_dir = self.optimization_dir / "mizuRoute"
@@ -2889,6 +2896,7 @@ if __name__ == "__main__":
         
         return summa_path / self.config.get('SUMMA_EXE')
         
+
     def run_optimization(self) -> Dict[str, Any]:
         """
         Main optimization method with enhanced final reporting
@@ -2953,6 +2961,12 @@ if __name__ == "__main__":
             # Enhanced final summary logging
             self._log_final_optimization_summary(algorithm_name, best_score, final_result, duration)
             
+            # ========== NEW: Stage results back if using scratch ==========
+            if self.scratch_manager.use_scratch:
+                self.logger.info("Staging results from scratch to permanent storage...")
+                self.scratch_manager.stage_results_back()
+            # ==============================================================
+            
             return {
                 'best_parameters': best_params,
                 'best_score': best_score,
@@ -2967,9 +2981,20 @@ if __name__ == "__main__":
             
         except Exception as e:
             self.logger.error(f"{algorithm_name} optimization failed: {str(e)}")
+            
+            # ========== NEW: Try to stage partial results even on failure ==========
+            if self.scratch_manager.use_scratch:
+                try:
+                    self.logger.info("Attempting to stage partial results...")
+                    self.scratch_manager.stage_results_back()
+                except Exception as stage_error:
+                    self.logger.error(f"Failed to stage partial results: {stage_error}")
+            # =======================================================================
+            
             raise
         finally:
             self._cleanup_parallel_processing()
+
 
 
 class DDSOptimizer(BaseOptimizer):

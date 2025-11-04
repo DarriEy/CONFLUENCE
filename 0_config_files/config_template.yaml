@@ -29,6 +29,7 @@ SPINUP_PERIOD: 1980-01-02, 1981-12-31                          # start_date, end
 # Computatational settings
 MPI_PROCESSES: 1                                               # Number of parallel processes allowed, based on your system's capabilities
 FORCE_RUN_ALL_STEPS: False                                     # Run all steps in the workflow and overwrite existing files
+USE_LOCAL_SCRATCH: true                                        # Use SLURM local scratch for optimization (true/false). Set to true on HPC systems to improve I/O performance in highly parallel calibrations.
 
 # Logging settings
 LOG_LEVEL: INFO                                                # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
