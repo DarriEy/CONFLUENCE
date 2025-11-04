@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+try:
+    from confluence_version import __version__
+except Exception:
+    __version__ = "0+unknown"
+
 CONFLUENCE CLI Argument Manager
 
 This utility provides comprehensive command-line interface functionality for the CONFLUENCE
@@ -195,7 +200,7 @@ class CLIArgumentManager:
         config_group.add_argument(
             '--version',
             action='version',
-            version='CONFLUENCE 1.0.0'
+            version=f'CONFLUENCE {__version__}'
         )
         
         # Configuration Management

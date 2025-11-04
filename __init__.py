@@ -1,3 +1,4 @@
+from .confluence_version import __version__
 # confluence/__init__.py
 """
 CONFLUENCE - Community Optimization and Numerical Framework for 
@@ -5,8 +6,6 @@ Large-domain Understanding of Environmental Networks and Computational Explorati
 
 A comprehensive hydrological modeling platform for watershed analysis.
 """
-
-__version__ = "1.0.0"
 __author__ = "Darri Eythorsson"
 __email__ = "darri.eythorsson@ucalgary.ca"
 

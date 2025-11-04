@@ -52,6 +52,10 @@ from utils.models.model_manager import ModelManager
 from utils.evaluation.analysis_manager import AnalysisManager
 from utils.optimization.optimization_manager import OptimizationManager
 from utils.cli.cli_argument_manager import CLIArgumentManager
+try:
+    from confluence_version import __version__
+except Exception:
+    __version__ = "0+unknown"
 
 class CONFLUENCE:
     """
