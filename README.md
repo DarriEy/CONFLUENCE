@@ -102,7 +102,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 ---
 
 ## License
-Licensed under the MIT License.  
+Licensed under the GPL-3.0 License.  
 See [LICENSE](LICENSE) for details.
 
 ---
