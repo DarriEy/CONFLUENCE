@@ -28,6 +28,11 @@ Usage:
     plan = cli_manager.get_execution_plan(args)
 """
 
+try:
+    from confluence_version import __version__
+except Exception:  # fallback for odd contexts
+    __version__ = "0+unknown"
+
 import argparse
 import os
 import shutil
@@ -39,6 +44,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .external_tools_config import get_external_tools_definitions
+
+
 
 class CLIArgumentManager:
     """
@@ -200,7 +207,7 @@ class CLIArgumentManager:
         config_group.add_argument(
             '--version',
             action='version',
-            version=f'CONFLUENCE {__version__}'
+            version=f'CONFLUENCE {__version__}',
         )
         
         # Configuration Management

@@ -14,7 +14,7 @@ set -e  # Exit on any error
 # Configuration
 SCRIPT_NAME="confluence"
 CONFLUENCE_SCRIPT="CONFLUENCE.py"
-MIN_PYTHON_VERSION="3.8"
+MIN_PYTHON_VERSION="3.11"
 REQUIRED_PYTHON_VERSION="3.11"  # Preferred Python version
 
 # Colors for output (if terminal supports it)
