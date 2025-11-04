@@ -548,6 +548,11 @@ def main() -> None:
         # Get execution plan
         plan = cli_manager.get_execution_plan(args)
         
+        if plan.get('mode') == 'example_notebook':
+            ex_id = plan['example_notebook']
+            rc = cli_manager.launch_example_notebook(ex_id)
+            sys.exit(rc)
+
         # Handle pour point setup FIRST (before config loading)
         if plan['mode'] == 'pour_point_setup':
             pour_point_info = plan['pour_point']

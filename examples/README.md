@@ -1,73 +1,93 @@
-# Example Workflows
+# CONFLUENCE Examples
 
-This directory contains practical examples demonstrating CONFLUENCE across scales—from single-site validation to continental modeling.  
-Each example provides a complete, ready-to-run workflow with configuration files, Jupyter notebooks, and batch scripts.
-
----
-
-## 1. Structure and Learning Path
-
-Examples are organized into four progressive stages. Follow them in order for the best learning experience.
-
-### **01. Point-Scale Validation**
-**Foundation level**  
-Introduces core concepts using focused validation studies:
-- Snow physics validation with SNOTEL data  
-- Energy balance validation with FLUXNET tower observations  
-Teaches configuration structure, model setup, and single-point validation.
-
-### **02. Watershed Modeling**
-**Spatial scaling**  
-Demonstrates modeling from lumped to distributed representations using the Bow River at Banff (≈2,600 km²):  
-- 02a: Single-unit lumped model  
-- 02b: Semi-distributed sub-basin model (~15 units)  
-- 02c: Elevation-based HRU discretization  
-Shows trade-offs between spatial detail and computational cost.
-
-### **03. Large-Domain Applications**
-**Scaling up**  
-Explores regional to continental applications:  
-- 03a: National-scale modeling (Iceland)  
-- 03b: Continental modeling (North America)  
-Covers HPC execution, large data handling, and resource scaling.
-
-### **04. Large-Sample Studies**
-**Comparative and ensemble workflows**  
-Demonstrates multi-site and global analyses using:
-- FLUXNET, NorSWE, CAMELS, CARAVAN, LamaH-CE, NZ datasets, ISMN  
-Focuses on automation, parallel execution, and systematic evaluation.
+This directory provides complete, ready-to-run examples that demonstrate **CONFLUENCE** across spatial scales — from single-site validation to continental-scale modeling.  
+Each example includes configuration files, Jupyter notebooks, and optional batch scripts to reproduce the workflows described in the main documentation.
 
 ---
 
-## 2. Getting Started
+## Learning Path
 
-1. Ensure CONFLUENCE is installed with all dependencies:
+Examples are organized into four progressive stages. Follow them sequentially to build understanding and confidence with CONFLUENCE.
+
+### 01. Point-Scale Validation
+
+Focuses on single-site process studies:
+
+- **01a** - Snow physics validation using SNOTEL data  
+- **01b** - Energy balance validation with FLUXNET observations  
+
+Covers configuration structure, model setup, and controlled single-point testing.
+
+### 02. Watershed Modeling
+
+Demonstrates transition from lumped to distributed modeling at the basin scale using the Bow River at Banff (~2,600 km²):
+
+- **02a** – Lumped model  
+- **02b** – Semi-distributed sub-basins (~15 units)  
+- **02c** – Elevation-based HRU discretization  
+
+Highlights trade-offs between spatial complexity and computational cost.
+
+### 03. Large-Domain Applications
+
+Scales up to national and continental domains:
+
+- **03a** – Iceland  
+- **03b** – North America  
+
+Focuses on high-performance execution, large datasets, and scaling efficiency.
+
+### 04. Large-Sample Studies
+
+Covers multi-site and global ensemble workflows using datasets such as **FLUXNET**, **NorSWE**, **CAMELS**, **CARAVAN**, **LamaH-CE**, and **ISMN**.  
+Emphasizes automation, parallel execution, and systematic model evaluation.
+
+---
+
+## Quick Start
+
+1. **Install dependencies**
    ```bash
    ./confluence --install
    ```
 
-2. Open the desired notebook in the example folder.
+2. **Launch an example notebook** directly from the CLI:
+   ```bash
+   ./confluence --example_notebook 1a
+   ```
+   This command automatically:
 
-3. Follow the step-by-step instructions within each notebook or run:
+   - Locates the corresponding notebook (e.g., `examples/01_point_vertical_flux_estimation/01a_point_scale_snotel.ipynb`)  
+   - Opens it in Jupyter Lab  
+   - Initializes it using the **root CONFLUENCE virtual environment**  
+
+   You can substitute any example ID (e.g., `2b`, `3a`, `4c`) to launch the corresponding workflow.
+
+3. **Run complete workflows** via configuration:
    ```bash
    ./confluence --config config.yaml
    ```
 
-**Recommended path:** begin with 01 tutorials, then move upward as you gain experience.
+---
 
-Each example includes:
-- A complete configuration file  
-- Jupyter notebook with explanations  
+## Example Contents
+
+Each example directory includes:
+
+- A complete and reproducible configuration file  
+- A Jupyter notebook with contextual explanations  
 - Optional batch script for automated runs  
-- Notes on expected results and dataset access
+- Notes on expected results and dataset access  
 
 ---
 
-## 3. Learning Outcomes
-Through these tutorials you will:
-- Manage configurations and workflow dependencies  
-- Apply spatial discretization strategies  
-- Orchestrate complete model sequences  
-- Automate batch runs and multi-site experiments  
-- Evaluate models statistically and visually  
-- Transition from local runs to HPC environments confidently
+## Learning Outcomes
+
+By completing these examples, you will learn to:
+
+- Configure and manage CONFLUENCE workflows  
+- Apply spatial discretization and calibration strategies  
+- Execute simulations locally or on HPC systems  
+- Automate large-sample experiments  
+- Evaluate results statistically and visually  
+- Transition confidently from validation studies to large-scale modeling  

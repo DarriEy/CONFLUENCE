@@ -314,6 +314,10 @@ install_gdal_python() {
             print_info "You may need to install GDAL manually:"
             print_info "  pip install GDAL==$gdal_version"
             return 1
+
+    # Build jupyter lab
+    jupyter lab build --minimize=False
+
         fi
     fi
 }

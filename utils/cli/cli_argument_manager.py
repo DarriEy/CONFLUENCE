@@ -38,14 +38,14 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 import yaml
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .external_tools_config import get_external_tools_definitions
-
-
 
 class CLIArgumentManager:
     """
@@ -430,6 +430,15 @@ class CLIArgumentManager:
             type=str,
             help='Custom SLURM script template file to use'
         )
+
+        # Examples group
+        examples_group = self.parser.add_argument_group('Examples')
+        examples_group.add_argument(
+            '--example_notebook',
+            type=str,
+            metavar='ID',
+            help='Open an example notebook (e.g., 1a, 3b) in Jupyter using the root venv'
+        )
     
     def _get_examples_text(self) -> str:
         """Generate examples text for help output including new binary management commands."""
@@ -641,6 +650,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 'dry_run': args.dry_run
             }
         }
+
+        # NEW: example notebook open (early return; does not affect any other flags)
+        if getattr(args, 'example_notebook', None):
+            plan['mode'] = 'example_notebook'
+            plan['example_notebook'] = args.example_notebook.strip()
+            return plan
         
         # Handle binary management operations
         if (hasattr(args, 'get_executables') and args.get_executables is not None) or getattr(args, 'validate_binaries', False):
@@ -723,7 +738,160 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             }
         
         return plan
-    
+
+    def launch_example_notebook(
+        self,
+        example_id: str,
+        repo_root=None,
+        venv_candidates=None,
+        prefer_lab: bool = True
+    ) -> int:
+        """
+        Launch an example notebook bound to the repo's root venv.
+
+        - Maps IDs like '1a' -> '01a'; searches examples/** for {prefix}_*.ipynb (fallback {prefix}*.ipynb)
+        - Uses the repo-root venv's Python to start Jupyter
+        - Ensures an ipykernel named 'confluence-root' exists for that venv
+        - Rewrites the notebook's kernelspec (backed up to .bak) to use 'confluence-root'
+        """
+
+        # -------- repo root --------
+        repo_root = Path(repo_root) if repo_root else Path.cwd().resolve()
+        if not repo_root.exists():
+            print(f"❌ Repo root not found: {repo_root}")
+            return 1
+
+        # -------- normalize example prefix (e.g., 1a -> 01a) --------
+        raw = example_id.strip()
+        m = re.fullmatch(r'(?i)(\d{1,2})([a-z])', raw)
+        if m:
+            n = int(m.group(1))
+            letter = m.group(2).lower()
+            prefix = f"{n:02d}{letter}"
+        else:
+            prefix = raw.lower()
+
+        # -------- venv detection in repo root --------
+        if venv_candidates is None:
+            venv_candidates = ['.venv', 'venv', 'env', '.conda', '.virtualenv']
+
+        def _venv_python(venv: Path) -> Path:
+            return venv / ('Scripts' if os.name == 'nt' else 'bin') / ('python.exe' if os.name == 'nt' else 'python')
+
+        venv_dir = None
+        for name in venv_candidates:
+            candidate = repo_root / name
+            if candidate.exists() and candidate.is_dir():
+                venv_dir = candidate
+                break
+
+        python_exe = None
+        if venv_dir:
+            python_exe = _venv_python(venv_dir)
+            if not python_exe.exists():
+                alt = venv_dir / ('Scripts/python' if os.name == 'nt' else 'bin/python3')
+                if alt.exists():
+                    python_exe = alt
+
+        if not python_exe or not python_exe.exists():
+            # last resort: current interpreter
+            from pathlib import Path as _P
+            python_exe = _P(sys.executable)
+            print("⚠️  Could not find a root venv Python. Falling back to current interpreter.")
+            print(f"   Looked under: {[str(repo_root / v) for v in venv_candidates]}")
+
+        # -------- find notebooks under examples/** --------
+        examples_root = repo_root / 'examples'
+        if not examples_root.exists():
+            print(f"❌ 'examples/' directory not found at: {examples_root}")
+            return 2
+
+        primary_matches = sorted(examples_root.rglob(f"{prefix}_*.ipynb"))
+        fallback_matches = [] if primary_matches else sorted(examples_root.rglob(f"{prefix}*.ipynb"))
+        matches = primary_matches or fallback_matches
+        if not matches:
+            print(f"❌ Example notebook not found for ID '{example_id}'.")
+            print(f"   Searched recursively under: {examples_root}")
+            print(f"   Expected something like: {prefix}_*.ipynb")
+            return 2
+
+        nb_path = matches[0]  # open the first match, but show options if many
+        try:
+            rel_show = nb_path.relative_to(repo_root)
+        except Exception:
+            rel_show = nb_path
+
+        if len(matches) > 1:
+            print("ℹ️ Multiple notebooks match this prefix; opening the first match:")
+            for i, p in enumerate(matches[:10], 1):
+                try:
+                    print(f"   [{i}] {p.relative_to(repo_root)}")
+                except Exception:
+                    print(f"   [{i}] {p}")
+            if len(matches) > 10:
+                print(f"   ...and {len(matches)-10} more")
+
+        # -------- ensure ipykernel exists for the venv --------
+        # 1) make sure ipykernel is installed in that venv
+        try:
+            chk = subprocess.run([str(python_exe), "-m", "pip", "show", "ipykernel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if chk.returncode != 0:
+                print("ℹ️ Installing ipykernel into the repo venv...")
+                ins = subprocess.run([str(python_exe), "-m", "pip", "install", "ipykernel"])
+                if ins.returncode != 0:
+                    print("❌ Could not install ipykernel into the selected environment.")
+                    return 3
+        except FileNotFoundError:
+            print("❌ Python executable not found for the venv.")
+            return 3
+
+        # 2) install/refresh kernelspec named 'confluence-root'
+        kernel_name = "confluence-root"
+        display_name = "Python (CONFLUENCE root venv)"
+        _ = subprocess.run([str(python_exe), "-m", "ipykernel", "install", "--user", "--name", kernel_name, "--display-name", display_name])
+
+        # -------- rewrite notebook kernelspec to use this kernel (backup .bak) --------
+        try:
+            # read JSON (do not import nbformat to keep deps minimal)
+            with open(nb_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if "metadata" not in data:
+                data["metadata"] = {}
+            ks = data["metadata"].get("kernelspec", {})
+            current_name = ks.get("name")
+            if current_name != kernel_name:
+                # backup
+                bak = nb_path.with_suffix(nb_path.suffix + ".bak")
+                if not bak.exists():
+                    shutil.copy2(nb_path, bak)
+                    print(f"🧯 Backed up original notebook to: {bak.name}")
+                # rewrite
+                data["metadata"]["kernelspec"] = {
+                    "name": kernel_name,
+                    "display_name": display_name,
+                    "language": "python"
+                }
+                with open(nb_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=1)
+                print(f"🔁 Set notebook kernel to: {display_name}")
+        except Exception as e:
+            print(f"⚠️  Could not adjust notebook kernelspec automatically ({e}).")
+            print(f"   You can switch to '{display_name}' from the Kernel menu in Jupyter.")
+
+        # -------- launch Jupyter from the repo root venv --------
+        jupyter_cmd = ['-m', 'jupyter', 'lab' if prefer_lab else 'notebook', str(nb_path)]
+        print(f"🚀 Launching Jupyter with: {python_exe}")
+        print(f"📓 Notebook: {rel_show}")
+        try:
+            result = subprocess.run([str(python_exe), *jupyter_cmd], cwd=str(repo_root))
+            return result.returncode
+        except FileNotFoundError:
+            print("❌ Jupyter is not installed in the selected environment.")
+            print(f"   Try: {python_exe} -m pip install jupyter")
+            return 3
+
+
+
     def apply_config_overrides(self, config: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
         """
         Apply configuration overrides from CLI arguments.
@@ -1219,6 +1387,23 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"   ⚠️  Verification error: {str(e)}")
             return False
 
+    def add_example_notebook_arg(self) -> None:
+        """
+        Add the --example_notebook flag to the argument parser.
+
+        Call this after self._setup_parser() is run (or invoke it at the end of _setup_parser()).
+        """
+        import argparse  # safe if already imported
+        if not hasattr(self, "parser") or not isinstance(self.parser, argparse.ArgumentParser):
+            raise RuntimeError("CLIArgumentManager.parser must be an argparse.ArgumentParser before adding flags")
+
+        examples_group = self.parser.add_argument_group('Examples')
+        examples_group.add_argument(
+            '--example_notebook',
+            type=str,
+            metavar='ID',
+            help='Open an example notebook (e.g., 1a, 3b) in Jupyter using the root venv'
+        )
     
     def _resolve_tool_dependencies(self, tools: List[str]) -> List[str]:
         """
