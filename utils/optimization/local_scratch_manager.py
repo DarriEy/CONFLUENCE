@@ -130,6 +130,33 @@ class LocalScratchManager:
         self.logger.info(f"Scratch data dir: {self.scratch_data_dir}")
         self.logger.info(f"Scratch project dir: {self.scratch_project_dir}")
     
+    def _needs_routing(self) -> bool:
+        """
+        Determine if mizuRoute routing is needed based on configuration.
+        
+        Returns:
+            True if routing is needed, False otherwise
+        """
+        # Check routing delineation setting
+        routing_delineation = self.config.get('ROUTING_DELINEATION', 'lumped').lower()
+        
+        # Skip routing for lumped or none
+        if routing_delineation in ['lumped', 'none', 'off', 'false']:
+            return False
+        
+        # Check domain definition method
+        domain_method = self.config.get('DOMAIN_DEFINITION_METHOD', 'lumped').lower()
+        
+        # If domain is point or lumped, typically no routing needed
+        if domain_method in ['point', 'lumped']:
+            # Unless specifically using river_network routing
+            if routing_delineation == 'river_network':
+                return True
+            return False
+        
+        # For distributed domains, routing is typically needed
+        return True
+    
     def setup_scratch_space(self) -> bool:
         """
         Setup complete scratch space with all necessary data.
@@ -159,7 +186,12 @@ class LocalScratchManager:
             self._copy_settings_to_scratch()
             self._copy_forcing_to_scratch()
             self._copy_observations_to_scratch()
-            self._copy_mizuroute_settings_to_scratch()
+            
+            # Only copy mizuRoute settings if routing is needed
+            if self._needs_routing():
+                self._copy_mizuroute_settings_to_scratch()
+            else:
+                self.logger.info("Routing not needed - skipping mizuRoute settings copy")
             
             # Update configuration files with scratch paths
             self._update_file_paths_for_scratch()
@@ -184,11 +216,14 @@ class LocalScratchManager:
             self.scratch_data_dir,
             self.scratch_project_dir,
             self.scratch_project_dir / "settings" / "SUMMA",
-            self.scratch_project_dir / "settings" / "mizuRoute",
             self.scratch_project_dir / "forcing" / "SUMMA_input",
             self.scratch_project_dir / "observations" / "streamflow" / "preprocessed",
             self.scratch_project_dir / "simulations" / f"run_{self.algorithm_name}",
         ]
+        
+        # Add mizuRoute directory only if routing is needed
+        if self._needs_routing():
+            dirs_to_create.append(self.scratch_project_dir / "settings" / "mizuRoute")
         
         for directory in dirs_to_create:
             directory.mkdir(parents=True, exist_ok=True)
@@ -232,26 +267,21 @@ class LocalScratchManager:
     
     def _copy_mizuroute_settings_to_scratch(self) -> None:
         """Copy mizuRoute settings to scratch."""
-        if self.config['ROUTING_DELINEATION'] != 'lumped': 
-
-            source_dir = self.project_dir / "settings" / "mizuRoute"
-            dest_dir = self.scratch_project_dir / "settings" / "mizuRoute"
-            
-            if not source_dir.exists():
-                self.logger.warning(f"mizuRoute settings directory not found: {source_dir}")
-                return
-            
-            self.logger.info(f"Copying mizuRoute settings: {source_dir} -> {dest_dir}")
-            self._rsync_directory(source_dir, dest_dir)
-            
-            # Verify critical file
-            topology_file = dest_dir / "topology.nc"
-            if not topology_file.exists():
-                self.logger.error(f"Critical file missing after copy: {topology_file}")
-                raise FileNotFoundError(f"topology.nc not found in {dest_dir}")
-        else:
-            self.logger.info('lumped model no need to copy routing files')
+        source_dir = self.project_dir / "settings" / "mizuRoute"
+        dest_dir = self.scratch_project_dir / "settings" / "mizuRoute"
+        
+        if not source_dir.exists():
+            self.logger.warning(f"mizuRoute settings directory not found: {source_dir}")
             return
+        
+        self.logger.info(f"Copying mizuRoute settings: {source_dir} -> {dest_dir}")
+        self._rsync_directory(source_dir, dest_dir)
+        
+        # Verify critical file
+        topology_file = dest_dir / "topology.nc"
+        if not topology_file.exists():
+            self.logger.error(f"Critical file missing after copy: {topology_file}")
+            raise FileNotFoundError(f"topology.nc not found in {dest_dir}")
     
     def _rsync_directory(self, source: Path, dest: Path) -> None:
         """
