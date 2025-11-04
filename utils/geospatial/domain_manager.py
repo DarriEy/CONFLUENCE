@@ -224,8 +224,12 @@ class DomainManager:
         try:
             discretization_method = self.config.get('DOMAIN_DISCRETIZATION')
             self.logger.info("Creating discretization visualization...")
-            plot_path = self.reporter.plot_discretized_domain(discretization_method)
-            return plot_path
+            if self.config.get('DOMAIN_DEFINITION_METHOD') != 'point':
+                plot_path = self.reporter.plot_discretized_domain(discretization_method)
+                return plot_path
+            else:
+                self.logger.info('Point scale model, not creating visualisation')
+                return
         except Exception as e:
             self.logger.error(f"Error visualizing discretized domain: {str(e)}")
             import traceback

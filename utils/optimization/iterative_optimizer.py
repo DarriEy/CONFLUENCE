@@ -2896,7 +2896,7 @@ if __name__ == "__main__":
         algorithm_name = self.get_algorithm_name()
         
         self.logger.info("=" * 60)
-        self.logger.info(f"Starting {algorithm_name} optimization for {self.config.get('CALIBRATION_VARIABLE', 'streamflow')} calibration")
+        self.logger.info(f"Starting {algorithm_name} optimization for {self.config.get('OPTIMISATION_TARGET', 'streamflow')} calibration")
         self.logger.info(f"Target metric: {self.target_metric}")
         self.logger.info(f"Max iterations: {self.max_iterations}")
         

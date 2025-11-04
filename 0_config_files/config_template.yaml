@@ -14,7 +14,7 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-CONFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/code/CONFLUENCE_data # Directory with the confluence data directories, including the external installations
+CONFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data # Directory with the confluence data directories, including the external installations
 CONFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/code/CONFLUENCE  # Directory with the confluence code repository
 
 # Experiment settings
@@ -274,6 +274,7 @@ ATTRIBUTES_OUTPUT_DIR: default                                 # Output director
 ### ============================================= 6. Optimisation settings: ===============================================================
 
 OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
+OPTIMISATION_TARGET: streamflow                                # Options: streamflow (default), swe, snow_depth, sca, et, latent_heat, soil_moisture, groundwater
 CALIBRATION_TIMESTEP: hourly                                   # Timestep to use for calibration, options: 'native', 'hourly', 'daily'
 
 # Iterative optimisation settings
@@ -281,7 +282,6 @@ ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE
 NUMBER_OF_ITERATIONS: 100                                      # Number of iterations for calibration 
 POPULATION_SIZE: 30                                            # Population size for genetic algorithms
 OPTIMIZATION_METRIC: KGE                                       # Options: Root mean square error : "RMSE", Nash-Suthcliffe efficiency: "NSE", Kling-Gupta Efficiency: "KGE", KGE projected: "KGEp", Mean absolute error: "MAE"
-TARGET_METRIC: KGE                                             # Ensure consistency
 
   # -- DE specific settings
 DE_SCALING_FACTOR: 0.5                                         # F parameter (mutation strength)
