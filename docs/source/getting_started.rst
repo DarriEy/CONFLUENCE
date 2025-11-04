@@ -1,82 +1,83 @@
 Getting Started
 ===============
 
-This guide will walk you through setting up your first hydrological model with CONFLUENCE.
+This guide walks you through setting up and running your first CONFLUENCE workflow — from creating a configuration file to executing a full hydrological simulation.
+
+---
 
 Quick Start
 -----------
 
-1. **Prepare your configuration file**
+1. **Create your configuration**
 
-   Copy the template configuration and modify it for your domain:
+   Copy and edit the provided template:
 
    .. code-block:: bash
 
-      cp 0_config_files/config_template.yaml config_active.yaml
+      cp 0_config_files/config_template.yaml my_project.yaml
 
-2. **Define your study area**
+2. **Define your study domain**
 
-   Specify your watershed using either:
-   
-   - Pour point coordinates
-   - Bounding box
-   - Existing shapefile
+   You can specify:
+   - A pour point (latitude/longitude)
+   - A bounding box
+   - An existing shapefile
+
+   Example (YAML):
 
    .. code-block:: yaml
 
-      # Using pour point coordinates
-      POUR_POINT_COORDS: 62.09444/136.27223
-      
-      # Or using bounding box (lat_max/lon_min/lat_min/lon_max)
-      BOUNDING_BOX_COORDS: 83.0/-169.0/7.0/-52.0
+      # Pour point coordinates
+      POUR_POINT_COORDS: 51.1722/-115.5717
+
+      # Or bounding box (lat_max/lon_min/lat_min/lon_max)
+      BOUNDING_BOX_COORDS: 52.0/-116.0/50.0/-114.0
 
 3. **Run the workflow**
 
    .. code-block:: bash
 
-      python CONFLUENCE.py --config config_active.yaml
+      ./confluence --config my_project.yaml --setup_project
+      ./confluence --config my_project.yaml
 
-Example: North America Domain
------------------------------
+---
 
-Here's a complete example using the provided North America configuration:
+Example: Bow River Watershed
+----------------------------
 
-.. literalinclude:: ../../0_config_files/config_North_America.yaml
+.. literalinclude:: ../../0_config_files/config_template.yaml
    :language: yaml
-   :caption: North America Configuration Example
-   :lines: 1-50
+   :caption: Example configuration (excerpt)
+   :lines: 1-40
 
-Running the Example
-~~~~~~~~~~~~~~~~~~~
+This example performs:
+1. Domain delineation and forcing data setup  
+2. Model configuration (e.g., SUMMA, FUSE, NextGen, GR4J, LSTM)  
+3. Simulation execution  
+4. Routing using mizuRoute  
+5. Output evaluation and visualization
 
-.. code-block:: bash
-
-   python CONFLUENCE.py --config 0_config_files/config_North_America.yaml
-
-This will:
-
-1. Define the watershed domain
-2. Download and preprocess forcing data
-3. Set up the SUMMA model
-4. Run hydrological simulations
-5. Route streamflow with mizuRoute
-6. Generate visualization outputs
+---
 
 Understanding the Workflow
 --------------------------
 
-CONFLUENCE follows these main steps:
+Each CONFLUENCE run follows a structured pipeline:
 
-1. **Domain Definition**: Delineate or subset your watershed
-2. **Data Acquisition**: Download forcing data (ERA5, etc.)
-3. **Preprocessing**: Prepare data for modeling
-4. **Model Setup**: Configure hydrological models
-5. **Simulation**: Run the models
-6. **Postprocessing**: Analyze and visualize results
+1. **Domain Definition** — delineate watershed or region  
+2. **Data Acquisition** — retrieve and preprocess forcing datasets (ERA5, Daymet, etc.)  
+3. **Model Setup** — configure supported models  
+4. **Simulation** — execute model runs  
+5. **Routing & Evaluation** — route flows and compute diagnostics  
+6. **Reporting** — generate plots, metrics, and summaries  
+
+Each step can be called individually using CLI options such as ``--setup_project`` or ``--calibrate_model``.
+
+---
 
 Next Steps
 ----------
 
-- Explore different :doc:`configuration` options
-- Learn about available :doc:`workflows`
-- Check out more :doc:`examples`
+- Explore the :doc:`configuration` structure in detail  
+- Try the progressive :doc:`examples` for advanced applications  
+- Visit :doc:`troubleshooting` for setup or runtime guidance

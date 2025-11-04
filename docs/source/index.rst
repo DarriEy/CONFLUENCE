@@ -1,43 +1,50 @@
-CONFLUENCE Documentation
-========================
-
 .. image:: _static/Conf.jpg
    :width: 200px
    :align: center
 
-**CONFLUENCE** (Community Optimization and Numerical Framework for Large-domain Understanding of Environmental Networks and Computational Exploration) is a comprehensive hydrological modeling platform that integrates multiple components for data management, model setup, optimization, uncertainty analysis, and visualization.
+CONFLUENCE Documentation
+========================
 
-Key Features
-------------
+**Community Optimization Nexus for Leveraging Understanding of Environmental Networks in Computational Exploration**
 
-- **Multi-Model Support**: Integrates SUMMA, FUSE, MESH, and other models
-- **Automated Workflows**: Streamline the entire modeling process
-- **Geospatial Analysis**: Advanced domain delineation and discretization
-- **Optimization**: Built-in calibration and sensitivity analysis
-- **Visualization**: Comprehensive plotting and reporting capabilities
+---
 
-Quick Links
+Overview
+--------
+
+**CONFLUENCE** is a computational hydrological modeling platform that integrates data preparation, model setup, optimization, and evaluation in a unified workflow.  
+It enables reproducible, scalable, and extensible experiments for hydrological and environmental modeling.
+
+**Core capabilities:**
+- Multi-model integration (SUMMA, FUSE, NextGen, GR4J, LSTM, mizuRoute)
+- Automated workflows for data-to-results reproducibility
+- Parallel optimization and calibration
+- High-performance and HPC execution
+- Comprehensive evaluation and reporting tools
+
+---
+
+Quick Start
 -----------
 
-- :doc:`installation` - Get CONFLUENCE up and running
-- :doc:`getting_started` - Your first watershed model
-- :doc:`examples` - Complete examples and tutorials
+- :doc:`installation` — Installation and environment setup  
+- :doc:`getting_started` — Your first project workflow  
+- :doc:`examples` — Tutorials and case studies  
 - `GitHub Repository <https://github.com/DarriEy/CONFLUENCE>`_
+
+---
 
 .. toctree::
    :maxdepth: 2
-   :hidden:
    :caption: User Guide
 
    installation
    getting_started
    configuration
-   workflows
    examples
 
 .. toctree::
    :maxdepth: 2
-   :hidden:
    :caption: Reference
 
    modules/index
@@ -46,14 +53,15 @@ Quick Links
 
 .. toctree::
    :maxdepth: 1
-   :hidden:
-   :caption: About
+   :caption: Project Information
 
    contributing
    changelog
    license
 
-Indices and tables
+---
+
+Indices and Tables
 ==================
 
 * :ref:`genindex`

@@ -1,74 +1,57 @@
 Installation
 ============
 
-Requirements
+Overview
+--------
+CONFLUENCE supports a one-command installer that creates an isolated Python 3.11 environment and installs required packages. HPC environments vary; use the module recipes on your cluster as needed.
+
+Quick Install
+-------------
+Run the built-in installer from the project root:
+
+.. code-block:: bash
+
+   ./confluence --install
+
+What this does:
+- Creates/updates ``.venv/`` (Python 3.11 recommended)
+- Installs Python dependencies with ``pip``
+- Reuses the environment on subsequent runs
+
+Manual Setup (Optional)
+-----------------------
+If you prefer to manage the environment yourself:
+
+.. code-block:: bash
+
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+
+System Prerequisites
+--------------------
+- Build toolchain: GCC/Clang (C/C++), gfortran; CMake ≥ 3.20; MPI (OpenMPI/MPICH)
+- Core libs: GDAL, HDF5, NetCDF (C + Fortran), BLAS/LAPACK
+- Optional tools: R, CDO (when applicable)
+
+HPC Notes
+---------
+Use your site’s module system, then run the installer:
+
+.. code-block:: bash
+
+   # Example (conceptual): load compiler, MPI, GDAL, NetCDF, Python 3.11
+   module load gcc openmpi gdal netcdf-c netcdf-fortran python/3.11
+   ./confluence --install
+
+Verification
 ------------
+.. code-block:: bash
 
-CONFLUENCE requires Python 3.8 or higher and several scientific computing libraries.
-
-System Dependencies
-~~~~~~~~~~~~~~~~~~~
-
-Before installing CONFLUENCE, you'll need to install and compile several hydrological modeling tools:
-
-- **SUMMA** - Structure for Unifying Multiple Modeling Alternatives
-  
-  .. code-block:: bash
-  
-     git clone https://github.com/CH-Earth/summa.git
-     cd summa
-     # Follow SUMMA installation instructions
-
-- **mizuRoute** - Network routing model
-  
-  .. code-block:: bash
-  
-     git clone https://github.com/ESCOMP/mizuRoute.git
-     cd mizuRoute
-     # Follow mizuRoute installation instructions
-
-- **FUSE** - Framework for Understanding Structural Errors
-  
-  .. code-block:: bash
-  
-     git clone https://github.com/CyrilThebault/fuse
-     cd fuse
-     # Follow FUSE installation instructions
-
-- **MESH** - Modelling Environmental Systems in an Integrated manner
-- **TauDEM** - Terrain Analysis Using Digital Elevation Models
-- **Ostrich** - Optimization Software Tool for Research Involving Computational Heuristics
-
-Installation Steps
-------------------
-
-1. Clone the repository:
-
-   .. code-block:: bash
-
-      git clone https://github.com/DarriEy/CONFLUENCE.git
-      cd CONFLUENCE
-
-2. Install Python dependencies:
-
-   .. code-block:: bash
-
-      pip install -r requirements.txt
-
-3. Configure your environment:
-
-   .. code-block:: bash
-
-      cp config_template.yaml config_active.yaml
-      # Edit config_active.yaml with your settings
-
-4. Verify installation:
-
-   .. code-block:: bash
-
-      python CONFLUENCE.py --help
+   ./confluence --help
 
 Next Steps
 ----------
-
-Once installed, proceed to the :doc:`getting_started` guide to set up your first watershed model.
+- :doc:`getting_started` — your first run
+- :doc:`configuration` — YAML structure and options
+- :doc:`examples` — progressive tutorials

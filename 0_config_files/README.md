@@ -14,7 +14,7 @@ Each section feeds into the next to ensure consistency and reproducibility.
 - **Global Settings** — Define directories, domain names, and experiment IDs.  
 - **Geospatial** — Configure watershed delineation, coordinate systems, and spatial discretization.  
 - **Model-Agnostic** — Specify preprocessing, forcing data, and format standardization.  
-- **Model-Specific** — Provide setup parameters for SUMMA, FUSE, GR, HYPE, FLASH, or MESH.  
+- **Model-Specific** — Provide setup parameters for SUMMA, FUSE, NEXTGEN, GR, LSTM.  
 - **Evaluation** — Define performance metrics, benchmarking methods, and visualization settings.  
 - **Optimization** — Configure calibration targets, objective functions, and algorithms.
 
