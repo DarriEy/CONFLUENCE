@@ -1,55 +1,54 @@
-# CONFLUENCE Utils
+# Utilities
 
-This directory contains the core utility modules that power CONFLUENCE's hydrological modeling capabilities. The utils provide the foundational architecture for model integration, optimization algorithms, data processing, and workflow management that enables CONFLUENCE's flexibility across different scales and applications.
+Core utility modules that power model integration, optimization, data handling, and workflow orchestration in CONFLUENCE. These modules expose clear interfaces and remain loosely coupled to support reliability and extensibility across scales.
 
-## Architecture Overview
+---
 
-The utils directory is organized into functional modules that handle different aspects of the modeling workflow. Each module provides a clean interface for specific capabilities while maintaining loose coupling with other components.
+## 1. Architecture
+
+Utilities are organized by capability. Each module provides a focused interface and integrates through configuration and shared services (logging, project management).
 
 ### Project Management (`project/`)
-
-The project module handles core infrastructure operations including directory structure creation, logging management, and project initialization. The ProjectManager establishes the physical file organization that other components depend on, while the LoggingManager provides comprehensive logging capabilities with configurable output formats and filtering. These utilities ensure consistent project structure and maintain detailed execution records for debugging and reproducibility.
+Project initialization, directory layout, and logging infrastructure for reproducible runs. Establishes file organization and detailed execution records for debugging and auditability.
 
 ### Model Integration (`models/`)
+Unified preprocessor → runner → postprocessor pattern. Central selection/dispatch with model-specific utilities for configuration generation, data formatting, execution, and output processing. Supports SUMMA, FUSE, GR, HYPE, FLASH, and MESH.
 
-The models module provides a unified interface for multiple hydrological models through a consistent preprocessor-runner-postprocessor pattern. The ModelManager orchestrates model selection and execution, while individual utilities handle model-specific requirements for SUMMA, FUSE, GR, HYPE, FLASH, and MESH. Each model utility manages data formatting, configuration file generation, execution management, and output processing. This architecture enables seamless switching between models and supports comparative studies across different modeling approaches.
-
-### Optimization Framework (`optimization/`)
-
-The optimization module implements both traditional iterative algorithms and modern gradient-based approaches. The IterativeOptimizer supports classical algorithms like differential evolution and particle swarm optimization with parallel processing capabilities, while the DifferentiableParameterEmulator provides neural network-based optimization with automatic differentiation. Both approaches share common interfaces for parameter management, objective function evaluation, and convergence monitoring, enabling flexible optimization strategy selection based on problem characteristics.
+### Optimization (`optimization/`)
+Two complementary paths:
+- **Iterative** (e.g., differential evolution, particle swarm) with parallel execution.
+- **Differentiable** parameter emulation for gradient-based optimization.
+Shared interfaces enable consistent parameter handling, objective evaluation, and convergence monitoring.
 
 ### Command Line Interface (`cli/`)
+Argument parsing and validation for interactive and batch workflows. Manages complex parameter combinations with clear error messages and usage output.
 
-The CLI module provides comprehensive argument parsing and validation for both interactive and batch processing workflows. The argument manager handles complex parameter combinations, validates configuration consistency, and provides helpful error messages and usage examples. This utility ensures robust command-line operations and supports both simple single-run executions and complex batch processing scenarios.
+### Evaluation (`evaluation/`)
+Performance assessment: sensitivity analysis, benchmarking, and decision-analysis utilities. Works with optimization results for systematic model evaluation.
 
-### Analysis and Evaluation (`evaluation/`)
+### Reporting (`reporting/`)
+Summary tables and figures for single-run and large-sample studies. Produces publication-ready visuals and comparative summaries.
 
-The evaluation module implements performance assessment tools including sensitivity analysis, benchmarking capabilities, and decision analysis frameworks. These utilities support systematic model evaluation across multiple metrics and provide statistical analysis tools for understanding parameter importance and model behavior. The evaluation framework integrates with optimization modules to provide comprehensive assessment of calibration results.
+### Data (`data/`)
+Standardized interfaces for preprocessing, QC, and format conversion across common hydrologic data sources. Preserves metadata and consistency throughout the workflow.
 
-### Reporting and Visualization (`reporting/`)
+---
 
-The reporting module handles result visualization and summary generation across different spatial scales and application contexts. These utilities create publication-ready figures, performance summaries, and comparative analyses while supporting both individual model runs and large-sample studies. The visualization tools integrate with the evaluation framework to provide comprehensive assessment reports.
+## 2. Extending CONFLUENCE
 
-### Data Management (`data/`)
+### Add a Model
+Follow the preprocessor → runner → postprocessor pattern. Implement model utilities under `models/` and register them with the dispatcher. Handle configuration generation, data formatting, execution, and output parsing.
 
-The data utilities provide standardized interfaces for handling diverse data sources and formats commonly used in hydrological modeling. These tools manage data preprocessing, quality control, and format conversion between different model requirements while maintaining metadata and ensuring consistent handling across the workflow.
+### Add an Optimization Algorithm
+Choose iterative or differentiable frameworks. Extend base optimizer interfaces; implement parameter sampling, objective evaluation, update rules, and convergence checks. Reuse logging and configuration services.
 
-## Extending CONFLUENCE
+### Customize Workflows
+Compose new steps using existing logging, error handling, and progress reporting utilities. Integrate via configuration without modifying core functionality.
 
-### Adding Model Support
+---
 
-New model integration follows the established preprocessor-runner-postprocessor pattern. Create model-specific utilities in the models directory that inherit from or implement the expected interfaces. The ModelManager automatically discovers new models through its mapping dictionaries, requiring only registration of the new components. Model utilities should handle all model-specific requirements including configuration file generation, data formatting, execution management, and output processing.
-
-### Implementing Optimization Algorithms
-
-New optimization algorithms can be added to either the iterative or differentiable optimization frameworks depending on their characteristics. Traditional algorithms should extend the base optimizer classes and implement required methods for parameter sampling, objective evaluation, and convergence assessment. Gradient-based algorithms can leverage the differentiable framework's neural network infrastructure while implementing algorithm-specific update rules and convergence criteria.
-
-### Workflow Customization
-
-The modular architecture supports workflow customization through configuration-driven component selection and parameter specification. New workflow steps can be integrated by following the established patterns for logging, error handling, and progress reporting. The CLI and project management utilities provide infrastructure for new workflow components without requiring changes to core functionality.
-
-## Development Guidelines
-
-Contributors should maintain the established patterns for error handling, logging, and configuration management. Each utility module should provide clear interfaces, comprehensive documentation, and appropriate error messages. New functionality should integrate with existing logging and configuration frameworks while maintaining the flexible, scale-independent design that enables CONFLUENCE's broad applicability.
-
-The utils architecture prioritizes maintainability and extensibility while providing the robust foundation needed for reliable hydrological modeling across diverse applications and scales. Understanding these core utilities provides the foundation for effective CONFLUENCE development and customization.
+## 3. Development Guidelines
+- Maintain consistent error handling and logging.
+- Keep module interfaces small and well-documented.
+- Prefer configuration-driven behavior over hard-coded paths.
+- Ensure additions work across small (point) to large (continental) scales.
