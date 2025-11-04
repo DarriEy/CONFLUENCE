@@ -41,7 +41,6 @@ SALib
 
 # Utility libraries
 psutil
-tqdm
 alive-progress
 tqdm
 contextily
