@@ -15,7 +15,6 @@ import cdo # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 import seaborn as sns # type: ignore
 
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from utils.models.hypeFlow import write_hype_forcing, write_hype_geo_files, write_hype_par_file, write_hype_info_filedir_files # type: ignore
 
 

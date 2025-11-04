@@ -19,8 +19,6 @@ import shutil
 import rasterio # type: ignore
 import psutil # type: ignore
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 
 class SummaPreProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):

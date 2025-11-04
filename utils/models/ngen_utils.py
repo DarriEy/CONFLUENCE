@@ -8,9 +8,6 @@ Classes:
     NgenPreProcessor: Handles spatial preprocessing and configuration generation
     NgenRunner: Manages model execution
     NgenPostprocessor: Processes model outputs
-
-Author: CONFLUENCE Development Team
-Date: 2025
 """
 
 import os
@@ -26,9 +23,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 from shutil import copyfile
 import netCDF4 as nc4
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 
 class NgenPreProcessor:
     """

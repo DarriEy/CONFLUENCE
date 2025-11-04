@@ -32,18 +32,15 @@ Usage:
 For more information, see the documentation at:
     https://github.com/DarriEy/CONFLUENCE
 
-License: MIT License
+License: GPL-3.0 License
 Version: 1.0.0
 """
 
 from pathlib import Path
-import sys
 import yaml
 from datetime import datetime
 from typing import Dict, Any, List
-
-# Add the parent directory to the path to enable imports
-sys.path.append(str(Path(__file__).resolve().parent))
+import sys
 
 # Import CONFLUENCE components
 from utils.project.project_manager import ProjectManager

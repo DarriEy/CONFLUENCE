@@ -33,20 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Import external tools configuration
-# Add CONFLUENCE root directory to path
-# File is at: CONFLUENCE/utils/cli/cli_argument_manager.py
-# We need:  CONFLUENCE/ (so we can import utils.model_utils.ngen_utils)
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from utils.cli.external_tools_config import get_external_tools_definitions
-
-try:
-    from ruamel.yaml import YAML
-    _YAML_RT = YAML(typ="rt")  # round-trip to preserve comments/formatting
-    _YAML_RT.preserve_quotes = True
-except Exception:
-    _YAML_RT = None
-
+from .external_tools_config import get_external_tools_definitions
 
 class CLIArgumentManager:
     """
@@ -1351,14 +1338,15 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     shutil.copy2(config_path, backup_path)
                     print(f"   📦 Backup created: {backup_path}")
 
-            with open(config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(config, f, default_flow_style=False, sort_keys=False
+            )
 
-            print(f"   💾 Updated config template saved to: {config_path}")
-        except Exception as e:
-            print(f"   ⚠️  Could not save updated config: {e}")
+                print(f"   💾 Updated config template saved to: {config_path}")
+            except Exception as e:
+                print(f"   ⚠️  Could not save updated config: {e}")
 
-    return config
+        return config
     
     def handle_binary_management(cli_manager, execution_plan, confluence_instance=None):
         """

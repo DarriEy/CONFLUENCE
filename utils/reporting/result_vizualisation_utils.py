@@ -10,7 +10,6 @@ import plotly.graph_objects as go # type: ignore
 import matplotlib.gridspec as gridspec # type: ignore
 import matplotlib.dates as mdates # type: ignore
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE # type: ignore
 
 class resultMapper:

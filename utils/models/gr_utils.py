@@ -11,8 +11,6 @@ import rasterio
 #from rpy2.robjects import pandas2ri
 #from rpy2.robjects.conversion import localconverter
 import shutil
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.data.variable_utils import VariableHandler
 
 class GRPreProcessor:

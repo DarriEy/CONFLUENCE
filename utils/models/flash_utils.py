@@ -18,7 +18,6 @@ from torch.utils.data import TensorDataset, DataLoader # type: ignore
 import geopandas as gpd # type: ignore
 from datetime import datetime
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.evaluation.calculate_sim_stats import get_KGE, get_KGEp, get_NSE, get_MAE, get_RMSE, get_KGEnp # type: ignore
 
 class FLASH:
