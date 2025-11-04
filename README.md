@@ -111,7 +111,3 @@ See [LICENSE](LICENSE) for details.
 - Documentation: [confluence.readthedocs.io](https://confluence.readthedocs.io)  
 - Issues: [GitHub Issues](https://github.com/DarriEy/CONFLUENCE/issues)  
 - Discussions: [GitHub Discussions](https://github.com/DarriEy/CONFLUENCE/discussions)
-
----
-
-```
