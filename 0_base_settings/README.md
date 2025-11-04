@@ -1,19 +1,58 @@
-# CONFLUENCE Base Settings
+# Base Settings
 
-This directory contains default template files for supported hydrological models. These base settings provide clean, well-tested starting points that are copied to project-specific directories during preprocessing, ensuring consistent model setup while enabling project-specific customization.
+This directory contains the default configuration templates and parameter files for all supported hydrological models in CONFLUENCE.  
+These serve as **clean, validated starting points** for new projects and ensure reproducible, consistent model setup across workflows.
 
-## Structure
+---
 
-Each model has a dedicated subdirectory containing its required template files:
+## 1. Structure
 
-**SUMMA/** - Parameter files, decision options, output controls, and lookup tables for SUMMA model setup  
-**FUSE/** - Configuration templates and parameter definitions for FUSE model applications  
-**mizuRoute** - Topology definition, parameter and control file templates
+Each subdirectory includes model-specific base templates:
 
-## Usage
+- **SUMMA/** — Parameter files, decision file, and file manager templates for SUMMA model setup  
+  → [CH-Earth SUMMA Repository](https://github.com/CH-Earth/SUMMA)
 
-These base settings are automatically copied to project directories during model preprocessing. The original templates remain unchanged, while copied versions can be modified for specific applications without affecting other projects. This approach maintains clean defaults while supporting extensive customization for different modeling scenarios.
+- **FUSE/** — Configuration templates and parameter definitions for FUSE model applications  
+  → [CH-Earth FUSE Repository](https://github.com/CH-Earth/FUSE)
 
-## Customization
+- **mizuRoute/** — Network topology, routing parameter files, and control templates for mizuRoute  
+  → [CH-Earth mizuRoute Repository](https://github.com/CH-Earth/mizuRoute)
 
-Modify base settings carefully, as changes affect all future projects using these templates. For project-specific modifications, edit the copied files in the project settings directory rather than these base templates. This preserves reproducibility and ensures consistent starting points across different modeling applications.
+- **NOAH/** — Parameter files for the NOAH Land Surface Model used in **NextGen-style** workflows.
+  → [CH-Earth NOAH Repository](https://github.com/CH-Earth/noah-lsm)
+
+---
+
+## 2. Usage
+
+Base settings are automatically copied into each project during preprocessing:
+```bash
+./confluence --setup_project --config my_project.yaml
+```
+
+Copied files can then be safely modified without affecting the base templates.  
+This ensures:
+- Clean defaults for every new project  
+- Reproducibility across model setups  
+- Isolation between experiments
+
+---
+
+## 3. Customization Guidelines
+
+- **Avoid editing files here directly.**  
+  Changes will affect all future projects.  
+  Instead, modify the copies within your project directory.
+
+- Use version control to track any changes for transparency.
+- When adding support for new models, follow the directory structure and naming conventions used here.
+
+---
+
+## 4. References
+
+For full model documentation and parameter details:
+- [SUMMA – Structure for Unifying Multiple Modeling Alternatives](https://github.com/CH-Earth/SUMMA)  
+- [FUSE – Framework for Understanding Structural Errors](https://github.com/CH-Earth/FUSE)  
+- [mizuRoute – River Network Routing Tool](https://github.com/CH-Earth/mizuRoute)  
+- [NOAH – Land Surface Model](https://github.com/CH-Earth/noah-lsm)
