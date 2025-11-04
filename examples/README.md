@@ -70,6 +70,20 @@ Emphasizes automation, parallel execution, and systematic model evaluation.
 
 ---
 
+## Data Access
+
+Example data for **01a – 02c** are provided as a single ~200 MB bundle for quick testing.
+
+- **Download:** [GitHub Release – Example Data (01a–02c)](https://github.com/DarriEy/CONFLUENCE/releases/download/examples-data-v0.1/confluence_examples_01a-02c_data.zip)
+- **Automatic setup:** Example 01a automatically downloads this bundle if missing.
+
+If you have access to institutional storage (e.g. **FIR** or **UCalgary ARC**),  
+you may instead point the confluence config paths to your local MAF dataset.
+
+> Large-domain and large-sample examples (**03a–04c**) use multi-terabyte datasets and are **not included** in this bundle.  
+
+---
+
 ## Example Contents
 
 Each example directory includes:

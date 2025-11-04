@@ -494,10 +494,9 @@ DATATOOL_PATH: default                                         # Path to datatoo
 GISTOOL_PATH: default                                          # Path to gistool executable
 EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
 DATATOOL_DATASET_ROOT: /path/to/meteorological-data/           # Path to datatool datasets root directory
-DATATOOL_CACHE: /path/to/cache/dir                             # Cache directory used in datatool
 GISTOOL_DATASET_ROOT: /path/to/geospatial-data/                # Path to gistool datasets root directory
-GISTOOL_LIB_PATH: /path/to/r-env/                              # Path to gistool libraries
 TOOL_CACHE: /path/to/cache/dir                                 # Path to gistool cache directory
 EASYMORE_CACHE: /path/to/cache/dir                             # Path to easymore cache directory
 EASYMORE_JOB_CONF: /path/to/esmr/job_config                    # Path to easymore job config
 CLUSTER_JSON: /path/to/cluster.json                            # Path to cluster json config
+GISTOOL_LIB_PATH: /path/to/r-env/                              # Path to gistool libraries
