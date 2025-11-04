@@ -40,10 +40,12 @@ LOG_FORMAT: detailed                                           # Log format: sim
 POUR_POINT_COORDS: 51.1722/-115.5717                           # Pour point coordinates lat/lon, if default use user provided shapefile. 
 BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5                # Bounding box of the domain: lat_max/lon_min/lat_min/lon_max. 
 
-# Domain delineation settings (GRU level)
-DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method, current options: subset_geofabric, delineate_geofabric, lumped_watershed
+# Domain definition settings (GRU level)
+DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method, options: subset, delineate (delineates distributed river network), lumped
 ROUTING_DELINEATION: lumped                                    # Spatial discretisation of river network for routing
-GEOFABRIC_TYPE: na                                             # Source geofabric to subset from, current options: Merit, TDX, NWS
+GEOFABRIC_TYPE: na                                             # Source geofabric if subsetting, options: Merit, TDX, NWS
+
+## Delineation settings
 DELINEATION_METHOD: slope_area                                 # Method for stream identification, options: stream_threshold, curvature, slope_area, multi_scale 
 CURVATURE_THRESHOLD: 0.0                                       # Profile curvature threshold for curvature method
 MIN_SOURCE_THRESHOLD: 100                                      # Minimum contributing area for stream sources in curvature method

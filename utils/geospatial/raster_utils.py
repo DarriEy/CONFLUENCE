@@ -1,5 +1,4 @@
-# In utils/geospatial_utils/raster_utils.py
-
+# In utils/geospatial/raster_utils.py
 import numpy as np
 import rasterio # type: ignore
 from scipy import stats

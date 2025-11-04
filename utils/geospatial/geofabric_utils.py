@@ -387,9 +387,7 @@ class GeofabricDelineator:
             mpi_prefix = f"{mpi_cmd} -n {self.mpi_processes} "
         else:
             mpi_prefix = ""
-            
-        mpi_prefix = ""
-        
+                    
         # Common initial steps (same for all methods)
         common_steps = [
             f"{mpi_prefix}{self.taudem_dir}/pitremove -z {dem_path} -fel {self.interim_dir}/elv-fel.tif -v",
@@ -560,6 +558,7 @@ class GeofabricDelineator:
         
         self.logger.info("Slope-area based stream identification completed")
         self.logger.info(f"Used slope^{slope_exponent} * area^{area_exponent} >= {slope_area_threshold} criterion")
+
 
     def _run_multi_scale_method(self, dem_path: Path, pour_point_path: Path, mpi_prefix: str):
         """

@@ -163,11 +163,12 @@ class DomainManager:
             self.logger.info(f"Domain definition completed using method: {domain_method}")
         
         # Visualize the domain after definition
-        self.visualize_domain()
-        
+        self.visualize_domain()        
         self.logger.info(f"Domain definition workflow finished")
+
         return result
     
+
     def discretize_domain(self) -> Optional[Union[Path, dict]]:
         """
         Discretize the domain into HRUs or GRUs.

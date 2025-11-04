@@ -80,6 +80,9 @@ class forcingResampler:
         else:
             self.logger.warning(f"Merging not implemented for dataset: {self.forcing_dataset}")
 
+
+            
+
     def _merge_rdrs_forcings(self):
         """Merge RDRS forcing data files into monthly files."""
         years = [
