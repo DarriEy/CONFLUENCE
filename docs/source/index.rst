@@ -47,7 +47,6 @@ Quick Start
    :maxdepth: 2
    :caption: Reference
 
-   modules/index
    api
    troubleshooting
 
