@@ -1050,11 +1050,10 @@ class BaseOptimizer(ABC):
         # Algorithm-specific directory setup
         self.algorithm_name = self.get_algorithm_name().lower()
         
-        # Parallel processing setup FIRST (before using self.use_parallel)
         self.use_parallel = config.get('MPI_PROCESSES', 1) > 1
         self.num_processes = max(1, config.get('MPI_PROCESSES', 1))
         
-        # NOW initialize scratch manager with MPI rank
+        # Get MPI rank
         mpi_rank = None
         if self.use_parallel:
             mpi_rank = os.environ.get('PMI_RANK', 0)  # SLURM
@@ -1062,11 +1061,19 @@ class BaseOptimizer(ABC):
                 mpi_rank = os.environ.get('OMPI_COMM_WORLD_RANK', 0)  # OpenMPI
             mpi_rank = int(mpi_rank) if mpi_rank else 0
 
+        # Initialize scratch manager
         self.scratch_manager = LocalScratchManager(
             config, logger, self.project_dir, self.get_algorithm_name(), mpi_rank
         )
 
         if self.scratch_manager.use_scratch:
+            # Add staggered setup to avoid memory pressure
+            if mpi_rank and mpi_rank > 0:
+                import time
+                delay = mpi_rank * 2  # 2 seconds per rank
+                self.logger.info(f"Rank {mpi_rank}: Waiting {delay}s before scratch setup...")
+                time.sleep(delay)
+            
             if self.scratch_manager.setup_scratch_space():
                 self.data_dir = self.scratch_manager.get_effective_data_dir()
                 self.project_dir = self.scratch_manager.get_effective_project_dir()
