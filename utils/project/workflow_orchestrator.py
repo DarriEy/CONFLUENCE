@@ -151,7 +151,15 @@ class WorkflowOrchestrator:
                 lambda: (self.project_dir / "simulations" / self.experiment_id / 
                         f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists(),
                 "Running hydrological model simulations"
+                
             ),
+
+            (
+                self.managers['model'].postprocess_results,
+                lambda: (self.project_dir / "results" / "postprocessed.csv").exists(),
+                "Post-processing simulation results"
+            ),
+
             
             # --- Optimization and Emulation Steps ---
             (
@@ -194,11 +202,6 @@ class WorkflowOrchestrator:
                 "Running parameter sensitivity analysis"
             ),
             
-            (
-                self.managers['model'].postprocess_results,
-                lambda: (self.project_dir / "results" / "postprocessed.csv").exists(),
-                "Post-processing simulation results"
-            ),
         ]
     
     def run_workflow(self, force_run: bool = False):
