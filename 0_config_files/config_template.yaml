@@ -276,7 +276,7 @@ ATTRIBUTES_OUTPUT_DIR: default                                 # Output director
 
 OPTIMISATION_METHODS: [iteration]                              # Methods to optimise the model performance, options: 'emulation', 'iteration'
 OPTIMISATION_TARGET: streamflow                                # Options: streamflow (default), swe, snow_depth, sca, et, latent_heat, soil_moisture, groundwater
-CALIBRATION_TIMESTEP: hourly                                   # Timestep to use for calibration, options: 'native', 'hourly', 'daily'
+CALIBRATION_TIMESTEP: daily                                   # Timestep to use for calibration, options: 'native', 'hourly', 'daily'
 
 # Iterative optimisation settings
 ITERATIVE_OPTIMIZATION_ALGORITHM: DE                           # Options DDS, DE, PSO, NSGA-II, ADAM or SCE-UA

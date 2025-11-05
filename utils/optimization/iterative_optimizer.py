@@ -1048,15 +1048,30 @@ class BaseOptimizer(ABC):
         self.experiment_id = self.config.get('EXPERIMENT_ID')
         
         # Algorithm-specific directory setup
-        # Initialize scratch manager
         self.algorithm_name = self.get_algorithm_name().lower()
-        self.scratch_manager = LocalScratchManager(config, logger, self.project_dir, self.algorithm_name)
+        
+        # Parallel processing setup FIRST (before using self.use_parallel)
+        self.use_parallel = config.get('MPI_PROCESSES', 1) > 1
+        self.num_processes = max(1, config.get('MPI_PROCESSES', 1))
+        
+        # NOW initialize scratch manager with MPI rank
+        mpi_rank = None
+        if self.use_parallel:
+            mpi_rank = os.environ.get('PMI_RANK', 0)  # SLURM
+            if not mpi_rank:
+                mpi_rank = os.environ.get('OMPI_COMM_WORLD_RANK', 0)  # OpenMPI
+            mpi_rank = int(mpi_rank) if mpi_rank else 0
+
+        self.scratch_manager = LocalScratchManager(
+            config, logger, self.project_dir, self.get_algorithm_name(), mpi_rank
+        )
 
         if self.scratch_manager.use_scratch:
             if self.scratch_manager.setup_scratch_space():
                 self.data_dir = self.scratch_manager.get_effective_data_dir()
                 self.project_dir = self.scratch_manager.get_effective_project_dir()
 
+        # Continue with rest of initialization...
         self.optimization_dir = self.project_dir / "simulations" / f"run_{self.algorithm_name}"
         self.logger.info(f"optimization_dir set to: {self.optimization_dir}")  # AND THIS
         self.summa_sim_dir = self.optimization_dir / "SUMMA"
@@ -1090,8 +1105,6 @@ class BaseOptimizer(ABC):
             self.logger.info(f"Random seed set to: {self.random_seed}")
 
         # Parallel processing setup
-        self.use_parallel = config.get('MPI_PROCESSES', 1) > 1
-        self.num_processes = max(1, config.get('MPI_PROCESSES', 1))
         self.parallel_dirs = []
         self._consecutive_parallel_failures = 0
         
