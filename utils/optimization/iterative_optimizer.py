@@ -1414,6 +1414,12 @@ class BaseOptimizer(ABC):
         """Setup parallel processing directories and files"""
         self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
         
+        # DEBUG: Check if source files exist
+        self.logger.info(f"optimization_settings_dir: {self.optimization_settings_dir}")
+        self.logger.info(f"optimization_settings_dir exists: {self.optimization_settings_dir.exists()}")
+        if self.optimization_settings_dir.exists():
+            files = list(self.optimization_settings_dir.glob("*"))
+            self.logger.info(f"Files in optimization_settings_dir: {[f.name for f in files]}")
         for proc_id in range(self.num_processes):
             # Create process-specific directories
             proc_base_dir = self.optimization_dir / f"parallel_proc_{proc_id:02d}"
