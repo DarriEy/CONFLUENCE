@@ -112,6 +112,20 @@ class LocalScratchManager:
             )
             return False
         
+        # NEW: Check if job spans multiple nodes
+        num_nodes = os.environ.get('SLURM_JOB_NUM_NODES', '1')
+        try:
+            num_nodes = int(num_nodes)
+            if num_nodes > 1:
+                self.logger.warning(
+                    f"Job spans {num_nodes} nodes. Local scratch only works on single-node jobs. "
+                    "Falling back to standard filesystem. To use scratch, constrain job to 1 node with "
+                    "#SBATCH --nodes=1"
+                )
+                return False
+        except ValueError:
+            pass
+        
         self.logger.info(f"SLURM environment detected: TMPDIR={slurm_tmpdir}, JOB_ID={slurm_job_id}")
         return True
     
