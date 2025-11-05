@@ -1409,7 +1409,7 @@ class BaseOptimizer(ABC):
                 return StreamflowTarget(self.config, self.project_dir, self.logger)
             else:
                 raise ValueError(f"Unsupported optimization target: {optimization_target} with calibration variable: {calibration_variable}")
-                
+                    
     def _setup_parallel_processing(self) -> None:
         """Setup parallel processing directories and files"""
         self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
@@ -1420,6 +1420,7 @@ class BaseOptimizer(ABC):
         if self.optimization_settings_dir.exists():
             files = list(self.optimization_settings_dir.glob("*"))
             self.logger.info(f"Files in optimization_settings_dir: {[f.name for f in files]}")
+        
         for proc_id in range(self.num_processes):
             # Create process-specific directories
             proc_base_dir = self.optimization_dir / f"parallel_proc_{proc_id:02d}"
@@ -1430,7 +1431,7 @@ class BaseOptimizer(ABC):
             
             # Create directories
             for directory in [proc_base_dir, proc_summa_dir, proc_mizuroute_dir,
-                             proc_summa_settings_dir, proc_mizu_settings_dir]:
+                            proc_summa_settings_dir, proc_mizu_settings_dir]:
                 directory.mkdir(parents=True, exist_ok=True)
             
             # Create log directories
@@ -1440,9 +1441,14 @@ class BaseOptimizer(ABC):
             # Copy settings files
             self._copy_settings_to_process_dir(proc_summa_settings_dir, proc_mizu_settings_dir)
             
+            # ADD THIS: Verify critical files were copied
+            fm_file = proc_summa_settings_dir / 'fileManager.txt'
+            if not fm_file.exists():
+                raise FileNotFoundError(f"Failed to copy fileManager.txt to {proc_summa_settings_dir}")
+            
             # Update file managers for this process
             self._update_process_file_managers(proc_id, proc_summa_dir, proc_mizuroute_dir,
-                                             proc_summa_settings_dir, proc_mizu_settings_dir)
+                                            proc_summa_settings_dir, proc_mizu_settings_dir)
             
             # Store directory info
             self.parallel_dirs.append({
@@ -1453,6 +1459,14 @@ class BaseOptimizer(ABC):
                 'summa_settings_dir': proc_summa_settings_dir,
                 'mizuroute_settings_dir': proc_mizu_settings_dir
             })
+        
+        # ADD THIS: Final verification that all parallel dirs are ready
+        self.logger.info("Verifying all parallel directories are set up...")
+        for proc_id, proc_dirs in enumerate(self.parallel_dirs):
+            fm_path = proc_dirs['summa_settings_dir'] / 'fileManager.txt'
+            if not fm_path.exists():
+                raise FileNotFoundError(f"Parallel proc {proc_id} missing fileManager.txt at {fm_path}")
+        self.logger.info(f"All {len(self.parallel_dirs)} parallel directories verified and ready")
     
     def _copy_settings_to_process_dir(self, proc_summa_settings_dir: Path, proc_mizu_settings_dir: Path) -> None:
         """Copy settings files to process-specific directory"""
