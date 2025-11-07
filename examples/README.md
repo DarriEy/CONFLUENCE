@@ -37,11 +37,6 @@ Scales up to national and continental domains:
 
 Focuses on high-performance execution, large datasets, and scaling efficiency.
 
-### 04. Large-Sample Studies
-
-Covers multi-site and global ensemble workflows using datasets such as **FLUXNET**, **NorSWE**, **CAMELS**, **CARAVAN**, **LamaH-CE**, and **ISMN**.  
-Emphasizes automation, parallel execution, and systematic model evaluation.
-
 ---
 
 ## Quick Start
@@ -61,7 +56,7 @@ Emphasizes automation, parallel execution, and systematic model evaluation.
    - Opens it in Jupyter Lab  
    - Initializes it using the **root CONFLUENCE virtual environment**  
 
-   You can substitute any example ID (e.g., `2b`, `3a`, `4c`) to launch the corresponding workflow.
+   You can substitute any example ID (e.g., `2b`, `3a`) to launch the corresponding workflow.
 
 3. **Run complete workflows** via configuration:
    ```bash
@@ -80,7 +75,7 @@ Example data for **01a – 02c** are provided as a single ~200 MB bundle for qui
 If you have access to institutional storage (e.g. **FIR** or **UCalgary ARC**),  
 you may instead point the confluence config paths to your local MAF dataset.
 
-> Large-domain and large-sample examples (**03a–04c**) use multi-terabyte datasets and are **not included** in this bundle.  
+> Large-domain examples (**03a–03b**) use multi-terabyte datasets and are **not included** in this bundle.  
 
 ---
 
