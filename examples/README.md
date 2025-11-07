@@ -7,7 +7,7 @@ Each example includes configuration files, Jupyter notebooks, and optional batch
 
 ## Learning Path
 
-Examples are organized into four progressive stages. Follow them sequentially to build understanding and confidence with CONFLUENCE.
+Examples are organized into three progressive stages. Follow them sequentially to build understanding and confidence with CONFLUENCE.
 
 ### 01. Point-Scale Validation
 
