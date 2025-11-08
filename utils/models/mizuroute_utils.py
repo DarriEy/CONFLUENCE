@@ -3,6 +3,7 @@ import sys
 import pandas as pd # type: ignore
 import netCDF4 as nc4 # type: ignore
 import geopandas as gpd # type: ignore
+import numpy as np # type: ignore
 from pathlib import Path
 from shutil import copyfile
 from datetime import datetime
@@ -313,37 +314,52 @@ class MizuRoutePreProcessor:
             self.logger.info(f"Weight range: {self.subcatchment_weights.min():.4f} to {self.subcatchment_weights.max():.4f}")
             
         else:
-            # Check if we have elevation-based distributed modeling (SUMMA attributes file exists with multiple HRUs per GRU)
+            # Check if we have SUMMA attributes file with multiple HRUs per GRU
             attributes_path = self.project_dir / 'settings' / 'SUMMA' / 'attributes.nc'
             
             if attributes_path.exists():
-                # Check if this is truly distributed (multiple HRUs per GRU)
                 with nc4.Dataset(attributes_path, 'r') as attrs:
                     n_hrus = len(attrs.dimensions['hru'])
                     n_grus = len(attrs.dimensions['gru'])
                     
                     if n_hrus > n_grus:
-                        # Elevation-based distributed modeling
-                        self.logger.info(f"Using elevation-based distributed topology: {n_hrus} HRUs across {n_grus} GRUs")
+                        # Multiple HRUs per GRU - SUMMA will output GRU-level runoff
+                        # mizuRoute should route at GRU level
+                        self.logger.info(f"Distributed SUMMA with {n_hrus} HRUs across {n_grus} GRUs")
+                        self.logger.info("Creating GRU-level topology for mizuRoute (SUMMA outputs averageRoutedRunoff at GRU level)")
                         
-                        # Read HRU information from SUMMA attributes file
-                        hru_ids = attrs.variables['hruId'][:].astype(int)
+                        # Read GRU information from SUMMA attributes file
+                        gru_ids = attrs.variables['gruId'][:].astype(int)
+                        
+                        # For distributed SUMMA, GRU IDs should match segment IDs
+                        hru_ids = gru_ids  # mizuRoute will read GRU-level data
+                        hru_to_seg_ids = gru_ids  # Each GRU drains to segment with same ID
+                        
+                        # Calculate GRU areas by summing HRU areas within each GRU
                         hru2gru = attrs.variables['hru2gruId'][:].astype(int)
-                        hru_areas = attrs.variables['HRUarea'][:].astype(float)
+                        hru_areas_all = attrs.variables['HRUarea'][:].astype(float)
                         
-                        # Map each HRU to its corresponding segment (via GRU)
-                        # GRU IDs should match segment IDs
-                        hru_to_seg_ids = hru2gru.copy()
+                        # Sum areas for each GRU
+                        gru_areas = np.zeros(n_grus)
+                        for i, gru_id in enumerate(gru_ids):
+                            gru_mask = hru2gru == gru_id
+                            gru_areas[i] = hru_areas_all[gru_mask].sum()
+                        
+                        hru_areas = gru_areas
                         
                         num_seg = len(shp_river)
-                        num_hru = n_hrus
+                        num_hru = n_grus  # mizuRoute sees GRUs as HRUs
                         
-                        self.logger.info(f"Mapped {num_hru} HRUs to {num_seg} segments via GRU assignments")
+                        # Store flag for control file generation
+                        self.summa_uses_gru_runoff = True
+                        
+                        self.logger.info(f"Created topology with {num_hru} GRUs for mizuRoute routing")
                     else:
                         # Lumped modeling: use original logic
+                        self.summa_uses_gru_runoff = False
                         closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
                         
-                        if len(shp_basin) == 1:  # For lumped case
+                        if len(shp_basin) == 1:
                             shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
                             self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
                         
@@ -355,9 +371,10 @@ class MizuRoutePreProcessor:
                         hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
             else:
                 # No attributes file: use original logic
+                self.summa_uses_gru_runoff = False
                 closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
                 
-                if len(shp_basin) == 1:  # For lumped case
+                if len(shp_basin) == 1:
                     shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
                     self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
                 
@@ -605,7 +622,10 @@ class MizuRoutePreProcessor:
         self.logger.debug(f"mizuRoute control file created at {self.mizuroute_setup_dir / control_name}")
 
     def _write_control_file_runoff(self, cf):
-        """Write SUMMA-specific runoff file settings (original behavior)"""
+        """Write SUMMA-specific runoff file settings"""
+        # Check if we should use GRU-level or HRU-level data
+        uses_gru = getattr(self, 'summa_uses_gru_runoff', False)
+        
         cf.write("!\n! --- DEFINE RUNOFF FILE \n")
         cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for SUMMA runoff \n")
         cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')}    ! Variable name for SUMMA runoff \n")
@@ -613,8 +633,16 @@ class MizuRoutePreProcessor:
         cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT', '3600')}    ! Time interval of input runoff in seconds \n")
         cf.write("<dname_time>            time    ! Dimension name for time \n")
         cf.write("<vname_time>            time    ! Variable name for time \n")
-        cf.write("<dname_hruid>           hru     ! Dimension name for HM_HRU ID \n")
-        cf.write("<vname_hruid>           hruId   ! Variable name for HM_HRU ID \n")
+        
+        if uses_gru:
+            # Distributed SUMMA outputs GRU-level runoff
+            cf.write("<dname_hruid>           gru     ! Dimension name for HM_HRU ID (GRU level for distributed SUMMA) \n")
+            cf.write("<vname_hruid>           gruId   ! Variable name for HM_HRU ID (GRU level for distributed SUMMA) \n")
+        else:
+            # Standard HRU-level runoff
+            cf.write("<dname_hruid>           hru     ! Dimension name for HM_HRU ID \n")
+            cf.write("<vname_hruid>           hruId   ! Variable name for HM_HRU ID \n")
+            
         cf.write("<calendar>              standard    ! Calendar of the nc file \n")
 
     def _set_topology_attributes(self, ncid):
