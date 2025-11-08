@@ -148,7 +148,7 @@ class MizuRoutePreProcessor:
     def _write_gr_control_file_runoff(self, cf):
         """Write GR-specific runoff file settings"""
         cf.write("!\n! --- DEFINE RUNOFF FILE \n")
-        cf.write(f"<fname_qsim>            {self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for GR4J runoff \n")
+        cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for GR4J runoff \n")
         cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'q_routed')}    ! Variable name for GR4J runoff \n")
         cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS', 'mm/d')}    ! Units of input runoff \n")
         cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT', '86400')}    ! Time interval of input runoff in seconds \n")
@@ -611,7 +611,7 @@ class MizuRoutePreProcessor:
     def _write_fuse_control_file_runoff(self, cf):
         """Write FUSE-specific runoff file settings"""
         cf.write("!\n! --- DEFINE RUNOFF FILE \n")
-        cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for FUSE runoff \n")
+        cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_runs_def.nc    ! netCDF name for FUSE runoff \n")
         cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR')}    ! Variable name for FUSE runoff \n")
         cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS')}    ! Units of input runoff \n")
         cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT')}    ! Time interval of input runoff in seconds \n")
