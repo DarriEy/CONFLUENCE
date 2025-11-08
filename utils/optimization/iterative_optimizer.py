@@ -1411,25 +1411,34 @@ class BaseOptimizer(ABC):
         optimization_target = self.config.get('OPTIMISATION_TARGET', 'streamflow')
         calibration_variable = self.config.get('CALIBRATION_VARIABLE', 'streamflow').lower()
         
+        # Check for ET/latent heat calibration FIRST (before streamflow)
+        if optimization_target in ['et', 'latent_heat']:
+            return ETTarget(self.config, self.project_dir, self.logger)
+        
         # Check for snow-related calibration
-        if (optimization_target in ['swe', 'sca', 'snow_depth'] or 
+        elif (optimization_target in ['swe', 'sca', 'snow_depth'] or 
             'swe' in calibration_variable or 'snow' in calibration_variable):
             return SnowTarget(self.config, self.project_dir, self.logger)
-        elif optimization_target == 'streamflow' or 'flow' in calibration_variable:
-            return StreamflowTarget(self.config, self.project_dir, self.logger)
+        
+        # Check for groundwater calibration
         elif optimization_target in ['gw_depth', 'gw_grace']:
             return GroundwaterTarget(self.config, self.project_dir, self.logger)
-        elif optimization_target in ['et', 'latent_heat']:
-            return ETTarget(self.config, self.project_dir, self.logger)
+        
+        # Check for soil moisture calibration
         elif optimization_target in ['sm_point', 'sm_smap', 'sm_esa']:
             return SoilMoistureTarget(self.config, self.project_dir, self.logger)
+        
+        # Check for streamflow calibration (should be near the end as it's most common)
+        elif optimization_target == 'streamflow' or 'flow' in calibration_variable:
+            return StreamflowTarget(self.config, self.project_dir, self.logger)
+        
         else:
             # Default fallback - try to infer from calibration variable
             if 'streamflow' in calibration_variable or 'flow' in calibration_variable:
                 return StreamflowTarget(self.config, self.project_dir, self.logger)
             else:
                 raise ValueError(f"Unsupported optimization target: {optimization_target} with calibration variable: {calibration_variable}")
-                    
+                
     def _setup_parallel_processing(self) -> None:
         """Setup parallel processing directories and files"""
         self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
