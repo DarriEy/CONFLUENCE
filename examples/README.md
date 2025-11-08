@@ -69,13 +69,14 @@ Focuses on high-performance execution, large datasets, and scaling efficiency.
 
 Example data for **01a – 02c** are provided as a single ~200 MB bundle for quick testing.
 
-- **Download:** [GitHub Release – Example Data (01a–02c)](https://github.com/DarriEy/CONFLUENCE/releases/download/examples-data-v0.1/confluence_examples_01a-02c_data.zip)
-- **Automatic setup:** Example 01a automatically downloads this bundle if missing.
+- **Download:** [GitHub Release – Example Data (01a–03a)](https://github.com/DarriEy/CONFLUENCE/releases/download/examples-data-v0.2/example_data_v0.2.zip)
 
 If you have access to institutional storage (e.g. **FIR** or **UCalgary ARC**),  
 you may instead point the confluence config paths to your local MAF dataset.
 
-> Large-domain examples (**03a–03b**) use multi-terabyte datasets and are **not included** in this bundle.  
+https://app.globus.org/file-manager?origin_id=1062f558-f976-4d03-b4ef-f6c3b465ed66&origin_path=%2F
+
+> Continental-domain simulations (**03b**) use multi-gigabyte datasets. 1 month of example data is available through globus in this [bundle](https://app.globus.org/file-manager?origin_id=1062f558-f976-4d03-b4ef-f6c3b465ed66&origin_path=%2F).  
 
 ---
 
@@ -85,7 +86,6 @@ Each example directory includes:
 
 - A complete and reproducible configuration file  
 - A Jupyter notebook with contextual explanations  
-- Optional batch script for automated runs  
 - Notes on expected results and dataset access  
 
 ---
