@@ -416,7 +416,9 @@ class MizuRoutePreProcessor:
             pour_point_geom = shp_pour_point.geometry.iloc[0]
             
             # Calculate distances from pour point to all river segments
-            distances = shp_river.geometry.distance(pour_point_geom)
+            shp_river_proj = shp_river.to_crs(shp_river.estimate_utm_crs())
+            pour_point_proj = gpd.GeoSeries([pour_point_geom], crs=shp_pour_point.crs).to_crs(shp_river_proj.crs)
+            distances = shp_river_proj.geometry.distance(pour_point_proj.iloc[0])
             
             # Find closest segment
             closest_idx = distances.idxmin()
