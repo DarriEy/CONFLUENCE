@@ -313,19 +313,60 @@ class MizuRoutePreProcessor:
             self.logger.info(f"Weight range: {self.subcatchment_weights.min():.4f} to {self.subcatchment_weights.max():.4f}")
             
         else:
-            # Original logic for non-lumped cases
-            closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+            # Check if we have elevation-based distributed modeling (SUMMA attributes file exists with multiple HRUs per GRU)
+            attributes_path = self.project_dir / 'settings' / 'SUMMA' / 'attributes.nc'
             
-            if len(shp_basin) == 1:  # For lumped case
-                shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
-                self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
-            
-            num_seg = len(shp_river)
-            num_hru = len(shp_basin)
-            
-            hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
-            hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
-            hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
+            if attributes_path.exists():
+                # Check if this is truly distributed (multiple HRUs per GRU)
+                with nc4.Dataset(attributes_path, 'r') as attrs:
+                    n_hrus = len(attrs.dimensions['hru'])
+                    n_grus = len(attrs.dimensions['gru'])
+                    
+                    if n_hrus > n_grus:
+                        # Elevation-based distributed modeling
+                        self.logger.info(f"Using elevation-based distributed topology: {n_hrus} HRUs across {n_grus} GRUs")
+                        
+                        # Read HRU information from SUMMA attributes file
+                        hru_ids = attrs.variables['hruId'][:].astype(int)
+                        hru2gru = attrs.variables['hru2gruId'][:].astype(int)
+                        hru_areas = attrs.variables['HRUarea'][:].astype(float)
+                        
+                        # Map each HRU to its corresponding segment (via GRU)
+                        # GRU IDs should match segment IDs
+                        hru_to_seg_ids = hru2gru.copy()
+                        
+                        num_seg = len(shp_river)
+                        num_hru = n_hrus
+                        
+                        self.logger.info(f"Mapped {num_hru} HRUs to {num_seg} segments via GRU assignments")
+                    else:
+                        # Lumped modeling: use original logic
+                        closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+                        
+                        if len(shp_basin) == 1:  # For lumped case
+                            shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
+                            self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
+                        
+                        num_seg = len(shp_river)
+                        num_hru = len(shp_basin)
+                        
+                        hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
+                        hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
+                        hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
+            else:
+                # No attributes file: use original logic
+                closest_segment_id = self._find_closest_segment_to_pour_point(shp_river)
+                
+                if len(shp_basin) == 1:  # For lumped case
+                    shp_basin.loc[0, self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')] = closest_segment_id
+                    self.logger.info(f"Set single HRU to drain to closest segment: {closest_segment_id}")
+                
+                num_seg = len(shp_river)
+                num_hru = len(shp_basin)
+                
+                hru_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_RM_GRUID')].values.astype(int)
+                hru_to_seg_ids = shp_basin[self.config.get('RIVER_BASIN_SHP_HRU_TO_SEG')].values.astype(int)
+                hru_areas = shp_basin[self.config.get('RIVER_BASIN_SHP_AREA')].values.astype(float)
         
         # Ensure minimum segment length - now safe from None values
         length_col = self.config.get('RIVER_NETWORK_SHP_LENGTH')
