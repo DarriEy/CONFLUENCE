@@ -804,18 +804,18 @@ class MizuRouteRunner:
         active_models = [m.strip() for m in models]
         
         # For FUSE, check if it has already converted its output
-        if 'FUSE' in active_models:
-            self.logger.debug("Fixing FUSE time precision for mizuRoute compatibility")
-            experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'FUSE'
-            runoff_filename = f"{self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_runs_def.nc"
+        #if 'FUSE' in active_models:
+        #    self.logger.debug("Fixing FUSE time precision for mizuRoute compatibility")
+        #    experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'FUSE'
+        #    runoff_filename = f"{self.config.get('DOMAIN_NAME')}_{self.config.get('EXPERIMENT_ID')}_runs_def.nc"
         else:
-            self.logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
-            experiment_output_summa = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
-            if experiment_output_summa == 'default':
-                experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
-            else:
-                experiment_output_dir = Path(experiment_output_summa)
-            runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
+        self.logger.info("Fixing SUMMA time precision for mizuRoute compatibility")
+        experiment_output_summa = self.config.get('EXPERIMENT_OUTPUT_SUMMA')
+        if experiment_output_summa == 'default':
+            experiment_output_dir = self.project_dir / f"simulations/{self.config['EXPERIMENT_ID']}" / 'SUMMA'
+        else:
+            experiment_output_dir = Path(experiment_output_summa)
+        runoff_filename = f"{self.config.get('EXPERIMENT_ID')}_timestep.nc"
         
         runoff_filepath = experiment_output_dir / runoff_filename
         
