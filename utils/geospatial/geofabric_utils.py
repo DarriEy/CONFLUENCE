@@ -134,19 +134,26 @@ class GeofabricDelineator:
 
         for attempt in range(self.max_retries if retry else 1):
             try:
+                # Check if command already has MPI prefix to avoid double prefixing
+                has_mpi_prefix = any(cmd in command for cmd in ["mpirun", "srun"])
+                
                 if run_cmd and "module load" in command:
                     # For commands with module load, we need to handle them specially
                     parts = command.split(" && ")
                     if len(parts) == 2:
                         module_part = parts[0]
                         actual_cmd = parts[1]
-                        full_command = f"{module_part} && {run_cmd} -n {self.mpi_processes} {actual_cmd}"
+                        if not has_mpi_prefix:
+                            full_command = f"{module_part} && {run_cmd} -n {self.mpi_processes} {actual_cmd}"
+                        else:
+                            full_command = command
                     else:
                         full_command = command
-                elif run_cmd:
-                    # For regular commands, just add the run command prefix
+                elif run_cmd and not has_mpi_prefix:
+                    # For regular commands without MPI prefix, add the run command prefix
                     full_command = f"{run_cmd} -n {self.mpi_processes} {command}"
                 else:
+                    # Command already has MPI prefix or no run_cmd available
                     full_command = command
 
                 self.logger.debug(f"Running command: {full_command}")
