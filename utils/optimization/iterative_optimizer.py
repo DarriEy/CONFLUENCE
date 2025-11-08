@@ -1382,9 +1382,9 @@ class BaseOptimizer(ABC):
                 updated_lines.append(f"simStartTime         '{sim_start}'\n")
             elif 'simEndTime' in line:
                 updated_lines.append(f"simEndTime           '{sim_end}'\n")
-            elif 'outFilePrefix' in line:
-                prefix = f'run_{self.algorithm_name}_final' if not use_calibration_period else f'run_{self.algorithm_name}_opt'
-                updated_lines.append(f"outFilePrefix        '{prefix}_{self.experiment_id}'\n")
+            #elif 'outFilePrefix' in line:
+                #prefix = f'run_{self.algorithm_name}_final' if not use_calibration_period else f'run_{self.algorithm_name}_opt'
+                #updated_lines.append(f"outFilePrefix        '{prefix}_{self.experiment_id}'\n")
             elif 'outputPath' in line:
                 output_path = str(self.summa_sim_dir).replace('\\', '/')
                 updated_lines.append(f"outputPath           '{output_path}/'\n")
