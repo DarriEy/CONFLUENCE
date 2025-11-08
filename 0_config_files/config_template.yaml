@@ -156,7 +156,7 @@ DEPTH_SHAPE_FACTOR_BOUNDS: [0.1, 3.0]                          # Bounds for shap
 ###  4.2 Model Specific settings: FUSE 
 FUSE_INSTALL_PATH: default                                     # FUSE installation path, if default, self.code_dir / installs / fuse / bin
 FUSE_EXE: fuse.exe                                             # Name of FUSE executable
-FUSE_ROUTING_INTEGRATION: mizuRoute                            # Routing method for distributed FUSE
+FUSE_ROUTING_INTEGRATION: default                              # Routing method for distributed FUSE
 SETTINGS_FUSE_PATH: default                                    # Path to FUSE run settings, if default self.data_dir / settings / FUSE
 SETTINGS_FUSE_FILEMANAGER: default                             # Name of FUSE file manager
 FUSE_SPATIAL_MODE: distributed                                 # Spatial discretisation of FUSE, options: lumped or semi-distributed
@@ -205,6 +205,8 @@ SETTINGS_MIZU_OUTPUT_FREQ: single                              # Frequency with 
 SETTINGS_MIZU_OUTPUT_VARS: 1                                   # Routing output. '0' for both KWT and IRF; '1' IRF only; '2' KWT only.
 SETTINGS_MIZU_MAKE_OUTLET: n/a                                 # Segment ID or IDs that should be set as network outlet. Specify multiple IDs separated by commas: X,Y,Z. Specify no IDs as: n/a. Note that this can also be done in the network shapefile.
 SETTINGS_MIZU_NEEDS_REMAP: no                                  # 'no' if routing basins map 1:1 onto model GRUs. 'yes' if river segments span multiple GRUs or if multiple segments are inside a single GRU.
+MIZU_FROM_MODEL: default
+
 
 # Mizuroute Paths and filenames
 SETTINGS_MIZU_PATH: default                                    # Directory containing mizuroute settings. If "default" self.data_dir / settings / mizuRoute

@@ -561,6 +561,19 @@ class MizuRoutePreProcessor:
         
         self.logger.debug(f"mizuRoute control file created at {self.mizuroute_setup_dir / control_name}")
 
+    def _write_control_file_runoff(self, cf):
+        """Write SUMMA-specific runoff file settings (original behavior)"""
+        cf.write("!\n! --- DEFINE RUNOFF FILE \n")
+        cf.write(f"<fname_qsim>            {self.config.get('EXPERIMENT_ID')}_timestep.nc    ! netCDF name for SUMMA runoff \n")
+        cf.write(f"<vname_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_VAR', 'averageRoutedRunoff')}    ! Variable name for SUMMA runoff \n")
+        cf.write(f"<units_qsim>            {self.config.get('SETTINGS_MIZU_ROUTING_UNITS', 'm/s')}    ! Units of input runoff \n")
+        cf.write(f"<dt_qsim>               {self.config.get('SETTINGS_MIZU_ROUTING_DT', '3600')}    ! Time interval of input runoff in seconds \n")
+        cf.write("<dname_time>            time    ! Dimension name for time \n")
+        cf.write("<vname_time>            time    ! Variable name for time \n")
+        cf.write("<dname_hruid>           hru     ! Dimension name for HM_HRU ID \n")
+        cf.write("<vname_hruid>           hruId   ! Variable name for HM_HRU ID \n")
+        cf.write("<calendar>              standard    ! Calendar of the nc file \n")
+
     def _set_topology_attributes(self, ncid):
         now = datetime.now()
         ncid.setncattr('Author', "Created by SUMMA workflow scripts")
