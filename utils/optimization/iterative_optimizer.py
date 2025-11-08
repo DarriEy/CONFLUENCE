@@ -678,6 +678,32 @@ class ModelExecutor:
             
             mizu_exe = mizu_path / self.config.get('EXE_NAME_MIZUROUTE', 'mizuroute.exe')
             control_file = settings_dir / self.config.get('SETTINGS_MIZU_CONTROL_FILE', 'mizuroute.control')
+
+            # 1) Find SUMMA timestep file actually produced for this run
+            timestep_files = sorted((output_dir.parent / "SUMMA").glob("*_timestep.nc"))
+            if not timestep_files:
+                self.logger.error(f"No SUMMA timestep files found in {(output_dir.parent / 'SUMMA')}")
+                return False
+            summa_timestep = timestep_files[0].name  # e.g., run_de_opt_run_1_timestep.nc
+
+            # 2) Rewrite mizuroute.control paths/names to match this run
+            text = control_file.read_text()
+
+            def repl(line, key, val):
+                # assumes lines like: key = 'value'
+                if line.strip().startswith(key):
+                    return f"{key} = '{val}'\n"
+                return line
+
+            lines = []
+            for line in text.splitlines(True):
+                line = repl(line, "input_dir",  str((output_dir.parent / "SUMMA")))
+                line = repl(line, "output_dir", str(output_dir))
+                line = repl(line, "fname_qsim", summa_timestep)
+                # optional: update case_name to strip suffix after last '_' if desired
+                lines.append(line)
+
+            control_file.write_text("".join(lines))
             
             if not mizu_exe.exists():
                 self.logger.error(f"mizuRoute executable not found: {mizu_exe}")
