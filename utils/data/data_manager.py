@@ -21,7 +21,7 @@ from utils.data.archive_utils import tar_directory # type: ignore
 
 class DataManager:
     """
-    Manages all data acquisition and preprocessing operations for CONFLUENCE.
+    Manages all data acquisition and preprocessing operations for SYMFLUENCE.
     
     The DataManager is responsible for acquiring, processing, and preparing all the 
     data required for hydrological modeling. This includes geospatial attributes 
@@ -39,13 +39,13 @@ class DataManager:
     - Managing input/output variable transformations
     
     The DataManager acts as a bridge between external data sources and the 
-    CONFLUENCE modeling system, ensuring that all required data is available
+    SYMFLUENCE modeling system, ensuring that all required data is available
     in the correct format before model execution begins.
     
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         logger (logging.Logger): Logger instance
-        data_dir (Path): Path to the CONFLUENCE data directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         variable_handler (VariableHandler): Handler for variable transformations
@@ -69,7 +69,7 @@ class DataManager:
         """
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
@@ -694,7 +694,7 @@ class DataManager:
                 'watershed_size_deg': f"{lat_range:.6f}x{lon_range:.6f}",
                 'watershed_size_km': f"{lat_range*111:.2f}x{lon_range*111:.2f}",
                 'subset_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'processing_script': 'CONFLUENCE EM-Earth subset and merge with small watershed handling',
+                'processing_script': 'SYMFLUENCE EM-Earth subset and merge with small watershed handling',
                 'merged_variables': f"prcp: {list(prcp_subset.data_vars.keys())}, tmean: {list(tmean_subset.data_vars.keys())}"
             })
             
@@ -768,7 +768,7 @@ class DataManager:
         
         This method performs preprocessing operations that are common across different
         hydrological models. These operations convert the raw input data into formats
-        that can be used by any model in the CONFLUENCE framework.
+        that can be used by any model in the SYMFLUENCE framework.
         
         The preprocessing includes:
         1. Geospatial statistics: Computing zonal statistics to aggregate geospatial

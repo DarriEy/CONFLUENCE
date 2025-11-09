@@ -20,7 +20,7 @@ class DataAcquisitionProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
         self.variable_handler = VariableHandler(self.config, self.logger, 'ERA5', 'SUMMA')
@@ -187,7 +187,7 @@ class DataCleanupProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 
@@ -265,7 +265,7 @@ class DataPreProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 
@@ -455,7 +455,7 @@ class ObservedDataProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.forcing_time_step_size = int(self.config.get('FORCING_TIME_STEP_SIZE'))
@@ -969,7 +969,7 @@ class ObservedDataProcessor:
                 return False
             
             # Create directory for processed data if it doesn't exist
-            project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+            project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
             output_dir = project_dir / 'observations' / 'snow' / 'swe'
             output_dir.mkdir(parents=True, exist_ok=True)
             
@@ -1601,8 +1601,8 @@ class gistoolRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('SYMFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.tool_cache = self.config.get('TOOL_CACHE')
@@ -1613,7 +1613,7 @@ class gistoolRunner:
         #Get the path to the directory containing the gistool script
         self.gistool_path = self.config['GISTOOL_PATH']
         if self.gistool_path == 'default':
-            self.gistool_path = Path(self.config['CONFLUENCE_DATA_DIR']) / 'installs/gistool'
+            self.gistool_path = Path(self.config['SYMFLUENCE_DATA_DIR']) / 'installs/gistool'
         else: 
             self.gistool_path = self.config['GISTOOL_PATH']
     
@@ -1662,8 +1662,8 @@ class datatoolRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('SYMFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.tool_cache = self.config.get('TOOL_CACHE')
@@ -1673,7 +1673,7 @@ class datatoolRunner:
         #Get the path to the directory containing the datatool script
         self.datatool_path = self.config['DATATOOL_PATH']
         if self.datatool_path == 'default':
-            self.datatool_path = Path(self.config['CONFLUENCE_DATA_DIR']) / 'installs/datatool'
+            self.datatool_path = Path(self.config['SYMFLUENCE_DATA_DIR']) / 'installs/datatool'
         else: 
             self.datatool_path = self.config['DATATOOL_PATH']
     

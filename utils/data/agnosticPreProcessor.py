@@ -22,7 +22,7 @@ class forcingResampler:
         self.config = config
         self.logger = logger
         self.domain_name = self.config['DOMAIN_NAME']
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
         dem_name = self.config['DEM_NAME']
         if dem_name == "default":
@@ -1875,7 +1875,7 @@ class geospatialStatistics:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.catchment_path = self._get_file_path('CATCHMENT_PATH', 'shapefiles/catchment')
         self.catchment_name = self.config.get('CATCHMENT_SHP_NAME')
         if self.catchment_name == 'default':

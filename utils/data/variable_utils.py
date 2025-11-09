@@ -13,7 +13,7 @@ class VariableHandler:
     Attributes:
         variable_mappings (Dict): Dataset to model variable name mappings
         unit_registry (pint_xarray.UnitRegistry): Unit conversion registry
-        logger (logging.Logger): CONFLUENCE logger instance
+        logger (logging.Logger): SYMFLUENCE logger instance
     """
     
     # Dataset variable name mappings
@@ -176,8 +176,8 @@ class VariableHandler:
         Initialize VariableHandler with configuration settings.
         
         Args:
-            config: CONFLUENCE configuration dictionary
-            logger: CONFLUENCE logger instance
+            config: SYMFLUENCE configuration dictionary
+            logger: SYMFLUENCE logger instance
         """
         self.config = config
         self.logger = logger

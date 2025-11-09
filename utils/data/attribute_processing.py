@@ -25,7 +25,7 @@ class attributeProcessor:
         """Initialize the attribute processor."""
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.logger.info(f'data dir: {self.data_dir}')
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.logger.info(f'domain name: {self.domain_name}')
