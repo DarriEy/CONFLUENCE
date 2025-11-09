@@ -32,7 +32,67 @@ We welcome all contributions — from bug fixes and documentation improvements t
 
 ---
 
-## 2. Making Changes
+## 2. Branching Strategy
+
+SYMFLUENCE uses a simple branching model for organized development:
+
+```
+main          ← Protected, releases only (v0.5.0, v0.5.1, v1.0.0)
+  ↓
+develop       ← Active development, merge here first
+  ↓
+feature/*     ← Individual features
+hotfix/*      ← Emergency fixes
+```
+
+### Working on Features
+
+```bash
+# Start from develop
+git checkout develop
+git pull origin develop
+
+# Create your feature branch
+git checkout -b feature/my-feature
+
+# Work, commit, push
+git add .
+git commit -m "Add feature description"
+git push -u origin feature/my-feature
+
+# Open PR to merge into develop
+```
+
+### Creating Releases
+
+```bash
+# When develop is ready for release
+git checkout main
+git merge develop
+git tag -a v0.5.1 -m "Release v0.5.1"
+git push origin main --tags
+```
+
+### Hotfixes
+
+```bash
+# For critical production bugs
+git checkout -b hotfix/critical-bug main
+# Fix and commit
+git checkout main
+git merge hotfix/critical-bug
+git tag -a v0.5.1 -m "Hotfix: critical bug"
+git push origin main --tags
+
+# Merge back to develop
+git checkout develop
+git merge hotfix/critical-bug
+git push origin develop
+```
+
+---
+
+## 3. Making Changes
 
 ### Code Style
 - Follow **PEP 8** and use clear, descriptive variable names.
@@ -54,7 +114,7 @@ Use concise, descriptive messages:
 
 ---
 
-## 3. Submitting Your Work
+## 4. Submitting Your Work
 
 1. **Create a feature branch**
    ```bash
@@ -72,7 +132,7 @@ Use concise, descriptive messages:
    - **Description:** what and why  
    - **Type:** new feature, fix, documentation, etc.  
    - **Testing:** how it was verified  
-   - **Related issues:** e.g., “Closes #42”
+   - **Related issues:** e.g., "Closes #42"
 
 Example:
 ```
@@ -93,14 +153,14 @@ Closes #117
 
 ---
 
-## 4. Code Review
+## 5. Code Review
 All submissions are reviewed by maintainers. Expect constructive feedback — discussions help keep the codebase consistent and maintainable.  
 
 Please be responsive and open to suggestions.
 
 ---
 
-## 5. Reporting Issues
+## 6. Reporting Issues
 When reporting, include:
 - **Description:** what went wrong  
 - **Steps to reproduce**  
@@ -130,7 +190,7 @@ Branch: main
 
 ---
 
-## 6. Feature Requests
+## 7. Feature Requests
 We value ideas for improvement. When proposing features:
 - Describe the functionality and motivation.
 - Suggest how it might fit into existing workflows.
@@ -138,7 +198,7 @@ We value ideas for improvement. When proposing features:
 
 ---
 
-## 7. Contribution Types
+## 8. Contribution Types
 We welcome:
 - Bug fixes  
 - Documentation updates  
@@ -149,8 +209,8 @@ We welcome:
 
 ---
 
-## 8. Questions
-If you’re unsure where to start:
+## 9. Questions
+If you're unsure where to start:
 - Open a GitHub discussion or issue  
 - Review existing docs at [symfluence.readthedocs.io](https://symfluence.readthedocs.io)
 
