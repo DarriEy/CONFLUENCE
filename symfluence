@@ -44,8 +44,8 @@ _is_placeholder_or_empty() {
 set_default_symfluence_paths() {
     local pwd_code_dir="$PWD"
     local pwd_data_dir
-    pwd_data_dir="$(cd "$PWD/.." && pwd)/CONFLUENCE_data"
-    mkdir pwd_data_dir
+    pwd_data_dir="$(cd "$PWD/.." && pwd)/SYMFLUENCE_data"
+    mkdir -p "$pwd_data_dir"
 
     if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR}"; then
         export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
@@ -264,7 +264,7 @@ update_config_paths_in_yaml() {
     # $1: path to YAML config (e.g., ./0_config_files/config.yaml)
     local cfg="$1"
     local CODE="$PWD"
-    local DATA; DATA="$(cd "$PWD/.." && pwd)"
+    local DATA_BASE="$PWD/../SYMFLUENCE_data"; mkdir -p "$DATA_BASE"; local DATA="$(cd "$DATA_BASE" && pwd)"
 
     # Ensure file exists
     if [[ ! -f "$cfg" ]]; then
