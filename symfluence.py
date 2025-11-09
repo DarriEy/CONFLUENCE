@@ -325,7 +325,19 @@ def main():
             binary_ops = plan['binary_operations']
             
             if binary_ops.get('validate_binaries'):
-                result = cli_manager.validate_binaries(config_path=config_path)
+                # Try new signature first (no args), then instance-based, then legacy positional
+                try:
+                    result = cli_manager.validate_binaries()
+                except TypeError:
+                    try:
+                        sym_inst = SYMFLUENCE(
+                            config_path,
+                            debug_mode=plan['settings'].get('debug', False)
+                        )
+                        result = cli_manager.validate_binaries(symfluence_instance=sym_inst)
+                    except TypeError:
+                        # Last resort: legacy positional config_path
+                        result = cli_manager.validate_binaries(config_path)
                 sys.exit(0 if result else 1)
             
             if binary_ops.get('get_executables') is not None:
