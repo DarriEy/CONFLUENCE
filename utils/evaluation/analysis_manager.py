@@ -28,13 +28,13 @@ class AnalysisManager:
     
     The AnalysisManager works with multiple hydrological models, providing consistent
     interfaces for analysis operations across different model types. It integrates
-    with other CONFLUENCE components to ensure that analyses use the correct input data
+    with other SYMFLUENCE components to ensure that analyses use the correct input data
     and that results are properly stored and visualized.
     
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         logger (logging.Logger): Logger instance
-        data_dir (Path): Path to the CONFLUENCE data directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         experiment_id (str): ID of the current experiment
@@ -57,7 +57,7 @@ class AnalysisManager:
         """
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.experiment_id = self.config.get('EXPERIMENT_ID')
