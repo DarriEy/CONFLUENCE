@@ -1,58 +1,113 @@
-# Base Settings
-
-This directory contains the default configuration templates and parameter files for all supported hydrological models in SYMFLUENCE.  
-These serve as **clean, validated starting points** for new projects and ensure reproducible, consistent model setup across workflows.
+# SYMFLUENCE
+**SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration**
 
 ---
 
-## 1. Structure
-
-Each subdirectory includes model-specific base templates:
-
-- **SUMMA/** — Parameter files, decision file, and file manager templates for SUMMA model setup  
-  → [CH-Earth SUMMA Repository](https://github.com/CH-Earth/SUMMA)
-
-- **FUSE/** — Configuration templates and parameter definitions for FUSE model applications  
-  → [CH-Earth FUSE Repository](https://github.com/CH-Earth/FUSE)
-
-- **mizuRoute/** — Network topology, routing parameter files, and control templates for mizuRoute  
-  → [CH-Earth mizuRoute Repository](https://github.com/CH-Earth/mizuRoute)
-
-- **NOAH/** — Parameter files for the NOAH Land Surface Model used in **NextGen-style** workflows.
-  → [CH-Earth NOAH Repository](https://github.com/CH-Earth/noah-lsm)
+## Overview
+**SYMFLUENCE** is a computational environmental modeling platform that streamlines the hydrological modeling workflow—from domain setup to evaluation. It provides an integrated framework for multi-model comparison, parameter optimization, and automated workflow management across spatial scales.
 
 ---
 
-## 2. Usage
+## Installation
+Environment setup varies by system.  
+Use the built-in installer whenever possible:
 
-Base settings are automatically copied into each project during preprocessing:
 ```bash
-./symfluence --setup_project --config my_project.yaml
+./symfluence --install
 ```
 
-Copied files can then be safely modified without affecting the base templates.  
-This ensures:
-- Clean defaults for every new project  
-- Reproducibility across model setups  
-- Isolation between experiments
+This creates a clean Python 3.11 virtual environment, installs dependencies, and registers local binaries.  
+For detailed instructions (ARC, FIR, Anvil, macOS), see [INSTALL.md](INSTALL.md).
 
 ---
 
-## 3. Customization Guidelines
+## Quick Start
 
-- **Avoid editing files here directly.**  
-  Changes will affect all future projects.  
-  Instead, modify the copies within your project directory.
+### Basic CLI Usage
+```bash
+# Show options
+./symfluence --help
 
-- Use version control to track any changes for transparency.
-- When adding support for new models, follow the directory structure and naming conventions used here.
+# Run default workflow
+./symfluence
+
+# Run specific steps
+./symfluence --setup_project --calibrate_model
+
+# Define domain from pour point
+./symfluence --pour_point 51.1722/-115.5717 --domain_def delineate
+
+# Preview workflow
+./symfluence --dry_run
+```
+
+### First Project
+```bash
+cp 0_config_files/config_template.yaml my_project.yaml
+./symfluence --config my_project.yaml --setup_project
+./symfluence --config my_project.yaml
+```
+---
+
+## Python API
+For programmatic control or integration:
+
+```python
+from pathlib import Path
+from SYMFLUENCE import SYMFLUENCE
+
+cfg = Path('my_config.yaml')
+symfluence = SYMFLUENCE(cfg)
+symfluence.run_individual_steps(['setup_project', 'calibrate_model'])
+```
 
 ---
 
-## 4. References
+## Configuration
+YAML configuration files define:
+- Domain boundaries and discretization
+- Model selection and parameters
+- Optimization targets
+- Output and visualization options
 
-For full model documentation and parameter details:
-- [SUMMA – Structure for Unifying Multiple Modeling Alternatives](https://github.com/CH-Earth/SUMMA)  
-- [FUSE – Framework for Understanding Structural Errors](https://github.com/CH-Earth/FUSE)  
-- [mizuRoute – River Network Routing Tool](https://github.com/CH-Earth/mizuRoute)  
-- [NOAH – Land Surface Model](https://github.com/CH-Earth/noah-lsm)
+See [`0_config_files/config_template.yaml`](0_config_files/config_template.yaml) for a full example.
+
+---
+
+## Project Structure
+```
+SYMFLUENCE/
+├── SYMFLUENCE.py         # Main entry point
+├── symfluence            # Shell wrapper
+├── utils/                # Core framework modules
+│   ├── project/
+│   ├── geospatial/
+│   ├── models/
+│   ├── optimization/
+│   └── evaluation/
+├── 0_config_files/       # Configuration templates
+├── examples/             # Example workflows
+├── docs/                 # Documentation
+└── installs/             # Auto-generated tool installs
+```
+
+---
+
+## Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Code standards and testing
+- Branching and pull request process
+- Issue reporting
+
+---
+
+## License
+Licensed under the GPL-3.0 License.  
+See [LICENSE](LICENSE) for details.
+
+---
+
+## Support
+- Documentation: [symfluence.readthedocs.io](https://symfluence.readthedocs.io)  
+- Issues: [GitHub Issues](https://github.com/DarriEy/SYMFLUENCE/issues)  
+- Discussions: [GitHub Discussions](https://github.com/DarriEy/SYMFLUENCE/discussions)
