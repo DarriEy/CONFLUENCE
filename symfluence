@@ -31,7 +31,31 @@ fi
 print_error()   { echo -e "${RED}Error:${NC} $1" >&2; }
 print_warning() { echo -e "${YELLOW}Warning:${NC} $1" >&2; }
 print_info()    { echo -e "${BLUE}Info:${NC} $1"; }
-print_success() { echo -e "${GREEN}Success:${NC} $1"; }
+print_success() { echo -e "${GREEN}
+
+# ----------------------------------------------------------------------
+# Default path helpers (derive from current working directory)
+# ----------------------------------------------------------------------
+_is_placeholder_or_empty() {
+    local v="$1"
+    [[ -z "$v" || "$v" == "default" || "$v" == "DEFAULT" || "$v" == "/path" || "$v" == "/path/" || "$v" == "/path/to" || "$v" == "/path/to/" || "$v" == *"/path/to/"* ]]
+}
+
+set_default_symfluence_paths() {
+    local pwd_code_dir="$PWD"
+    local pwd_data_dir
+    pwd_data_dir="$(cd "$PWD/.." && pwd)"
+
+    if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR}"; then
+        export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
+        print_info "Set SYMFLUENCE_CODE_DIR to $SYMFLUENCE_CODE_DIR"
+    fi
+    if _is_placeholder_or_empty "${SYMFLUENCE_DATA_DIR}"; then
+        export SYMFLUENCE_DATA_DIR="$pwd_data_dir"
+        print_info "Set SYMFLUENCE_DATA_DIR to $SYMFLUENCE_DATA_DIR"
+    fi
+}
+Success:${NC} $1"; }
 
 # ----------------------------------------------------------------------
 # R / rpy2 environment helpers (enhanced)
@@ -229,6 +253,90 @@ install_python_requirements() {
     return 1
 }
 
+_is_bad_path() {
+    # returns 0 (true) if the value is empty/placeholder or the directory doesn't exist
+    local v="$1"
+    [[ -z "$v" || "$v" == "default" || "$v" == "DEFAULT" || "$v" == "/path" || "$v" == "/path/" || "$v" == "/path/to" || "$v" == "/path/to/" || "$v" == *"/path/to/"* || ! -d "$v" ]]
+}
+
+update_config_paths_in_yaml() {
+    # $1: path to YAML config (e.g., ./0_config_files/config.yaml)
+    local cfg="$1"
+    local CODE="$PWD"
+    local DATA; DATA="$(cd "$PWD/.." && pwd)"
+
+    # Ensure file exists
+    if [[ ! -f "$cfg" ]]; then
+        mkdir -p "$(dirname "$cfg")"
+        printf "SYMFLUENCE_CODE_DIR: %s\nSYMFLUENCE_DATA_DIR: %s\n" "$CODE" "$DATA" > "$cfg"
+        print_info "Created $cfg with default SYMFLUENCE_* paths"
+        return 0
+    fi
+
+    # Try yq first (cleanest). Fallback to sed/awk if yq is missing.
+    if command -v yq >/dev/null 2>&1; then
+        # Read current values (empty string if missing)
+        local cur_code cur_data
+        cur_code="$(yq -r '.SYMFLUENCE_CODE_DIR // ""' "$cfg" 2>/dev/null)"
+        cur_data="$(yq -r '.SYMFLUENCE_DATA_DIR // ""' "$cfg" 2>/dev/null)"
+
+        local set_code=0 set_data=0
+        _is_bad_path "$cur_code"; set_code=$?
+        _is_bad_path "$cur_data"; set_data=$?
+
+        # _is_bad_path returns 0 when bad → we should set it
+        if [[ $set_code -eq 0 ]]; then
+            SYM_CODE_NEW="$CODE" yq -i '.SYMFLUENCE_CODE_DIR = strenv(SYM_CODE_NEW)' "$cfg"
+            print_info "Updated SYMFLUENCE_CODE_DIR -> $CODE in $cfg"
+        fi
+        if [[ $set_data -eq 0 ]]; then
+            SYM_DATA_NEW="$DATA" yq -i '.SYMFLUENCE_DATA_DIR = strenv(SYM_DATA_NEW)' "$cfg"
+            print_info "Updated SYMFLUENCE_DATA_DIR -> $DATA in $cfg"
+        fi
+        return 0
+    fi
+
+    # ---- Fallback without yq (portable; works on macOS/BSD + GNU) ----
+    # Read current values (simple top-level key parse)
+    local cur_code cur_data
+    cur_code="$(grep -E '^[[:space:]]*SYMFLUENCE_CODE_DIR:' "$cfg" | head -1 | sed 's/^[^:]*:[[:space:]]*//')"
+    cur_data="$(grep -E '^[[:space:]]*SYMFLUENCE_DATA_DIR:' "$cfg" | head -1 | sed 's/^[^:]*:[[:space:]]*//')"
+
+    local need_code=1 need_data=1
+    _is_bad_path "$cur_code" || need_code=0
+    _is_bad_path "$cur_data" || need_data=0
+
+    # If neither needs change, we're done
+    if [[ $need_code -eq 0 && $need_data -eq 0 ]]; then
+        return 0
+    fi
+
+    # Make a backup and write a temp file portably (macOS sed -i is quirky)
+    local tmp="${cfg}.tmp.$$"
+    cp "$cfg" "${cfg}.bak"
+
+    # Start from original and rewrite lines if present; if absent, append at end.
+    awk -v code="$CODE" -v data="$DATA" -v need_code="$need_code" -v need_data="$need_data" '
+        BEGIN { saw_code=0; saw_data=0; }
+        /^[[:space:]]*SYMFLUENCE_CODE_DIR:/ {
+            saw_code=1;
+            if (need_code==1) { print "SYMFLUENCE_CODE_DIR: " code; next }
+        }
+        /^[[:space:]]*SYMFLUENCE_DATA_DIR:/ {
+            saw_data=1;
+            if (need_data==1) { print "SYMFLUENCE_DATA_DIR: " data; next }
+        }
+        { print }
+        END {
+            if (saw_code==0) print "SYMFLUENCE_CODE_DIR: " code;
+            if (saw_data==0) print "SYMFLUENCE_DATA_DIR: " data;
+        }
+    ' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
+
+    if [[ $need_code -eq 1 ]]; then print_info "Updated SYMFLUENCE_CODE_DIR -> $CODE in $cfg"; fi
+    if [[ $need_data -eq 1 ]]; then print_info "Updated SYMFLUENCE_DATA_DIR -> $DATA in $cfg"; fi
+}
+
 # ----------------------------------------------------------------------
 # Locate symfluence.py (with legacy env var compat)
 # ----------------------------------------------------------------------
@@ -391,6 +499,11 @@ main() {
         fi
         [[ "$arg" == "--install" ]] && run_install=true
     done
+
+    # Set sane defaults for SYMFLUENCE_* based on working dir
+    # Update config.yaml with PWD-based paths if current values are bad/missing
+    local CONFIG_YAML="./0_config_files/config_template.yaml"   # <-- change if needed
+    update_config_paths_in_yaml "$CONFIG_YAML"
 
     # Find symfluence.py
     local symfluence_script

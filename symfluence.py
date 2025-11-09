@@ -281,7 +281,7 @@ def main():
                 domain_def_method=pour_point_info['domain_definition_method'],
                 domain_name=pour_point_info['domain_name'],
                 bounding_box_coords=pour_point_info.get('bounding_box_coords'),
-                confluence_code_dir=None  # Let it auto-detect
+                symfluence_code_dir=None  # Let it auto-detect
             )
             
             # Use the newly created config file
@@ -297,7 +297,7 @@ def main():
                 domain_def_method=pour_point_info['domain_definition_method'],
                 domain_name=pour_point_info['domain_name'],
                 bounding_box_coords=pour_point_info.get('bounding_box_coords'),
-                confluence_code_dir=None
+                symfluence_code_dir=None
             )
             
             # Use the newly created config file for the SLURM job
@@ -333,7 +333,7 @@ def main():
                 specific_tools = binary_ops['get_executables'] if binary_ops['get_executables'] else None
                 result = cli_manager.get_executables(
                     specific_tools=specific_tools,
-                    confluence_instance=symfluence_instance,
+                    symfluence_instance=symfluence_instance,
                     force=binary_ops.get('force_install', False),
                     dry_run=plan['settings'].get('dry_run', False)
                 )
