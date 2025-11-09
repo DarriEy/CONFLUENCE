@@ -1,10 +1,26 @@
 # SYMFLUENCE
 **SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration**
 
+[![PyPI version](https://badge.fury.io/py/symfluence.svg)](https://badge.fury.io/py/symfluence)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Documentation](https://img.shields.io/badge/docs-symfluence.org-brightgreen)](https://symfluence.readthedocs.io)
+
+
 ---
 
 ## Overview
 **SYMFLUENCE** is a computational environmental modeling platform that streamlines the hydrological modeling workflow—from domain setup to evaluation. It provides an integrated framework for multi-model comparison, parameter optimization, and automated workflow management across spatial scales.
+
+---
+
+## Quick Links
+
+- **Install:** `pip install symfluence`
+- **Documentation:** [symfluence.readthedocs.io](https://symfluence.readthedocs.io)
+- **Website:** [symfluence.org](https://symfluence.org)
+- **Discussions:** [GitHub Discussions](https://github.com/DarriEy/SYMFLUENCE/discussions)
+- **Issues:** [GitHub Issues](https://github.com/DarriEy/SYMFLUENCE/issues)
 
 ---
 
@@ -54,7 +70,7 @@ For programmatic control or integration:
 
 ```python
 from pathlib import Path
-from SYMFLUENCE import SYMFLUENCE
+from symfluence import SYMFLUENCE
 
 cfg = Path('my_config.yaml')
 symfluence = SYMFLUENCE(cfg)
