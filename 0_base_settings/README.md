@@ -1,6 +1,6 @@
 # Base Settings
 
-This directory contains the default configuration templates and parameter files for all supported hydrological models in CONFLUENCE.  
+This directory contains the default configuration templates and parameter files for all supported hydrological models in SYMFLUENCE.  
 These serve as **clean, validated starting points** for new projects and ensure reproducible, consistent model setup across workflows.
 
 ---
@@ -25,9 +25,9 @@ Each subdirectory includes model-specific base templates:
 
 ## 2. Usage
 
-Base settings are automatically copied into each project during preprocessing:
+Base settings are automatically copied into each project during model preprocessing:
 ```bash
-./confluence --setup_project --config my_project.yaml
+./symfluence --preprocess_models --config my_project.yaml
 ```
 
 Copied files can then be safely modified without affecting the base templates.  
