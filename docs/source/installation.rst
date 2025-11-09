@@ -3,7 +3,7 @@ Installation
 
 Overview
 --------
-CONFLUENCE supports a one-command installer that creates an isolated Python 3.11 environment and installs required packages. HPC environments vary; use the module recipes on your cluster as needed.
+SYMFLUENCE supports a one-command installer that creates an isolated Python 3.11 environment and installs required packages. HPC environments vary; use the module recipes on your cluster as needed.
 
 Quick Install
 -------------
@@ -11,12 +11,22 @@ Run the built-in installer from the project root:
 
 .. code-block:: bash
 
-   ./confluence --install
+   ./symfluence --install
 
 What this does:
 - Creates/updates ``.venv/`` (Python 3.11 recommended)
 - Installs Python dependencies with ``pip``
 - Reuses the environment on subsequent runs
+
+Backward Compatibility
+----------------------
+For users transitioning from CONFLUENCE, the old command still works:
+
+.. code-block:: bash
+
+   ./confluence --install
+
+This wrapper will be deprecated in a future release. Please update to ``./symfluence``.
 
 Manual Setup (Optional)
 -----------------------
@@ -36,19 +46,19 @@ System Prerequisites
 
 HPC Notes
 ---------
-Use your site’s module system, then run the installer:
+Use your site's module system, then run the installer:
 
 .. code-block:: bash
 
    # Example (conceptual): load compiler, MPI, GDAL, NetCDF, Python 3.11
    module load gcc openmpi gdal netcdf-c netcdf-fortran python/3.11
-   ./confluence --install
+   ./symfluence --install
 
 Verification
 ------------
 .. code-block:: bash
 
-   ./confluence --help
+   ./symfluence --help
 
 Next Steps
 ----------

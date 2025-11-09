@@ -4,8 +4,35 @@ Changelog
 All notable changes to this project are documented here.
 This file follows a concise, category-based format (Added / Changed / Removed / Fixed).
 
-Unreleased
+Version 0.2.0 (Unreleased)
+--------------------------
+
+Changed
+-------
+- **Major rebrand:** CONFLUENCE renamed to SYMFLUENCE (SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration)
+- All documentation updated to reference SYMFLUENCE
+- Repository moved to https://github.com/DarriEy/SYMFLUENCE
+- ReadTheDocs URL updated to symfluence.readthedocs.io
+- Configuration file parameters updated: ``CONFLUENCE_DATA_DIR`` → ``SYMFLUENCE_DATA_DIR``, ``CONFLUENCE_CODE_DIR`` → ``SYMFLUENCE_CODE_DIR``
+- Main Python class renamed: ``CONFLUENCE`` → ``SYMFLUENCE``
+- CLI command updated: ``./confluence`` → ``./symfluence``
+
+Added
+-----
+- Backward compatibility wrappers for ``./confluence`` command and ``CONFLUENCE`` Python class
+- Deprecation notices in documentation for old naming conventions
+- Migration guide for users transitioning from CONFLUENCE
+
+Deprecated
 ----------
+- ``./confluence`` CLI command (use ``./symfluence`` instead)
+- ``CONFLUENCE`` Python class (use ``SYMFLUENCE`` instead)
+- ``CONFLUENCE_DATA_DIR`` and ``CONFLUENCE_CODE_DIR`` configuration parameters (use ``SYMFLUENCE_*`` equivalents)
+
+---
+
+Version 0.1.0 (Previous)
+------------------------
 
 Added
 -----
@@ -33,5 +60,3 @@ Fixed
 -----
 - Outdated references to older Python versions or legacy options in docs.
 - Inconsistent terminology across installation, configuration, and examples pages.
-
-

@@ -2,17 +2,17 @@
    :width: 200px
    :align: center
 
-CONFLUENCE Documentation
+SYMFLUENCE Documentation
 ========================
 
-**Community Optimization Nexus for Leveraging Understanding of Environmental Networks in Computational Exploration**
+**SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration**
 
 ---
 
 Overview
 --------
 
-**CONFLUENCE** is a computational hydrological modeling platform that integrates data preparation, model setup, optimization, and evaluation in a unified workflow.  
+**SYMFLUENCE** is a computational hydrological modeling platform that integrates data preparation, model setup, optimization, and evaluation in a unified workflow.  
 It enables reproducible, scalable, and extensible experiments for hydrological and environmental modeling.
 
 **Core capabilities:**
@@ -30,7 +30,7 @@ Quick Start
 - :doc:`installation` — Installation and environment setup  
 - :doc:`getting_started` — Your first project workflow  
 - :doc:`examples` — Tutorials and case studies  
-- `GitHub Repository <https://github.com/DarriEy/CONFLUENCE>`_
+- `GitHub Repository <https://github.com/DarriEy/SYMFLUENCE>`_
 
 ---
 

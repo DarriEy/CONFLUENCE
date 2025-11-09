@@ -3,7 +3,7 @@ Examples
 
 Overview
 --------
-This section introduces complete, ready-to-run examples that demonstrate CONFLUENCE’s full range of workflows — from point-scale validation to large-domain and large-sample modeling.  
+This section introduces complete, ready-to-run examples that demonstrate SYMFLUENCE's full range of workflows — from point-scale validation to large-domain and large-sample modeling.  
 Each example includes configuration templates, Jupyter notebooks, and batch scripts located in the ``examples/`` directory.
 
 ---
@@ -23,10 +23,10 @@ Each directory contains a configuration file, notebook, and optional SLURM scrip
 
 Running the Examples
 --------------------
-1. Install CONFLUENCE and activate your environment:
+1. Install SYMFLUENCE and activate your environment:
    .. code-block:: bash
 
-      ./confluence --install
+      ./symfluence --install
       source .venv/bin/activate
 
 2. Navigate to the example directory:
@@ -36,6 +36,8 @@ Running the Examples
       jupyter notebook 02b_basin_semi_distributed.ipynb
 
 3. Run the notebook or script as described inside.
+
+**Note:** For backward compatibility, ``./confluence --install`` still works but is deprecated.
 
 ---
 
@@ -59,6 +61,6 @@ Best Practices
 
 References
 ----------
-- Example notebooks: `jupyter_notebooks/ <https://github.com/DarriEy/CONFLUENCE/tree/main/jupyter_notebooks>`_  
-- Configuration templates: `0_config_files/ <https://github.com/DarriEy/CONFLUENCE/tree/main/0_config_files>`_  
-- :doc:`configuration` — Configuration reference  
+- Example notebooks: `jupyter_notebooks/ <https://github.com/DarriEy/SYMFLUENCE/tree/main/jupyter_notebooks>`_  
+- Configuration templates: `0_config_files/ <https://github.com/DarriEy/SYMFLUENCE/tree/main/0_config_files>`_  
+- :doc:`configuration` — Configuration reference

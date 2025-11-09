@@ -3,22 +3,35 @@ API Reference
 
 Overview
 --------
-The CONFLUENCE Python API mirrors the CLI and provides programmatic access to the full workflow.
-The primary entry point is the ``CONFLUENCE`` class, which coordinates manager components and the
+The SYMFLUENCE Python API mirrors the CLI and provides programmatic access to the full workflow.
+The primary entry point is the ``SYMFLUENCE`` class, which coordinates manager components and the
 ``WorkflowOrchestrator``-driven step sequence.
 
 Quick Start
 -----------
 .. code-block:: python
 
-   from CONFLUENCE import CONFLUENCE
+   from symfluence import SYMFLUENCE
+
+   conf = SYMFLUENCE("my_project.yaml")
+   conf.run_workflow()  # executes the orchestrated end-to-end pipeline
+
+Backward Compatibility
+----------------------
+For users transitioning from CONFLUENCE, the old import still works:
+
+.. code-block:: python
+
+   from CONFLUENCE import CONFLUENCE  # Deprecated, use SYMFLUENCE
 
    conf = CONFLUENCE("my_project.yaml")
-   conf.run_workflow()  # executes the orchestrated end-to-end pipeline
+   conf.run_workflow()
+
+This compatibility wrapper will be removed in a future release.
 
 Managers and Responsibilities
 -----------------------------
-Internally, CONFLUENCE composes several managers, coordinated by the workflow orchestrator:
+Internally, SYMFLUENCE composes several managers, coordinated by the workflow orchestrator:
 
 - ``project`` — project structure, pour point creation
 - ``domain`` — domain definition, discretization
@@ -91,7 +104,7 @@ Configuration flags affecting orchestration include:
 
 Status and Monitoring
 ---------------------
-Programmatically query progress using the orchestrator’s status:
+Programmatically query progress using the orchestrator's status:
 
 .. code-block:: python
 
@@ -103,7 +116,7 @@ Logging
 Set verbosity in YAML (e.g., ``LOG_LEVEL: INFO``) and inspect logs under
 ``_workLog_<domain_name>/`` for step-by-step diagnostics.
 
-Extending CONFLUENCE
+Extending SYMFLUENCE
 --------------------
 - Add new model adapters under ``utils/models/`` and register them in preprocessing/run steps
 - Add optimization strategies under ``optimization`` and expose via configuration

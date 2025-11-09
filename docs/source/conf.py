@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.abspath('../../'))
 
 # Project information
-project = 'CONFLUENCE'
+project = 'SYMFLUENCE'
 copyright = '2025, Darri Eythorsson'
 author = 'Darri Eythorsson'
 release = '0.1.0'
@@ -35,6 +35,6 @@ source_suffix = {
 html_context = {
     'display_github': True,
     'github_user': 'DarriEy',
-    'github_repo': 'CONFLUENCE',
+    'github_repo': 'SYMFLUENCE',
     'github_version': 'main/docs/source/',
 }

@@ -3,7 +3,7 @@ Configuration
 
 Overview
 --------
-All CONFLUENCE workflows are driven by a single YAML configuration file.  
+All SYMFLUENCE workflows are driven by a single YAML configuration file.  
 This file defines domain setup, model selection, data sources, optimization strategy, and output behavior.  
 Configurations are modular, validated at runtime, and fully reproducible.
 
@@ -30,8 +30,8 @@ Define experiment identifiers, paths, and computational options.
 
 .. code-block:: yaml
 
-   CONFLUENCE_DATA_DIR: "/path/to/data"
-   CONFLUENCE_CODE_DIR: "/path/to/code"
+   SYMFLUENCE_DATA_DIR: "/path/to/data"
+   SYMFLUENCE_CODE_DIR: "/path/to/code"
    DOMAIN_NAME: "bow_river"
    EXPERIMENT_ID: "baseline_01"
    EXPERIMENT_TIME_START: "2018-01-01"
@@ -40,6 +40,8 @@ Define experiment identifiers, paths, and computational options.
    LOG_LEVEL: INFO
    LOG_TO_FILE: True
    LOG_FORMAT: detailed
+
+**Note:** For backward compatibility, ``CONFLUENCE_DATA_DIR`` and ``CONFLUENCE_CODE_DIR`` are still supported but deprecated. Please update to ``SYMFLUENCE_DATA_DIR`` and ``SYMFLUENCE_CODE_DIR``.
 
 ---
 
@@ -56,7 +58,7 @@ Configure watershed delineation, thresholds, and HRU discretization.
    MULTI_SCALE_THRESHOLDS: [2500, 7500, 15000]
    USE_DROP_ANALYSIS: True
    DROP_ANALYSIS_NUM_THRESHOLDS: 5
-   DE LINEATE_COASTAL_WATERSHEDS: False
+   DELINEATE_COASTAL_WATERSHEDS: False
    DOMAIN_DISCRETIZATION: elevation
    ELEVATION_BAND_SIZE: 400
    MIN_HRU_SIZE: 5
@@ -179,7 +181,7 @@ Set paths for custom installations and parallel runtime behavior.
 
    SUMMA_INSTALL_PATH: /opt/summa
    MIZUROUTE_INSTALL_PATH: /opt/mizuroute
-   OUTPUT_DIR: /scratch/confluence/output
+   OUTPUT_DIR: /scratch/symfluence/output
    SETTINGS_SUMMA_TIME_LIMIT: 02:00:00
    SETTINGS_SUMMA_MEM: 12G
 
@@ -189,7 +191,7 @@ Validation and Best Practices
 -----------------------------
 1. Validate before execution:
    .. code-block:: bash
-      ./confluence --validate_config my_project.yaml
+      ./symfluence --validate_config my_project.yaml
 2. Comment custom values and rationale within YAML.
 3. Version-control all configuration files (except `config_active.yaml`).
 4. Use template as baseline and document deviations clearly.

@@ -1,7 +1,7 @@
 Getting Started
 ===============
 
-This guide walks you through setting up and running your first CONFLUENCE workflow — from creating a configuration file to executing a full hydrological simulation.
+This guide walks you through setting up and running your first SYMFLUENCE workflow — from creating a configuration file to executing a full hydrological simulation.
 
 ---
 
@@ -37,8 +37,10 @@ Quick Start
 
    .. code-block:: bash
 
-      ./confluence --config my_project.yaml --setup_project
-      ./confluence --config my_project.yaml
+      ./symfluence --config my_project.yaml --setup_project
+      ./symfluence --config my_project.yaml
+
+   **Note:** For backward compatibility, ``./confluence`` still works but will be deprecated.
 
 ---
 
@@ -62,7 +64,7 @@ This example performs:
 Understanding the Workflow
 --------------------------
 
-Each CONFLUENCE run follows a structured pipeline:
+Each SYMFLUENCE run follows a structured pipeline:
 
 1. **Domain Definition** — delineate watershed or region  
 2. **Data Acquisition** — retrieve and preprocess forcing datasets (ERA5, Daymet, etc.)  
