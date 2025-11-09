@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 try:
-    from confluence_version import __version__
+    from symfluence_version import __version__
 except Exception:
     __version__ = "0+unknown"
 
-CONFLUENCE CLI Argument Manager
+SYMFLUENCE CLI Argument Manager
 
-This utility provides comprehensive command-line interface functionality for the CONFLUENCE
+This utility provides comprehensive command-line interface functionality for the SYMFLUENCE
 hydrological modeling platform. It handles argument parsing, validation, and workflow
 step execution control.
 
@@ -29,7 +29,7 @@ Usage:
 """
 
 try:
-    from confluence_version import __version__
+    from symfluence_version import __version__
 except Exception:  # fallback for odd contexts
     __version__ = "0+unknown"
 
@@ -49,7 +49,7 @@ from .external_tools_config import get_external_tools_definitions
 
 class CLIArgumentManager:
     """
-    Manages command-line arguments and workflow execution options for CONFLUENCE.
+    Manages command-line arguments and workflow execution options for SYMFLUENCE.
     
     This class provides a comprehensive CLI interface that allows users to:
     - Run individual workflow steps
@@ -57,7 +57,7 @@ class CLIArgumentManager:
     - Control workflow execution behavior
     - Manage configuration and debugging options
     
-    The argument manager integrates with the existing CONFLUENCE workflow orchestrator
+    The argument manager integrates with the existing SYMFLUENCE workflow orchestrator
     to provide granular control over workflow execution.
     """
     
@@ -186,7 +186,7 @@ class CLIArgumentManager:
     def _setup_parser(self) -> None:
         """Set up the argument parser with all CLI options."""
         self.parser = argparse.ArgumentParser(
-            description='CONFLUENCE - Community Optimization Nexus for Leveraging Understanding of Environmental Networks in Computational Exploration',
+            description='SYMFLUENCE - SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration',
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=self._get_examples_text()
         )
@@ -207,7 +207,7 @@ class CLIArgumentManager:
         config_group.add_argument(
             '--version',
             action='version',
-            version=f'CONFLUENCE {__version__}',
+            version=f'SYMFLUENCE {__version__}',
         )
         
         # Configuration Management
@@ -254,7 +254,7 @@ class CLIArgumentManager:
         workflow_group.add_argument(
             '--run_workflow',
             action='store_true',
-            help='Run the complete CONFLUENCE workflow (default behavior if no individual steps specified)'
+            help='Run the complete SYMFLUENCE workflow (default behavior if no individual steps specified)'
         )
         workflow_group.add_argument(
             '--force_rerun',
@@ -314,7 +314,7 @@ class CLIArgumentManager:
             '--pour_point',
             type=str,
             metavar='LAT/LON',
-            help='Set up CONFLUENCE for a pour point coordinate (format: lat/lon, e.g., 51.1722/-115.5717)'
+            help='Set up SYMFLUENCE for a pour point coordinate (format: lat/lon, e.g., 51.1722/-115.5717)'
         )
         pourpoint_group.add_argument(
             '--domain_def',
@@ -411,14 +411,14 @@ class CLIArgumentManager:
         slurm_group.add_argument(
             '--job_modules',
             type=str,
-            default='confluence_modules',
-            help='Module to restore in SLURM job (default: confluence_modules)'
+            default='symfluence_modules',
+            help='Module to restore in SLURM job (default: symfluence_modules)'
         )
         slurm_group.add_argument(
             '--conda_env',
             type=str,
-            default='confluence',
-            help='Conda environment to activate (default: confluence)'
+            default='symfluence',
+            help='Conda environment to activate (default: symfluence)'
         )
         slurm_group.add_argument(
             '--submit_and_wait',
@@ -445,45 +445,45 @@ class CLIArgumentManager:
         return """
 Examples:
 # Basic workflow execution
-python CONFLUENCE.py
-python CONFLUENCE.py --config /path/to/config.yaml
+python SYMFLUENCE.py
+python SYMFLUENCE.py --config /path/to/config.yaml
 
 # Individual workflow steps
-python CONFLUENCE.py --calibrate_model
-python CONFLUENCE.py --setup_project --create_pour_point --define_domain
+python SYMFLUENCE.py --calibrate_model
+python SYMFLUENCE.py --setup_project --create_pour_point --define_domain
 
 # Pour point setup
-python CONFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate --domain_name "MyWatershed"
-python CONFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate --domain_name "Test" --bounding_box_coords 52.0/-116.0/51.0/-115.0
+python SYMFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate --domain_name "MyWatershed"
+python SYMFLUENCE.py --pour_point 51.1722/-115.5717 --domain_def delineate --domain_name "Test" --bounding_box_coords 52.0/-116.0/51.0/-115.0
 
 # Configuration management
-python CONFLUENCE.py --list_templates
-python CONFLUENCE.py --update_config my_config.yaml
-python CONFLUENCE.py --validate_environment
+python SYMFLUENCE.py --list_templates
+python SYMFLUENCE.py --update_config my_config.yaml
+python SYMFLUENCE.py --validate_environment
 
 # Binary/executable management
-python CONFLUENCE.py --get_executables
-python CONFLUENCE.py --get_executables summa mizuroute
-python CONFLUENCE.py --validate_binaries
-python CONFLUENCE.py --get_executables --force_install
+python SYMFLUENCE.py --get_executables
+python SYMFLUENCE.py --get_executables summa mizuroute
+python SYMFLUENCE.py --validate_binaries
+python SYMFLUENCE.py --get_executables --force_install
 
 # Workflow management
-python CONFLUENCE.py --workflow_status
-python CONFLUENCE.py --resume_from define_domain
-python CONFLUENCE.py --clean --clean_level intermediate
-python CONFLUENCE.py --clean --clean_level all --dry_run
+python SYMFLUENCE.py --workflow_status
+python SYMFLUENCE.py --resume_from define_domain
+python SYMFLUENCE.py --clean --clean_level intermediate
+python SYMFLUENCE.py --clean --clean_level all --dry_run
 
 # Status and validation
-python CONFLUENCE.py --status
-python CONFLUENCE.py --list_steps
-python CONFLUENCE.py --validate_config
+python SYMFLUENCE.py --status
+python SYMFLUENCE.py --list_steps
+python SYMFLUENCE.py --validate_config
 
 # Advanced options
-python CONFLUENCE.py --debug --force_rerun
-python CONFLUENCE.py --dry_run
-python CONFLUENCE.py --continue_on_error
+python SYMFLUENCE.py --debug --force_rerun
+python SYMFLUENCE.py --dry_run
+python SYMFLUENCE.py --continue_on_error
 
-For more information, visit: https://github.com/DarriEy/CONFLUENCE
+For more information, visit: https://github.com/DarriEy/SYMFLUENCE
     """
     
     # ============================================================================
@@ -751,8 +751,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
 
         - Maps IDs like '1a' -> '01a'; searches examples/** for {prefix}_*.ipynb (fallback {prefix}*.ipynb)
         - Uses the repo-root venv's Python to start Jupyter
-        - Ensures an ipykernel named 'confluence-root' exists for that venv
-        - Rewrites the notebook's kernelspec (backed up to .bak) to use 'confluence-root'
+        - Ensures an ipykernel named 'symfluence-root' exists for that venv
+        - Rewrites the notebook's kernelspec (backed up to .bak) to use 'symfluence-root'
         """
 
         # -------- repo root --------
@@ -845,9 +845,9 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print("❌ Python executable not found for the venv.")
             return 3
 
-        # 2) install/refresh kernelspec named 'confluence-root'
-        kernel_name = "confluence-root"
-        display_name = "Python (CONFLUENCE root venv)"
+        # 2) install/refresh kernelspec named 'symfluence-root'
+        kernel_name = "symfluence-root"
+        display_name = "Python (SYMFLUENCE root venv)"
         _ = subprocess.run([str(python_exe), "-m", "ipykernel", "install", "--user", "--name", kernel_name, "--display-name", display_name])
 
         # -------- rewrite notebook kernelspec to use this kernel (backup .bak) --------
@@ -911,14 +911,14 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     # EXTERNAL TOOL MANAGEMENT
     # ============================================================================
     
-    def get_executables(self, specific_tools: List[str] = None, confluence_instance=None,
+    def get_executables(self, specific_tools: List[str] = None, symfluence_instance=None,
                         force: bool = False, dry_run: bool = False) -> Dict[str, Any]:
         """
         Clone and install external tool repositories with dependency resolution.
         
         Args:
             specific_tools: List of specific tools to install, or None for all
-            confluence_instance: CONFLUENCE instance for config access
+            symfluence_instance: SYMFLUENCE instance for config access
             force: Force reinstallation even if tools exist
             dry_run: Show what would be done without actually doing it
             
@@ -942,8 +942,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         # Get config
         config = {}
-        if confluence_instance and hasattr(confluence_instance, 'config'):
-            config = confluence_instance.config
+        if symfluence_instance and hasattr(symfluence_instance, 'config'):
+            config = symfluence_instance.config
         else:
             try:
                 config_path = Path('./0_config_files/config_template.yaml')
@@ -955,7 +955,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 pass
         
         # Determine installation directory
-        data_dir = config.get('CONFLUENCE_DATA_DIR', '.')
+        data_dir = config.get('SYMFLUENCE_DATA_DIR', '.')
         install_base_dir = Path(data_dir) / 'installs'
         
         print(f"📁 Installation directory: {install_base_dir}")
@@ -1128,7 +1128,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         return installation_results
     
-    def validate_binaries(self, confluence_instance=None) -> Dict[str, Any]:
+    def validate_binaries(self, symfluence_instance=None) -> Dict[str, Any]:
         """
         Validate that required binary executables exist and are functional.
 
@@ -1148,10 +1148,10 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
 
         # Get config if available
         config = {}
-        if confluence_instance and hasattr(confluence_instance, 'config'):
-            config = confluence_instance.config
-        elif confluence_instance and hasattr(confluence_instance, 'workflow_orchestrator'):
-            config = confluence_instance.workflow_orchestrator.config
+        if symfluence_instance and hasattr(symfluence_instance, 'config'):
+            config = symfluence_instance.config
+        elif symfluence_instance and hasattr(symfluence_instance, 'workflow_orchestrator'):
+            config = symfluence_instance.workflow_orchestrator.config
 
         # If no config available, try to load default
         if not config:
@@ -1184,7 +1184,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 config_path_key = tool_info['config_path_key']
                 tool_path = config.get(config_path_key, 'default')
                 if tool_path == 'default':
-                    data_dir = config.get('CONFLUENCE_DATA_DIR', '.')
+                    data_dir = config.get('SYMFLUENCE_DATA_DIR', '.')
                     tool_path = Path(data_dir) / tool_info['default_path_suffix']
                 else:
                     tool_path = Path(tool_path)
@@ -1293,7 +1293,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     tool_result['errors'].append(f"Executable not found at: {exe_path}")
                     validation_results['missing_tools'].append(tool_name)
                     print(f"   ❌ Not found: {exe_path}")
-                    print(f"   💡 Try: python CONFLUENCE.py --get_executables {tool_name}")
+                    print(f"   💡 Try: python SYMFLUENCE.py --get_executables {tool_name}")
 
             except Exception as e:
                 tool_result['status'] = 'error'
@@ -1316,8 +1316,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
 
         if missing_count > 0:
             print(f"\n💡 To install missing tools:")
-            print(f"   python CONFLUENCE.py --get_executables")
-            print(f"   python CONFLUENCE.py --get_executables {' '.join(validation_results['missing_tools'])}")
+            print(f"   python SYMFLUENCE.py --get_executables")
+            print(f"   python SYMFLUENCE.py --get_executables {' '.join(validation_results['missing_tools'])}")
 
         if failed_count > 0:
             print(f"\n🔧 Failed tools may need rebuilding or dependency installation")
@@ -1456,24 +1456,24 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         if successful_count > 0 and not dry_run:
             print(f"\n✅ Installation complete!")
-            print(f"💡 Run 'python CONFLUENCE.py --validate_binaries' to verify")
+            print(f"💡 Run 'python SYMFLUENCE.py --validate_binaries' to verify")
     
     def _ensure_valid_config_paths(self, config: Dict[str, Any], config_path: Path) -> Dict[str, Any]:
         """
-        Ensure CONFLUENCE_DATA_DIR and CONFLUENCE_CODE_DIR paths exist and are valid.
+        Ensure SYMFLUENCE_DATA_DIR and SYMFLUENCE_CODE_DIR paths exist and are valid.
         """
-        data_dir = config.get('CONFLUENCE_DATA_DIR')
-        code_dir = config.get('CONFLUENCE_CODE_DIR')
+        data_dir = config.get('SYMFLUENCE_DATA_DIR')
+        code_dir = config.get('SYMFLUENCE_CODE_DIR')
 
         data_dir_valid = False
         code_dir_valid = False
 
-        # Check if CONFLUENCE_DATA_DIR exists and is accessible
+        # Check if SYMFLUENCE_DATA_DIR exists and is accessible
         if data_dir:
             try:
                 data_path = Path(data_dir)
                 if data_path.exists():
-                    test_file = data_path / '.confluence_test'
+                    test_file = data_path / '.symfluence_test'
                     try:
                         test_file.touch()
                         test_file.unlink()
@@ -1489,7 +1489,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             except Exception:
                 pass
 
-        # Check if CONFLUENCE_CODE_DIR exists and is accessible
+        # Check if SYMFLUENCE_CODE_DIR exists and is accessible
         if code_dir:
             try:
                 code_path = Path(code_dir)
@@ -1503,25 +1503,25 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"\n⚠️  Detected invalid or inaccessible paths in config template:")
 
             if not code_dir_valid:
-                print(f"   📂 CONFLUENCE_CODE_DIR: {code_dir} (inaccessible)")
+                print(f"   📂 SYMFLUENCE_CODE_DIR: {code_dir} (inaccessible)")
 
             if not data_dir_valid:
-                print(f"   📂 CONFLUENCE_DATA_DIR: {data_dir} (inaccessible)")
+                print(f"   📂 SYMFLUENCE_DATA_DIR: {data_dir} (inaccessible)")
 
             print(f"\n🔧 Auto-configuring paths for fresh installation...")
 
             if not code_dir_valid:
                 new_code_dir = Path.cwd().resolve()
-                config['CONFLUENCE_CODE_DIR'] = str(new_code_dir)
-                print(f"   ✅ CONFLUENCE_CODE_DIR set to: {new_code_dir}")
+                config['SYMFLUENCE_CODE_DIR'] = str(new_code_dir)
+                print(f"   ✅ SYMFLUENCE_CODE_DIR set to: {new_code_dir}")
 
             if not data_dir_valid:
-                new_data_dir = (Path.cwd().parent / 'CONFLUENCE_data').resolve()
-                config['CONFLUENCE_DATA_DIR'] = str(new_data_dir)
+                new_data_dir = (Path.cwd().parent / 'SYMFLUENCE_data').resolve()
+                config['SYMFLUENCE_DATA_DIR'] = str(new_data_dir)
 
                 try:
                     new_data_dir.mkdir(parents=True, exist_ok=True)
-                    print(f"   ✅ CONFLUENCE_DATA_DIR set to: {new_data_dir}")
+                    print(f"   ✅ SYMFLUENCE_DATA_DIR set to: {new_data_dir}")
                     print(f"   📁 Created data directory")
                 except Exception as e:
                     print(f"   ⚠️  Could not create data directory: {e}")
@@ -1545,14 +1545,14 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
 
         return config
     
-    def handle_binary_management(cli_manager, execution_plan, confluence_instance=None):
+    def handle_binary_management(cli_manager, execution_plan, symfluence_instance=None):
         """
         Handle binary management operations (validate_binaries, get_executables).
         
         Args:
             cli_manager: CLIArgumentManager instance
             execution_plan: Execution plan from CLI manager
-            confluence_instance: CONFLUENCE instance (optional)
+            symfluence_instance: SYMFLUENCE instance (optional)
         
         Returns:
             bool: Success status
@@ -1562,7 +1562,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             
             if binary_ops.get('validate_binaries', False):
                 print("\n🔧 Binary Validation Requested")
-                results = cli_manager.validate_binaries(confluence_instance)
+                results = cli_manager.validate_binaries(symfluence_instance)
                 return len(results['missing_tools']) == 0 and len(results['failed_tools']) == 0
             
             if binary_ops.get('get_executables') is not None:
@@ -1576,7 +1576,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 
                 results = cli_manager.get_executables(
                     specific_tools=specific_tools,
-                    confluence_instance=confluence_instance,
+                    symfluence_instance=symfluence_instance,
                     force=force_install,
                     dry_run=dry_run
                 )
@@ -1593,12 +1593,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     # WORKFLOW MANAGEMENT
     # ============================================================================
     
-    def validate_step_availability(self, confluence_instance, requested_steps: List[str]) -> Tuple[List[str], List[str]]:
+    def validate_step_availability(self, symfluence_instance, requested_steps: List[str]) -> Tuple[List[str], List[str]]:
         """
         Validate that requested steps are available in the current workflow.
         
         Args:
-            confluence_instance: CONFLUENCE system instance
+            symfluence_instance: SYMFLUENCE system instance
             requested_steps: List of step names requested by user
             
         Returns:
@@ -1607,8 +1607,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         available_steps = []
         unavailable_steps = []
         
-        if hasattr(confluence_instance, 'workflow_orchestrator'):
-            workflow_steps = confluence_instance.workflow_orchestrator.define_workflow_steps()
+        if hasattr(symfluence_instance, 'workflow_orchestrator'):
+            workflow_steps = symfluence_instance.workflow_orchestrator.define_workflow_steps()
             actual_functions = {step_func.__name__ for step_func, _ in workflow_steps}
             
             for step_name in requested_steps:
@@ -1629,13 +1629,13 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         return available_steps, unavailable_steps
     
-    def resume_workflow_from_step(self, step_name: str, confluence_instance) -> List[str]:
+    def resume_workflow_from_step(self, step_name: str, symfluence_instance) -> List[str]:
         """
         Determine which steps to execute when resuming from a specific step.
         
         Args:
             step_name: Name of the step to resume from
-            confluence_instance: CONFLUENCE system instance
+            symfluence_instance: SYMFLUENCE system instance
             
         Returns:
             List of step names to execute
@@ -1644,7 +1644,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         print("=" * 50)
         
         try:
-            workflow_steps = confluence_instance.workflow_orchestrator.define_workflow_steps()
+            workflow_steps = symfluence_instance.workflow_orchestrator.define_workflow_steps()
             
             step_functions = {}
             step_order = []
@@ -1751,7 +1751,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     print(f"   {warning}")
                 print(f"   Consider running --workflow_status to check dependencies")
             
-            print(f"\n💡 Resume command: python CONFLUENCE.py {' --'.join([''] + steps_to_execute)}")
+            print(f"\n💡 Resume command: python SYMFLUENCE.py {' --'.join([''] + steps_to_execute)}")
             
             return steps_to_execute
         
@@ -1759,14 +1759,14 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"❌ Error planning workflow resume: {str(e)}")
             return []
     
-    def clean_workflow_files(self, clean_level: str = 'intermediate', confluence_instance=None,
+    def clean_workflow_files(self, clean_level: str = 'intermediate', symfluence_instance=None,
                              dry_run: bool = False) -> Dict[str, Any]:
         """
         Clean workflow files and directories based on the specified level.
         
         Args:
             clean_level: Level of cleaning ('intermediate', 'outputs', 'all')
-            confluence_instance: CONFLUENCE system instance
+            symfluence_instance: SYMFLUENCE system instance
             dry_run: If True, show what would be cleaned without actually deleting
             
         Returns:
@@ -1789,12 +1789,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             'summary': {}
         }
         
-        if not confluence_instance:
-            print("❌ Cannot clean files without CONFLUENCE instance")
+        if not symfluence_instance:
+            print("❌ Cannot clean files without SYMFLUENCE instance")
             return cleaning_results
         
         try:
-            project_dir = confluence_instance.workflow_orchestrator.project_dir
+            project_dir = symfluence_instance.workflow_orchestrator.project_dir
             
             if not project_dir.exists():
                 print(f"📁 Project directory not found: {project_dir}")
@@ -1976,12 +1976,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         return 0.0
     
-    def get_detailed_workflow_status(self, confluence_instance=None) -> Dict[str, Any]:
+    def get_detailed_workflow_status(self, symfluence_instance=None) -> Dict[str, Any]:
         """
         Get detailed workflow status with step completion, file checks, and timestamps.
         
         Args:
-            confluence_instance: CONFLUENCE system instance
+            symfluence_instance: SYMFLUENCE system instance
             
         Returns:
             Dictionary with detailed status information
@@ -1999,14 +1999,14 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             'system_info': {}
         }
         
-        if not confluence_instance:
+        if not symfluence_instance:
             return status
         
         try:
-            workflow_steps = confluence_instance.workflow_orchestrator.define_workflow_steps()
+            workflow_steps = symfluence_instance.workflow_orchestrator.define_workflow_steps()
             status['summary']['total_steps'] = len(workflow_steps)
             
-            project_dir = confluence_instance.workflow_orchestrator.project_dir
+            project_dir = symfluence_instance.workflow_orchestrator.project_dir
             
             for i, (step_func, check_func, description) in enumerate(workflow_steps, 1):
                 step_name = step_func.__name__
@@ -2043,7 +2043,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 
                 status['steps'][step_name] = step_status
             
-            status['config_validation'] = self._validate_config_status(confluence_instance)
+            status['config_validation'] = self._validate_config_status(symfluence_instance)
             status['system_info'] = self._get_system_info()
         
         except Exception as e:
@@ -2094,7 +2094,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         return file_details
     
-    def _validate_config_status(self, confluence_instance) -> Dict[str, Any]:
+    def _validate_config_status(self, symfluence_instance) -> Dict[str, Any]:
         """Validate configuration status."""
         config_status = {
             'valid': True,
@@ -2104,10 +2104,10 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         }
         
         try:
-            config = confluence_instance.config
+            config = symfluence_instance.config
             
             required_settings = [
-                'DOMAIN_NAME', 'EXPERIMENT_ID', 'CONFLUENCE_DATA_DIR',
+                'DOMAIN_NAME', 'EXPERIMENT_ID', 'SYMFLUENCE_DATA_DIR',
                 'EXPERIMENT_TIME_START', 'EXPERIMENT_TIME_END'
             ]
             
@@ -2118,8 +2118,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                     config_status['errors'].append(f"Missing required setting: {setting}")
                     config_status['valid'] = False
             
-            if 'CONFLUENCE_DATA_DIR' in config:
-                data_dir = Path(config['CONFLUENCE_DATA_DIR'])
+            if 'SYMFLUENCE_DATA_DIR' in config:
+                data_dir = Path(config['SYMFLUENCE_DATA_DIR'])
                 if not data_dir.exists():
                     config_status['warnings'].append(f"Data directory does not exist: {data_dir}")
             
@@ -2297,8 +2297,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 print(f"{i}. ❌ {template.name} (Error reading: {str(e)})")
         
         print("💡 Usage:")
-        print("   python CONFLUENCE.py --config path/to/template.yaml")
-        print("   python CONFLUENCE.py --pour_point LAT/LON --domain_def METHOD --domain_name NAME")
+        print("   python SYMFLUENCE.py --config path/to/template.yaml")
+        print("   python SYMFLUENCE.py --pour_point LAT/LON --domain_def METHOD --domain_name NAME")
     
     def _get_template_description(self, template_path: Path, config: Dict[str, Any]) -> str:
         """Extract description from template file or generate one."""
@@ -2411,8 +2411,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 print(f"   ❌ {package} (missing)")
                 missing_packages.append(package)
         
-        # Check CONFLUENCE structure
-        print(f"\n📁 CONFLUENCE Structure:")
+        # Check SYMFLUENCE structure
+        print(f"\n📁 SYMFLUENCE Structure:")
         
         required_dirs = [
             'utils', 'utils/project', 'utils/data', 'utils/geospatial',
@@ -2472,32 +2472,32 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         if missing_tools > 0:
             print(f"   🔧 External tools: {valid_tools}/{total_tools} available")
-            print(f"   💡 Install missing tools: python CONFLUENCE.py --get_executables")
+            print(f"   💡 Install missing tools: python SYMFLUENCE.py --get_executables")
         else:
             print(f"   ✅ All external tools available ({valid_tools}/{total_tools})")
         
-        print("   🚀 CONFLUENCE is ready to run!")
+        print("   🚀 SYMFLUENCE is ready to run!")
     
     # ============================================================================
     # STATUS AND INFORMATION
     # ============================================================================
     
-    def print_status_information(self, confluence_instance, operations: Dict[str, bool]) -> None:
+    def print_status_information(self, symfluence_instance, operations: Dict[str, bool]) -> None:
         """
         Print various status information based on requested operations.
         
         Args:
-            confluence_instance: CONFLUENCE system instance
+            symfluence_instance: SYMFLUENCE system instance
             operations: Dictionary of status operations to perform
         """
         if operations.get('list_steps'):
             self._print_workflow_steps()
         
         if operations.get('validate_config'):
-            self._print_config_validation(confluence_instance)
+            self._print_config_validation(symfluence_instance)
         
         if operations.get('show_status'):
-            self._print_workflow_status(confluence_instance)
+            self._print_workflow_status(symfluence_instance)
     
     def _print_workflow_steps(self) -> None:
         """Print all available workflow steps."""
@@ -2506,16 +2506,16 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         for step_name, step_info in self.workflow_steps.items():
             print(f"--{step_name:<25} {step_info['description']}")
         print("\n💡 Use these flags to run individual steps, e.g.:")
-        print("  python CONFLUENCE.py --setup_project --create_pour_point")
+        print("  python SYMFLUENCE.py --setup_project --create_pour_point")
         print()
     
-    def _print_config_validation(self, confluence_instance) -> None:
+    def _print_config_validation(self, symfluence_instance) -> None:
         """Print configuration validation results."""
         print("\n🔍 Configuration Validation:")
         print("=" * 30)
         
-        if hasattr(confluence_instance, 'workflow_orchestrator'):
-            is_valid = confluence_instance.workflow_orchestrator.validate_workflow_prerequisites()
+        if hasattr(symfluence_instance, 'workflow_orchestrator'):
+            is_valid = symfluence_instance.workflow_orchestrator.validate_workflow_prerequisites()
             if is_valid:
                 print("✅ Configuration is valid")
             else:
@@ -2524,13 +2524,13 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         else:
             print("⚠️  Configuration validation not available")
     
-    def _print_workflow_status(self, confluence_instance) -> None:
+    def _print_workflow_status(self, symfluence_instance) -> None:
         """Print current workflow status."""
         print("\n📊 Workflow Status:")
         print("=" * 20)
         
-        if hasattr(confluence_instance, 'get_status'):
-            status = confluence_instance.get_status()
+        if hasattr(symfluence_instance, 'get_status'):
+            status = symfluence_instance.get_status()
             print(f"🏞️  Domain: {status.get('domain', 'Unknown')}")
             print(f"🧪 Experiment: {status.get('experiment', 'Unknown')}")
             print(f"⚙️  Config Valid: {'✅' if status.get('config_valid', False) else '❌'}")
@@ -2550,12 +2550,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     
     def setup_pour_point_workflow(self, coordinates: str, domain_def_method: str, domain_name: str,
                                    bounding_box_coords: Optional[str] = None,
-                                   confluence_code_dir: Optional[str] = None) -> Dict[str, Any]:
+                                   symfluence_code_dir: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a configuration setup for pour point workflow.
         
         This method:
-        1. Loads the config template from CONFLUENCE_CODE_DIR/0_config_files/config_template.yaml
+        1. Loads the config template from SYMFLUENCE_CODE_DIR/0_config_files/config_template.yaml
         2. Updates key settings (pour point, domain name, domain definition method, bounding box)
         3. Saves as config_{domain_name}.yaml
         4. Returns configuration details for workflow execution
@@ -2565,7 +2565,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             domain_def_method: Domain definition method to use
             domain_name: Name for the domain/watershed
             bounding_box_coords: Optional bounding box, defaults to 1-degree buffer around pour point
-            confluence_code_dir: Path to CONFLUENCE code directory
+            symfluence_code_dir: Path to SYMFLUENCE code directory
             
         Returns:
             Dictionary with pour point workflow configuration including 'config_file' path
@@ -2596,8 +2596,8 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
                 Path("../../0_config_files/config_template.yaml"),
             ]
             
-            if confluence_code_dir:
-                possible_locations.insert(0, Path(confluence_code_dir) / "0_config_files" / "config_template.yaml")
+            if symfluence_code_dir:
+                possible_locations.insert(0, Path(symfluence_code_dir) / "0_config_files" / "config_template.yaml")
             
             for location in possible_locations:
                 if location.exists():
@@ -2607,7 +2607,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             if not template_path:
                 raise FileNotFoundError(
                     f"Config template not found. Tried locations: {[str(p) for p in possible_locations]}\n"
-                    f"Please ensure you're running from the CONFLUENCE directory or specify --config with a template path."
+                    f"Please ensure you're running from the SYMFLUENCE directory or specify --config with a template path."
                 )
             
             print(f"   📄 Loading template from: {template_path}")
@@ -2633,7 +2633,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"   ✅ Pour point workflow setup complete!")
             print(f"\n🚀 Next steps:")
             print(f"   1. Review the generated config file: {output_config_path}")
-            print(f"   2. CONFLUENCE will now use this config to run the pour point workflow")
+            print(f"   2. SYMFLUENCE will now use this config to run the pour point workflow")
             print(f"   3. Essential steps (setup_project, create_pour_point, define_domain, discretize_domain) will be executed")
             
             return {
@@ -2659,13 +2659,13 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
     # SLURM JOB SUBMISSION
     # ============================================================================
     
-    def submit_slurm_job(self, execution_plan: Dict[str, Any], confluence_instance=None) -> Dict[str, Any]:
+    def submit_slurm_job(self, execution_plan: Dict[str, Any], symfluence_instance=None) -> Dict[str, Any]:
         """
         Submit a SLURM job for the execution plan.
         
         Args:
             execution_plan: Execution plan dictionary
-            confluence_instance: CONFLUENCE instance (optional)
+            symfluence_instance: SYMFLUENCE instance (optional)
             
         Returns:
             Dictionary with job submission results
@@ -2680,10 +2680,10 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         
         # Auto-generate job name if not provided
         if not slurm_options.get('job_name'):
-            if confluence_instance and hasattr(confluence_instance, 'config'):
-                domain = confluence_instance.config.get('DOMAIN_NAME', 'confluence')
+            if symfluence_instance and hasattr(symfluence_instance, 'config'):
+                domain = symfluence_instance.config.get('DOMAIN_NAME', 'symfluence')
             else:
-                domain = 'confluence'
+                domain = 'symfluence'
             
             mode = execution_plan.get('mode', 'workflow')
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -2703,12 +2703,12 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
         config_file = execution_plan.get('config_file', './0_config_files/config_template.yaml')
         
         # Create SLURM script
-        script_content = self._create_confluence_slurm_script(
+        script_content = self._create_symfluence_slurm_script(
             execution_plan, slurm_options, config_file
         )
         
         # Save script
-        script_path = Path(f"CONFLUENCE_{slurm_options['job_name']}.sh")
+        script_path = Path(f"SYMFLUENCE_{slurm_options['job_name']}.sh")
         with open(script_path, 'w') as f:
             f.write(script_content)
         
@@ -2733,7 +2733,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"✅ Job submitted successfully!")
             print(f"🆔 Job ID: {job_id}")
             print(f"📋 Check status: squeue -j {job_id}")
-            print(f"📊 Monitor logs: tail -f CONFLUENCE_*_{job_id}.{{'out','err'}}")
+            print(f"📊 Monitor logs: tail -f SYMFLUENCE_*_{job_id}.{{'out','err'}}")
             
             submission_result = {
                 'success': True,
@@ -2758,43 +2758,43 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
             print(f"❌ Unexpected error: {e}")
             raise
     
-    def _create_confluence_slurm_script(self, execution_plan: Dict[str, Any],
+    def _create_symfluence_slurm_script(self, execution_plan: Dict[str, Any],
                                         slurm_options: Dict[str, Any],
                                         config_file: str) -> str:
-        """Create SLURM script content for CONFLUENCE workflow."""
+        """Create SLURM script content for SYMFLUENCE workflow."""
         job_mode = execution_plan.get('job_mode', 'workflow')
         job_steps = execution_plan.get('job_steps', [])
         
-        # Build CONFLUENCE command
+        # Build SYMFLUENCE command
         if job_mode == 'individual_steps':
-            confluence_cmd = f"python CONFLUENCE.py --config {config_file}"
+            symfluence_cmd = f"python SYMFLUENCE.py --config {config_file}"
             for step in job_steps:
-                confluence_cmd += f" --{step}"
+                symfluence_cmd += f" --{step}"
         elif job_mode == 'pour_point_setup':
             pour_point_info = execution_plan.get('pour_point', {})
-            confluence_cmd = (
-                f"python CONFLUENCE.py "
+            symfluence_cmd = (
+                f"python SYMFLUENCE.py "
                 f"--pour_point {pour_point_info.get('coordinates')} "
                 f"--domain_def {pour_point_info.get('domain_definition_method')} "
                 f"--domain_name '{pour_point_info.get('domain_name')}'"
             )
             if pour_point_info.get('bounding_box_coords'):
-                confluence_cmd += f" --bounding_box_coords {pour_point_info['bounding_box_coords']}"
+                symfluence_cmd += f" --bounding_box_coords {pour_point_info['bounding_box_coords']}"
         else:
-            confluence_cmd = f"python CONFLUENCE.py --config {config_file}"
+            symfluence_cmd = f"python SYMFLUENCE.py --config {config_file}"
         
         settings = execution_plan.get('settings', {})
         if settings.get('force_rerun', False):
-            confluence_cmd += " --force_rerun"
+            symfluence_cmd += " --force_rerun"
         if settings.get('debug', False):
-            confluence_cmd += " --debug"
+            symfluence_cmd += " --debug"
         if settings.get('continue_on_error', False):
-            confluence_cmd += " --continue_on_error"
+            symfluence_cmd += " --continue_on_error"
         
         script = f"""#!/bin/bash
 #SBATCH --job-name={slurm_options['job_name']}
-#SBATCH --output=CONFLUENCE_{slurm_options['job_name']}_%j.out
-#SBATCH --error=CONFLUENCE_{slurm_options['job_name']}_%j.err
+#SBATCH --output=SYMFLUENCE_{slurm_options['job_name']}_%j.out
+#SBATCH --error=SYMFLUENCE_{slurm_options['job_name']}_%j.err
 #SBATCH --time={slurm_options['job_time']}
 #SBATCH --ntasks={slurm_options['job_ntasks']}
 #SBATCH --mem={slurm_options['job_memory']}"""
@@ -2810,7 +2810,7 @@ For more information, visit: https://github.com/DarriEy/CONFLUENCE
 
 # Job information
 echo "=========================================="
-echo "CONFLUENCE SLURM Job Started"
+echo "SYMFLUENCE SLURM Job Started"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Job Name: {slurm_options['job_name']}"
 echo "Node: $HOSTNAME"
@@ -2830,21 +2830,21 @@ echo "Loading environment..."
         
         script += f"""
 echo "Python environment: $(which python)"
-echo "CONFLUENCE directory: $(pwd)"
+echo "SYMFLUENCE directory: $(pwd)"
 echo ""
 
-# Run CONFLUENCE workflow
-echo "Starting CONFLUENCE workflow..."
-echo "Command: {confluence_cmd}"
+# Run SYMFLUENCE workflow
+echo "Starting SYMFLUENCE workflow..."
+echo "Command: {symfluence_cmd}"
 echo ""
 
-{confluence_cmd}
+{symfluence_cmd}
 
 exit_code=$?
 
 echo ""
 echo "=========================================="
-echo "CONFLUENCE Job Completed"
+echo "SYMFLUENCE Job Completed"
 echo "Exit code: $exit_code"
 echo "Finished: $(date)"
 echo "=========================================="
@@ -2903,13 +2903,13 @@ exit $exit_code
             time.sleep(60)
     
     def handle_slurm_job_submission(self, execution_plan: Dict[str, Any],
-                                     confluence_instance=None) -> bool:
+                                     symfluence_instance=None) -> bool:
         """
         Handle SLURM job submission workflow.
         
         Args:
             execution_plan: Execution plan from CLI manager
-            confluence_instance: CONFLUENCE instance (optional)
+            symfluence_instance: SYMFLUENCE instance (optional)
             
         Returns:
             bool: Success status
@@ -2921,14 +2921,14 @@ exit $exit_code
                 print("⚠️ Warning: No SLURM account specified. This may be required on your system.")
                 print("   Use --job_account to specify an account if job submission fails.")
             
-            result = self.submit_slurm_job(execution_plan, confluence_instance)
+            result = self.submit_slurm_job(execution_plan, symfluence_instance)
             
             if result.get('success', False):
                 print(f"\n🎉 SLURM job submission successful!")
                 if not slurm_options.get('submit_and_wait', False):
                     print(f"💡 Job is running in background. Monitor with:")
                     print(f"   squeue -j {result['job_id']}")
-                    print(f"   tail -f CONFLUENCE_*_{result['job_id']}.out")
+                    print(f"   tail -f SYMFLUENCE_*_{result['job_id']}.out")
                 return True
             else:
                 print(f"❌ Job submission failed")

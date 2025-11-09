@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-CONFLUENCE External Tools Configuration
+SYMFLUENCE External Tools Configuration
 
-This module defines external tool configurations required by CONFLUENCE,
+This module defines external tool configurations required by SYMFLUENCE,
 including repositories, build instructions, and validation criteria.
 
 Tools include:
@@ -43,7 +43,7 @@ export NCORES="${NCORES:-4}"
 
 def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
     """
-    Define all external tools required by CONFLUENCE.
+    Define all external tools required by SYMFLUENCE.
     
     Returns:
         Dictionary mapping tool names to their complete configuration including:
