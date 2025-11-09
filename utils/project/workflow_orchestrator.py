@@ -8,10 +8,10 @@ from datetime import datetime
 
 class WorkflowOrchestrator:
     """
-    Orchestrates the CONFLUENCE workflow execution and manages the step sequence.
+    Orchestrates the SYMFLUENCE workflow execution and manages the step sequence.
     
     The WorkflowOrchestrator is responsible for defining, coordinating, and executing
-    the complete CONFLUENCE modeling workflow. It integrates the various manager 
+    the complete SYMFLUENCE modeling workflow. It integrates the various manager 
     components into a coherent sequence of operations, handling dependencies between
     steps, tracking progress, and providing status information.
     
@@ -22,7 +22,7 @@ class WorkflowOrchestrator:
     - Providing status information and execution reports
     - Validating prerequisites before workflow execution
     
-    This class represents the "conductor" of the CONFLUENCE system, ensuring that
+    This class represents the "conductor" of the SYMFLUENCE system, ensuring that
     each component performs its tasks in the correct order and with the necessary
     inputs from previous steps.
     
@@ -42,7 +42,7 @@ class WorkflowOrchestrator:
         
         Sets up the orchestrator with references to all manager components, the 
         configuration, and the logger. This creates the central coordination point
-        for the entire CONFLUENCE workflow.
+        for the entire SYMFLUENCE workflow.
         
         Args:
             managers (Dict[str, Any]): Dictionary of manager instances for each 
@@ -60,13 +60,19 @@ class WorkflowOrchestrator:
         self.logging_manager = logging_manager
         self.domain_name = config.get('DOMAIN_NAME')
         self.experiment_id = config.get('EXPERIMENT_ID')
-        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.domain_name}"
+        
+        # Support both old (CONFLUENCE) and new (SYMFLUENCE) config keys
+        data_dir = config.get('SYMFLUENCE_DATA_DIR') or config.get('CONFLUENCE_DATA_DIR')
+        if not data_dir:
+            raise KeyError("Neither SYMFLUENCE_DATA_DIR nor CONFLUENCE_DATA_DIR found in config")
+        
+        self.project_dir = Path(data_dir) / f"domain_{self.domain_name}"
     
     def define_workflow_steps(self) -> List[Tuple[Callable, Callable, str]]:
         """
         Define the workflow steps with their output validation checks and descriptions.
         
-        This method establishes the complete sequence of operations for a CONFLUENCE
+        This method establishes the complete sequence of operations for a SYMFLUENCE
         modeling workflow. Each step consists of:
         1. A function to execute (typically a method from a manager component)
         2. A check function that verifies the step's output exists
@@ -121,45 +127,44 @@ class WorkflowOrchestrator:
                 "Discretizing domain into hydrological response units"
             ),
             
-            # --- Model Agnostic Data Pre-Processing ---
+            # --- Model-Agnostic Data Preprocessing ---
             (
                 self.managers['data'].process_observed_data,
-                lambda: (self.project_dir / "observations" / "streamflow" / "preprocessed" / 
+                lambda: (self.project_dir / "observations" / "streamflow" / 
                         f"{self.domain_name}_streamflow_processed.csv").exists(),
-                "Processing observational data"
+                "Processing observed streamflow data"
             ),
             (
                 self.managers['data'].acquire_forcings,
-                lambda: (self.project_dir / "forcing" / "raw_data").exists() or (self.project_dir / "forcing" / "raw_data.tar.gz").exists(),
+                lambda: (self.project_dir / "forcing" / 
+                        f"{self.domain_name}_forcing.nc").exists(),
                 "Acquiring meteorological forcing data"
             ),
             (
                 self.managers['data'].run_model_agnostic_preprocessing,
-                lambda: (self.project_dir / "forcing" / "basin_averaged_data").exists() or (self.project_dir / "forcing" / "basin_averaged_data.tar.gz").exists(),
-                "Processing forcing data for modeling"
+                lambda: (self.project_dir / "domain_data" / 
+                        f"{self.domain_name}_attributes.nc").exists(),
+                "Running model-agnostic data preprocessing"
             ),
             
-            # --- Model Specific Processing and Initialization ---
+            # --- Model-Specific Preprocessing and Execution ---
             (
                 self.managers['model'].preprocess_models,
-                lambda: (self.project_dir / "forcing" / 
-                        f"{self.config['HYDROLOGICAL_MODEL'].split(',')[0]}_input").exists(),
-                "Preparing model-specific input files"
+                lambda: any((self.project_dir / "settings").glob(f"*_{self.config.get('HYDROLOGICAL_MODEL', 'SUMMA')}*")),
+                "Preprocessing model-specific input files"
             ),
             (
                 self.managers['model'].run_models,
-                lambda: (self.project_dir / "simulations" / self.experiment_id / 
-                        f"{self.config.get('HYDROLOGICAL_MODEL').split(',')[0]}").exists(),
-                "Running hydrological model simulations"
-                
+                lambda: (self.project_dir / "simulations" / 
+                        f"{self.experiment_id}_{self.config.get('HYDROLOGICAL_MODEL', 'SUMMA')}_output.nc").exists(),
+                "Running hydrological model simulation"
             ),
-
             (
                 self.managers['model'].postprocess_results,
-                lambda: (self.project_dir / "results" / "postprocessed.csv").exists(),
+                lambda: (self.project_dir / "simulations" / 
+                        f"{self.experiment_id}_postprocessed.nc").exists(),
                 "Post-processing simulation results"
             ),
-
             
             # --- Optimization and Emulation Steps ---
             (
@@ -239,15 +244,13 @@ class WorkflowOrchestrator:
         
         # Log workflow start
         start_time = datetime.now()
-        if self.logging_manager:
-            header = self.logging_manager.format_section_header("CONFLUENCE WORKFLOW EXECUTION")
-            self.logger.info(header)
-        else:
-            self.logger.info("\n" + "=" * 60)
-            self.logger.info("Starting CONFLUENCE Workflow Execution")
-            self.logger.info(f"Domain: {self.domain_name}")
-            self.logger.info(f"Experiment: {self.experiment_id}")
-            self.logger.info("=" * 60)
+        
+        # FIXED: Use direct logging instead of non-existent format_section_header()
+        self.logger.info("=" * 60)
+        self.logger.info("SYMFLUENCE WORKFLOW EXECUTION")
+        self.logger.info(f"Domain: {self.domain_name}")
+        self.logger.info(f"Experiment: {self.experiment_id}")
+        self.logger.info("=" * 60)
         
         # Get workflow steps
         workflow_steps = self.define_workflow_steps()
@@ -260,14 +263,13 @@ class WorkflowOrchestrator:
         for idx, (step_func, check_func, description) in enumerate(workflow_steps, 1):
             step_name = step_func.__name__
             
-            # Log step header
+            # FIXED: Use log_step_header() instead of non-existent format_step_header()
             if self.logging_manager:
-                step_header = self.logging_manager.format_step_header(idx, total_steps, description)
-                self.logger.info(step_header)
+                self.logging_manager.log_step_header(idx, total_steps, step_name, description)
             else:
-                self.logger.info(f"\n{'=' * 40}")
-                self.logger.info(f"Step {idx}/{total_steps}: {step_name}")
-                self.logger.info(f"{'=' * 40}")
+                self.logger.info(f"\nStep {idx}/{total_steps}: {step_name}")
+                self.logger.info(f"{description}")
+                self.logger.info("=" * 40)
             
             try:
                 if force_run or not check_func():
@@ -277,25 +279,23 @@ class WorkflowOrchestrator:
                     step_func()
                     
                     step_end_time = datetime.now()
-                    duration = step_end_time - step_start_time
+                    duration = (step_end_time - step_start_time).total_seconds()
                     
-                    # Log completion
+                    # FIXED: Use log_completion() instead of non-existent format_step_completion()
                     if self.logging_manager:
-                        completion_msg = self.logging_manager.format_step_completion(
-                            description, str(duration), "✓"
+                        self.logging_manager.log_completion(
+                            success=True, 
+                            message=description, 
+                            duration=duration
                         )
-                        self.logger.info(completion_msg)
                     else:
-                        self.logger.info(f"✓ Completed: {step_name} (Duration: {duration})")
+                        self.logger.info(f"✓ Completed: {step_name} (Duration: {duration:.2f}s)")
                     
                     completed_steps += 1
                 else:
                     # Log skip
                     if self.logging_manager:
-                        skip_msg = self.logging_manager.format_step_completion(
-                            description, "already exists", "→"
-                        )
-                        self.logger.info(skip_msg)
+                        self.logging_manager.log_substep(f"Skipping: {description} (Output already exists)")
                     else:
                         self.logger.info(f"→ Skipping: {step_name} (Output already exists)")
                     
@@ -304,10 +304,10 @@ class WorkflowOrchestrator:
             except Exception as e:
                 # Log failure
                 if self.logging_manager:
-                    error_msg = self.logging_manager.format_step_completion(
-                        description, f"ERROR: {str(e)}", "✗"
+                    self.logging_manager.log_completion(
+                        success=False,
+                        message=f"{description}: {str(e)}"
                     )
-                    self.logger.error(error_msg)
                 else:
                     self.logger.error(f"✗ Failed: {step_name}")
                     self.logger.error(f"Error: {str(e)}")
@@ -325,13 +325,10 @@ class WorkflowOrchestrator:
         end_time = datetime.now()
         total_duration = end_time - start_time
         
-        if self.logging_manager:
-            summary_header = self.logging_manager.format_section_header("WORKFLOW SUMMARY")
-            self.logger.info(summary_header)
-        else:
-            self.logger.info("\n" + "=" * 60)
-            self.logger.info("CONFLUENCE Workflow Summary")
-            self.logger.info("=" * 60)
+        # FIXED: Use direct logging instead of non-existent format_section_header()
+        self.logger.info("\n" + "=" * 60)
+        self.logger.info("WORKFLOW SUMMARY")
+        self.logger.info("=" * 60)
         
         self.logger.info(f"Total execution time: {total_duration}")
         self.logger.info(f"Steps completed: {completed_steps}/{total_steps}")
@@ -343,8 +340,7 @@ class WorkflowOrchestrator:
         else:
             self.logger.info("✓ Workflow completed successfully")
         
-        if self.logging_manager:
-            self.logger.info("═" * 60)
+        self.logger.info("═" * 60)
     
     def validate_workflow_prerequisites(self) -> bool:
         """
@@ -367,11 +363,10 @@ class WorkflowOrchestrator:
         """
         valid = True
         
-        # Check configuration validity
+        # Check configuration validity (support both old and new config keys)
         required_config = [
             'DOMAIN_NAME',
             'EXPERIMENT_ID',
-            'CONFLUENCE_DATA_DIR',
             'HYDROLOGICAL_MODEL',
             'DOMAIN_DEFINITION_METHOD',
             'DOMAIN_DISCRETIZATION'
@@ -381,6 +376,11 @@ class WorkflowOrchestrator:
             if not self.config.get(key):
                 self.logger.error(f"Required configuration missing: {key}")
                 valid = False
+        
+        # Check for data directory (either old or new name)
+        if not (self.config.get('SYMFLUENCE_DATA_DIR') or self.config.get('CONFLUENCE_DATA_DIR')):
+            self.logger.error("Required configuration missing: SYMFLUENCE_DATA_DIR (or CONFLUENCE_DATA_DIR)")
+            valid = False
         
         # Check manager initialization
         required_managers = ['project', 'domain', 'data', 'model', 'analysis', 'optimization']

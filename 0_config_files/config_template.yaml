@@ -1,10 +1,10 @@
-### ==================================== CONFLUENCE template configuration file ============================================================
+### ==================================== SYMFLUENCE template configuration file ============================================================
 #
-# This configuration file contains all settings required to run the CONFLUENCE workflow, from conceptualisation to evaluation.
+# This configuration file contains all settings required to run the SYMFLUENCE workflow, from conceptualisation to evaluation.
 # The configuration settings are organized based on modules and can be populated as the user moves through the individual components
 # of the hydrological modelling exercise. This configuration file is comprised of the following sections:
 # 
-# 1. Global settings: Underlying configuration of each CONFLUENCE initation which are used throughout the workflow, e.g. root path etc. 
+# 1. Global settings: Underlying configuration of each SYMFLUENCE initation which are used throughout the workflow, e.g. root path etc. 
 # 2. Geospatial settings: Configurations required to define the geospatial domain of the project and prepare geospatial input files
 # 3. Model Agnostic settings: Configurations required for data pre-processing that is common to all models
 # 4. Model Specific settings: Configurations required for data preprocessing that is specific depending on model selection
@@ -14,8 +14,8 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-CONFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/data/CONFLUENCE_data # Directory with the confluence data directories, including the external installations
-CONFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/code/CONFLUENCE  # Directory with the confluence code repository
+SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/test/CONFLUENCE_data # Directory with the confluence data directories, including the external installations
+SYMFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/test/CONFLUENCE  # Directory with the confluence code repository
 
 # Experiment settings
 DOMAIN_NAME: Bow_at_Banff                                      # Name of modeled domain
