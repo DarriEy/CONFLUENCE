@@ -21,6 +21,8 @@ wheels/
 *.egg
 examples/*/.ipynb_checkpoints/
 .confluence_env
+mpi_*
+
 
 # Virtual Environment
 venv/
@@ -60,11 +62,12 @@ Icon
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*/.ipynb_checkpoints/*
+*/*/.ipynb_checkpoints/*
 
 # Model outputs and temporary files
 *.log
 *.err
+*.out
 *.pkl
 temp/
 logs/
