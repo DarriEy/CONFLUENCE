@@ -5,24 +5,31 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SYMFLUENCE</title>
   <style>
-    html,body { margin:0; font-family: system-ui, Arial, sans-serif; color:#111; }
+    html,body { margin:0; padding:0; font-family: system-ui, Arial, sans-serif; background:#fafafa; color:#111; }
     .wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:40px; }
-    .card { max-width:720px; width:100%; text-align:center; }
-    h1 { letter-spacing:.02em; font-size: clamp(28px, 5vw, 56px); margin:0 0 12px; }
-    p { margin:0 0 20px; font-size: clamp(16px, 2.6vw, 20px); line-height:1.5; color:#333; }
-    .tag { display:inline-block; padding:6px 10px; border:1px solid #ddd; border-radius:999px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#555; }
-    .cta { display:inline-block; padding:12px 18px; border:1px solid #111; border-radius:10px; text-decoration:none; margin-top:8px; }
+    .card { max-width:800px; width:100%; text-align:center; }
+    h1 { font-size: clamp(28px, 5vw, 54px); margin-bottom: 12px; letter-spacing:.02em; }
+    h2 { font-size: clamp(18px, 2.6vw, 22px); font-weight:400; color:#444; margin-top:0; margin-bottom:24px; }
+    p { margin:0 auto 24px; font-size: clamp(15px, 2.2vw, 18px); line-height:1.6; color:#333; max-width:700px; }
+    a.button { display:inline-block; padding:12px 22px; border:1px solid #111; border-radius:8px; text-decoration:none; font-weight:500; transition: all .15s ease-in-out; }
+    a.button:hover { background:#111; color:#fff; }
+    .footer { margin-top:40px; font-size:14px; color:#777; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <span class="tag">Formerly CONFLUENCE</span>
-      <h1>Welcome to SYMFLUENCE</h1>
-      <p>We’re rebranding and getting ready for deployment. A fuller site is coming soon.</p>
-      <p><a class="cta" href="mailto:hello@symfluence.org">Contact us</a></p>
+      <h1>SYMFLUENCE</h1>
+      <h2>SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration</h2>
+      <p>
+        SYMFLUENCE is a developing research and modeling framework for integrated Earth-system simulation,
+        designed and led at the <strong>University of Calgary</strong>.
+      </p>
+      <a class="button" href="https://github.com/DarriEy/SYMFLUENCE" target="_blank">View on GitHub</a>
+      <div class="footer">
+        © <script>document.write(new Date().getFullYear())</script> SYMFLUENCE • Formerly CONFLUENCE
+      </div>
     </div>
   </div>
 </body>
 </html>
-
