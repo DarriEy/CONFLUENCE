@@ -9,9 +9,9 @@ Handles ngen model calibration using various optimization algorithms:
 - PSO (Particle Swarm Optimization)
 - SCE-UA (Shuffled Complex Evolution - University of Arizona)
 
-Integrates with the existing CONFLUENCE optimization framework.
+Integrates with the existing SYMFLUENCE optimization framework.
 
-Author: CONFLUENCE Development Team
+Author: SYMFLUENCE Development Team
 Date: 2025
 """
 
@@ -64,13 +64,13 @@ class NgenOptimizer:
         self.optimization_metric = config.get('OPTIMIZATION_METRIC', 'KGE')
         
         # ngen execution settings
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         project_dir = data_dir / f"domain_{self.domain_name}"
         self.ngen_sim_dir = project_dir / 'simulations' / self.experiment_id / 'ngen'
         self.ngen_setup_dir = project_dir / 'settings' / 'ngen'
         
         # Results tracking
-        self.results_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.domain_name}" / "optimisation"
+        self.results_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.domain_name}" / "optimisation"
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize results storage
@@ -105,7 +105,7 @@ class NgenOptimizer:
         optimization_target = self.config.get('OPTIMISATION_TARGET', 'streamflow')
         
         # Get project directory for calibration target
-        data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         project_dir = data_dir / f"domain_{self.domain_name}"
         
         if optimization_target in ['streamflow', 'discharge', 'flow']:
@@ -119,7 +119,7 @@ class NgenOptimizer:
         """Setup parallel processing directories and files (similar to SUMMA calibration)"""
         self.logger.info(f"Setting up parallel processing with {self.num_processes} processes")
         
-        data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         project_dir = data_dir / f"domain_{self.domain_name}"
         optimization_dir = project_dir / "simulations" / self.experiment_id
         

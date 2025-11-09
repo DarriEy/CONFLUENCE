@@ -34,7 +34,7 @@ class FUSEParameterManager:
         self.param_bounds = self._get_default_fuse_bounds()
         
         # Path to FUSE parameter files
-        self.data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.fuse_sim_dir = self.project_dir / 'simulations' / self.experiment_id / 'FUSE'
         self.fuse_setup_dir = self.project_dir / 'settings' / 'FUSE'

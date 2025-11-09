@@ -7,7 +7,7 @@ NextGen (ngen) Worker Functions
 Worker functions for ngen model calibration that can be called from 
 the main iterative optimizer or used in parallel processing.
 
-Author: CONFLUENCE Development Team
+Author: SYMFLUENCE Development Team
 Date: 2025
 """
 
@@ -17,9 +17,9 @@ from pathlib import Path
 import sys
 from typing import Dict, Any, List, Tuple, Optional
 
-# Add CONFLUENCE root directory to path
-# File is at: CONFLUENCE/utils/optimization/ngen_worker_functions.py
-# We need:  CONFLUENCE/ (so we can import utils.model_utils.ngen_utils)
+# Add SYMFLUENCE root directory to path
+# File is at: SYMFLUENCE/utils/optimization/ngen_worker_functions.py
+# We need:  SYMFLUENCE/ (so we can import utils.model_utils.ngen_utils)
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 
@@ -39,7 +39,7 @@ def _apply_ngen_parameters_worker(config: Dict[str, Any], params: Dict[str, floa
         
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         
         ngen_setup_dir = data_dir / f"domain_{domain_name}" / 'settings' / 'ngen'
         
@@ -99,8 +99,8 @@ def _run_ngen_worker(config: Dict[str, Any]) -> bool:
     import logging
     import traceback
     
-    # Get the main confluence logger if available
-    logger = logging.getLogger('confluence')
+    # Get the main symfluence logger if available
+    logger = logging.getLogger('symfluence')
     
     try:
         # Check if this is a parallel process
@@ -165,7 +165,7 @@ def _calculate_ngen_metrics_worker(config: Dict[str, Any], metric: str = 'KGE') 
         
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         project_dir = data_dir / f"domain_{domain_name}"
         
         # Create minimal logger

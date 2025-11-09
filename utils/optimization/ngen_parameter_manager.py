@@ -7,7 +7,7 @@ NextGen (ngen) Parameter Manager
 Handles ngen parameter bounds, normalization, denormalization, and 
 configuration file updates for model calibration.
 
-Author: CONFLUENCE Development Team
+Author: SYMFLUENCE Development Team
 Date: 2025
 """
 
@@ -47,7 +47,7 @@ class NgenParameterManager:
         self.param_bounds = self._get_default_ngen_bounds()
         
         # Path to ngen configuration files
-        self.data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.ngen_sim_dir = self.project_dir / 'simulations' / self.experiment_id / 'ngen'
         self.ngen_setup_dir = self.project_dir / 'settings' / 'ngen'

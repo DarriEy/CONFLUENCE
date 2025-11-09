@@ -3,7 +3,7 @@
 """
 Differentiable Parameter Emulation (DPE) for SUMMA – Enhanced Config-driven Multipath Optimizer
 
-This module provides multiple gradient-based optimization strategies for CONFLUENCE hydrological model calibration:
+This module provides multiple gradient-based optimization strategies for SYMFLUENCE hydrological model calibration:
 
 1. EMULATOR: Pure neural network surrogate with PyTorch backpropagation
 2. FD: Direct finite-difference optimization on SUMMA
@@ -16,7 +16,7 @@ Key Features:
 - Validation convergence tracking
 - Progress reporting with detailed logging
 - Robust error handling and fallback mechanisms
-- Integration with CONFLUENCE's existing optimization infrastructure
+- Integration with SYMFLUENCE's existing optimization infrastructure
 
 Configuration Options (config.yaml):
   EMULATOR_SETTING: "EMULATOR" | "FD" | "SUMMA_AUTODIFF" | "SUMMA_AUTODIFF_FD"
@@ -44,7 +44,7 @@ Configuration Options (config.yaml):
   DPE_TRAINING_CACHE: "default"  # Uses domain_dir/emulation/training_data/
   DPE_FORCE_RETRAIN: false       # Force regeneration of training data
 
-Author: CONFLUENCE Development Team
+Author: SYMFLUENCE Development Team
 License: MIT
 Version: 2.0.0
 """
@@ -215,26 +215,26 @@ class ParameterEmulator(nn.Module):
 
 class SummaInterface:
     """
-    Interface to SUMMA hydrological model via CONFLUENCE's iterative optimizer backend.
+    Interface to SUMMA hydrological model via SYMFLUENCE's iterative optimizer backend.
     
     This class provides a clean interface for parameter manipulation, model execution,
-    and result extraction while leveraging CONFLUENCE's existing parallel processing
+    and result extraction while leveraging SYMFLUENCE's existing parallel processing
     and parameter management infrastructure.
     
     Parameters
     ----------
-    confluence_config : Dict
-        CONFLUENCE configuration dictionary
+    symfluence_config : Dict
+        SYMFLUENCE configuration dictionary
     logger : logging.Logger
         Logger instance for tracking operations
     """
     
-    def __init__(self, confluence_config: Dict, logger: logging.Logger):
-        self.config = confluence_config  # Add this line
+    def __init__(self, symfluence_config: Dict, logger: logging.Logger):
+        self.config = symfluence_config  # Add this line
         self.logger = logger
         
         # Initialize backend component
-        self.backend = DEOptimizer(confluence_config, self.logger)
+        self.backend = DEOptimizer(symfluence_config, self.logger)
         self.param_manager = self.backend.parameter_manager
         self.model_executor = self.backend.model_executor
         self.calib_target = self.backend.calibration_target
@@ -466,7 +466,7 @@ class ObjectiveHead(nn.Module):
 
 class DifferentiableParameterOptimizer:
     """
-    Differentiable Parameter Optimizer for CONFLUENCE.
+    Differentiable Parameter Optimizer for SYMFLUENCE.
     
     This class provides multiple gradient-based optimization strategies for
     hydrological model calibration, including pure emulation, finite differences,
@@ -478,8 +478,8 @@ class DifferentiableParameterOptimizer:
     
     Parameters
     ----------
-    confluence_config : Dict
-        CONFLUENCE configuration dictionary
+    symfluence_config : Dict
+        SYMFLUENCE configuration dictionary
     domain_name : str
         Name of the modeling domain
     emulator_config : EmulatorConfig, optional
@@ -492,19 +492,19 @@ class DifferentiableParameterOptimizer:
     >>> optimized_params = dpe.run_from_config()
     """
     
-    def __init__(self, confluence_config: Dict, domain_name: str, emulator_config: EmulatorConfig = None):
-        self.confluence_config = confluence_config
-        self.config = confluence_config
+    def __init__(self, symfluence_config: Dict, domain_name: str, emulator_config: EmulatorConfig = None):
+        self.symfluence_config = symfluence_config
+        self.config = symfluence_config
         self.domain_name = domain_name
         self.emulator_config = emulator_config or EmulatorConfig()
         
         # Setup logging
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(f"{__name__}.DPE")
-        self.backend = DEOptimizer(confluence_config, self.logger)
+        self.backend = DEOptimizer(symfluence_config, self.logger)
         
         # Initialize SUMMA interface
-        self.summa = SummaInterface(confluence_config, self.logger)
+        self.summa = SummaInterface(symfluence_config, self.logger)
         self.param_names = self.summa.param_names
         
         # SINGLE OBJECTIVE: Only KGE
@@ -530,7 +530,7 @@ class DifferentiableParameterOptimizer:
 
     def _setup_cache_directory(self):
         """Setup default cache directory structure."""
-        data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         domain_dir = data_dir / f"domain_{self.domain_name}"
         self.cache_dir = domain_dir / "emulation" / "training_data"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1468,7 +1468,7 @@ class DifferentiableParameterOptimizer:
         This method enables end-to-end gradient computation through SUMMA,
         with an optional neural network head for objective post-processing.
         It supports both 'ADAM' and 'LBFGS' optimizers, configurable via
-        the 'DPE_OPTIMIZER' setting in the confluence_config.
+        the 'DPE_OPTIMIZER' setting in the symfluence_config.
         
         Parameters
         ----------
@@ -1490,7 +1490,7 @@ class DifferentiableParameterOptimizer:
         Dict[str, float]
             Optimized parameters
         """
-        optimizer_choice = self.confluence_config.get('DPE_OPTIMIZER', 'ADAM').upper()
+        optimizer_choice = self.symfluence_config.get('DPE_OPTIMIZER', 'ADAM').upper()
         
         self.logger.info(f"Starting SUMMA autodiff optimization (Sundials: {use_sundials})")
         self.logger.info(f"Using optimizer: {optimizer_choice}")
@@ -1913,7 +1913,7 @@ class DifferentiableParameterOptimizer:
         Dict[str, float]
             Optimized parameters
         """
-        mode = self.confluence_config.get('EMULATOR_SETTING', 'EMULATOR').upper()
+        mode = self.symfluence_config.get('EMULATOR_SETTING', 'EMULATOR').upper()
         
         self.logger.info("=" * 80)
         self.logger.info("DIFFERENTIABLE PARAMETER OPTIMIZATION")
@@ -1927,35 +1927,35 @@ class DifferentiableParameterOptimizer:
         total_start_time = time.time()
         
         # Extract configuration parameters
-        fd_step = float(self.confluence_config.get('DPE_FD_STEP', 1e-3))
-        gd_step = float(self.confluence_config.get('DPE_GD_STEP_SIZE', 1e-1))
-        autodiff_steps = int(self.confluence_config.get('DPE_AUTODIFF_STEPS', 200))
-        autodiff_lr = float(self.confluence_config.get('DPE_AUTODIFF_LR', 1e-2))
-        use_nn_head = bool(self.confluence_config.get('DPE_USE_NN_HEAD', True))
-        use_sundials = bool(self.confluence_config.get('DPE_USE_SUNDIALS', True))
-        force_retrain = bool(self.confluence_config.get('DPE_FORCE_RETRAIN', False))
+        fd_step = float(self.symfluence_config.get('DPE_FD_STEP', 1e-3))
+        gd_step = float(self.symfluence_config.get('DPE_GD_STEP_SIZE', 1e-1))
+        autodiff_steps = int(self.symfluence_config.get('DPE_AUTODIFF_STEPS', 200))
+        autodiff_lr = float(self.symfluence_config.get('DPE_AUTODIFF_LR', 1e-2))
+        use_nn_head = bool(self.symfluence_config.get('DPE_USE_NN_HEAD', True))
+        use_sundials = bool(self.symfluence_config.get('DPE_USE_SUNDIALS', True))
+        force_retrain = bool(self.symfluence_config.get('DPE_FORCE_RETRAIN', False))
         
         # Extract new configuration
-        pretrain_head = bool(self.confluence_config.get('DPE_PRETRAIN_NN_HEAD', False))
+        pretrain_head = bool(self.symfluence_config.get('DPE_PRETRAIN_NN_HEAD', False))
     
         # Update emulator config
         self.emulator_config.pretrain_nn_head = pretrain_head
 
         # Determine cache path
-        cache_setting = self.confluence_config.get("DPE_TRAINING_CACHE", "default")
+        cache_setting = self.symfluence_config.get("DPE_TRAINING_CACHE", "default")
         if cache_setting == "default" or not cache_setting:
             cache_path = None  # Uses default directory
         else:
             cache_path = Path(cache_setting)
      
         # Extract iterative configuration
-        iterate_enabled = bool(self.confluence_config.get('DPE_EMULATOR_ITERATE', False))
-        iterate_max_iterations = int(self.confluence_config.get('DPE_ITERATE_MAX_ITERATIONS', 5))
-        iterate_samples_per_cycle = int(self.confluence_config.get('DPE_ITERATE_SAMPLES_PER_CYCLE', 100))
-        iterate_sampling_radius = float(self.confluence_config.get('DPE_ITERATE_SAMPLING_RADIUS', 0.1))
-        iterate_convergence_tol = float(self.confluence_config.get('DPE_ITERATE_CONVERGENCE_TOL', 1e-4))
-        iterate_min_improvement = float(self.confluence_config.get('DPE_ITERATE_MIN_IMPROVEMENT', 1e-6))
-        iterate_sampling_method = self.confluence_config.get('DPE_ITERATE_SAMPLING_METHOD', 'gaussian')
+        iterate_enabled = bool(self.symfluence_config.get('DPE_EMULATOR_ITERATE', False))
+        iterate_max_iterations = int(self.symfluence_config.get('DPE_ITERATE_MAX_ITERATIONS', 5))
+        iterate_samples_per_cycle = int(self.symfluence_config.get('DPE_ITERATE_SAMPLES_PER_CYCLE', 100))
+        iterate_sampling_radius = float(self.symfluence_config.get('DPE_ITERATE_SAMPLING_RADIUS', 0.1))
+        iterate_convergence_tol = float(self.symfluence_config.get('DPE_ITERATE_CONVERGENCE_TOL', 1e-4))
+        iterate_min_improvement = float(self.symfluence_config.get('DPE_ITERATE_MIN_IMPROVEMENT', 1e-6))
+        iterate_sampling_method = self.symfluence_config.get('DPE_ITERATE_SAMPLING_METHOD', 'gaussian')
         
         # Update emulator config with iterative settings
         self.emulator_config.iterate_enabled = iterate_enabled
@@ -2140,7 +2140,7 @@ class DifferentiableParameterOptimizer:
             'domain_name': self.domain_name,
             'parameter_names': self.param_names,
             'objective_names': self.objective_names,
-            'optimization_mode': self.confluence_config.get('EMULATOR_SETTING', 'EMULATOR'),
+            'optimization_mode': self.symfluence_config.get('EMULATOR_SETTING', 'EMULATOR'),
             'timing_results': self.timing_results,
             'training_data_sizes': {
                 'training': len(self.training_data.get('parameters', [])),
@@ -2164,7 +2164,7 @@ def main():
     """Main entry point for command line execution."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="CONFLUENCE Differentiable Parameter Optimization")
+    parser = argparse.ArgumentParser(description="SYMFLUENCE Differentiable Parameter Optimization")
     parser.add_argument('--config', type=str, default='config.yaml',
                        help='Path to configuration file (default: config.yaml)')
     parser.add_argument('--domain', type=str, 
@@ -2193,7 +2193,7 @@ def main():
     # Extract domain name
     domain_name = config.get('DOMAIN_NAME', 'test_domain')
     
-    # Create emulator configuration from CONFLUENCE config
+    # Create emulator configuration from SYMFLUENCE config
     emulator_config = EmulatorConfig(
         hidden_dims=config.get('DPE_HIDDEN_DIMS', [256, 128, 64]),
         n_training_samples=config.get('DPE_TRAINING_SAMPLES', 500),

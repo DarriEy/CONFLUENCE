@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-CONFLUENCE Optimizer
+SYMFLUENCE Optimizer
 
-This module provides parameter optimization for CONFLUENCE hydrological models using with support for multiple calibration targets (streamflow, snow, etc.),
+This module provides parameter optimization for SYMFLUENCE hydrological models using with support for multiple calibration targets (streamflow, snow, etc.),
 parallel processing, and parameter management.
 
 Features:
@@ -196,13 +196,13 @@ class ParameterManager:
         
         # Parse local parameter bounds
         if self.local_params:
-            local_param_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}" / 'settings' / 'SUMMA' / 'localParamInfo.txt'
+            local_param_file = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}" / 'settings' / 'SUMMA' / 'localParamInfo.txt'
             local_bounds = self._parse_param_info_file(local_param_file, self.local_params)
             bounds.update(local_bounds)
         
         # Parse basin parameter bounds
         if self.basin_params:
-            basin_param_file = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}" / 'settings' / 'SUMMA' / 'basinParamInfo.txt'
+            basin_param_file = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}" / 'settings' / 'SUMMA' / 'basinParamInfo.txt'
             basin_bounds = self._parse_param_info_file(basin_param_file, self.basin_params)
             bounds.update(basin_bounds)
         
@@ -283,7 +283,7 @@ class ParameterManager:
     
     def _load_existing_optimized_parameters(self) -> Optional[Dict[str, np.ndarray]]:
         """Load existing optimized parameters from default settings"""
-        trial_params_path = self.config.get('CONFLUENCE_DATA_DIR')
+        trial_params_path = self.config.get('SYMFLUENCE_DATA_DIR')
         if trial_params_path == 'default':
             return None
         
@@ -627,7 +627,7 @@ class ModelExecutor:
             # Get SUMMA executable
             summa_path = self.config.get('SUMMA_INSTALL_PATH')
             if summa_path == 'default':
-                summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+                summa_path = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
             else:
                 summa_path = Path(summa_path)
             
@@ -672,7 +672,7 @@ class ModelExecutor:
             # Get mizuRoute executable
             mizu_path = self.config.get('INSTALL_PATH_MIZUROUTE')
             if mizu_path == 'default':
-                mizu_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
+                mizu_path = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
             else:
                 mizu_path = Path(mizu_path)
             
@@ -1055,7 +1055,7 @@ class ResultsManager:
 
 class BaseOptimizer(ABC):
     """
-    Abstract base class for CONFLUENCE optimizers.
+    Abstract base class for SYMFLUENCE optimizers.
     
     Contains common functionality shared between different optimization algorithms
     like DDS and DE. Handles setup, parameter management, model execution, and
@@ -1068,7 +1068,7 @@ class BaseOptimizer(ABC):
         self.logger = logger
         
         # Setup basic paths
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.experiment_id = self.config.get('EXPERIMENT_ID')
@@ -1316,8 +1316,8 @@ class BaseOptimizer(ABC):
                     ilayer_var[:, h] = default_heights
                 
                 # Add attributes
-                ds.setncattr('title', 'Minimal coldState file created by CONFLUENCE optimization')
-                ds.setncattr('created_by', 'CONFLUENCE BaseOptimizer._create_minimal_coldstate()')
+                ds.setncattr('title', 'Minimal coldState file created by SYMFLUENCE optimization')
+                ds.setncattr('created_by', 'SYMFLUENCE BaseOptimizer._create_minimal_coldstate()')
                 
             self.logger.info(f"Created minimal coldState.nc with {num_hrus} HRUs")
             return True
@@ -2272,7 +2272,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add CONFLUENCE path
+# Add SYMFLUENCE path
 sys.path.append(r"{Path(__file__).parent}")
 
 # Import the worker function
@@ -2967,7 +2967,7 @@ if __name__ == "__main__":
         """Get SUMMA executable path"""
         summa_path = self.config.get('SUMMA_INSTALL_PATH')
         if summa_path == 'default':
-            summa_path = Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
+            summa_path = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / 'installs' / 'summa' / 'bin'
         else:
             summa_path = Path(summa_path)
         
@@ -3076,7 +3076,7 @@ if __name__ == "__main__":
 
 class DDSOptimizer(BaseOptimizer):
     """
-    Dynamically Dimensioned Search (DDS) Optimizer for CONFLUENCE
+    Dynamically Dimensioned Search (DDS) Optimizer for SYMFLUENCE
     
     Implements the DDS algorithm with support for multi-start parallel execution.
     """
@@ -3473,7 +3473,7 @@ class DDSOptimizer(BaseOptimizer):
 
 class DEOptimizer(BaseOptimizer):
     """
-    Differential Evolution (DE) Optimizer for CONFLUENCE
+    Differential Evolution (DE) Optimizer for SYMFLUENCE
     
     Implements the DE algorithm with population-based optimization.
     """
@@ -3709,7 +3709,7 @@ class DEOptimizer(BaseOptimizer):
 
 class PSOOptimizer(BaseOptimizer):
     """
-    Particle Swarm Optimization (PSO) Optimizer for CONFLUENCE
+    Particle Swarm Optimization (PSO) Optimizer for SYMFLUENCE
     
     Implements the PSO algorithm with swarm-based optimization where particles
     move through parameter space guided by their personal best and global best.
@@ -4006,7 +4006,7 @@ class PSOOptimizer(BaseOptimizer):
 
 class NSGA2Optimizer(BaseOptimizer):
     """
-    Non-dominated Sorting Genetic Algorithm II (NSGA-II) for CONFLUENCE
+    Non-dominated Sorting Genetic Algorithm II (NSGA-II) for SYMFLUENCE
     
     Implements the NSGA-II multi-objective optimization algorithm. Uses both
     NSE and KGE as objectives for streamflow calibration, producing a Pareto
@@ -6122,7 +6122,7 @@ class PopulationDDSOptimizer(BaseOptimizer):
 
 class SCEUAOptimizer(BaseOptimizer):
     """
-    Shuffled Complex Evolution - University of Arizona (SCE-UA) Optimizer for CONFLUENCE
+    Shuffled Complex Evolution - University of Arizona (SCE-UA) Optimizer for SYMFLUENCE
     
     Implements the SCE-UA algorithm (Duan et al. 1992, 1993). Uses complexes of points that evolve and shuffle
     to explore the parameter space efficiently.

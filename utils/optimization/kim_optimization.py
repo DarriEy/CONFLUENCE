@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-KIM (Knowledge-Informed Mapping) Optimizer for CONFLUENCE
+KIM (Knowledge-Informed Mapping) Optimizer for SYMFLUENCE
 
-This module integrates the KIM toolkit with CONFLUENCE's optimization framework,
+This module integrates the KIM toolkit with SYMFLUENCE's optimization framework,
 providing knowledge-informed deep learning for hydrological model calibration
 using mutual information-based sensitivity analysis and inverse mapping.
 
@@ -14,7 +14,7 @@ Key features:
 - Uses fewer model realizations (few hundred vs thousands for traditional methods)
 - Knowledge-guided parameter selection based on sensitivity analysis
 - Direct parameter estimation from model responses
-- Integration with CONFLUENCE's existing model infrastructure
+- Integration with SYMFLUENCE's existing model infrastructure
 
 References:
 - Jiang, P., Shuai, P., Sun, A., et al. (2023). Knowledge-informed deep learning 
@@ -50,7 +50,7 @@ from utils.optimization.iterative_optimizer import BaseOptimizer
 
 class KIMOptimizer(BaseOptimizer):
     """
-    Knowledge-Informed Mapping (KIM) Optimizer for CONFLUENCE
+    Knowledge-Informed Mapping (KIM) Optimizer for SYMFLUENCE
     
     This optimizer uses the KIM toolkit to perform hydrological model calibration
     through a knowledge-informed deep learning approach that combines mutual
@@ -127,7 +127,7 @@ class KIMOptimizer(BaseOptimizer):
     
     def _setup_kim_directories(self) -> None:
         """Set up directories for KIM-specific outputs"""
-        project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.kim_results_dir = project_dir / "results" / "optimization" / "kim"
         self.kim_results_dir.mkdir(parents=True, exist_ok=True)
         
@@ -253,7 +253,7 @@ class KIMOptimizer(BaseOptimizer):
     
     def _generate_parameter_samples(self, n_samples: int, focus_params: Optional[List[str]] = None) -> np.ndarray:
         """
-        Generate parameter samples using CONFLUENCE's parameter manager
+        Generate parameter samples using SYMFLUENCE's parameter manager
         
         Parameters
         ----------
@@ -282,7 +282,7 @@ class KIMOptimizer(BaseOptimizer):
     
     def _run_model_ensemble(self, param_samples: np.ndarray, run_type: str) -> Dict[str, np.ndarray]:
         """
-        Run ensemble of model simulations using CONFLUENCE's model executor
+        Run ensemble of model simulations using SYMFLUENCE's model executor
         
         Parameters
         ----------
@@ -1052,7 +1052,7 @@ def create_kim_optimizer(config: Dict[str, Any], logger: logging.Logger) -> KIMO
     Parameters
     ----------
     config : Dict[str, Any]
-        CONFLUENCE configuration dictionary
+        SYMFLUENCE configuration dictionary
     logger : logging.Logger
         Logger instance
         

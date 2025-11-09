@@ -17,7 +17,7 @@ class OptimizationManager:
     Manages all optimization operations including calibration and emulation.
     
     The OptimizationManager is responsible for coordinating model calibration and 
-    parameter emulation within the CONFLUENCE framework. It provides a unified 
+    parameter emulation within the SYMFLUENCE framework. It provides a unified 
     interface for different optimization algorithms and handles the interaction 
     between optimization components and hydrological models.
     
@@ -37,13 +37,13 @@ class OptimizationManager:
     and uncertainty quantification.
     
     The OptimizationManager acts as a bridge between the underlying optimization
-    algorithms and the CONFLUENCE workflow, ensuring consistent execution and
+    algorithms and the SYMFLUENCE workflow, ensuring consistent execution and
     results management.
     
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         logger (logging.Logger): Logger instance
-        data_dir (Path): Path to the CONFLUENCE data directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         experiment_id (str): ID of the current experiment
@@ -71,7 +71,7 @@ class OptimizationManager:
         """
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.experiment_id = self.config.get('EXPERIMENT_ID')
@@ -178,7 +178,7 @@ class OptimizationManager:
             return None
     
     def _save_large_domain_results(self, results: Dict[str, Any]):
-        """Save large domain emulation results to standard CONFLUENCE location."""
+        """Save large domain emulation results to standard SYMFLUENCE location."""
         try:
             # Create large domain results directory
             lde_results_dir = self.project_dir / "optimisation" / "large_domain_emulation"
@@ -191,12 +191,12 @@ class OptimizationManager:
             
             self.logger.info(f"Saved large domain emulation results to {results_file}")
             
-            # Save best parameters in CONFLUENCE format if available
+            # Save best parameters in SYMFLUENCE format if available
             optimization_results = results.get('optimization', {})
             best_params = optimization_results.get('best_parameters')
             
             if best_params and isinstance(best_params, dict):
-                # Convert to DataFrame format compatible with other CONFLUENCE optimizers
+                # Convert to DataFrame format compatible with other SYMFLUENCE optimizers
                 params_data = {'iteration': [0]}
                 
                 # Add optimization mode and loss
@@ -527,7 +527,7 @@ class OptimizationManager:
 
         except Exception as e:
             self.logger.error("Differentiable Parameter Emulation workflow failed.", exc_info=True)
-            # Re-raise the exception to be caught by the main CONFLUENCE error handler
+            # Re-raise the exception to be caught by the main SYMFLUENCE error handler
             raise e    
 
     def run_emulation(self) -> Optional[Dict]:
@@ -809,7 +809,7 @@ class OptimizationResultsManager:
     
     def save_optimization_results(self, results: Dict[str, Any], algorithm: str, target_metric: str = 'KGE') -> Optional[Path]:
         """
-        Save optimization results to a CSV file for compatibility with other parts of CONFLUENCE.
+        Save optimization results to a CSV file for compatibility with other parts of SYMFLUENCE.
         
         Args:
             results: Dictionary with optimization results

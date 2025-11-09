@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-CONFLUENCE Node-Agnostic Local Scratch Manager
+SYMFLUENCE Node-Agnostic Local Scratch Manager
 
 This module provides functionality to use local scratch storage on HPC systems
 to reduce IOPS on shared filesystems during parallel optimization, with support
@@ -63,7 +63,7 @@ class LocalScratchManager:
         Initialize the local scratch manager.
         
         Args:
-            config: CONFLUENCE configuration dictionary
+            config: SYMFLUENCE configuration dictionary
             logger: Logger instance
             project_dir: Main project directory path
             algorithm_name: Name of optimization algorithm (for directory naming)
@@ -171,7 +171,7 @@ class LocalScratchManager:
         self.scratch_project_dir = self.scratch_data_dir / f"domain_{self.domain_name}"
         
         # Store original for reference
-        self.original_data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.original_data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         
         self.logger.info(f"Rank {self.mpi_rank} on {self.node_name}:")
         self.logger.info(f"  Scratch root: {self.scratch_root}")
@@ -438,7 +438,7 @@ class LocalScratchManager:
             }
         else:
             return {
-                'data_dir': self.original_data_dir if self.original_data_dir else Path(self.config.get('CONFLUENCE_DATA_DIR')),
+                'data_dir': self.original_data_dir if self.original_data_dir else Path(self.config.get('SYMFLUENCE_DATA_DIR')),
                 'project_dir': self.project_dir,
                 'settings_dir': self.project_dir / "settings" / "SUMMA",
                 'mizuroute_settings_dir': self.project_dir / "settings" / "mizuRoute",
@@ -531,12 +531,12 @@ class LocalScratchManager:
         Get the effective data directory (scratch or original).
         
         Returns:
-            Path to use for CONFLUENCE_DATA_DIR
+            Path to use for SYMFLUENCE_DATA_DIR
         """
         if self.use_scratch:
             return self.scratch_data_dir
         else:
-            return self.original_data_dir if self.original_data_dir else Path(self.config.get('CONFLUENCE_DATA_DIR'))
+            return self.original_data_dir if self.original_data_dir else Path(self.config.get('SYMFLUENCE_DATA_DIR'))
     
     def get_effective_project_dir(self) -> Path:
         """

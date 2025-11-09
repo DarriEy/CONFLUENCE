@@ -7,7 +7,7 @@ NextGen (ngen) Calibration Targets
 Provides calibration target classes for ngen model outputs.
 Currently supports streamflow calibration with plans for snow, ET, etc.
 
-Author: CONFLUENCE Development Team
+Author: SYMFLUENCE Development Team
 Date: 2025
 """
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-CONFLUENCE Calibration Targets
+SYMFLUENCE Calibration Targets
 
 This module provides calibration targets for different hydrologic variables including:
 - Streamflow (routed and non-routed)

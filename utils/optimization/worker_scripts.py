@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Worker Scripts for CONFLUENCE Optimization
+Worker Scripts for SYMFLUENCE Optimization
 
 This module contains all the worker functions used for parallel processing
-in the CONFLUENCE optimization framework. These functions are designed to
+in the SYMFLUENCE optimization framework. These functions are designed to
 run in separate processes and handle model execution, parameter application,
 and metrics calculation.
 """
@@ -946,7 +946,7 @@ def _get_catchment_area_worker(config: Dict, logger) -> float:
     """Get actual catchment area for unit conversion (worker version)"""
     try:
         domain_name = config.get('DOMAIN_NAME')
-        project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+        project_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
         
         # Try basin shapefile first
         basin_path = project_dir / "shapefiles" / "river_basins"
@@ -1190,7 +1190,7 @@ def _calculate_metrics_inline_worker(summa_dir: Path, mizuroute_dir: Path, confi
         
         try:
             domain_name = config.get('DOMAIN_NAME')
-            project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
+            project_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{domain_name}"
             obs_path = project_dir / "observations" / "streamflow" / "preprocessed" / f"{domain_name}_streamflow_processed.csv"
             
             logger.info(f"DEBUG: Domain name: {domain_name}")
@@ -1914,7 +1914,7 @@ def _run_mizuroute_worker(task_data: Dict, mizuroute_dir: Path, logger, debug_in
         # Get mizuRoute executable
         mizu_path = config.get('INSTALL_PATH_MIZUROUTE', 'default')
         if mizu_path == 'default':
-            mizu_path = Path(config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
+            mizu_path = Path(config.get('SYMFLUENCE_DATA_DIR')) / 'installs' / 'mizuRoute' / 'route' / 'bin'
         else:
             mizu_path = Path(mizu_path)
         

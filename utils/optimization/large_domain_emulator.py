@@ -1,4 +1,4 @@
-# Enhanced Large Domain Emulator with CONFLUENCE Integration
+# Enhanced Large Domain Emulator with SYMFLUENCE Integration
 # In utils/optimization/large_domain_emulator.py
 
 import torch
@@ -25,7 +25,7 @@ from shapely.geometry import Point
 from sklearn.neighbors import BallTree
 from tqdm import tqdm
 
-# Import CONFLUENCE backend components
+# Import SYMFLUENCE backend components
 
 from utils.optimization.iterative_optimizer import DEOptimizer
 from utils.optimization.iterative_optimizer import ParameterManager, ModelExecutor, ResultsManager
@@ -35,7 +35,7 @@ from utils.optimization.differentiable_parameter_emulator import ObjectiveHead
 
 class LargeDomainEmulator:
     """
-    Enhanced distributed hydrological emulator for CONFLUENCE with multiple optimization modes.
+    Enhanced distributed hydrological emulator for SYMFLUENCE with multiple optimization modes.
     
     This class implements four optimization strategies:
     1. EMULATOR: Pure neural network surrogate with PyTorch backpropagation
@@ -44,22 +44,22 @@ class LargeDomainEmulator:
     4. SUMMA_AUTODIFF_FD: Autodiff wrapper with finite-difference Jacobian approximation
     
     Scales from single basin to continental domains using Graph Transformer networks
-    with full CONFLUENCE data integration and multiobjective evaluation.
+    with full SYMFLUENCE data integration and multiobjective evaluation.
     """
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger):
         """
-        Initialize the distributed emulator with CONFLUENCE integration.
+        Initialize the distributed emulator with SYMFLUENCE integration.
         
         Args:
-            config: CONFLUENCE configuration dictionary
+            config: SYMFLUENCE configuration dictionary
             logger: Logger instance
         """
         self.config = config
         self.logger = logger
         
-        # Use CONFLUENCE paths and structure
-        self.data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        # Use SYMFLUENCE paths and structure
+        self.data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.experiment_id = config.get('EXPERIMENT_ID')
@@ -74,8 +74,8 @@ class LargeDomainEmulator:
         # Determine optimization mode
         self.optimization_mode = config.get('LARGE_DOMAIN_EMULATOR_MODE', 'EMULATOR').upper()
         
-        # Initialize CONFLUENCE backend components
-        self._initialize_confluence_backend()
+        # Initialize SYMFLUENCE backend components
+        self._initialize_symfluence_backend()
         
         # Initialize emulator-specific components
         self.hydrofabric = None
@@ -88,10 +88,10 @@ class LargeDomainEmulator:
         self.logger.info(f"Large domain emulator initialized in {self.optimization_mode} mode")
         self.logger.info(f"Project directory: {self.project_dir}")
     
-    def _initialize_confluence_backend(self):
-        """Initialize CONFLUENCE backend components for proper parameter and model management."""
+    def _initialize_symfluence_backend(self):
+        """Initialize SYMFLUENCE backend components for proper parameter and model management."""
         if DEOptimizer is None:
-            raise RuntimeError("CONFLUENCE backend not available. Cannot initialize large domain emulator.")
+            raise RuntimeError("SYMFLUENCE backend not available. Cannot initialize large domain emulator.")
         
         # Create backend optimizer for parameter management
         self.backend = DEOptimizer(self.config, self.logger)
@@ -105,11 +105,11 @@ class LargeDomainEmulator:
         self.param_names = self.parameter_manager.all_param_names
         self.n_parameters = len(self.param_names)
         
-        self.logger.info(f"Initialized CONFLUENCE backend with {self.n_parameters} parameters")
+        self.logger.info(f"Initialized SYMFLUENCE backend with {self.n_parameters} parameters")
         self.logger.info(f"Parameters: {self.param_names}")
     
     def _extract_emulator_config(self) -> Dict[str, Any]:
-        """Extract emulator-specific configuration from CONFLUENCE config."""
+        """Extract emulator-specific configuration from SYMFLUENCE config."""
         return {
             # Model architecture
             'hidden_dim': self.config.get('LARGE_DOMAIN_EMULATOR_HIDDEN_DIM', 512),
@@ -149,7 +149,7 @@ class LargeDomainEmulator:
                 'snow_cover': self.config.get('LARGE_DOMAIN_EMULATOR_MODIS_WEIGHT', 0.15)
             },
             
-            # Time periods (from CONFLUENCE config)
+            # Time periods (from SYMFLUENCE config)
             'calibration_period': self.config.get('CALIBRATION_PERIOD', '1982-01-01, 1990-12-31'),
             'evaluation_period': self.config.get('EVALUATION_PERIOD', '2012-01-01, 2018-12-31'),
             
@@ -207,13 +207,13 @@ class LargeDomainEmulator:
             return {}
     
     def _initialize_components(self):
-        """Initialize all emulator components using CONFLUENCE data."""
-        self.logger.info("Initializing emulator components with CONFLUENCE data")
+        """Initialize all emulator components using SYMFLUENCE data."""
+        self.logger.info("Initializing emulator components with SYMFLUENCE data")
         
-        # Initialize hydrofabric graph from CONFLUENCE shapefiles
-        self.hydrofabric = CONFLUENCEHydrofabricGraph(self.config, self.logger, self.project_dir)
+        # Initialize hydrofabric graph from SYMFLUENCE shapefiles
+        self.hydrofabric = SYMFLUENCEHydrofabricGraph(self.config, self.logger, self.project_dir)
         
-        # Initialize multiobjective evaluator with CONFLUENCE observations
+        # Initialize multiobjective evaluator with SYMFLUENCE observations
         self.multiobjective_evaluator = MultiobjjectiveEvaluator(
             self.config, self.logger, self.project_dir, self.hydrofabric
         )
@@ -249,7 +249,7 @@ class LargeDomainEmulator:
         }
     
     def _generate_emulator_training_data(self) -> Dict[str, List]:
-        """Generate training data for neural network emulator using CONFLUENCE parameter management."""
+        """Generate training data for neural network emulator using SYMFLUENCE parameter management."""
         self.logger.info("Generating training data for emulator")
         
         n_samples = self.emulator_config['emulator_training_samples']
@@ -259,7 +259,7 @@ class LargeDomainEmulator:
         parameter_sets = []
         objectives_list = []
         
-        self.logger.info(f"Generating {n_samples} parameter sets using CONFLUENCE parameter manager")
+        self.logger.info(f"Generating {n_samples} parameter sets using SYMFLUENCE parameter manager")
         
         for i in tqdm(range(n_samples), desc="Generating training data"):
             try:
@@ -295,7 +295,7 @@ class LargeDomainEmulator:
         }
     
     def _run_summa_evaluation_with_backend(self, parameters: Dict[str, float]) -> Optional[np.ndarray]:
-        """Run SUMMA evaluation using CONFLUENCE backend."""
+        """Run SUMMA evaluation using SYMFLUENCE backend."""
         try:
             # Use backend's model executor
             task = {
@@ -931,18 +931,18 @@ class ObjectiveHead(nn.Module):
 
 
 # ==============================
-# CONFLUENCE Data Integration
+# SYMFLUENCE Data Integration
 # ==============================
 
-class CONFLUENCEHydrofabricGraph:
-    """CONFLUENCE hydrofabric graph using actual shapefiles and data."""
+class SYMFLUENCEHydrofabricGraph:
+    """SYMFLUENCE hydrofabric graph using actual shapefiles and data."""
     
     def __init__(self, config: Dict[str, Any], logger: logging.Logger, project_dir: Path):
         self.config = config
         self.logger = logger
         self.project_dir = project_dir
         
-        # Load actual CONFLUENCE shapefiles
+        # Load actual SYMFLUENCE shapefiles
         self.catchment_gdf = self._load_catchment_shapefile()
         self.river_network_gdf = self._load_river_network_shapefile()
         
@@ -951,14 +951,14 @@ class CONFLUENCEHydrofabricGraph:
         self.node_mapping = {hru_id: idx for idx, hru_id in enumerate(self.catchment_ids)}
         
         self._build_graph_connectivity()
-        self._load_confluence_attributes()
+        self._load_symfluence_attributes()
         self._initialize_encoder_dimensions()
         
         self.logger.info(f"Loaded hydrofabric with {len(self.catchment_ids)} catchments")
     
     def _load_catchment_shapefile(self) -> gpd.GeoDataFrame:
-        """Load catchment shapefile from CONFLUENCE project directory."""
-        # Use CONFLUENCE paths from config
+        """Load catchment shapefile from SYMFLUENCE project directory."""
+        # Use SYMFLUENCE paths from config
         catchment_path = self.config.get('CATCHMENT_PATH', 'default')
         if catchment_path == 'default':
             catchment_path = self.project_dir / "shapefiles" / "catchment"
@@ -976,7 +976,7 @@ class CONFLUENCEHydrofabricGraph:
         return gpd.read_file(shapefile_path)
     
     def _load_river_network_shapefile(self) -> gpd.GeoDataFrame:
-        """Load river network shapefile from CONFLUENCE project directory."""
+        """Load river network shapefile from SYMFLUENCE project directory."""
         network_path = self.config.get('RIVER_NETWORK_SHP_PATH', 'default')
         if network_path == 'default':
             network_path = self.project_dir / "shapefiles" / "river_network"
@@ -994,7 +994,7 @@ class CONFLUENCEHydrofabricGraph:
             return gpd.GeoDataFrame()
     
     def _build_graph_connectivity(self):
-        """Build graph connectivity from CONFLUENCE river network."""
+        """Build graph connectivity from SYMFLUENCE river network."""
         edge_list = []
         edge_attributes = []
         
@@ -1045,8 +1045,8 @@ class CONFLUENCEHydrofabricGraph:
         
         self.logger.info(f"Built graph with {len(edge_list)} edges")
     
-    def _load_confluence_attributes(self):
-        """Load attributes from CONFLUENCE attribute processing."""
+    def _load_symfluence_attributes(self):
+        """Load attributes from SYMFLUENCE attribute processing."""
         attributes_dir = self.project_dir / "attributes"
         
         # Initialize attributes data
@@ -1077,7 +1077,7 @@ class CONFLUENCEHydrofabricGraph:
                 if col.startswith('land_'):
                     self.attributes_data[col] = land_df[col].values[:n_hrus]
         
-        # Create forcing summary from CONFLUENCE forcing data
+        # Create forcing summary from SYMFLUENCE forcing data
         self._load_forcing_summary()
         
         # Fill defaults if needed
@@ -1092,7 +1092,7 @@ class CONFLUENCEHydrofabricGraph:
         self.logger.info(f"Loaded {self.n_attributes} attributes and {self.n_forcing} forcing variables")
         
     def _load_forcing_summary(self):
-        """Load forcing summary from CONFLUENCE forcing data."""
+        """Load forcing summary from SYMFLUENCE forcing data."""
         forcing_dir = self.project_dir / "forcing" / "basin_averaged_data"
         n_hrus = len(self.catchment_ids)
         
@@ -1222,7 +1222,7 @@ class MultiobjjectiveEvaluator:
         self.logger.info("Initialized multiobjective evaluator")
     
     def _load_observation_datasets(self):
-        """Load all observation datasets from CONFLUENCE project structure."""
+        """Load all observation datasets from SYMFLUENCE project structure."""
         obs_dir = self.project_dir / "observations"
         
         # Load streamflow observations
@@ -1399,7 +1399,7 @@ class MultiobjjectiveEvaluator:
 class DistributedGraphTransformer(nn.Module):
     """Enhanced Graph Transformer for distributed emulation."""
     
-    def __init__(self, config: Dict[str, Any], hydrofabric: CONFLUENCEHydrofabricGraph):
+    def __init__(self, config: Dict[str, Any], hydrofabric: SYMFLUENCEHydrofabricGraph):
         super().__init__()
         self.config = config
         self.hydrofabric = hydrofabric
@@ -1522,9 +1522,9 @@ class DistributedGraphTransformer(nn.Module):
 def main():
     """Main function for testing the enhanced large domain emulator."""
     
-    # Example CONFLUENCE configuration
+    # Example SYMFLUENCE configuration
     config = {
-        'CONFLUENCE_DATA_DIR': '/path/to/confluence/data',
+        'SYMFLUENCE_DATA_DIR': '/path/to/symfluence/data',
         'DOMAIN_NAME': 'bow_at_banff',
         'EXPERIMENT_ID': 'large_domain_test',
         'LARGE_DOMAIN_EMULATOR_MODE': 'EMULATOR',  # or 'FD', 'SUMMA_AUTODIFF', 'SUMMA_AUTODIFF_FD'
@@ -1543,7 +1543,7 @@ def main():
         'LARGE_DOMAIN_EMULATOR_GRACE_WEIGHT': 0.15,
         'LARGE_DOMAIN_EMULATOR_MODIS_WEIGHT': 0.15,
         
-        # CONFLUENCE paths (will be auto-detected)
+        # SYMFLUENCE paths (will be auto-detected)
         'CATCHMENT_PATH': 'default',
         'CATCHMENT_SHP_NAME': 'default',
         'RIVER_NETWORK_SHP_PATH': 'default',

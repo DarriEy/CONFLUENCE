@@ -35,7 +35,7 @@ def _apply_fuse_parameters_worker(config: Dict[str, Any], params: Dict[str, floa
         # Construct parameter file path
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         
         param_file_path = (data_dir / f"domain_{domain_name}" / 'simulations' / 
                           experiment_id / 'FUSE' / f"{domain_name}_{experiment_id}_para_def.nc")
@@ -73,14 +73,14 @@ def _run_fuse_worker(config: Dict[str, Any], mode: str = 'run_def') -> bool:
         # Get FUSE executable path
         fuse_install = config.get('FUSE_INSTALL_PATH', 'default')
         if fuse_install == 'default':
-            data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+            data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
             fuse_exe = data_dir / 'installs' / 'fuse' / 'bin' / 'fuse.exe'
         else:
             fuse_exe = Path(fuse_install) / 'fuse.exe'
         
         # Get file manager path
         domain_name = config.get('DOMAIN_NAME')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         filemanager_path = (data_dir / f"domain_{domain_name}" / 'settings' / 
                            'FUSE' / 'fm_catch.txt')
         
@@ -140,7 +140,7 @@ def _calculate_fuse_metrics_worker(config: Dict[str, Any], metric: str = 'KGE') 
         # Get paths
         domain_name = config.get('DOMAIN_NAME')
         experiment_id = config.get('EXPERIMENT_ID')
-        data_dir = Path(config.get('CONFLUENCE_DATA_DIR'))
+        data_dir = Path(config.get('SYMFLUENCE_DATA_DIR'))
         project_dir = data_dir / f"domain_{domain_name}"
         
         # Read observed streamflow
