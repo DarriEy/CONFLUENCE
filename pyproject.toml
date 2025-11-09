@@ -1,22 +1,64 @@
 [build-system]
-requires = ["hatchling>=1.25", "hatch-requirements-txt>=0.4"]
+requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
 name = "symfluence"
+version = "0.5.0"         # <- static to avoid plugin issues
 description = "SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 authors = [{ name = "SYMFLUENCE Team", email = "dev@symfluence.org" }]
-# Pull deps from requirements.txt:
-dynamic = ["dependencies", "version"]
 
-# CLI entrypoint -> wrapper that calls your existing utils/cli/cli_manager:main
+# Start with an empty list to unblock; we’ll fill runtime deps later.
+dependencies = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "xarray",
+  "pint_xarray",
+  "distributed",
+  "pyviscous",
+  "torch",
+  "scikit-learn",
+  "pyswarms",
+  "geopandas",
+  "rasterio",
+  "pyproj",
+  "shapely",
+  "fiona",
+  "easymore",
+  "rasterstats",
+  "pvlib",
+  "cdo",
+  "seaborn",
+  "plotly",
+  "findlibs",
+  "netCDF4",
+  "hydrobm",
+  "baseflow",
+  "matplotlib",
+  "SALib",
+  "psutil",
+  "alive-progress",
+  "tqdm",
+  "contextily",
+  "pyyaml",
+  "requests",
+  "cdsapi",
+  "hs_restclient",
+  "numexpr",
+  "cftime",
+  "pytest", 
+  "sphinx", 
+  "jupyterlab", 
+  "ipykernel"
+]
+
 [project.scripts]
+# thin wrapper that delegates to your existing CLI
 symfluence = "symfluence.cli:main"
-# optional: a separate installer command if you want it
-# symfluence-install = "symfluence.installer:main"
 
 [project.urls]
 Homepage = "https://symfluence.org"
@@ -24,32 +66,20 @@ Source = "https://github.com/DarriEy/SYMFLUENCE"
 Issues = "https://github.com/DarriEy/SYMFLUENCE/issues"
 Documentation = "https://symfluence.org/"
 
-# Pick ONE versioning strategy:
-
-# (A) Use your root version file
-[tool.hatch.version]
-source = "file"
-path = "symfluence_version"
-
-# (B) Or, if you prefer Git tags instead, comment the two lines above and use:
-# [tool.hatch.version]
-# source = "vcs"
-
-# requirements.txt → dependencies
-[tool.hatch.metadata.hooks.requirements]
-files = ["requirements.txt"]
-
-# Package both the thin wrapper AND your existing utils tree
 [tool.hatch.build.targets.wheel]
+# ship both the wrapper and your existing utils package (no moves)
 packages = ["src/symfluence", "utils"]
 
 [tool.hatch.build.targets.sdist]
 include = [
   "src/symfluence",
   "utils",
-  "requirements.txt",
   "README.md",
   "LICENSE",
   "MANIFEST.in",
-  "symfluence_version"
+  "requirements.txt",
+  "symfluence_version.py" 
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"symfluence_version.py" = "symfluence_version.py"
