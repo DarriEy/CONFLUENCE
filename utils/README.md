@@ -1,6 +1,6 @@
 # Utilities
 
-Core utility modules that power model integration, optimization, data handling, and workflow orchestration in CONFLUENCE. These modules expose clear interfaces and remain loosely coupled to support reliability and extensibility across scales.
+Core utility modules that power model integration, optimization, data handling, and workflow orchestration in SYMFLUENCE. These modules expose clear interfaces and remain loosely coupled to support reliability and extensibility across scales.
 
 ---
 
@@ -34,7 +34,7 @@ Standardized interfaces for preprocessing, QC, and format conversion across comm
 
 ---
 
-## 2. Extending CONFLUENCE
+## 2. Extending SYMFLUENCE
 
 ### Add a Model
 Follow the preprocessor → runner → postprocessor pattern. Implement model utilities under `models/` and register them with the dispatcher. Handle configuration generation, data formatting, execution, and output parsing.

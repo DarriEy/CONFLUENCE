@@ -1,6 +1,6 @@
 # INSTALLATION & ENVIRONMENT SETUP
 
-**Note:** CONFLUENCE attempts to install and configure external tools automatically, but HPC environments vary. Use these recipes as starting points and adjust for your system.
+**Note:** SYMFLUENCE attempts to install and configure external tools automatically, but HPC environments vary. Use these recipes as starting points and adjust for your system.
 
 ---
 
@@ -37,7 +37,7 @@ The installer handles Python setup automatically.
 
 Running:
 ```bash
-./confluence --install
+./symfluence --install
 ```
 will:
 - Create a `.venv/` (if not present)
@@ -98,7 +98,7 @@ module load openblas/0.3.24
 
 After loading modules:
 ```bash
-./confluence --install
+./symfluence --install
 ```
 
 ---
@@ -127,7 +127,7 @@ export FC=$(brew --prefix)/bin/gfortran-14
 ### D) Python Setup
 Run:
 ```bash
-./confluence --install
+./symfluence --install
 ```
 
 If needed manually:
@@ -140,5 +140,5 @@ pip install -r requirements.txt
 ---
 
 ## 5. Support Stance
-CONFLUENCE aims for a one-command setup but cannot guarantee success on all systems.  
+SYMFLUENCE aims for a one-command setup but cannot guarantee success on all systems.  
 If installation fails, use your cluster’s module system and re-run the installer.

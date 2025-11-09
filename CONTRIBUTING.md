@@ -1,4 +1,4 @@
-# Contributing to CONFLUENCE
+# Contributing to SYMFLUENCE
 
 We welcome all contributions — from bug fixes and documentation improvements to new model integrations and performance optimizations. This guide outlines how to get started and how to collaborate effectively.
 
@@ -8,14 +8,14 @@ We welcome all contributions — from bug fixes and documentation improvements t
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/YOUR-USERNAME/CONFLUENCE.git
-   cd CONFLUENCE
-   git remote add upstream https://github.com/DarriEy/CONFLUENCE.git
+   git clone https://github.com/YOUR-USERNAME/SYMFLUENCE.git
+   cd SYMFLUENCE
+   git remote add upstream https://github.com/DarriEy/SYMFLUENCE.git
    ```
 
 2. **Set up your environment**
    ```bash
-   ./confluence --install
+   ./symfluence --install
    ```
    This will create and manage a `.venv` automatically.  
    If you prefer manual setup:
@@ -27,7 +27,7 @@ We welcome all contributions — from bug fixes and documentation improvements t
 
 3. **Verify installation**
    ```bash
-   ./confluence --help
+   ./symfluence --help
    ```
 
 ---
@@ -105,7 +105,7 @@ When reporting, include:
 - **Description:** what went wrong  
 - **Steps to reproduce**  
 - **Expected vs actual behavior**  
-- **Environment:** OS, Python version, CONFLUENCE commit/branch  
+- **Environment:** OS, Python version, SYMFLUENCE commit/branch  
 
 Example:
 ```
@@ -113,7 +113,7 @@ Example:
 Model setup fails on FIR cluster with NetCDF 4.9.2.
 
 ## Steps
-1. Run ./confluence --setup_project
+1. Run ./symfluence --setup_project
 2. Error during model initialization
 
 ## Expected
@@ -152,6 +152,6 @@ We welcome:
 ## 8. Questions
 If you’re unsure where to start:
 - Open a GitHub discussion or issue  
-- Review existing docs at [confluence.readthedocs.io](https://confluence.readthedocs.io)
+- Review existing docs at [symfluence.readthedocs.io](https://symfluence.readthedocs.io)
 
-Thank you for helping improve CONFLUENCE.
+Thank you for helping improve SYMFLUENCE.
