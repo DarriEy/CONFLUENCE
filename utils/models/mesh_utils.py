@@ -28,7 +28,7 @@ class MESHPreProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.mesh_setup_dir = self.project_dir / "settings" / "MESH"
@@ -74,7 +74,7 @@ class MESHPreProcessor:
 
     def create_json(self):
         # main work path - modify
-        work_path = '/Users/darrieythorsson/compHydro/data/CONFLUENCE_data/domain_Bow/'
+        work_path = '/Users/darrieythorsson/compHydro/data/SYMFLUENCE_data/domain_Bow/'
 
         # using meshflow==v0.1.0-dev1
         # modify the following to match your settings
@@ -213,7 +213,7 @@ class MESHRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.catchment_path = self._get_default_path('CATCHMENT_PATH', 'shapefiles/catchment')
@@ -227,7 +227,7 @@ class MESHRunner:
         self.output_path = self.project_dir / 'simulations' / self.config['EXPERIMENT_ID'] / 'MESH'
         self.output_path.mkdir(parents=True, exist_ok=True)
         self.mesh_exe = self.config.get('MESH_EXE')
-        self.mesh_install_path = Path(self.config['CONFLUENCE_DATA_DIR']) / 'installs' / 'MESH-DEV'
+        self.mesh_install_path = Path(self.config['SYMFLUENCE_DATA_DIR']) / 'installs' / 'MESH-DEV'
 
         # Model configuration
 
@@ -282,7 +282,7 @@ class MESHPostProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.gr_setup_dir = self.project_dir / "settings" / "MESH"

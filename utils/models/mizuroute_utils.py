@@ -18,7 +18,7 @@ class MizuRoutePreProcessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.mizuroute_setup_dir = self.project_dir / "settings" / "mizuRoute"
 
 
@@ -43,7 +43,7 @@ class MizuRoutePreProcessor:
 
     def copy_base_settings(self):
         self.logger.info("Copying mizuRoute base settings")
-        base_settings_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'mizuRoute'
+        base_settings_path = Path(self.config.get('SYMFLUENCE_CODE_DIR')) / '0_base_settings' / 'mizuRoute'
         self.mizuroute_setup_dir.mkdir(parents=True, exist_ok=True)
 
         for file in os.listdir(base_settings_path):
@@ -873,7 +873,7 @@ class MizuRouteRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 

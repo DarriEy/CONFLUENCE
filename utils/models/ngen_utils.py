@@ -1,8 +1,8 @@
 """
-NextGen (ngen) Framework Utilities for CONFLUENCE
+NextGen (ngen) Framework Utilities for SYMFLUENCE
 
 This module provides preprocessing, execution, and postprocessing utilities
-for the NOAA NextGen Water Resources Modeling Framework within CONFLUENCE.
+for the NOAA NextGen Water Resources Modeling Framework within SYMFLUENCE.
 
 Classes:
     NgenPreProcessor: Handles spatial preprocessing and configuration generation
@@ -28,7 +28,7 @@ class NgenPreProcessor:
     """
     Preprocessor for NextGen Framework.
     
-    Handles conversion of CONFLUENCE data to ngen-compatible formats including:
+    Handles conversion of SYMFLUENCE data to ngen-compatible formats including:
     - Catchment geometry (geopackage)
     - Nexus points (GeoJSON)
     - Forcing data (NetCDF)
@@ -48,7 +48,7 @@ class NgenPreProcessor:
         self.logger = logger
         
         # Directories
-        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
         self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
         self.forcing_dir = self.project_dir / "forcing" / "NGEN_input"
         
@@ -82,18 +82,18 @@ class NgenPreProcessor:
         Copy Noah-OWP parameter tables from base settings to domain settings.
         
         Copies GENPARM.TBL, MPTABLE.TBL, and SOILPARM.TBL from:
-            CONFLUENCE_CODE_DIR/0_base_settings/NOAH/parameters/
+            SYMFLUENCE_CODE_DIR/0_base_settings/NOAH/parameters/
         To:
             domain_dir/settings/ngen/NOAH/parameters/
         """
         self.logger.info("Copying Noah-OWP parameter tables")
         
-        # Get path to CONFLUENCE code directory (parent of CONFLUENCE_DATA_DIR)
-        confluence_data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        confluence_code_dir = confluence_data_dir.parent / 'CONFLUENCE'
+        # Get path to SYMFLUENCE code directory (parent of SYMFLUENCE_DATA_DIR)
+        symfluence_data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
+        symfluence_code_dir = symfluence_data_dir.parent / 'SYMFLUENCE'
         
         # Source directory for Noah parameter tables
-        source_param_dir = confluence_code_dir / '0_base_settings' / 'NOAH' / 'parameters'
+        source_param_dir = symfluence_code_dir / '0_base_settings' / 'NOAH' / 'parameters'
         
         # Destination directory
         dest_param_dir = self.ngen_setup_dir / 'NOAH' / 'parameters'
@@ -281,7 +281,7 @@ class NgenPreProcessor:
     
     def create_catchment_geopackage(self) -> Path:
         """
-        Create ngen-compatible geopackage from CONFLUENCE catchment shapefile.
+        Create ngen-compatible geopackage from SYMFLUENCE catchment shapefile.
         
         The geopackage must contain a 'divides' layer with required attributes:
         - divide_id: Catchment identifier
@@ -358,7 +358,7 @@ class NgenPreProcessor:
     
     def prepare_forcing_data(self) -> Path:
         """
-        Convert CONFLUENCE basin-averaged ERA5 forcing to ngen format.
+        Convert SYMFLUENCE basin-averaged ERA5 forcing to ngen format.
         
         Processes:
         1. Load all monthly forcing files
@@ -914,13 +914,13 @@ class NgenRunner:
         self.config = config
         self.logger = logger
         
-        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
         self.ngen_setup_dir = self.project_dir / "settings" / "ngen"
         
         # Get ngen installation path
         ngen_install_path = config.get('NGEN_INSTALL_PATH', 'default')
         if ngen_install_path == 'default':
-            self.ngen_exe = Path(config.get('CONFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build' / 'ngen'
+            self.ngen_exe = Path(config.get('SYMFLUENCE_DATA_DIR')).parent / 'installs' / 'ngen' / 'build' / 'ngen'
         else:
             self.ngen_exe = Path(ngen_install_path) / 'ngen'
     
@@ -1048,7 +1048,7 @@ class NgenPostprocessor:
         self.config = config
         self.logger = logger
         
-        self.project_dir = Path(config.get('CONFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{config.get('DOMAIN_NAME')}"
         self.results_dir = self.project_dir / "results"
         self.results_dir.mkdir(parents=True, exist_ok=True)
     

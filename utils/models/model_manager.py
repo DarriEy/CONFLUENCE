@@ -44,7 +44,7 @@ from utils.data.archive_utils import tar_directory # type: ignore
 
 class ModelManager:
     """
-    Manages all hydrological model operations within the CONFLUENCE framework.
+    Manages all hydrological model operations within the SYMFLUENCE framework.
     
     The ModelManager is responsible for coordinating the execution of hydrological
     models, including preprocessing of input data, executing model simulations,
@@ -73,7 +73,7 @@ class ModelManager:
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         logger (logging.Logger): Logger instance
-        data_dir (Path): Path to the CONFLUENCE data directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         experiment_id (str): ID of the current experiment
@@ -102,7 +102,7 @@ class ModelManager:
         """
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.experiment_id = self.config.get('EXPERIMENT_ID')

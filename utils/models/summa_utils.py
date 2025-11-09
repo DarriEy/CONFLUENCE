@@ -37,7 +37,7 @@ class SummaPreProcessor:
         self.logger = logger
 
         # Directories and paths
-        self.project_dir = Path(self.config.get('CONFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
+        self.project_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR')) / f"domain_{self.config.get('DOMAIN_NAME')}"
         self.summa_setup_dir = self.project_dir / "settings" / "SUMMA"
         self.shapefile_path = self.project_dir / 'shapefiles' / 'forcing'
         self.settings_path = self.project_dir / 'settings/SUMMA'
@@ -113,7 +113,7 @@ class SummaPreProcessor:
         """
         self.logger.info("Copying SUMMA base settings")
         
-        base_settings_path = Path(self.config.get('CONFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA'
+        base_settings_path = Path(self.config.get('SYMFLUENCE_CODE_DIR')) / '0_base_settings' / 'SUMMA'
         settings_path = self._get_default_path('SETTINGS_SUMMA_PATH', 'settings/SUMMA')
         
         try:
@@ -1748,7 +1748,7 @@ class SUMMAPostprocessor:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.results_dir = self.project_dir / "results"
@@ -1825,7 +1825,7 @@ class SummaRunner:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
 

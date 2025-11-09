@@ -20,21 +20,21 @@ from utils.models.hypeFlow import write_hype_forcing, write_hype_geo_files, writ
 
 class HYPEPreProcessor:
     """
-    HYPE (HYdrological Predictions for the Environment) preprocessor for CONFLUENCE.
-    Handles preparation of HYPE model inputs using CONFLUENCE's data structure.
+    HYPE (HYdrological Predictions for the Environment) preprocessor for SYMFLUENCE.
+    Handles preparation of HYPE model inputs using SYMFLUENCE's data structure.
     
     Attributes:
-        config (Dict[str, Any]): CONFLUENCE configuration settings
+        config (Dict[str, Any]): SYMFLUENCE configuration settings
         logger (logging.Logger): Logger for the preprocessing workflow
         project_dir (Path): Project directory path
         domain_name (str): Name of the modeling domain
     """
     
     def __init__(self, config: Dict[str, Any], logger: Any):
-        """Initialize HYPE preprocessor with CONFLUENCE config."""
+        """Initialize HYPE preprocessor with SYMFLUENCE config."""
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
@@ -101,7 +101,7 @@ class HYPEPreProcessor:
 
 class HYPERunner:
     """
-    Runner class for the HYPE model within CONFLUENCE.
+    Runner class for the HYPE model within SYMFLUENCE.
     Handles model execution and run-time management.
     
     Attributes:
@@ -115,7 +115,7 @@ class HYPERunner:
         """Initialize HYPE runner."""
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
@@ -177,7 +177,7 @@ class HYPERunner:
         """Get HYPE installation path."""
         hype_path = self.config.get('HYPE_INSTALL_PATH')
         if hype_path == 'default' or hype_path is None:
-            return Path(self.config.get('CONFLUENCE_DATA_DIR')) / 'installs' / 'hype'
+            return Path(self.config.get('SYMFLUENCE_DATA_DIR')) / 'installs' / 'hype'
         return Path(hype_path)
 
     def _get_output_path(self) -> Path:
@@ -228,7 +228,7 @@ class HYPERunner:
 
 class HYPEPostProcessor:
     """
-    Postprocessor for HYPE model outputs within CONFLUENCE.
+    Postprocessor for HYPE model outputs within SYMFLUENCE.
     Handles output extraction, processing, and analysis.
     
     Attributes:
@@ -242,7 +242,7 @@ class HYPEPostProcessor:
         """Initialize HYPE postprocessor."""
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         
