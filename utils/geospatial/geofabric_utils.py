@@ -1,7 +1,7 @@
 """
 geofabric_utils.py
 
-This module provides utilities for geofabric delineation and processing in the CONFLUENCE system.
+This module provides utilities for geofabric delineation and processing in the SYMFLUENCE system.
 It includes classes for geofabric delineation, subsetting, and lumped watershed delineation.
 
 Classes:
@@ -37,7 +37,7 @@ class GeofabricDelineator:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.mpi_processes = self.config.get('MPI_PROCESSES',1)
@@ -1217,7 +1217,7 @@ class GeofabricDelineator:
         
         This method creates a simple square buffer with 0.01 degree (~1km) around the pour point
         specified in the configuration. It saves the buffer as shapefiles in both the river_basins
-        and catchment directories to satisfy CONFLUENCE's requirements.
+        and catchment directories to satisfy SYMFLUENCE's requirements.
         
         Returns:
             Tuple[Optional[Path], Optional[Path]]: Paths to the created river_basins and catchment shapefiles
@@ -1664,7 +1664,7 @@ class GeofabricSubsetter:
 
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
 
@@ -1731,7 +1731,7 @@ class GeofabricSubsetter:
         subset_basins = basins[basins[fabric_config['basin_id_col']].isin(upstream_basin_ids)].copy()
         subset_rivers = rivers[rivers[fabric_config['river_id_col']].isin(upstream_basin_ids)].copy()
 
-        # Add CONFLUENCE specific columns dependiing on fabric
+        # Add SYMFLUENCE specific columns dependiing on fabric
 
         if self.config.get('GEOFABRIC_TYPE') == 'NWS':
             subset_basins['GRU_ID'] = subset_basins['COMID']
@@ -1916,7 +1916,7 @@ class LumpedWatershedDelineator:
     def __init__(self, config: Dict[str, Any], logger: Any):
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.output_dir = self.project_dir / "shapefiles/tempdir"

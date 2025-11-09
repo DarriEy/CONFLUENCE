@@ -35,7 +35,7 @@ class DomainDiscretizer:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self.root_path = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.root_path = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.root_path / f"domain_{self.domain_name}"
         dem_name = self.config['DEM_NAME']
