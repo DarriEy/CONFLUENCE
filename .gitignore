@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 examples/*/.ipynb_checkpoints/
+.confluence_env
 
 # Virtual Environment
 venv/
