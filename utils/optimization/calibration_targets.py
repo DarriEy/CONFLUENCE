@@ -25,8 +25,6 @@ from typing import Dict, Any, List, Tuple, Optional
 from abc import ABC, abstractmethod
 import re
 
-
-
 class CalibrationTarget(ABC):
     """Abstract base class for different calibration variables (streamflow, snow, etc.)"""
     

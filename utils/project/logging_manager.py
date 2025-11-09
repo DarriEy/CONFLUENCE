@@ -18,10 +18,10 @@ warnings.filterwarnings('ignore',
 
 class LoggingManager:
     """
-    Manages logging configuration and setup for the CONFLUENCE framework.
+    Manages logging configuration and setup for the SYMFLUENCE framework.
     
     The LoggingManager is responsible for establishing a structured and comprehensive
-    logging system for CONFLUENCE operations. It creates and configures loggers that
+    logging system for SYMFLUENCE operations. It creates and configures loggers that
     provide detailed tracking of workflow execution, error conditions, and system
     status. The logging system supports both console output for interactive feedback
     and file-based logging for detailed analysis and troubleshooting.
@@ -41,7 +41,7 @@ class LoggingManager:
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         debug_mode (bool): Whether debug mode is enabled
-        data_dir (Path): Path to the CONFLUENCE data directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         log_dir (Path): Path to the logging directory
@@ -54,7 +54,7 @@ class LoggingManager:
         Initialize the logging manager.
         
         This method sets up the logging directory structure and initializes the main
-        logger for CONFLUENCE. It also captures and preserves the configuration
+        logger for SYMFLUENCE. It also captures and preserves the configuration
         used for the current run.
         
         Args:
@@ -68,7 +68,7 @@ class LoggingManager:
         """
         self.config = config
         self.debug_mode = debug_mode
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
         self.log_dir = self.project_dir / f"_workLog_{self.domain_name}"
@@ -90,7 +90,7 @@ class LoggingManager:
         """
         Set up logging configuration with console and file handlers.
         
-        This method creates and configures the main logger for CONFLUENCE with
+        This method creates and configures the main logger for SYMFLUENCE with
         two handlers:
         1. A file handler that captures detailed log information for debugging
            and records all log levels (DEBUG and above)
@@ -117,14 +117,14 @@ class LoggingManager:
         
         # Create timestamp for log file
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = self.log_dir / f'confluence_general_{self.domain_name}_{current_time}.log'
+        log_file = self.log_dir / f'symfluence_general_{self.domain_name}_{current_time}.log'
         
         # Disable the root logger to prevent interference
         logging.getLogger().handlers = []
         logging.getLogger().setLevel(logging.CRITICAL)
         
         # Create main logger
-        logger = logging.getLogger('confluence')
+        logger = logging.getLogger('symfluence')
         logger.setLevel(getattr(logging, log_level.upper()))
         
         # Remove existing handlers to avoid duplicates
@@ -176,7 +176,7 @@ class LoggingManager:
         
         # Log startup information
         logger.info("=" * 60)
-        logger.info("CONFLUENCE Logging Initialized")
+        logger.info("SYMFLUENCE Logging Initialized")
         if self.debug_mode:
             logger.info("DEBUG MODE: Enabled")
         logger.info(f"Domain: {self.domain_name}")
@@ -197,7 +197,7 @@ class LoggingManager:
         for each model run.
         
         The configuration is saved with masked sensitive information (such as
-        passwords or API keys, though none are currently expected in CONFLUENCE).
+        passwords or API keys, though none are currently expected in SYMFLUENCE).
         
         Returns:
             Path: Path to the saved configuration file
@@ -222,7 +222,7 @@ class LoggingManager:
         # Add metadata
         metadata = {
             'logged_at': current_time,
-            'confluence_version': '1.0.0',  # Update with actual version
+            'symfluence_version': '1.0.0',  # Update with actual version
             'debug_mode': self.debug_mode,
             'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         }
@@ -241,7 +241,7 @@ class LoggingManager:
         Create a logger for a specific module with its own file handler.
         
         This method creates module-specific loggers that inherit from the main
-        CONFLUENCE logger but have their own log files. This allows for
+        SYMFLUENCE logger but have their own log files. This allows for
         module-specific debugging and analysis without cluttering the main log.
         
         Module loggers use the same formatters as the main logger but can have
@@ -260,7 +260,7 @@ class LoggingManager:
             PermissionError: If module log file cannot be created
         """
         # Create module logger as child of main logger
-        module_logger = logging.getLogger(f'confluence.{module_name}')
+        module_logger = logging.getLogger(f'symfluence.{module_name}')
         
         # Set level
         if log_level:
@@ -380,7 +380,7 @@ class LoggingManager:
         """
         Create a summary JSON file for the entire run.
         
-        This method creates a comprehensive summary of a CONFLUENCE run, including
+        This method creates a comprehensive summary of a SYMFLUENCE run, including
         all completed steps, any errors or warnings encountered, and overall
         execution statistics. The summary is saved as a JSON file for easy
         parsing and analysis.
@@ -482,7 +482,7 @@ class LoggingManager:
         
         Args:
             log_type (str): Type of log file to retrieve:
-                          - 'general': Main CONFLUENCE log
+                          - 'general': Main SYMFLUENCE log
                           - 'config': Configuration log
                           - Any module name: Module-specific log
             
@@ -494,7 +494,7 @@ class LoggingManager:
         """
         if log_type == 'general':
             # Find the most recent general log
-            log_files = sorted(self.log_dir.glob(f'confluence_general_{self.domain_name}_*.log'))
+            log_files = sorted(self.log_dir.glob(f'symfluence_general_{self.domain_name}_*.log'))
             return log_files[-1] if log_files else None
         elif log_type == 'config':
             return self.config_log_file

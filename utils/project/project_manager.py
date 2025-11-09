@@ -13,7 +13,7 @@ class ProjectManager:
     
     The ProjectManager is responsible for creating and managing the project directory
     structure, handling pour point creation, and maintaining project metadata. It serves
-    as the foundation for all other CONFLUENCE components by establishing the physical
+    as the foundation for all other SYMFLUENCE components by establishing the physical
     file organization that the workflow depends on.
     
     Key responsibilities:
@@ -25,8 +25,8 @@ class ProjectManager:
     Attributes:
         config (Dict[str, Any]): Configuration dictionary containing project settings
         logger (logging.Logger): Logger instance for recording operations
-        data_dir (Path): Path to the CONFLUENCE data directory
-        code_dir (Path): Path to the CONFLUENCE code directory
+        data_dir (Path): Path to the SYMFLUENCE data directory
+        code_dir (Path): Path to the SYMFLUENCE code directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the specific project directory for this domain
     """
@@ -44,8 +44,8 @@ class ProjectManager:
         """
         self.config = config
         self.logger = logger
-        self.data_dir = Path(self.config.get('CONFLUENCE_DATA_DIR'))
-        self.code_dir = Path(self.config.get('CONFLUENCE_CODE_DIR'))
+        self.data_dir = Path(self.config.get('SYMFLUENCE_DATA_DIR'))
+        self.code_dir = Path(self.config.get('SYMFLUENCE_CODE_DIR'))
         self.domain_name = self.config.get('DOMAIN_NAME')
         self.project_dir = self.data_dir / f"domain_{self.domain_name}"
     
