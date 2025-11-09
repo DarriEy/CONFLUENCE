@@ -14,8 +14,8 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-SYMFLUENCE_DATA_DIR: /path/to/your/CONFLUENCE_data # Directory with the confluence data directories, including the external installations
-SYMFLUENCE_CODE_DIR: /path/to/your/CONFLUENCE  # Directory with the confluence code repository
+SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/test
+SYMFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/test/SYMFLUENCE
 
 # Experiment settings
 DOMAIN_NAME: Bow_at_Banff                                      # Name of modeled domain
