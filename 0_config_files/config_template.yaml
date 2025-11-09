@@ -14,8 +14,8 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/test
-SYMFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/test/SYMFLUENCE
+SYMFLUENCE_DATA_DIR: /path/to/SYMFLUENCE_Data/
+SYMFLUENCE_CODE_DIR: /path/to/SYMFLUENCE/
 
 # Experiment settings
 DOMAIN_NAME: Bow_at_Banff                                      # Name of modeled domain

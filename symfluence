@@ -44,7 +44,8 @@ _is_placeholder_or_empty() {
 set_default_symfluence_paths() {
     local pwd_code_dir="$PWD"
     local pwd_data_dir
-    pwd_data_dir="$(cd "$PWD/.." && pwd)"
+    pwd_data_dir="$(cd "$PWD/.." && pwd)/CONFLUENCE_data"
+    mkdir pwd_data_dir
 
     if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR}"; then
         export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
