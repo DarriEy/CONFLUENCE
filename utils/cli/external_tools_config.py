@@ -552,38 +552,30 @@ fi
             'build_commands': [
                 r'''
 set -e
-# Use MPI compilers, required by TauDEM
+# Set MPI compilers, which are required by TauDEM's CMake configuration.
 export CC=mpicc
 export CXX=mpicxx
 
-# TauDEM's CMake build system requires an explicit location for the GDAL headers and libraries.
-# The `gdal-config` utility provides the most reliable way to get these paths.
-GDAL_INCLUDE_DIR=$(gdal-config --cflags)
-GDAL_LIBRARY=$(gdal-config --libs)
-
 echo "--- TauDEM Build Configuration ---"
 echo "Compiler: $(command -v ${CXX})"
-echo "GDAL Include Flags: ${GDAL_INCLUDE_DIR}"
-echo "GDAL Library Flags: ${GDAL_LIBRARY}"
+echo "Relying on CMake's built-in find_package(GDAL) to locate dependencies."
 echo "---------------------------------"
 
-# Clean any previous attempts and configure the build with CMake.
-# We pass the GDAL paths directly to ensure CMake finds them correctly.
+# Clean any previous attempts and configure the build.
+# This simple invocation allows CMake to correctly find the GDAL package
+# provided by `libgdal-dev` without interference.
 rm -rf build && mkdir -p build && cd build
-cmake -S .. -B . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_FLAGS="${GDAL_INCLUDE_DIR}" \
-  -DCMAKE_EXE_LINKER_FLAGS="${GDAL_LIBRARY}"
+cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release
 
-# --- CRITICAL FIX ---
-# Build the software SERIALLY (no -j flag). TauDEM's build scripts have
-# dependency issues that cause race conditions during parallel builds.
-# A serial build is slower but far more reliable.
-echo "Building TauDEM in serial to prevent race conditions..."
+# Build the software SERIALLY (no -j flag). This is the critical fix
+# to prevent race conditions caused by improperly defined dependencies
+# in TauDEM's build scripts.
+echo "Building TauDEM serially to ensure stability..."
 cmake --build .
 
 # After a successful build, stage the executables to a standard bin directory.
 # CMake places the compiled binaries in the 'src' subdirectory of the build folder.
+echo "Staging executables..."
 mkdir -p ../bin
 copied_count=0
 for f in ./src/*; do
