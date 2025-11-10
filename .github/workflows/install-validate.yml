@@ -48,6 +48,7 @@ jobs:
             libeigen3-dev libboost-all-dev \
             libprotobuf-dev protobuf-compiler \
             libfmt-dev libspdlog-dev \
+            libcurl4-openssl-dev zlib1g-dev \
             pkg-config
           # Make pkg-configs and headers easy to find
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
@@ -56,7 +57,6 @@ jobs:
           # Helpful discovery variables for builds that call gdal-config
           echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
           echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
-          # Export compiler flags from gdal-config so pip builds can find headers/libs inside venv
           echo "CFLAGS=$(gdal-config --cflags)" >> $GITHUB_ENV
           echo "LDFLAGS=$(gdal-config --libs)" >> $GITHUB_ENV
           # NetCDF/HDF5 helpers for FUSE detection
@@ -65,6 +65,8 @@ jobs:
           echo "HDF5_ROOT=/usr" >> $GITHUB_ENV
           echo "NETCDF_FORTRAN=/usr" >> $GITHUB_ENV
           echo "NETCDF=/usr" >> $GITHUB_ENV
+          # Expose system site-packages so venv can import osgeo without building GDAL wheel
+          echo "SYSTEM_PY_SITE=/usr/lib/python3/dist-packages" >> $GITHUB_ENV
 
       # ---- R for rpy2 (installer manages Python env inside) ----
       - name: Set up R
@@ -96,6 +98,8 @@ jobs:
           echo "LDFLAGS: $LDFLAGS"
           echo "NF_CONFIG: $NF_CONFIG"
           echo "NC_CONFIG: $NC_CONFIG"
+          echo "SYSTEM_PY_SITE: $SYSTEM_PY_SITE"
+          ls -la "$SYSTEM_PY_SITE" | head -n 50 || true
           gdalinfo --version || true
           nc-config --all || true
           nf-config --all || true
@@ -119,10 +123,14 @@ jobs:
           export GDAL_CONFIG="${GDAL_CONFIG}"
           export CFLAGS="${CFLAGS}"
           export LDFLAGS="${LDFLAGS}"
+          # CRITICAL: let the installer’s venv see system-installed python3-gdal (`osgeo`)
+          export PYTHONPATH="${SYSTEM_PY_SITE}:${PYTHONPATH:-}"
           ./symfluence --install --noninteractive
 
       - name: Validate install
         run: |
+          # Also ensure osgeo is importable post-install (in case installer swaps venv)
+          export PYTHONPATH="${SYSTEM_PY_SITE}:${PYTHONPATH:-}"
           ./symfluence --validate
 
       - name: Upload build logs and artifacts
