@@ -1,105 +1,182 @@
-name: Install & Validate (Heavy)
+name: SYMFLUENCE - Full Install & Validate
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * *"  # daily at 06:00 UTC
-
-permissions:
-  contents: read
-
-defaults:
-  run:
-    shell: bash
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch: {}
 
 jobs:
   install-validate:
-    # Only run this heavy workflow from main
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    env:
+      # Make these visible to child shells
+      TZ: UTC
+      CI: "1"
+      NONINTERACTIVE: "1"
+      # If your CLI respects SYMFLUENCE_DATA / CODE overrides, keep these
+      SYMFLUENCE_CODE: ${{ github.workspace }}
+      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          submodules: recursive
           fetch-depth: 0
 
-      - name: Free disk space
-        run: |
-          set -e
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/lib/jvm
-          sudo apt-get clean
-          docker image prune -af || true
-          df -h
-
-      # ---- System deps for compilers / netCDF / MPI + GDAL ----
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential gfortran cmake \
-            libnetcdf-dev libnetcdff-dev \
-            libopenmpi-dev openmpi-bin \
-            gdal-bin libgdal-dev python3-gdal \
-            pkg-config
-          # Expose GDAL headers and config for anything that compiles against GDAL
-          echo "CPLUS_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
-          echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
-          echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
-
-      # ---- R for rpy2 (your installer will handle python bindings within its venv) ----
-      - name: Set up R
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.3.3'
-
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install ccache
-        run: sudo apt-get install -y ccache
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('**/*') }}
-          restore-keys: |
-            ccache-${{ runner.os }}-
-
-      - name: Diagnostics (system GDAL)
+      - name: Python deps for the installer
         run: |
-          echo "GDAL_CONFIG: $GDAL_CONFIG"
-          gdalinfo --version || true
+          python -m pip install --upgrade "pip<24.1" wheel setuptools
+          # If your CLI/installer uses these (adjust as needed)
+          python -m pip install packaging
 
-      - name: Prepare workspace
+      # -------------------------------
+      # Core system build dependencies
+      # -------------------------------
+      - name: Install system build deps
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/SYMFLUENCE_data"
-          echo "SYMFLUENCE_DATA=$GITHUB_WORKSPACE/SYMFLUENCE_data" >> $GITHUB_ENV
-          echo "CI=1" >> $GITHUB_ENV
-          echo "NONINTERACTIVE=1" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gfortran cmake make pkg-config \
+            libnetcdf-dev libnetcdff-dev \
+            libhdf5-dev \
+            libudunits2-dev \
+            libsqlite3-dev \
+            libopenblas-dev liblapack-dev \
+            libgdal-dev libproj-dev \
+            curl ca-certificates
 
-      - name: Install binaries
+      # ----------------------------------------
+      # Env discovery for NetCDF / HDF5 / UDUNITS
+      # ----------------------------------------
+      - name: Configure compiler and library env
+        shell: bash
         run: |
-          set -euo pipefail
-          # If your installer consults GDAL_CONFIG, pass it explicitly as env just in case:
-          GDAL_CONFIG="$GDAL_CONFIG" ./symfluence --install --noninteractive
+          set -e
+          # Ensure pkg-config can see multiarch paths
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
 
-      - name: Validate install
+          # Prefer config tools for path discovery
+          echo "NETCDF=$(nc-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
+          echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
+
+          # HDF5 & UDUNITS2 prefixes (used by older Find modules)
+          echo "HDF5_ROOT=$(pkg-config --variable=prefix hdf5 2>/dev/null || echo /usr)" >> $GITHUB_ENV
+          echo "UDUNITS2_DIR=$(pkg-config --variable=prefix udunits2 2>/dev/null || echo /usr)" >> $GITHUB_ENV
+
+          # Helpful flags (harmless if unused)
+          echo "CFLAGS=$(nc-config --cflags 2>/dev/null || true)" >> $GITHUB_ENV
+          echo "FFLAGS=$(nf-config --fflags 2>/dev/null || true)" >> $GITHUB_ENV
+
+          # Library dirs for linkers that don't use pkg-config
+          NC_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
+          echo "LD_LIBRARY_PATH=${NC_LIBDIR}:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=${NC_LIBDIR}:${LIBRARY_PATH}" >> $GITHUB_ENV
+
+      # -----------------------------------------------------------------
+      # Compatibility shim: some legacy makefiles look in /usr/lib64
+      # On Ubuntu this doesn't exist; link it to the multiarch lib dir.
+      # This avoids touching your FUSE script and fixes the ld failure.
+      # -----------------------------------------------------------------
+      - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
         run: |
-          ./symfluence --validate
+          set -e
+          if [ ! -d /usr/lib64 ]; then
+            sudo mkdir -p /usr/lib64
+          fi
+          # Link common libs used by FUSE when it hardcodes -L/usr/lib64
+          for lib in hdf5 hdf5_hl netcdf netcdff; do
+            for so in /usr/lib/x86_64-linux-gnu/lib${lib}.so*; do
+              base=$(basename "$so")
+              if [ ! -e "/usr/lib64/${base}" ]; then
+                sudo ln -s "$so" "/usr/lib64/${base}" || true
+              fi
+            done
+          done
 
-      - name: Upload installer logs
-        if: always()
+      # --------------------
+      # Sanity prints (logs)
+      # --------------------
+      - name: Print discovery info
+        run: |
+          which nc-config || true
+          which nf-config || true
+          pkg-config --modversion hdf5 || true
+          pkg-config --modversion udunits2 || true
+          echo "nc-config --libs: $(nc-config --libs 2>/dev/null || echo 'N/A')"
+          echo "nf-config --flibs: $(nf-config --flibs 2>/dev/null || echo 'N/A')"
+          echo "pkg-config hdf5 libs: $(pkg-config --libs hdf5 2>/dev/null || echo 'N/A')"
+          echo "pkg-config udunits2 cflags: $(pkg-config --cflags udunits2 2>/dev/null || echo 'N/A')"
+
+      # -----------------------------------------
+      # (Optional) Pre-pin NumPy for ngen py build
+      # If your installer tries WITH_PYTHON first
+      # -----------------------------------------
+      - name: Pre-pin NumPy for ngen (optional)
+        run: |
+          python -m pip install "numpy<2" "setuptools<70" || true
+          python - <<'PY'
+          import numpy as np
+          print("NumPy in runner:", np.__version__)
+          PY
+
+      # --------------------------
+      # Run your full installation
+      # --------------------------
+      - name: Full install
+        shell: bash
+        env:
+          # Export useful hints for CMake-based projects (like ngen)
+          CMAKE_PREFIX_PATH: "${{ env.UDUNITS2_DIR }}:${{ env.HDF5_ROOT }}:${{ env.NETCDF }}:${{ env.NETCDF_FORTRAN }}"
+          UDUNITS2_DIR: "${{ env.UDUNITS2_DIR }}"
+          HDF5_ROOT: "${{ env.HDF5_ROOT }}"
+          NETCDF: "${{ env.NETCDF }}"
+          NETCDF_FORTRAN: "${{ env.NETCDF_FORTRAN }}"
+        run: |
+          set -e
+          echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
+          echo "SYMFLUENCE_DATA: ${SYMFLUENCE_DATA}"
+          mkdir -p "${SYMFLUENCE_DATA}"
+
+          # Your installer entry point; keep whatever you already use:
+          # Examples (choose the one your repo uses):
+          #   ./symfluence --install
+          #   python SYMFLUENCE.py --get_executables
+          #   python SYMFLUENCE.py --install_all
+          #
+          # From your logs, this appears to be the one running the sequence:
+          python SYMFLUENCE.py --get_executables
+
+      # ----------------
+      # Validate binaries
+      # ----------------
+      - name: Validate
+        shell: bash
+        run: |
+          set -e
+          # Your validator (as in your logs)
+          ./symfluence --validate || python SYMFLUENCE.py --validate_binaries
+
+      # --------------------------
+      # Upload logs on failure only
+      # --------------------------
+      - name: Upload build logs (on fail)
+      # Try to capture CMake and custom logs if anything blew up
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: install-logs
+          name: symfluence-build-logs
           path: |
             **/build/**/CMakeFiles/CMakeOutput.log
             **/build/**/CMakeFiles/CMakeError.log
-            **/logs/**/*
-          if-no-files-found: ignore
+            **/logs/**
+            **/*build*.log
+            **/cmake_build/**/*.log
+          if-no-files-found: warn
