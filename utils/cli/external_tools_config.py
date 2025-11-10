@@ -552,42 +552,38 @@ fi
             'build_commands': [
                 r'''
 set -e
-# Set MPI compilers, which are required.
-export CC=mpicc
-export CXX=mpicxx
-
 # --- DEFINITIVE FIX for Silent Linker Failure ---
-# The TauDEM CMakeLists.txt file fails to correctly link the MPI libraries
-# that it finds. The only reliable solution is to manually construct the
-# complete list of required libraries and force CMake to use it.
+# The root cause is a conflict between the mpicxx wrapper and CMake's internal
+# logic. The only reliable solution is to bypass the wrapper and provide
+# explicit, complete flags for the standard g++ compiler.
 
-# Get the linker flags for GDAL using the authoritative gdal-config tool.
-GDAL_LIBS=$(gdal-config --libs)
+# 1. Get the authoritative compiler flags (include paths) from the MPI and GDAL tools.
+FULL_CXX_FLAGS="$(mpicxx -showme:compile) $(gdal-config --cflags)"
 
-# Manually specify the MPI libraries. For the MPICH version installed on
-# the Ubuntu 22.04 runner, these are the correct libraries.
-MPI_LIBS="-lmpicxx -lmpich"
+# 2. Get the authoritative and complete linker flags from the MPI and GDAL tools.
+FULL_LINKER_FLAGS="$(mpicxx -showme:link) $(gdal-config --libs)"
 
-# Combine the flags into a single variable for the linker.
-FULL_LINKER_FLAGS="${MPI_LIBS} ${GDAL_LIBS}"
+echo "--- TauDEM Final Explicit Build Configuration ---"
+echo "Using raw g++ compiler to avoid wrapper conflicts."
+echo "Final CXX Flags: ${FULL_CXX_FLAGS}"
+echo "Final Linker Flags: ${FULL_LINKER_FLAGS}"
+echo "---------------------------------------------"
 
-echo "--- TauDEM Final Build Configuration ---"
-echo "Compiler: $(command -v ${CXX})"
-echo "Forcing Linker Flags: ${FULL_LINKER_FLAGS}"
-echo "------------------------------------"
-
-# Clean and configure the build, passing the explicit linker flags.
-# This ensures that every executable is linked against both MPI and GDAL.
+# 3. Clean and configure the build, telling CMake to use the standard g++
+#    compiler and providing it with the complete, explicit set of flags.
 rm -rf build && mkdir -p build && cd build
 cmake -S .. -B . \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="gcc" \
+  -DCMAKE_CXX_COMPILER="g++" \
+  -DCMAKE_CXX_FLAGS="${FULL_CXX_FLAGS}" \
   -DCMAKE_EXE_LINKER_FLAGS="${FULL_LINKER_FLAGS}"
 
-# Build SERIALLY to prevent any possible race conditions.
+# 4. Build SERIALLY to prevent any possible race conditions.
 echo "Building TauDEM serially..."
 cmake --build .
 
-# Stage the executables from the 'src' subdirectory.
+# 5. Stage the executables from the 'src' subdirectory.
 echo "Staging executables..."
 mkdir -p ../bin
 copied_count=0
@@ -598,7 +594,7 @@ for f in ./src/*; do
   fi
 done
 
-# Final verification. This step must pass for the build to be successful.
+# 6. Final verification. This must pass for the build to be successful.
 if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Successfully built and staged $copied_count TauDEM executables."
   ls -la ../bin/
