@@ -552,18 +552,33 @@ fi
             'build_commands': [
                 r'''
 set -e
-
-# TauDEM requires MPI compilers. Use mpicc/mpicxx if available.
+# Use MPI compilers, which TauDEM requires
 export CC="${CC:-mpicc}"
 export CXX="${CXX:-mpicxx}"
 
-# Define robust CMake arguments to prevent build issues on modern compilers.
-# - CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF: Explicitly disables Link-Time Optimization (LTO).
-# - CMAKE_C_FLAGS / CMAKE_CXX_FLAGS: Set a safe, standard optimization level.
-# - The SYMFLUENCE_CMAKE_ARGS allows passing extra flags from the CI environment.
-CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DCMAKE_C_FLAGS=-O2 -DCMAKE_CXX_FLAGS=-O2"
+# Ensure the gdal-config utility is available
+if ! command -v gdal-config >/dev/null 2>&1; then
+    echo "❌ gdal-config not found. Please ensure libgdal-dev is installed."
+    exit 1
+fi
 
-# Clean previous build artifacts and run CMake configuration and build
+# Explicitly set the C++ compiler flags and Linker flags using gdal-config.
+# CMake automatically respects these environment variables. This is the most
+# reliable way to ensure TauDEM links correctly against the system's GDAL library.
+# We also add -O2 for a standard optimization level.
+export CXXFLAGS="$(gdal-config --cflags) -O2"
+export LDFLAGS="$(gdal-config --libs)"
+
+# Define base CMake arguments, primarily to disable LTO.
+CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
+
+echo "--- TauDEM Build Environment ---"
+echo "CXX: $(command -v ${CXX} || echo 'not found')"
+echo "CXXFLAGS: ${CXXFLAGS}"
+echo "LDFLAGS: ${LDFLAGS}"
+echo "------------------------------"
+
+# Clean previous build and run the configuration and build steps
 echo "Configuring TauDEM with CMake arguments: ${CMAKE_ARGS} ${SYMFLUENCE_CMAKE_ARGS}"
 rm -rf build && mkdir -p build && cd build
 cmake $CMAKE_ARGS ${SYMFLUENCE_CMAKE_ARGS} -S .. -B .
@@ -571,26 +586,23 @@ cmake $CMAKE_ARGS ${SYMFLUENCE_CMAKE_ARGS} -S .. -B .
 echo "Building TauDEM..."
 cmake --build . -j "${NCORES:-4}"
 
-# Stage TauDEM executables to a local bin directory for verification
+# Stage the compiled executables
 mkdir -p ../bin
-
-# Portable way to copy any executable found in build/src to ../bin
 copied_count=0
 for f in ./src/*; do
-  # Check if it's a regular file and is executable
   if [ -f "$f" ] && [ -x "$f" ]; then
     cp -f "$f" ../bin/
     ((copied_count++))
   fi
 done
 
-# Verify that executables were staged successfully
+# Verify that the build was successful
 if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Staged $copied_count TauDEM executables to ../bin/"
   ls -la ../bin/ | head -10
 else
-  echo "❌ Executable staging failed."
-  echo "   Showing contents of the build directory's 'src' folder:"
+  echo "❌ Executable staging failed. Build likely failed."
+  echo "   Showing contents of the build 'src' directory:"
   ls -la ./src | head -20
   exit 1
 fi
