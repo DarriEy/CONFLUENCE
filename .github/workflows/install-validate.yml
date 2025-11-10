@@ -115,34 +115,17 @@ jobs:
 
 
 
-      # -----------------------------------------------------------------
-      # Compatibility shim: some legacy makefiles look in /usr/lib64
-      # -----------------------------------------------------------------
-      - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
+      - name: Disable distro LTO flags (match earlier working TauDEM build)
+        shell: bash
         run: |
           set -e
-          sudo mkdir -p /usr/lib64
+          # Disable Debian/Ubuntu’s default LTO in dpkg-buildflags consumers (like CMake toolchains)
+          echo "DEB_BUILD_MAINT_OPTIONS=optimize=-lto" >> $GITHUB_ENV
+          # Also pin “set” overrides so nothing re-injects LTO later
+          echo "DEB_CFLAGS_SET=-O2"       >> $GITHUB_ENV
+          echo "DEB_CXXFLAGS_SET=-O2"     >> $GITHUB_ENV
+          echo "DEB_LDFLAGS_SET="         >> $GITHUB_ENV
 
-          # Mirror NetCDF libs
-          for so in /usr/lib/x86_64-linux-gnu/libnetcdf.so* /usr/lib/x86_64-linux-gnu/libnetcdff.so*; do
-            [ -e "$so" ] || continue
-            base=$(basename "$so")
-            if [ ! -e "/usr/lib64/${base}" ]; then
-              sudo ln -s "$so" "/usr/lib64/${base}" || true
-            fi
-          done
-
-          # Mirror HDF5 libs (Ubuntu keeps them under hdf5/serial)
-          for so in /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so* \
-                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_hl.so* \
-                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_fortran.so* \
-                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so*; do
-            [ -e "$so" ] || continue
-            base=$(basename "$so")
-            if [ ! -e "/usr/lib64/${base}" ]; then
-              sudo ln -s "$so" "/usr/lib64/${base}" || true
-            fi
-          done
 
 
       # --------------------
@@ -178,10 +161,10 @@ jobs:
           FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
           FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
           FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
-          # MPI compilers for TauDEM
+          # MPI for TauDEM
           CC: mpicc
           CXX: mpicxx
-          # 🔧 Disable LTO globally to avoid TauDEM .ccwrap quoting bug
+          # Hard-disable LTO in case anything bypasses Debian flags
           CFLAGS: -fno-lto
           CXXFLAGS: -fno-lto
           LDFLAGS: -fno-lto
