@@ -552,28 +552,41 @@ fi
             'build_commands': [
                 r'''
 set -e
-# Set MPI compilers, which are required by TauDEM's CMake configuration.
+# Set MPI compilers, which are required.
 export CC=mpicc
 export CXX=mpicxx
 
-echo "--- TauDEM Build Configuration ---"
+# --- DEFINITIVE FIX for Silent Linker Errors ---
+# The root cause of the build failure is that CMake is not assembling the
+# correct linker flags for both MPI and GDAL. The most robust solution is to
+# query the tools directly for their flags and pass them explicitly.
+
+# Get the necessary C++ compiler flags (primarily for GDAL's include headers).
+FULL_CXX_FLAGS="$(gdal-config --cflags)"
+
+# Get the complete set of linker flags. This is the most critical step.
+# `mpicxx -showme:link` provides the exact set of MPI libraries and paths.
+# We combine this with the flags from `gdal-config --libs`.
+FULL_LINKER_FLAGS="$(mpicxx -showme:link) $(gdal-config --libs)"
+
+echo "--- TauDEM Explicit Build Configuration ---"
 echo "Compiler: $(command -v ${CXX})"
-echo "Relying on CMake's built-in find_package(GDAL) to locate dependencies."
-echo "---------------------------------"
+echo "Final CXX Flags: ${FULL_CXX_FLAGS}"
+echo "Final Linker Flags: ${FULL_LINKER_FLAGS}"
+echo "---------------------------------------"
 
-# Clean any previous attempts and configure the build in a pristine state.
-# This simple invocation allows CMake to correctly find all dependencies.
+# Clean and configure the build, passing the explicit flags to CMake.
 rm -rf build && mkdir -p build && cd build
-cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release
+cmake -S .. -B . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="${FULL_CXX_FLAGS}" \
+  -DCMAKE_EXE_LINKER_FLAGS="${FULL_LINKER_FLAGS}"
 
-# Build the software SERIALLY (no -j flag). This is the critical fix
-# to prevent race conditions caused by improperly defined dependencies
-# in TauDEM's build scripts.
-echo "Building TauDEM serially to ensure stability..."
+# Build SERIALLY to prevent any possible race conditions.
+echo "Building TauDEM serially..."
 cmake --build .
 
-# After a successful build, stage the executables to a standard bin directory.
-# CMake places the compiled binaries in the 'src' subdirectory of the build folder.
+# Stage the executables from the 'src' subdirectory.
 echo "Staging executables..."
 mkdir -p ../bin
 copied_count=0
@@ -584,12 +597,12 @@ for f in ./src/*; do
   fi
 done
 
-# Final verification to ensure the main executable was built and staged.
+# Final verification. This step must pass for the build to be successful.
 if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Successfully built and staged $copied_count TauDEM executables."
   ls -la ../bin/
 else
-  echo "❌ Staging failed. The build completed but no executables were found in ./src."
+  echo "❌ Staging failed. The build produced no executables." >&2
   exit 1
 fi
                 '''

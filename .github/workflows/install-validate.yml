@@ -280,3 +280,84 @@ jobs:
           assert isinstance(s, dict) and {'total_steps','step_details'}.issubset(s), s
           print("API status OK:", s['total_steps'], "steps")
           PY
+
+  step_tests:
+    needs: smoke-tests
+    runs-on: ubuntu-latest
+    env:
+      TZ: UTC
+      CI: "1"
+      NONINTERACTIVE: "1"
+      SYMFLUENCE_CODE: ${{ github.workspace }}
+      # Put CI working data outside the repo tree
+      SYMFLUENCE_DATA: ${{ github.workspace }}/.sym_data
+      DOMAIN: Bow_at_Banff
+      DOMAIN_DEF: delineate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # Reuse your existing install procedure; keep if not inherited from prior job
+      - name: Install SYMFLUENCE (wrapper)
+        run: |
+          set -e
+          chmod +x ./symfluence
+          ./symfluence --install
+
+      - name: Create CI config for Bow at Banff
+        run: |
+          set -e
+          mkdir -p 0_config_files "${SYMFLUENCE_DATA}"
+          cat > 0_config_files/config_ci_bow.yaml <<'YAML'
+          SYMFLUENCE_CODE_DIR: "${{ env.SYMFLUENCE_CODE }}"
+          SYMFLUENCE_DATA_DIR: "${{ env.SYMFLUENCE_DATA }}"
+          DOMAIN_NAME: "${{ env.DOMAIN }}"
+          DOMAIN_DEFINITION_METHOD: "${{ env.DOMAIN_DEF }}"
+          LOG_LEVEL: "INFO"
+          YAML
+
+      - name: Step 1 — setup_project (creates domain scaffolding)
+        run: |
+          set -e
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project
+
+      - name: Step 2 — copy repo data into created domain folder
+        run: |
+          set -e
+          SRC="./src/data/domain_${DOMAIN}"
+          DEST="${SYMFLUENCE_DATA}/domain_${DOMAIN}"
+          mkdir -p "${DEST}"
+          # Copy everything (shapefiles, any sidecars, etc.)
+          cp -a "${SRC}/." "${DEST}/"
+          echo "Copied data into ${DEST}"
+          ls -R "${DEST}" || true
+
+      - name: Step 3 — run define_domain using CLI
+        run: |
+          set -e
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --define_domain
+
+      - name: Assertions — river basins shapefile exists; logs exist
+        run: |
+          set -e
+          DOMAIN_DIR="${SYMFLUENCE_DATA}/domain_${DOMAIN}"
+          RIV_DIR="${DOMAIN_DIR}/shapefiles/river_basins"
+          # Expect a river basins shapefile (method suffix may vary; allow wildcard)
+          test -d "${RIV_DIR}"
+          ls "${RIV_DIR}/${DOMAIN}_riverBasins_"*.shp >/dev/null
+          # Also check that workflow logs are written in the standard location
+          ls "_workLog_${DOMAIN}" >/dev/null
+          echo "✅ Expected outputs present."
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: domain-define-minimal-logs
+          path: |
+            _workLog_${{ env.DOMAIN }}/**
+            ${{ env.SYMFLUENCE_DATA }}/domain_${{ env.DOMAIN }}/**/*
+          if-no-files-found: warn
