@@ -557,9 +557,9 @@ export CC=mpicc
 export CXX=mpicxx
 
 # --- DEFINITIVE FIX for Silent Linker Errors ---
-# The root cause of the build failure is that CMake is not assembling the
-# correct linker flags for both MPI and GDAL. The most robust solution is to
-# query the tools directly for their flags and pass them explicitly.
+# The root cause of the build failure is that CMake's automatic flag discovery
+# is conflicting with the MPI compiler wrappers. The most robust solution is to
+# manually construct the *entire* set of flags and pass them explicitly.
 
 # Get the necessary C++ compiler flags (primarily for GDAL's include headers).
 FULL_CXX_FLAGS="$(gdal-config --cflags)"
@@ -576,6 +576,8 @@ echo "Final Linker Flags: ${FULL_LINKER_FLAGS}"
 echo "---------------------------------------"
 
 # Clean and configure the build, passing the explicit flags to CMake.
+# This prevents CMake from making incorrect assumptions and ensures all
+# required libraries are included in the final link command.
 rm -rf build && mkdir -p build && cd build
 cmake -S .. -B . \
   -DCMAKE_BUILD_TYPE=Release \
