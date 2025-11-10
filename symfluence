@@ -31,32 +31,49 @@ fi
 print_error()   { echo -e "${RED}Error:${NC} $1" >&2; }
 print_warning() { echo -e "${YELLOW}Warning:${NC} $1" >&2; }
 print_info()    { echo -e "${BLUE}Info:${NC} $1"; }
-print_success() { echo -e "${GREEN}
+print_success() { echo -e "${GREEN}Success:${NC} $1"; }
 
 # ----------------------------------------------------------------------
 # Default path helpers (derive from current working directory)
 # ----------------------------------------------------------------------
 _is_placeholder_or_empty() {
-    local v="$1"
-    [[ -z "$v" || "$v" == "default" || "$v" == "DEFAULT" || "$v" == "/path" || "$v" == "/path/" || "$v" == "/path/to" || "$v" == "/path/to/" || "$v" == *"/path/to/"* ]]
+  # Return 0 (true) if empty or looks like a placeholder path
+  local v="${1:-}"
+  [[ -z "$v" || "$v" == "default" || "$v" == "DEFAULT" || \
+     "$v" == "/path" || "$v" == "/path/" || "$v" == "/path/to" || \
+     "$v" == "/path/to/" || "$v" == *"/path/to/"* || "$v" == */path/to/* ]]
 }
 
 set_default_symfluence_paths() {
-    local pwd_code_dir="$PWD"
-    local pwd_data_dir
-    pwd_data_dir="$(cd "$PWD/.." && pwd)/SYMFLUENCE_data"
-    mkdir -p "$pwd_data_dir"
+  # Be safe if script runs with `set -u`
+  : "${SYMFLUENCE_CODE_DIR:=}"
+  : "${SYMFLUENCE_DATA_DIR:=}"
 
-    if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR}"; then
-        export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
-        print_info "Set SYMFLUENCE_CODE_DIR to $SYMFLUENCE_CODE_DIR"
-    fi
-    if _is_placeholder_or_empty "${SYMFLUENCE_DATA_DIR}"; then
-        export SYMFLUENCE_DATA_DIR="$pwd_data_dir"
-        print_info "Set SYMFLUENCE_DATA_DIR to $SYMFLUENCE_DATA_DIR"
-    fi
+  # Prefer repo root if available; otherwise use PWD
+  local repo_root
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    :
+  else
+    repo_root="$PWD"
+  fi
+
+  # code dir = repo root; data dir = parent-of-repo/SYMFLUENCE_data
+  local pwd_code_dir="$repo_root"
+  local pwd_data_dir
+  pwd_data_dir="$(cd "$repo_root/.." && pwd)/SYMFLUENCE_data"
+
+  if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR}"; then
+    export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
+    { command -v print_info >/dev/null 2>&1 && print_info "Set SYMFLUENCE_CODE_DIR to $SYMFLUENCE_CODE_DIR"; } || echo "Set SYMFLUENCE_CODE_DIR to $SYMFLUENCE_CODE_DIR"
+  fi
+
+  if _is_placeholder_or_empty "${SYMFLUENCE_DATA_DIR}"; then
+    export SYMFLUENCE_DATA_DIR="$pwd_data_dir"
+    mkdir -p "$SYMFLUENCE_DATA_DIR"
+    { command -v print_info >/dev/null 2>&1 && print_info "Set SYMFLUENCE_DATA_DIR to $SYMFLUENCE_DATA_DIR"; } || echo "Set SYMFLUENCE_DATA_DIR to $SYMFLUENCE_DATA_DIR"
+  fi
 }
-Success:${NC} $1"; }
+
 
 # ----------------------------------------------------------------------
 # R / rpy2 environment helpers (enhanced)
