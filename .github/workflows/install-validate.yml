@@ -5,32 +5,18 @@ on:
   schedule:
     - cron: "0 6 * * *"  # daily at 06:00 UTC
 
-permissions:
-  contents: read
-
-defaults:
-  run:
-    shell: bash
-
 jobs:
   install-validate:
-    # Only run this heavy workflow from main
-    if: github.ref == 'refs/heads/main'
+    # Prefer a self-hosted runner if you have one to control toolchain
+    # runs-on: [self-hosted, linux, x64]
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
-          docker image prune -af || true
-
-      # ---- System deps for compilers / netCDF / MPI ----
+      # ---- System deps for compilers / netCDF / MPI (tune to what SUMMA/mizuRoute need) ----
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -40,7 +26,7 @@ jobs:
             libopenmpi-dev openmpi-bin \
             pkg-config
 
-      # ---- R for rpy2 ----
+      # ---- R for rpy2 if your pipeline touches it ----
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -55,14 +41,7 @@ jobs:
             requirements.txt
             pyproject.toml
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
-
+      # ---- Optional: ccache to speed repeated C/C++/Fortran builds ----
       - name: Install ccache
         run: sudo apt-get install -y ccache
 
@@ -74,12 +53,14 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
+      # ---- Python deps (pin to your repo’s needs) ----
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
           if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
           pip install -e .
 
+      # ---- Set up CI-friendly environment paths ----
       - name: Prepare workspace
         run: |
           mkdir -p "$GITHUB_WORKSPACE/SYMFLUENCE_data"
@@ -87,15 +68,18 @@ jobs:
           echo "CI=1" >> $GITHUB_ENV
           echo "NONINTERACTIVE=1" >> $GITHUB_ENV
 
+      # ---- Run the full installer (non-interactive) ----
       - name: Install binaries
         run: |
-          set -euo pipefail
+          set -e
           ./symfluence --install --noninteractive
 
+      # ---- Validate the install (your CLI flag) ----
       - name: Validate install
         run: |
           ./symfluence --validate
 
+      # ---- (Optional) artifact logs/binaries for debugging ----
       - name: Upload installer logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -106,3 +90,4 @@ jobs:
             **/build/**/CMakeFiles/CMakeError.log
             **/logs/**/*
           if-no-files-found: ignore
+
