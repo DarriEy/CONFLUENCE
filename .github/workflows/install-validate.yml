@@ -145,14 +145,8 @@ jobs:
           echo "SYMFLUENCE_DATA: ${SYMFLUENCE_DATA}"
           mkdir -p "${SYMFLUENCE_DATA}"
 
-          # Your installer entry point; keep whatever you already use:
-          # Examples (choose the one your repo uses):
-          #   ./symfluence --install
-          #   python SYMFLUENCE.py --get_executables
-          #   python SYMFLUENCE.py --install_all
-          #
           # From your logs, this appears to be the one running the sequence:
-          python SYMFLUENCE.py --get_executables
+          python symfluence.py --install
 
       # ----------------
       # Validate binaries
