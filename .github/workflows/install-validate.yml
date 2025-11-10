@@ -217,7 +217,7 @@ jobs:
             **/cmake_build/**/*.log
           if-no-files-found: warn
 
-jobs:
+
   smoke-tests:
     needs: install-validate
     runs-on: ubuntu-latest
