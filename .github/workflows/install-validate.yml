@@ -248,7 +248,7 @@ jobs:
         run: |
           set -e
           chmod +x ./symfluence
-          ./symfluence --validate
+          ./symfluence --validate_binaries
 
       # --------------------------
       # Upload logs on failure only
@@ -318,7 +318,7 @@ jobs:
           print("API status OK:", s['total_steps'], "steps")
           PY
 
-  step_tests:
+  step_tests:domain:
     needs: smoke-tests
     runs-on: ubuntu-latest
     env:
