@@ -11,11 +11,9 @@ jobs:
   install-validate:
     runs-on: ubuntu-latest
     env:
-      # Make these visible to child shells
       TZ: UTC
       CI: "1"
       NONINTERACTIVE: "1"
-      # If your CLI respects SYMFLUENCE_DATA / CODE overrides, keep these
       SYMFLUENCE_CODE: ${{ github.workspace }}
       SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data
 
@@ -25,17 +23,6 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Python deps for the installer
-        run: |
-          python -m pip install --upgrade "pip<24.1" wheel setuptools
-          # If your CLI/installer uses these (adjust as needed)
-          python -m pip install packaging
 
       # -------------------------------
       # Core system build dependencies
@@ -53,27 +40,23 @@ jobs:
             libgdal-dev libproj-dev \
             curl ca-certificates
 
-      # ----------------------------------------
-      # Env discovery for NetCDF / HDF5 / UDUNITS
-      # ----------------------------------------
+      # ------------------------------------------------
+      # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)
+      # ------------------------------------------------
       - name: Configure compiler and library env
         shell: bash
         run: |
           set -e
-          # Ensure pkg-config can see multiarch paths
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          # PKG_CONFIG for multiarch + generic paths
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
 
-          # Prefer config tools for path discovery
+          # Prefer config tools for path discovery; fall back to /usr
           echo "NETCDF=$(nc-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
           echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
 
-          # HDF5 & UDUNITS2 prefixes (used by older Find modules)
+          # HDF5 & UDUNITS2 prefixes (used by some Find scripts)
           echo "HDF5_ROOT=$(pkg-config --variable=prefix hdf5 2>/dev/null || echo /usr)" >> $GITHUB_ENV
           echo "UDUNITS2_DIR=$(pkg-config --variable=prefix udunits2 2>/dev/null || echo /usr)" >> $GITHUB_ENV
-
-          # Helpful flags (harmless if unused)
-          echo "CFLAGS=$(nc-config --cflags 2>/dev/null || true)" >> $GITHUB_ENV
-          echo "FFLAGS=$(nf-config --fflags 2>/dev/null || true)" >> $GITHUB_ENV
 
           # Library dirs for linkers that don't use pkg-config
           NC_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
@@ -82,8 +65,7 @@ jobs:
 
       # -----------------------------------------------------------------
       # Compatibility shim: some legacy makefiles look in /usr/lib64
-      # On Ubuntu this doesn't exist; link it to the multiarch lib dir.
-      # This avoids touching your FUSE script and fixes the ld failure.
+      # On Ubuntu this doesn't exist; link to the multiarch lib dir.
       # -----------------------------------------------------------------
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
         run: |
@@ -91,7 +73,6 @@ jobs:
           if [ ! -d /usr/lib64 ]; then
             sudo mkdir -p /usr/lib64
           fi
-          # Link common libs used by FUSE when it hardcodes -L/usr/lib64
           for lib in hdf5 hdf5_hl netcdf netcdff; do
             for so in /usr/lib/x86_64-linux-gnu/lib${lib}.so*; do
               base=$(basename "$so")
@@ -115,25 +96,13 @@ jobs:
           echo "pkg-config hdf5 libs: $(pkg-config --libs hdf5 2>/dev/null || echo 'N/A')"
           echo "pkg-config udunits2 cflags: $(pkg-config --cflags udunits2 2>/dev/null || echo 'N/A')"
 
-      # -----------------------------------------
-      # (Optional) Pre-pin NumPy for ngen py build
-      # If your installer tries WITH_PYTHON first
-      # -----------------------------------------
-      - name: Pre-pin NumPy for ngen (optional)
-        run: |
-          python -m pip install "numpy<2" "setuptools<70" || true
-          python - <<'PY'
-          import numpy as np
-          print("NumPy in runner:", np.__version__)
-          PY
-
       # --------------------------
       # Run your full installation
       # --------------------------
-      - name: Full install
+      - name: Full install (build venv + tools)
         shell: bash
         env:
-          # Export useful hints for CMake-based projects (like ngen)
+          # Hints for CMake-based sub-builds (e.g., ngen)
           CMAKE_PREFIX_PATH: "${{ env.UDUNITS2_DIR }}:${{ env.HDF5_ROOT }}:${{ env.NETCDF }}:${{ env.NETCDF_FORTRAN }}"
           UDUNITS2_DIR: "${{ env.UDUNITS2_DIR }}"
           HDF5_ROOT: "${{ env.HDF5_ROOT }}"
@@ -144,9 +113,9 @@ jobs:
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
           echo "SYMFLUENCE_DATA: ${SYMFLUENCE_DATA}"
           mkdir -p "${SYMFLUENCE_DATA}"
-
-          # From your logs, this appears to be the one running the sequence:
-          python symfluence.py --install
+          chmod +x ./symfluence
+          # Your repo’s installer handles venv creation + Python deps:
+          ./symfluence --install
 
       # ----------------
       # Validate binaries
@@ -155,14 +124,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Your validator (as in your logs)
-          ./symfluence --validate || python SYMFLUENCE.py --validate_binaries
+          chmod +x ./symfluence
+          ./symfluence --validate
 
       # --------------------------
       # Upload logs on failure only
       # --------------------------
       - name: Upload build logs (on fail)
-      # Try to capture CMake and custom logs if anything blew up
         if: failure()
         uses: actions/upload-artifact@v4
         with:
