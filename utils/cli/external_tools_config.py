@@ -552,41 +552,40 @@ fi
             'build_commands': [
                 r'''
 set -e
-# Use MPI compilers, which TauDEM requires
-export CC="${CC:-mpicc}"
-export CXX="${CXX:-mpicxx}"
+# Use MPI compilers, required by TauDEM
+export CC=mpicc
+export CXX=mpicxx
 
-# Ensure the gdal-config utility is available
-if ! command -v gdal-config >/dev/null 2>&1; then
-    echo "❌ gdal-config not found. Please ensure libgdal-dev is installed."
-    exit 1
-fi
+# TauDEM's CMake build system requires an explicit location for the GDAL headers and libraries.
+# The `gdal-config` utility provides the most reliable way to get these paths.
+GDAL_INCLUDE_DIR=$(gdal-config --cflags)
+GDAL_LIBRARY=$(gdal-config --libs)
 
-# Explicitly set the C++ compiler flags and Linker flags using gdal-config.
-export CXXFLAGS="$(gdal-config --cflags) -O2"
-export LDFLAGS="$(gdal-config --libs)"
+echo "--- TauDEM Build Configuration ---"
+echo "Compiler: $(command -v ${CXX})"
+echo "GDAL Include Flags: ${GDAL_INCLUDE_DIR}"
+echo "GDAL Library Flags: ${GDAL_LIBRARY}"
+echo "---------------------------------"
 
-# Define base CMake arguments, primarily to disable LTO.
-CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
-
-echo "--- TauDEM Build Environment ---"
-echo "CXX: $(command -v ${CXX} || echo 'not found')"
-echo "CXXFLAGS: ${CXXFLAGS}"
-echo "LDFLAGS: ${LDFLAGS}"
-echo "------------------------------"
-
-# Clean previous build and run the configuration and build steps
-echo "Configuring TauDEM..."
+# Clean any previous attempts and configure the build with CMake.
+# We pass the GDAL paths directly to ensure CMake finds them correctly.
 rm -rf build && mkdir -p build && cd build
-cmake $CMAKE_ARGS ${SYMFLUENCE_CMAKE_ARGS} -S .. -B .
+cmake -S .. -B . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="${GDAL_INCLUDE_DIR}" \
+  -DCMAKE_EXE_LINKER_FLAGS="${GDAL_LIBRARY}"
 
-echo "Building TauDEM..."
-cmake --build . -j "${NCORES:-4}"
+# --- CRITICAL FIX ---
+# Build the software SERIALLY (no -j flag). TauDEM's build scripts have
+# dependency issues that cause race conditions during parallel builds.
+# A serial build is slower but far more reliable.
+echo "Building TauDEM in serial to prevent race conditions..."
+cmake --build .
 
-# Stage the compiled executables from the correct subdirectory
+# After a successful build, stage the executables to a standard bin directory.
+# CMake places the compiled binaries in the 'src' subdirectory of the build folder.
 mkdir -p ../bin
 copied_count=0
-# CORRECTED PATH: Look inside the 'src' subdirectory where CMake places the executables.
 for f in ./src/*; do
   if [ -f "$f" ] && [ -x "$f" ]; then
     cp -f "$f" ../bin/
@@ -594,16 +593,12 @@ for f in ./src/*; do
   fi
 done
 
-# Verify that the build was successful
+# Final verification to ensure the main executable was built and staged.
 if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
-  echo "✅ Staged $copied_count TauDEM executables to ../bin/"
-  ls -la ../bin/ | head -10
+  echo "✅ Successfully built and staged $copied_count TauDEM executables."
+  ls -la ../bin/
 else
-  echo "❌ Executable staging failed. Could not find executables in the './src' directory."
-  echo "   Showing contents of the build directory:"
-  ls -la . | head -20
-  echo "   Showing contents of the build/src directory:"
-  ls -la ./src | head -20
+  echo "❌ Staging failed. The build appears to have failed silently."
   exit 1
 fi
                 '''
