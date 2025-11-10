@@ -175,13 +175,16 @@ jobs:
           NETCDF_DIR: "${{ env.NETCDF_DIR }}"
           NETCDF_LIBDIR: "${{ env.NETCDF_LIBDIR }}"
           NETCDF_INCLUDE: "${{ env.NETCDF_INCLUDE }}"
-          # FUSE build helpers (your wrapper can read these if present)
           FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
           FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
           FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
           # MPI compilers for TauDEM
           CC: mpicc
           CXX: mpicxx
+          # 🔧 Disable LTO globally to avoid TauDEM .ccwrap quoting bug
+          CFLAGS: -fno-lto
+          CXXFLAGS: -fno-lto
+          LDFLAGS: -fno-lto
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
@@ -189,6 +192,7 @@ jobs:
           mkdir -p "${SYMFLUENCE_DATA}"
           chmod +x ./symfluence
           ./symfluence --install
+
 
 
       # ----------------
