@@ -43,13 +43,13 @@ jobs:
             libopenmpi-dev openmpi-bin \
             gdal-bin libgdal-dev python3-gdal \
             pkg-config
-          # Expose GDAL headers for any native builds
+          # Expose GDAL headers and config for anything that compiles against GDAL
           echo "CPLUS_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
           echo "C_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
-          # Record system GDAL version for pip pin
+          echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
           echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
 
-      # ---- R for rpy2 ----
+      # ---- R for rpy2 (your installer will handle python bindings within its venv) ----
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -59,7 +59,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # (no pip cache; we use --no-cache-dir in installs)
 
       - name: Install ccache
         run: sudo apt-get install -y ccache
@@ -72,32 +71,10 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      # ---- Install deps with CPU-only torch first, then GDAL pinned, then the rest ----
-      - name: Install Python deps (CPU torch + GDAL pinned)
+      - name: Diagnostics (system GDAL)
         run: |
-          python -m pip install --upgrade pip
-          # 1) CPU-only torch to avoid CUDA wheels
-          pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
-          # 2) GDAL Python bindings matching system GDAL (provides `osgeo`)
-          pip install --no-cache-dir "GDAL==${GDAL_VERSION}.*"
-          # 3) The rest of your deps and the package
-          if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; fi
-          pip install --no-cache-dir -e .
-
-      - name: Diagnostics (GDAL & Python)
-        run: |
-          python -c "import sys; print('Python:', sys.version)"
+          echo "GDAL_CONFIG: $GDAL_CONFIG"
           gdalinfo --version || true
-          python - <<'PY'
-          import os, importlib
-          try:
-              import osgeo, osgeo.gdal as g
-              print('GDAL Python VersionInfo:', g.VersionInfo())
-              print('osgeo module path:', osgeo.__file__)
-          except Exception as e:
-              print('osgeo import failed:', e)
-              raise
-          PY
 
       - name: Prepare workspace
         run: |
@@ -109,7 +86,8 @@ jobs:
       - name: Install binaries
         run: |
           set -euo pipefail
-          ./symfluence --install --noninteractive
+          # If your installer consults GDAL_CONFIG, pass it explicitly as env just in case:
+          GDAL_CONFIG="$GDAL_CONFIG" ./symfluence --install --noninteractive
 
       - name: Validate install
         run: |
