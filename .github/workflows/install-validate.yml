@@ -9,6 +9,7 @@ on:
 
 jobs:
   install-validate:
+    # Use the stable Ubuntu 22.04 runner
     runs-on: ubuntu-22.04
     env:
       TZ: UTC
@@ -27,19 +28,17 @@ jobs:
       # -------------------------------
       # Core system build dependencies
       # -------------------------------
-      - name: Install system build deps
+      - name: Install system build deps with stable PPA
         run: |
           set -e
-          # Add the UbuntuGIS PPA to get a stable, compatible suite of geospatial libraries
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:ubuntugis/ppa
           sudo apt-get update
           
-          # Now install all dependencies.
-          # The GDAL and other related packages will now be pulled from the stable PPA.
+          # Install all dependencies.
           sudo apt-get install -y \
-            build-essential gfortran cmake make pkg-config \
+            build-essential gfortran cmake make \
             libnetcdf-dev libnetcdff-dev \
             libhdf5-dev hdf5-tools \
             libudunits2-dev \
