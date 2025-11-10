@@ -540,7 +540,7 @@ fi
         # ================================================================
         # TauDEM - Terrain Analysis
         # ================================================================
-        'taudem': {
+            'taudem': {
             'description': 'Terrain Analysis Using Digital Elevation Models',
             'config_path_key': 'TAUDEM_INSTALL_PATH',
             'config_exe_key': 'TAUDEM_EXE',
@@ -551,83 +551,49 @@ fi
             'install_dir': 'TauDEM',
             'build_commands': [
                 r'''
-
 set -e
 
-# --- create tiny compiler shims that fix the bad token if it shows up ---
-WRAPDIR="$(pwd)/.ccwrap"; mkdir -p "$WRAPDIR"
+# TauDEM requires MPI compilers. Use mpicc/mpicxx if available.
+export CC="${CC:-mpicc}"
+export CXX="${CXX:-mpicxx}"
 
-REAL_GCC="$(command -v gcc)"
-REAL_GXX="$(command -v g++)"
+# Define robust CMake arguments to prevent build issues on modern compilers.
+# - CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF: Explicitly disables Link-Time Optimization (LTO).
+# - CMAKE_C_FLAGS / CMAKE_CXX_FLAGS: Set a safe, standard optimization level.
+# - The SYMFLUENCE_CMAKE_ARGS allows passing extra flags from the CI environment.
+CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DCMAKE_C_FLAGS=-O2 -DCMAKE_CXX_FLAGS=-O2"
 
-# g++ wrapper
-cat > "$WRAPDIR/g++" <<'EOF'
-#!/usr/bin/env bash
-# Split a single, quoted token "-fexceptions -pthread" into two args.
-fixed=()
-for arg in "$@"; do
-  if [ "$arg" = "-fexceptions -pthread" ]; then
-    fixed+=("-fexceptions" "-pthread")
-  else
-    fixed+=("$arg")
-  fi
-done
-# Use the real compiler path baked in at creation time:
-exec "__REAL_GXX__" "${fixed[@]}"
-EOF
-sed -i.bak "s|__REAL_GXX__|$REAL_GXX|g" "$WRAPDIR/g++"
-chmod +x "$WRAPDIR/g++"
-
-# gcc wrapper (just in case C codepaths see it too)
-cat > "$WRAPDIR/gcc" <<'EOF'
-#!/usr/bin/env bash
-fixed=()
-for arg in "$@"; do
-  if [ "$arg" = "-fexceptions -pthread" ]; then
-    fixed+=("-fexceptions" "-pthread")
-  else
-    fixed+=("$arg")
-  fi
-done
-exec "__REAL_GCC__" "${fixed[@]}"
-EOF
-sed -i.bak "s|__REAL_GCC__|$REAL_GCC|g" "$WRAPDIR/gcc"
-chmod +x "$WRAPDIR/gcc"
-
-# --- configure & build with the wrappers ---
-export CC="$WRAPDIR/gcc"
-export CXX="$WRAPDIR/g++"
-
+# Clean previous build artifacts and run CMake configuration and build
+echo "Configuring TauDEM with CMake arguments: ${CMAKE_ARGS} ${SYMFLUENCE_CMAKE_ARGS}"
 rm -rf build && mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release -S .. -B .
-cmake --build . -j ${NCORES:-4}
+cmake $CMAKE_ARGS ${SYMFLUENCE_CMAKE_ARGS} -S .. -B .
 
-# stage TauDEM executables
+echo "Building TauDEM..."
+cmake --build . -j "${NCORES:-4}"
+
+# Stage TauDEM executables to a local bin directory for verification
 mkdir -p ../bin
 
-# Portable: copy any executable from build/src to ../bin (works on macOS & Linux)
+# Portable way to copy any executable found in build/src to ../bin
+copied_count=0
 for f in ./src/*; do
-  [ -f "$f" ] || continue
-  if [ -x "$f" ]; then
+  # Check if it's a regular file and is executable
+  if [ -f "$f" ] && [ -x "$f" ]; then
     cp -f "$f" ../bin/
+    ((copied_count++))
   fi
 done
 
-# Ensure executables
-if ls ../bin/* >/dev/null 2>&1; then
-  chmod +x ../bin/* 2>/dev/null || true
-fi
-
-# Verify canonical binary
-if [ -x "../bin/pitremove" ] || [ -f "../bin/pitremove" ]; then
-  echo "✅ Staged TauDEM executables to ../bin/"
-  ls -la ../bin/ | head -50
+# Verify that executables were staged successfully
+if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
+  echo "✅ Staged $copied_count TauDEM executables to ../bin/"
+  ls -la ../bin/ | head -10
 else
-  echo "❌ Executable staging failed; showing build/src contents:"
-  ls -la ./src | head -100
+  echo "❌ Executable staging failed."
+  echo "   Showing contents of the build directory's 'src' folder:"
+  ls -la ./src | head -20
   exit 1
 fi
-
                 '''
             ],
             'dependencies': [],
