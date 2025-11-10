@@ -226,7 +226,6 @@ jobs:
       - name: Full install (build venv + tools)
         shell: bash
         env:
-          …
           # Use wrappers that strip LTO flags
           CC:  "${{ env.TAUDEM_CC }}"
           CXX: "${{ env.TAUDEM_CXX }}"
