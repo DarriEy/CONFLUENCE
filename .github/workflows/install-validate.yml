@@ -30,7 +30,14 @@ jobs:
       - name: Install system build deps
         run: |
           set -e
+          # Add the UbuntuGIS PPA to get a stable, compatible suite of geospatial libraries
           sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:ubuntugis/ppa
+          sudo apt-get update
+          
+          # Now install all dependencies.
+          # The GDAL and other related packages will now be pulled from the stable PPA.
           sudo apt-get install -y \
             build-essential gfortran cmake make pkg-config \
             libnetcdf-dev libnetcdff-dev \
