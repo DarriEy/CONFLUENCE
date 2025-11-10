@@ -23,21 +23,13 @@ jobs:
             pyproject.toml
             docs/requirements.txt
 
-      - name: Install deps
+      - name: Install deps (docs only)
         run: |
           python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
           if [ -f "docs/requirements.txt" ]; then pip install -r docs/requirements.txt; fi
-          if [ -f "pyproject.toml" ]; then pip install ".[docs]" || true; fi
-          # Fallback core if still missing:
-          python - <<'PY'
-          import importlib.util, sys, subprocess
-          def has(m): return importlib.util.find_spec(m) is not None
-          needed = ['sphinx']
-          for pkg in needed:
-              if not has(pkg):
-                  subprocess.check_call([sys.executable,'-m','pip','install',pkg])
-          PY
+          # Install the package but skip pulling runtime deps (avoids rpy2)
+          pip install -e . --no-deps
+
 
       - name: Build Sphinx
         run: |
