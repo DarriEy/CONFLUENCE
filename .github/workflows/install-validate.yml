@@ -172,77 +172,41 @@ jobs:
             [ -e "/usr/lib64/${base}" ] || sudo ln -s "$so" "/usr/lib64/${base}" || true
           done
 
-
-      - name: Create CC/CXX wrappers to strip LTO flags (for TauDEM)
-        shell: bash
-        run: |
-          set -e
-          WRAPDIR="${RUNNER_TEMP:-/tmp}/ccwrap"
-          mkdir -p "$WRAPDIR"
-
-          REAL_MPICC="$(command -v mpicc)"
-          REAL_MPICXX="$(command -v mpicxx)"
-
-          cat > "$WRAPDIR/cc.sh" <<'EOF'
-          #!/usr/bin/env bash
-          real="${REAL_MPICC}"
-          fixed=()
-          for a in "$@"; do
-            case "$a" in
-              -flto=*|-ffat-lto-objects) ;;  # drop LTO args
-              *) fixed+=("$a") ;;
-            esac
-          done
-          exec "$real" "${fixed[@]}"
-          EOF
-
-              cat > "$WRAPDIR/cxx.sh" <<'EOF'
-          #!/usr/bin/env bash
-          real="${REAL_MPICXX}"
-          fixed=()
-          for a in "$@"; do
-            case "$a" in
-              -flto=*|-ffat-lto-objects) ;;  # drop LTO args
-              *) fixed+=("$a") ;;
-            esac
-          done
-          exec "$real" "${fixed[@]}"
-          EOF
-
-              # bake real compiler paths into the scripts
-              sed -i "s|REAL_MPICC|$REAL_MPICC|g" "$WRAPDIR/cc.sh"
-              sed -i "s|REAL_MPICXX|$REAL_MPICXX|g" "$WRAPDIR/cxx.sh"
-
-              chmod +x "$WRAPDIR"/cc.sh "$WRAPDIR"/cxx.sh
-
-              # expose for later steps
-              echo "TAUDEM_CC=$WRAPDIR/cc.sh"   >> "$GITHUB_ENV"
-              echo "TAUDEM_CXX=$WRAPDIR/cxx.sh" >> "$GITHUB_ENV"
-
-
       # --------------------------
       # Run your full installation
       # --------------------------
       - name: Full install (build venv + tools)
         shell: bash
         env:
-          # Use wrappers that strip LTO flags
-          CC:  "${{ env.TAUDEM_CC }}"
-          CXX: "${{ env.TAUDEM_CXX }}"
-          # Nuke inherited flags & keep CMake clean
+          # Explicitly set MPI compilers for the build script
+          CC: mpicc
+          CXX: mpicxx
+
+          # Clear out any potentially harmful inherited flags from the environment
           CFLAGS: ""
           CXXFLAGS: ""
+          FFLAGS: ""
           LDFLAGS: ""
-          CMAKE_C_FLAGS: "-O2"
-          CMAKE_CXX_FLAGS: "-O2"
-          CMAKE_INTERPROCEDURAL_OPTIMIZATION: "OFF"
+
+          # Define robust CMake flags to disable LTO and set a safe optimization level.
+          # These will be passed to the symfluence install script.
+          # This is often more reliable than relying on environment variables alone.
+          SYMFLUENCE_CMAKE_ARGS: >-
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
+            -DCMAKE_C_FLAGS="-O2"
+            -DCMAKE_CXX_FLAGS="-O2"
 
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
           echo "SYMFLUENCE_DATA: ${SYMFLUENCE_DATA}"
           mkdir -p "${SYMFLUENCE_DATA}"
+          
+          # Ensure the installer script is executable
           chmod +x ./symfluence
+          
+          # Run the installation. The symfluence script must be able to pick up
+          # the SYMFLUENCE_CMAKE_ARGS environment variable and pass it to its CMake calls.
           ./symfluence --install
 
 
