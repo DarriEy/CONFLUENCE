@@ -33,23 +33,33 @@ jobs:
           docker image prune -af || true
           df -h
 
-      # ---- System deps for compilers / netCDF / MPI + GDAL ----
+      # ---- System deps for compilers / netCDF / MPI + GDAL + NGEN toolchain ----
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential gfortran cmake \
-            libnetcdf-dev libnetcdff-dev \
+            build-essential gfortran cmake ninja-build \
+            libnetcdf-dev libnetcdff-dev netcdf-bin \
+            libhdf5-openmpi-dev \
             libopenmpi-dev openmpi-bin \
             gdal-bin libgdal-dev python3-gdal \
+            libeigen3-dev libboost-all-dev \
+            libprotobuf-dev protobuf-compiler \
+            libfmt-dev libspdlog-dev \
             pkg-config
-          # Expose GDAL headers and config for anything that compiles against GDAL
-          echo "CPLUS_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
+          # Make pkg-configs and headers easy to find
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "CPLUS_INCLUDE_PATH=/usr/include/gdal:/usr/include:${CPLUS_INCLUDE_PATH}" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=/usr/include/gdal:/usr/include:${C_INCLUDE_PATH}" >> $GITHUB_ENV
+          # Helpful discovery variables
           echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
-          echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
+          echo "NF_CONFIG=$(command -v nf-config || true)" >> $GITHUB_ENV
+          echo "NC_CONFIG=$(command -v nc-config || true)" >> $GITHUB_ENV
+          echo "HDF5_ROOT=/usr" >> $GITHUB_ENV
+          echo "NETCDF_FORTRAN=/usr" >> $GITHUB_ENV
+          echo "NETCDF=/usr" >> $GITHUB_ENV
 
-      # ---- R for rpy2 (your installer will handle python bindings within its venv) ----
+      # ---- R for rpy2 (installer manages Python env inside) ----
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -71,10 +81,14 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      - name: Diagnostics (system GDAL)
+      - name: Diagnostics (system GDAL / NetCDF / HDF5)
         run: |
           echo "GDAL_CONFIG: $GDAL_CONFIG"
+          echo "NF_CONFIG: $NF_CONFIG"
+          echo "NC_CONFIG: $NC_CONFIG"
           gdalinfo --version || true
+          nc-config --all || true
+          nf-config --all || true
 
       - name: Prepare workspace
         run: |
@@ -86,20 +100,29 @@ jobs:
       - name: Install binaries
         run: |
           set -euo pipefail
-          # If your installer consults GDAL_CONFIG, pass it explicitly as env just in case:
+          # Ensure discovery vars are available to the installer
+          export HDF5_ROOT="${HDF5_ROOT:-/usr}"
+          export NETCDF_FORTRAN="${NETCDF_FORTRAN:-/usr}"
+          export NETCDF="${NETCDF:-/usr}"
+          export NF_CONFIG="${NF_CONFIG:-$(command -v nf-config || true)}"
+          export NC_CONFIG="${NC_CONFIG:-$(command -v nc-config || true)}"
           GDAL_CONFIG="$GDAL_CONFIG" ./symfluence --install --noninteractive
 
       - name: Validate install
         run: |
           ./symfluence --validate
 
-      - name: Upload installer logs
+      - name: Upload build logs and artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: install-logs
           path: |
-            **/build/**/CMakeFiles/CMakeOutput.log
-            **/build/**/CMakeFiles/CMakeError.log
-            **/logs/**/*
-          if-no-files-found: ignore
+            **/CMakeFiles/CMakeOutput.log
+            **/CMakeFiles/CMakeError.log
+            **/*build*/**/*.log
+            **/logs/**/*.log
+            **/install*/**/*.log
+            **/fuse*/**/*.log
+            **/ngen*/**/*.log
+          if-no-files-found: warn
