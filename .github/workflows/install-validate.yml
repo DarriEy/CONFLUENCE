@@ -33,7 +33,7 @@ jobs:
           docker image prune -af || true
           df -h
 
-      # ---- System deps for compilers / netCDF / MPI ----
+      # ---- System deps for compilers / netCDF / MPI + GDAL ----
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -41,7 +41,13 @@ jobs:
             build-essential gfortran cmake \
             libnetcdf-dev libnetcdff-dev \
             libopenmpi-dev openmpi-bin \
+            gdal-bin libgdal-dev python3-gdal \
             pkg-config
+          # Expose GDAL headers for any native builds
+          echo "CPLUS_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=/usr/include/gdal" >> $GITHUB_ENV
+          # Record system GDAL version for pip pin
+          echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
 
       # ---- R for rpy2 ----
       - name: Set up R
@@ -53,11 +59,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # remove pip caching to avoid conflict with no-cache installs
-          # cache: 'pip'
-          # cache-dependency-path: |
-          #   requirements.txt
-          #   pyproject.toml
+          # (no pip cache; we use --no-cache-dir in installs)
 
       - name: Install ccache
         run: sudo apt-get install -y ccache
@@ -70,15 +72,32 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      # ---- Install deps with CPU-only torch first to avoid CUDA wheels ----
-      - name: Install Python deps (CPU torch first, no cache)
+      # ---- Install deps with CPU-only torch first, then GDAL pinned, then the rest ----
+      - name: Install Python deps (CPU torch + GDAL pinned)
         run: |
           python -m pip install --upgrade pip
-          # CPU-only torch to prevent huge CUDA deps
+          # 1) CPU-only torch to avoid CUDA wheels
           pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
-          # Now the rest
+          # 2) GDAL Python bindings matching system GDAL (provides `osgeo`)
+          pip install --no-cache-dir "GDAL==${GDAL_VERSION}.*"
+          # 3) The rest of your deps and the package
           if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; fi
           pip install --no-cache-dir -e .
+
+      - name: Diagnostics (GDAL & Python)
+        run: |
+          python -c "import sys; print('Python:', sys.version)"
+          gdalinfo --version || true
+          python - <<'PY'
+          import os, importlib
+          try:
+              import osgeo, osgeo.gdal as g
+              print('GDAL Python VersionInfo:', g.VersionInfo())
+              print('osgeo module path:', osgeo.__file__)
+          except Exception as e:
+              print('osgeo import failed:', e)
+              raise
+          PY
 
       - name: Prepare workspace
         run: |
