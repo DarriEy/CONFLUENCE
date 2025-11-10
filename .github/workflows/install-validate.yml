@@ -9,7 +9,7 @@ on:
 
 jobs:
   install-validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       TZ: UTC
       CI: "1"
