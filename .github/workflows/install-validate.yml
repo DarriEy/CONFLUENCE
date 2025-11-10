@@ -14,7 +14,6 @@ jobs:
       TZ: UTC
       CI: "1"
       NONINTERACTIVE: "1"
-    env:
       SYMFLUENCE_CODE: ${{ github.workspace }}/SYMFLUENCE
       SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data
 
