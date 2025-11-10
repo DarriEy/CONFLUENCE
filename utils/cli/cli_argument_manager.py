@@ -1322,7 +1322,11 @@ For more information, visit: https://github.com/DarriEy/SYMFLUENCE
         if failed_count > 0:
             print(f"\n🔧 Failed tools may need rebuilding or dependency installation")
 
-        return validation_results
+        # Return True when all binaries are valid, otherwise the full results
+        if len(validation_results['missing_tools']) == 0 and len(validation_results['failed_tools']) == 0:
+            return True
+        else:
+            return validation_results
 
     
     def _check_dependencies(self, dependencies: List[str]) -> List[str]:

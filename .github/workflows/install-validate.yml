@@ -243,28 +243,12 @@ jobs:
       # ----------------
       # Validate binaries
       # ----------------
-      - name: Validate (tolerant)
+      - name: Validate
         shell: bash
         run: |
-          set +e  # allow the validator to exit non-zero without killing the step
-          ./symfluence --validate_binaries | tee _validate.log
-          rc=$?
-
-          echo "Validator exit code: $rc"
-          echo "---- Summary lines ----"
-          grep -E "Binary Validation Summary|Valid:|Missing:|Failed:" _validate.log || true
-
-          # Pass if the summary says all valid and no missing/failed
-          if grep -q "Valid: 9/9" _validate.log && \
-            grep -q "Missing: 0/9" _validate.log && \
-            grep -q "Failed: 0/9" _validate.log; then
-            echo "✅ All binaries validated; normalizing exit to 0"
-            exit 0
-          fi
-
-          # Otherwise, return the original code
-          exit "$rc"
-
+          set -e
+          chmod +x ./symfluence
+          ./symfluence --validate_binaries
 
       # --------------------------
       # Upload logs on failure only
