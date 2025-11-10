@@ -33,29 +33,55 @@ jobs:
     # -------------------------------
     # Core system build dependencies
     # -------------------------------
-      - name: Install system build deps with stable PPA
+      - name: Install system build deps
         run: |
           set -e
           sudo apt-get update
-          sudo apt-get install -y software-properties-common
+
+          # ------------------------------------------------------------------
+          # Enable UbuntuGIS Stable PPA for consistent GDAL/PROJ versions
+          # (GDAL 3.6+ on 22.04, or 3.8+ on 24.04)
+          # ------------------------------------------------------------------
           sudo add-apt-repository -y ppa:ubuntugis/ppa
           sudo apt-get update
-          
-          # Install all dependencies.
-          # CRITICAL FIX: `pkg-config` has been removed from this list to resolve the
-          # conflict with `pkgconf`, which is a dependency from the PPA.
+
+          # ------------------------------------------------------------------
+          # Core compilation and parallel libraries
+          # ------------------------------------------------------------------
           sudo apt-get install -y \
-            build-essential gfortran cmake make \
+            build-essential gfortran cmake make pkg-config \
+            ninja-build autoconf automake libtool \
+            git wget curl unzip tar
+
+          # ------------------------------------------------------------------
+          # OpenMPI stack (choose ONE MPI implementation)
+          # ------------------------------------------------------------------
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev
+
+          # ------------------------------------------------------------------
+          # GDAL / PROJ / NetCDF / HDF5 (via UbuntuGIS Stable)
+          # ------------------------------------------------------------------
+          sudo apt-get install -y \
+            gdal-bin libgdal-dev libproj-dev \
             libnetcdf-dev libnetcdff-dev \
             libhdf5-dev hdf5-tools \
-            libudunits2-dev \
-            libsqlite3-dev \
-            libopenblas-dev liblapack-dev \
-            libgdal-dev libproj-dev gdal-bin \
-            libgsl-dev libmetis-dev \
-            curl ca-certificates \
-            r-base r-base-dev \
-            mpich libmpich-dev
+            libudunits2-dev
+
+          # ------------------------------------------------------------------
+          # Python bindings and CMake helpers (optional but useful for tools)
+          # ------------------------------------------------------------------
+          sudo apt-get install -y \
+            python3-dev python3-pip python3-numpy python3-gdal
+
+          # ------------------------------------------------------------------
+          # Sanity checks for MPI and GDAL
+          # ------------------------------------------------------------------
+          mpicc --version
+          mpirun --version
+          gdal-config --version
+          echo "✅ System dependencies installed successfully"
+
 
       # ------------------------------------------------
       # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)

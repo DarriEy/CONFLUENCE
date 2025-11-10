@@ -552,54 +552,40 @@ fi
             'build_commands': [
                 r'''
 set -e
-# --- DEFINITIVE FIX for Silent Linker Failure ---
-# The root cause is a conflict between the mpicxx wrapper and CMake's internal
-# logic. The only reliable solution is to bypass the wrapper and provide
-# explicit, complete flags for the standard g++ compiler.
 
-# 1. Get the authoritative compiler flags (include paths) from the MPI and GDAL tools.
-FULL_CXX_FLAGS="$(mpicxx -showme:compile) $(gdal-config --cflags)"
+# Use OpenMPI compiler wrappers so CMake/FindMPI can auto-detect everything
+export CC=mpicc
+export CXX=mpicxx
 
-# 2. Get the authoritative and complete linker flags from the MPI and GDAL tools.
-FULL_LINKER_FLAGS="$(mpicxx -showme:link) $(gdal-config --libs)"
+# Clean build
+rm -rf build && mkdir -p build
+cd build
 
-echo "--- TauDEM Final Explicit Build Configuration ---"
-echo "Using raw g++ compiler to avoid wrapper conflicts."
-echo "Final CXX Flags: ${FULL_CXX_FLAGS}"
-echo "Final Linker Flags: ${FULL_LINKER_FLAGS}"
-echo "---------------------------------------------"
+# Let CMake find MPI and GDAL on its own (no manual linker flags)
+cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release
 
-# 3. Clean and configure the build, telling CMake to use the standard g++
-#    compiler and providing it with the complete, explicit set of flags.
-rm -rf build && mkdir -p build && cd build
-cmake -S .. -B . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER="gcc" \
-  -DCMAKE_CXX_COMPILER="g++" \
-  -DCMAKE_CXX_FLAGS="${FULL_CXX_FLAGS}" \
-  -DCMAKE_EXE_LINKER_FLAGS="${FULL_LINKER_FLAGS}"
+# Build (TauDEM targets live under src/)
+cmake --build . -j 2
 
-# 4. Build SERIALLY to prevent any possible race conditions.
-echo "Building TauDEM serially..."
-cmake --build .
-
-# 5. Stage the executables from the 'src' subdirectory.
+# Stage executables
 echo "Staging executables..."
 mkdir -p ../bin
-copied_count=0
-for f in ./src/*; do
-  if [ -f "$f" ] && [ -x "$f" ]; then
-    cp -f "$f" ../bin/
-    ((copied_count++))
-  fi
+copied=0
+for exe in pitremove d8flowdir d8converge dinfconverge dinfflowdir aread8 areadinf threshold streamnet slopearea gridnet peukerdouglas lengtharea; do
+  if [ -x "./src/${exe}" ]; then cp -f "./src/${exe}" ../bin/ && copied=$((copied+1)); fi
 done
+if [ "$copied" -eq 0 ]; then
+  for f in ./src/*; do
+    if [ -f "$f" ] && [ -x "$f" ]; then cp -f "$f" ../bin/ && copied=$((copied+1)); fi
+  done
+fi
 
-# 6. Final verification. This must pass for the build to be successful.
-if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
-  echo "✅ Successfully built and staged $copied_count TauDEM executables."
+# Sanity check
+if [ "$copied" -gt 0 ] && [ -x "../bin/pitremove" ]; then
+  echo "✅ TauDEM executables staged:"
   ls -la ../bin/
 else
-  echo "❌ Staging failed. The build produced no executables." >&2
+  echo "❌ TauDEM build/stage failed: pitremove not found" >&2
   exit 1
 fi
                 '''
