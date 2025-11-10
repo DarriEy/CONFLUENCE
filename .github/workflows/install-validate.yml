@@ -33,42 +33,17 @@ jobs:
           docker image prune -af || true
           df -h
 
-      # ---- System deps for compilers / netCDF / MPI + GDAL + NGEN toolchain ----
+      # ---- System deps for compilers / netCDF / MPI ----
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential gfortran cmake ninja-build \
-            python3-dev \
-            libnetcdf-dev libnetcdff-dev netcdf-bin \
-            libhdf5-openmpi-dev \
+            build-essential gfortran cmake \
+            libnetcdf-dev libnetcdff-dev \
             libopenmpi-dev openmpi-bin \
-            gdal-bin libgdal-dev python3-gdal \
-            libproj-dev proj-bin libgeos-dev \
-            libeigen3-dev libboost-all-dev \
-            libprotobuf-dev protobuf-compiler \
-            libfmt-dev libspdlog-dev \
-            libcurl4-openssl-dev zlib1g-dev \
             pkg-config
-          # Make pkg-configs and headers easy to find
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "CPLUS_INCLUDE_PATH=/usr/include/gdal:/usr/include:${CPLUS_INCLUDE_PATH}" >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=/usr/include/gdal:/usr/include:${C_INCLUDE_PATH}" >> $GITHUB_ENV
-          # Helpful discovery variables for builds that call gdal-config
-          echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
-          echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
-          echo "CFLAGS=$(gdal-config --cflags)" >> $GITHUB_ENV
-          echo "LDFLAGS=$(gdal-config --libs)" >> $GITHUB_ENV
-          # NetCDF/HDF5 helpers for FUSE detection
-          echo "NF_CONFIG=$(command -v nf-config || true)" >> $GITHUB_ENV
-          echo "NC_CONFIG=$(command -v nc-config || true)" >> $GITHUB_ENV
-          echo "HDF5_ROOT=/usr" >> $GITHUB_ENV
-          echo "NETCDF_FORTRAN=/usr" >> $GITHUB_ENV
-          echo "NETCDF=/usr" >> $GITHUB_ENV
-          # System Python site-packages containing python3-gdal (osgeo)
-          echo "SYSTEM_PY_SITE=/usr/lib/python3/dist-packages" >> $GITHUB_ENV
 
-      # ---- R for rpy2 (installer manages Python env inside) ----
+      # ---- R for rpy2 ----
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -78,6 +53,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          # remove pip caching to avoid conflict with no-cache installs
+          # cache: 'pip'
+          # cache-dependency-path: |
+          #   requirements.txt
+          #   pyproject.toml
 
       - name: Install ccache
         run: sudo apt-get install -y ccache
@@ -90,39 +70,15 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      # ---- Pre-create venv and inject sitecustomize to see system osgeo ----
-      - name: Pre-create venv with GDAL shim
+      # ---- Install deps with CPU-only torch first to avoid CUDA wheels ----
+      - name: Install Python deps (CPU torch first, no cache)
         run: |
-          python -m venv venv
-          ./venv/bin/python -m pip install -U pip
-          VENV_SITE=$(./venv/bin/python -c "import site,sys; print([p for p in site.getsitepackages() if 'site-packages' in p][0])")
-          cat > "${VENV_SITE}/sitecustomize.py" <<'PY'
-          import os, sys
-          sys_paths = set(sys.path)
-          # Allow venv to import system-installed python3-gdal (osgeo)
-          for p in (os.environ.get("SYSTEM_PY_SITE", "/usr/lib/python3/dist-packages"),):
-              if p and p not in sys_paths:
-                  sys.path.append(p)
-          PY
-
-      - name: Diagnostics (GDAL via venv)
-        run: |
-          echo "GDAL_CONFIG: $GDAL_CONFIG"
-          echo "GDAL_VERSION: $GDAL_VERSION"
-          ./venv/bin/python - <<'PY'
-          import sys
-          print("PY:", sys.version)
-          try:
-              import osgeo, osgeo.gdal as g
-              print("osgeo path:", osgeo.__file__)
-              print("GDAL py VersionInfo:", g.VersionInfo())
-          except Exception as e:
-              print("osgeo import failed:", e)
-              raise
-          PY
-          gdalinfo --version || true
-          nc-config --all || true
-          nf-config --all || true
+          python -m pip install --upgrade pip
+          # CPU-only torch to prevent huge CUDA deps
+          pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
+          # Now the rest
+          if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; fi
+          pip install --no-cache-dir -e .
 
       - name: Prepare workspace
         run: |
@@ -134,33 +90,19 @@ jobs:
       - name: Install binaries
         run: |
           set -euo pipefail
-          # Ensure discovery vars are available to the installer
-          export HDF5_ROOT="${HDF5_ROOT:-/usr}"
-          export NETCDF_FORTRAN="${NETCDF_FORTRAN:-/usr}"
-          export NETCDF="${NETCDF:-/usr}"
-          export NF_CONFIG="${NF_CONFIG:-$(command -v nf-config || true)}"
-          export NC_CONFIG="${NC_CONFIG:-$(command -v nc-config || true)}"
-          export GDAL_CONFIG="${GDAL_CONFIG}"
-          export CFLAGS="${CFLAGS}"
-          export LDFLAGS="${LDFLAGS}"
-          # Call your installer (it should detect and reuse ./venv)
           ./symfluence --install --noninteractive
 
       - name: Validate install
         run: |
           ./symfluence --validate
 
-      - name: Upload build logs and artifacts
+      - name: Upload installer logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: install-logs
           path: |
-            **/CMakeFiles/CMakeOutput.log
-            **/CMakeFiles/CMakeError.log
-            **/*build*/**/*.log
-            **/logs/**/*.log
-            **/install*/**/*.log
-            **/fuse*/**/*.log
-            **/ngen*/**/*.log
-          if-no-files-found: warn
+            **/build/**/CMakeFiles/CMakeOutput.log
+            **/build/**/CMakeFiles/CMakeError.log
+            **/logs/**/*
+          if-no-files-found: ignore
