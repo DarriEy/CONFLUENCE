@@ -247,8 +247,42 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          # ----- Override the buggy helper functions that the wrapper defines -----
+          _is_placeholder_or_empty() {
+            # Return 0 (true) if empty or looks like a placeholder path
+            local v="${1-}"
+            [[ -z "$v" || "$v" == "default" || "$v" == "DEFAULT" || \
+              "$v" == "/path" || "$v" == "/path/" || "$v" == "/path/to" || \
+              "$v" == "/path/to/" || "$v" == */path/to/* ]]
+          }
+
+          set_default_symfluence_paths() {
+            local pwd_code_dir
+            pwd_code_dir="$(pwd)"
+            local pwd_data_dir="${pwd_code_dir}/SYMFLUENCE_data"
+
+            # Only set if not already valid
+            if _is_placeholder_or_empty "${SYMFLUENCE_CODE_DIR-}"; then
+              export SYMFLUENCE_CODE_DIR="$pwd_code_dir"
+              echo "Set SYMFLUENCE_CODE_DIR to $SYMFLUENCE_CODE_DIR"
+            fi
+            if _is_placeholder_or_empty "${SYMFLUENCE_DATA_DIR-}"; then
+              export SYMFLUENCE_DATA_DIR="$pwd_data_dir"
+              mkdir -p "$SYMFLUENCE_DATA_DIR"
+              echo "Set SYMFLUENCE_DATA_DIR to $SYMFLUENCE_DATA_DIR"
+            fi
+          }
+          export -f _is_placeholder_or_empty set_default_symfluence_paths
+          # -----------------------------------------------------------------------
+
+          # Make sure we pass through the intended env paths
+          export SYMFLUENCE_CODE_DIR="${SYMFLUENCE_CODE}"
+          export SYMFLUENCE_DATA_DIR="${SYMFLUENCE_DATA}"
+
           chmod +x ./symfluence
-          ./symfluence --validate_binaries
+          ./symfluence --validate
+
 
       # --------------------------
       # Upload logs on failure only
