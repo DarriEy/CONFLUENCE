@@ -9,7 +9,6 @@ on:
 
 jobs:
   install-validate:
-    # Use the stable Ubuntu 22.04 runner
     runs-on: ubuntu-22.04
     env:
       TZ: UTC
@@ -25,9 +24,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # -------------------------------
-      # Core system build dependencies
-      # -------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Meets the 3.11+ requirement
+
+
+    # -------------------------------
+    # Core system build dependencies
+    # -------------------------------
       - name: Install system build deps with stable PPA
         run: |
           set -e
@@ -37,6 +42,8 @@ jobs:
           sudo apt-get update
           
           # Install all dependencies.
+          # CRITICAL FIX: `pkg-config` has been removed from this list to resolve the
+          # conflict with `pkgconf`, which is a dependency from the PPA.
           sudo apt-get install -y \
             build-essential gfortran cmake make \
             libnetcdf-dev libnetcdff-dev \
@@ -49,7 +56,6 @@ jobs:
             curl ca-certificates \
             r-base r-base-dev \
             mpich libmpich-dev
-
 
       # ------------------------------------------------
       # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)
@@ -233,6 +239,12 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
 
       # If your install/setup already happened in install-validate, you can remove this block.
       - name: Install SYMFLUENCE (wrapper)
