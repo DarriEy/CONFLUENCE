@@ -1,0 +1,30 @@
+name: 🐛 Bug Report
+description: Report a reproducible issue or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      placeholder: What happened? What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SYMFLUENCE version
+      placeholder: v0.5.1-dev
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Command run
+        2. Configuration used
+        3. Observed output
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      render: shell
+
