@@ -556,32 +556,31 @@ set -e
 export CC=mpicc
 export CXX=mpicxx
 
-# --- DEFINITIVE FIX for Silent Linker Errors ---
-# The root cause of the build failure is that CMake's automatic flag discovery
-# is conflicting with the MPI compiler wrappers. The most robust solution is to
-# manually construct the *entire* set of flags and pass them explicitly.
+# --- DEFINITIVE FIX for Silent Linker Failure ---
+# The TauDEM CMakeLists.txt file fails to correctly link the MPI libraries
+# that it finds. The only reliable solution is to manually construct the
+# complete list of required libraries and force CMake to use it.
 
-# Get the necessary C++ compiler flags (primarily for GDAL's include headers).
-FULL_CXX_FLAGS="$(gdal-config --cflags)"
+# Get the linker flags for GDAL using the authoritative gdal-config tool.
+GDAL_LIBS=$(gdal-config --libs)
 
-# Get the complete set of linker flags. This is the most critical step.
-# `mpicxx -showme:link` provides the exact set of MPI libraries and paths.
-# We combine this with the flags from `gdal-config --libs`.
-FULL_LINKER_FLAGS="$(mpicxx -showme:link) $(gdal-config --libs)"
+# Manually specify the MPI libraries. For the MPICH version installed on
+# the Ubuntu 22.04 runner, these are the correct libraries.
+MPI_LIBS="-lmpicxx -lmpich"
 
-echo "--- TauDEM Explicit Build Configuration ---"
+# Combine the flags into a single variable for the linker.
+FULL_LINKER_FLAGS="${MPI_LIBS} ${GDAL_LIBS}"
+
+echo "--- TauDEM Final Build Configuration ---"
 echo "Compiler: $(command -v ${CXX})"
-echo "Final CXX Flags: ${FULL_CXX_FLAGS}"
-echo "Final Linker Flags: ${FULL_LINKER_FLAGS}"
-echo "---------------------------------------"
+echo "Forcing Linker Flags: ${FULL_LINKER_FLAGS}"
+echo "------------------------------------"
 
-# Clean and configure the build, passing the explicit flags to CMake.
-# This prevents CMake from making incorrect assumptions and ensures all
-# required libraries are included in the final link command.
+# Clean and configure the build, passing the explicit linker flags.
+# This ensures that every executable is linked against both MPI and GDAL.
 rm -rf build && mkdir -p build && cd build
 cmake -S .. -B . \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_FLAGS="${FULL_CXX_FLAGS}" \
   -DCMAKE_EXE_LINKER_FLAGS="${FULL_LINKER_FLAGS}"
 
 # Build SERIALLY to prevent any possible race conditions.
