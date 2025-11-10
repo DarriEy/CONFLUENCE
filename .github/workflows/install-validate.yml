@@ -173,36 +173,71 @@ jobs:
           done
 
 
+      - name: Create CC/CXX wrappers to strip LTO flags (for TauDEM)
+        shell: bash
+        run: |
+          set -e
+          WRAPDIR="${RUNNER_TEMP:-/tmp}/ccwrap"
+          mkdir -p "$WRAPDIR"
+
+          REAL_MPICC="$(command -v mpicc)"
+          REAL_MPICXX="$(command -v mpicxx)"
+
+          cat > "$WRAPDIR/cc.sh" <<'EOF'
+          #!/usr/bin/env bash
+          real="${REAL_MPICC}"
+          fixed=()
+          for a in "$@"; do
+            case "$a" in
+              -flto=*|-ffat-lto-objects) ;;  # drop LTO args
+              *) fixed+=("$a") ;;
+            esac
+          done
+          exec "$real" "${fixed[@]}"
+          EOF
+
+              cat > "$WRAPDIR/cxx.sh" <<'EOF'
+          #!/usr/bin/env bash
+          real="${REAL_MPICXX}"
+          fixed=()
+          for a in "$@"; do
+            case "$a" in
+              -flto=*|-ffat-lto-objects) ;;  # drop LTO args
+              *) fixed+=("$a") ;;
+            esac
+          done
+          exec "$real" "${fixed[@]}"
+          EOF
+
+              # bake real compiler paths into the scripts
+              sed -i "s|REAL_MPICC|$REAL_MPICC|g" "$WRAPDIR/cc.sh"
+              sed -i "s|REAL_MPICXX|$REAL_MPICXX|g" "$WRAPDIR/cxx.sh"
+
+              chmod +x "$WRAPDIR"/cc.sh "$WRAPDIR"/cxx.sh
+
+              # expose for later steps
+              echo "TAUDEM_CC=$WRAPDIR/cc.sh"   >> "$GITHUB_ENV"
+              echo "TAUDEM_CXX=$WRAPDIR/cxx.sh" >> "$GITHUB_ENV"
+
+
       # --------------------------
       # Run your full installation
       # --------------------------
       - name: Full install (build venv + tools)
         shell: bash
         env:
-          CMAKE_PREFIX_PATH: "${{ env.UDUNITS2_DIR }}:${{ env.HDF5_ROOT }}:${{ env.NETCDF }}:${{ env.NETCDF_FORTRAN }}"
-          UDUNITS2_DIR: "${{ env.UDUNITS2_DIR }}"
-          HDF5_ROOT: "${{ env.HDF5_ROOT }}"
-          HDF5_LIBDIR: "${{ env.HDF5_LIBDIR }}"
-          HDF5_INCLUDE_DIR: "${{ env.HDF5_INCLUDE_DIR }}"
-          NETCDF: "${{ env.NETCDF }}"
-          NETCDF_FORTRAN: "${{ env.NETCDF_FORTRAN }}"
-          NETCDF_DIR: "${{ env.NETCDF_DIR }}"
-          NETCDF_LIBDIR: "${{ env.NETCDF_LIBDIR }}"
-          NETCDF_INCLUDE: "${{ env.NETCDF_INCLUDE }}"
-          FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
-          FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
-          FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
-          # MPI for TauDEM
-          CC: mpicc
-          CXX: mpicxx
-          # 🔒 Nuke anything inherited that might inject LTO/mangled flags:
+          …
+          # Use wrappers that strip LTO flags
+          CC:  "${{ env.TAUDEM_CC }}"
+          CXX: "${{ env.TAUDEM_CXX }}"
+          # Nuke inherited flags & keep CMake clean
           CFLAGS: ""
           CXXFLAGS: ""
           LDFLAGS: ""
-          # 🔒 Feed CMake clean, explicit flags so it doesn’t try IPO/LTO
           CMAKE_C_FLAGS: "-O2"
           CMAKE_CXX_FLAGS: "-O2"
           CMAKE_INTERPROCEDURAL_OPTIMIZATION: "OFF"
+
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
