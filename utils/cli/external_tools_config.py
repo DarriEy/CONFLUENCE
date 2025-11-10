@@ -576,18 +576,18 @@ echo "LDFLAGS: ${LDFLAGS}"
 echo "------------------------------"
 
 # Clean previous build and run the configuration and build steps
-echo "Configuring TauDEM with CMake arguments: ${CMAKE_ARGS} ${SYMFLUENCE_CMAKE_ARGS}"
+echo "Configuring TauDEM..."
 rm -rf build && mkdir -p build && cd build
 cmake $CMAKE_ARGS ${SYMFLUENCE_CMAKE_ARGS} -S .. -B .
 
 echo "Building TauDEM..."
 cmake --build . -j "${NCORES:-4}"
 
-# Stage the compiled executables
+# Stage the compiled executables from the correct subdirectory
 mkdir -p ../bin
 copied_count=0
-# CORRECTED PATH: Look in the current directory (the build root) for executables.
-for f in ./*; do
+# CORRECTED PATH: Look inside the 'src' subdirectory where CMake places the executables.
+for f in ./src/*; do
   if [ -f "$f" ] && [ -x "$f" ]; then
     cp -f "$f" ../bin/
     ((copied_count++))
@@ -599,13 +599,14 @@ if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Staged $copied_count TauDEM executables to ../bin/"
   ls -la ../bin/ | head -10
 else
-  echo "❌ Executable staging failed. Build likely failed or executables not found."
+  echo "❌ Executable staging failed. Could not find executables in the './src' directory."
   echo "   Showing contents of the build directory:"
   ls -la . | head -20
+  echo "   Showing contents of the build/src directory:"
+  ls -la ./src | head -20
   exit 1
 fi
                 '''
-            
             ],
             'dependencies': [],
             'test_command': None,
