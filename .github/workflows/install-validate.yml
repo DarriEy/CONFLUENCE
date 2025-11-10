@@ -149,6 +149,30 @@ jobs:
           echo "pkg-config hdf5 libs: $(pkg-config --libs hdf5 2>/dev/null || echo 'N/A')"
           echo "pkg-config udunits2 cflags: $(pkg-config --cflags udunits2 2>/dev/null || echo 'N/A')"
 
+
+      - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
+        run: |
+          set -e
+          sudo mkdir -p /usr/lib64
+
+          # NetCDF
+          for so in /usr/lib/x86_64-linux-gnu/libnetcdf.so* /usr/lib/x86_64-linux-gnu/libnetcdff.so*; do
+            [ -e "$so" ] || continue
+            base=$(basename "$so")
+            [ -e "/usr/lib64/${base}" ] || sudo ln -s "$so" "/usr/lib64/${base}" || true
+          done
+
+          # HDF5 (Ubuntu stores in hdf5/serial)
+          for so in /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_hl.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_fortran.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so*; do
+            [ -e "$so" ] || continue
+            base=$(basename "$so")
+            [ -e "/usr/lib64/${base}" ] || sudo ln -s "$so" "/usr/lib64/${base}" || true
+          done
+
+
       # --------------------------
       # Run your full installation
       # --------------------------
@@ -168,15 +192,17 @@ jobs:
           FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
           FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
           FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
+          # MPI for TauDEM
           CC: mpicc
           CXX: mpicxx
-          # Hard-disable LTO everywhere
-          CFLAGS: -fno-lto
-          CXXFLAGS: -fno-lto
-          LDFLAGS: -fno-lto
-          # 🔴 Ensure CMake gets it even if it ignores CFLAGS/CXXFLAGS
-          CMAKE_C_FLAGS: -O2 -fno-lto
-          CMAKE_CXX_FLAGS: -O2 -fno-lto
+          # 🔒 Nuke anything inherited that might inject LTO/mangled flags:
+          CFLAGS: ""
+          CXXFLAGS: ""
+          LDFLAGS: ""
+          # 🔒 Feed CMake clean, explicit flags so it doesn’t try IPO/LTO
+          CMAKE_C_FLAGS: "-O2"
+          CMAKE_CXX_FLAGS: "-O2"
+          CMAKE_INTERPROCEDURAL_OPTIMIZATION: "OFF"
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
@@ -184,7 +210,6 @@ jobs:
           mkdir -p "${SYMFLUENCE_DATA}"
           chmod +x ./symfluence
           ./symfluence --install
-
 
 
 
