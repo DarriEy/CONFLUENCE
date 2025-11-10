@@ -563,9 +563,6 @@ if ! command -v gdal-config >/dev/null 2>&1; then
 fi
 
 # Explicitly set the C++ compiler flags and Linker flags using gdal-config.
-# CMake automatically respects these environment variables. This is the most
-# reliable way to ensure TauDEM links correctly against the system's GDAL library.
-# We also add -O2 for a standard optimization level.
 export CXXFLAGS="$(gdal-config --cflags) -O2"
 export LDFLAGS="$(gdal-config --libs)"
 
@@ -589,7 +586,8 @@ cmake --build . -j "${NCORES:-4}"
 # Stage the compiled executables
 mkdir -p ../bin
 copied_count=0
-for f in ./src/*; do
+# CORRECTED PATH: Look in the current directory (the build root) for executables.
+for f in ./*; do
   if [ -f "$f" ] && [ -x "$f" ]; then
     cp -f "$f" ../bin/
     ((copied_count++))
@@ -601,12 +599,13 @@ if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Staged $copied_count TauDEM executables to ../bin/"
   ls -la ../bin/ | head -10
 else
-  echo "❌ Executable staging failed. Build likely failed."
-  echo "   Showing contents of the build 'src' directory:"
-  ls -la ./src | head -20
+  echo "❌ Executable staging failed. Build likely failed or executables not found."
+  echo "   Showing contents of the build directory:"
+  ls -la . | head -20
   exit 1
 fi
                 '''
+            
             ],
             'dependencies': [],
             'test_command': None,
