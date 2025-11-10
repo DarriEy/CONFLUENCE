@@ -34,14 +34,16 @@ jobs:
           sudo apt-get install -y \
             build-essential gfortran cmake make pkg-config \
             libnetcdf-dev libnetcdff-dev \
-            libhdf5-dev \
+            libhdf5-dev hdf5-tools \
             libudunits2-dev \
             libsqlite3-dev \
             libopenblas-dev liblapack-dev \
             libgdal-dev libproj-dev gdal-bin \
+            libgsl-dev libmetis-dev \
             curl ca-certificates \
             r-base r-base-dev \
             mpich libmpich-dev
+
 
       # ------------------------------------------------
       # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)
@@ -119,17 +121,29 @@ jobs:
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
         run: |
           set -e
-          if [ ! -d /usr/lib64 ]; then
-            sudo mkdir -p /usr/lib64
-          fi
-          for lib in hdf5 hdf5_hl netcdf netcdff; do
-            for so in /usr/lib/x86_64-linux-gnu/lib${lib}.so*; do
-              base=$(basename "$so")
-              if [ ! -e "/usr/lib64/${base}" ]; then
-                sudo ln -s "$so" "/usr/lib64/${base}" || true
-              fi
-            done
+          sudo mkdir -p /usr/lib64
+
+          # Mirror NetCDF libs
+          for so in /usr/lib/x86_64-linux-gnu/libnetcdf.so* /usr/lib/x86_64-linux-gnu/libnetcdff.so*; do
+            [ -e "$so" ] || continue
+            base=$(basename "$so")
+            if [ ! -e "/usr/lib64/${base}" ]; then
+              sudo ln -s "$so" "/usr/lib64/${base}" || true
+            fi
           done
+
+          # Mirror HDF5 libs (Ubuntu keeps them under hdf5/serial)
+          for so in /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_hl.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_fortran.so* \
+                    /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so*; do
+            [ -e "$so" ] || continue
+            base=$(basename "$so")
+            if [ ! -e "/usr/lib64/${base}" ]; then
+              sudo ln -s "$so" "/usr/lib64/${base}" || true
+            fi
+          done
+
 
       # --------------------
       # Sanity prints (logs)
