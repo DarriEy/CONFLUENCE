@@ -1,0 +1,56 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+            docs/requirements.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
+          if [ -f "docs/requirements.txt" ]; then pip install -r docs/requirements.txt; fi
+          if [ -f "pyproject.toml" ]; then pip install ".[docs]" || true; fi
+          # Fallback Sphinx if not provided by the project:
+          python - <<'PY'
+          import importlib.util, sys, subprocess
+          def has(mod): return importlib.util.find_spec(mod) is not None
+          if not has('sphinx'): subprocess.check_call([sys.executable,'-m','pip','install','sphinx'])
+          PY
+
+      - name: Build Sphinx
+        run: |
+          if [ -d "docs/source" ]; then
+            python -m sphinx -W -b html docs/source docs/_build/html
+          elif [ -f "docs/conf.py" ]; then
+            python -m sphinx -W -b html docs docs/_build/html
+          else
+            echo "No Sphinx docs folder found; skipping docs build"
+          fi
+
+      - name: Upload built docs (artifact)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: docs/_build/html
+          if-no-files-found: ignore
+
