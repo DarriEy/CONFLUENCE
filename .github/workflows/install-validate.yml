@@ -189,6 +189,18 @@ jobs:
       # --------------------------
       - name: Full install (build venv + tools)
         shell: bash
+        # --- DEFINITIVE FIX ---
+        # Create a clean environment for this step to prevent interference from
+        # variables set in previous steps (like CFLAGS, LDFLAGS, DEB_..._FLAGS).
+        # We explicitly set only the essential MPI compilers.
+        env:
+          CC: mpicc
+          CXX: mpicxx
+          CFLAGS: ""
+          CXXFLAGS: ""
+          LDFLAGS: ""
+          LD_LIBRARY_PATH: ""
+          DEB_BUILD_MAINT_OPTIONS: ""
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
@@ -198,8 +210,7 @@ jobs:
           # Ensure the installer script is executable
           chmod +x ./symfluence
           
-          # Run the installation in a clean environment.
-          # The symfluence script itself is now responsible for all build logic.
+          # Run the installation in the newly cleaned environment.
           ./symfluence --install
 
 
