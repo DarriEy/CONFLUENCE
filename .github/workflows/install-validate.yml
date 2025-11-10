@@ -1,0 +1,93 @@
+name: Install & Validate (Heavy)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"  # daily at 06:00 UTC
+
+jobs:
+  install-validate:
+    # Prefer a self-hosted runner if you have one to control toolchain
+    # runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- System deps for compilers / netCDF / MPI (tune to what SUMMA/mizuRoute need) ----
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gfortran cmake \
+            libnetcdf-dev libnetcdff-dev \
+            libopenmpi-dev openmpi-bin \
+            pkg-config
+
+      # ---- R for rpy2 if your pipeline touches it ----
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.3.3'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      # ---- Optional: ccache to speed repeated C/C++/Fortran builds ----
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('**/*') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      # ---- Python deps (pin to your repo’s needs) ----
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
+          pip install -e .
+
+      # ---- Set up CI-friendly environment paths ----
+      - name: Prepare workspace
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/SYMFLUENCE_data"
+          echo "SYMFLUENCE_DATA=$GITHUB_WORKSPACE/SYMFLUENCE_data" >> $GITHUB_ENV
+          echo "CI=1" >> $GITHUB_ENV
+          echo "NONINTERACTIVE=1" >> $GITHUB_ENV
+
+      # ---- Run the full installer (non-interactive) ----
+      - name: Install binaries
+        run: |
+          set -e
+          ./symfluence --install --noninteractive
+
+      # ---- Validate the install (your CLI flag) ----
+      - name: Validate install
+        run: |
+          ./symfluence --validate
+
+      # ---- (Optional) artifact logs/binaries for debugging ----
+      - name: Upload installer logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs
+          path: |
+            **/build/**/CMakeFiles/CMakeOutput.log
+            **/build/**/CMakeFiles/CMakeError.log
+            **/logs/**/*
+          if-no-files-found: ignore
+
