@@ -27,11 +27,8 @@ jobs:
 
       - name: Free disk space
         run: |
-          set -e
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/lib/jvm
-          sudo apt-get clean
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
           docker image prune -af || true
-          df -h
 
       # ---- System deps for compilers / netCDF / MPI ----
       - name: Install system dependencies
@@ -53,11 +50,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # remove pip caching to avoid conflict with no-cache installs
-          # cache: 'pip'
-          # cache-dependency-path: |
-          #   requirements.txt
-          #   pyproject.toml
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
 
       - name: Install ccache
         run: sudo apt-get install -y ccache
@@ -70,15 +74,11 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      # ---- Install deps with CPU-only torch first to avoid CUDA wheels ----
-      - name: Install Python deps (CPU torch first, no cache)
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          # CPU-only torch to prevent huge CUDA deps
-          pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
-          # Now the rest
-          if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; fi
-          pip install --no-cache-dir -e .
+          if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
+          pip install -e .
 
       - name: Prepare workspace
         run: |
