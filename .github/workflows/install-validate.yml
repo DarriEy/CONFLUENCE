@@ -127,6 +127,13 @@ jobs:
           echo "DEB_LDFLAGS_SET="         >> $GITHUB_ENV
 
 
+      - name: Show dpkg-buildflags (sanity)
+        run: |
+          set -e
+          echo "CFLAGS:   $(dpkg-buildflags --get CFLAGS || true)"
+          echo "CXXFLAGS: $(dpkg-buildflags --get CXXFLAGS || true)"
+          echo "LDFLAGS:  $(dpkg-buildflags --get LDFLAGS || true)"
+
 
       # --------------------
       # Sanity prints (logs)
@@ -161,13 +168,15 @@ jobs:
           FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
           FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
           FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
-          # MPI for TauDEM
           CC: mpicc
           CXX: mpicxx
-          # Hard-disable LTO in case anything bypasses Debian flags
+          # Hard-disable LTO everywhere
           CFLAGS: -fno-lto
           CXXFLAGS: -fno-lto
           LDFLAGS: -fno-lto
+          # 🔴 Ensure CMake gets it even if it ignores CFLAGS/CXXFLAGS
+          CMAKE_C_FLAGS: -O2 -fno-lto
+          CMAKE_CXX_FLAGS: -O2 -fno-lto
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
@@ -175,6 +184,7 @@ jobs:
           mkdir -p "${SYMFLUENCE_DATA}"
           chmod +x ./symfluence
           ./symfluence --install
+
 
 
 
