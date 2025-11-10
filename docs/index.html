@@ -4,32 +4,140 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SYMFLUENCE</title>
+
+  <meta name="description" content="SYMFLUENCE: SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration.">
+  <meta name="theme-color" content="#0e1116">
+
   <style>
-    html,body { margin:0; padding:0; font-family: system-ui, Arial, sans-serif; background:#fafafa; color:#111; }
-    .wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:40px; }
-    .card { max-width:800px; width:100%; text-align:center; }
-    h1 { font-size: clamp(28px, 5vw, 54px); margin-bottom: 12px; letter-spacing:.02em; }
-    h2 { font-size: clamp(18px, 2.6vw, 22px); font-weight:400; color:#444; margin-top:0; margin-bottom:24px; }
-    p { margin:0 auto 24px; font-size: clamp(15px, 2.2vw, 18px); line-height:1.6; color:#333; max-width:700px; }
-    a.button { display:inline-block; padding:12px 22px; border:1px solid #111; border-radius:8px; text-decoration:none; font-weight:500; transition: all .15s ease-in-out; }
-    a.button:hover { background:#111; color:#fff; }
-    .footer { margin-top:40px; font-size:14px; color:#777; }
+    :root{
+      --bg:#0e1116; --card:#121821; --ink:#e9edf3; --muted:#a9b3be;
+      --border:#232b35; --accent:#3178ff; --shadow:rgba(0,0,0,.25);
+    }
+    @media (prefers-color-scheme:light){
+      :root{--bg:#f7f7f8; --card:#ffffff; --ink:#121417; --muted:#5a6572; --border:#e6e9ee; --accent:#0b5fff; --shadow:rgba(0,0,0,.08);}
+    }
+
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    a{color:var(--accent)}
+    .wrap{min-height:100vh;display:flex;flex-direction:column;padding:24px}
+    header{max-width:1100px;margin:0 auto 16px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand__title{margin:0;font-weight:750;letter-spacing:.2px;font-size: clamp(22px,3.2vw,28px)}
+    .chip{display:inline-block;padding:4px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px}
+    nav a{text-decoration:none;color:inherit;padding:8px 10px;border-radius:8px;border:1px solid transparent}
+    nav a:hover, nav a:focus-visible{border-color:var(--border);outline:none}
+    main{max-width:1100px;margin:0 auto;width:100%;display:grid;gap:18px}
+
+    /* Hero */
+    .hero{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px var(--shadow);padding:clamp(18px,4.6vw,36px)}
+    .hero__inner{max-width:880px}
+    .hero h1{margin:0 0 10px;font-weight:800;line-height:1.12;letter-spacing:0;
+             font-size: clamp(28px,4.6vw,46px);}
+    .hero h2{margin:0 0 18px;font-weight:500;color:var(--muted);font-size: clamp(16px,2.2vw,18px)}
+    .hero p{margin:0 0 18px;line-height:1.6;font-size: clamp(15px,2vw,17px)}
+    .tags{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px}
+    .tag{padding:4px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted)}
+    .cta{display:flex;flex-wrap:wrap;gap:12px}
+    .btn{display:inline-block;padding:12px 16px;border-radius:10px;border:1px solid var(--border);
+         text-decoration:none;font-weight:600;color:inherit;background:transparent}
+    .btn--primary{border-color:var(--accent)}
+    .btn:hover,.btn:focus-visible{outline:none;border-color:var(--accent)}
+
+    /* Sections */
+    .grid{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:860px){.grid{grid-template-columns:1.05fr .95fr}}
+    section.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:clamp(16px,2.8vw,22px)}
+    section.card h3{margin:0 0 10px;font-size: clamp(18px,2.2vw,20px)}
+    section.card p{margin:0 0 10px}
+    .pubs{list-style:none;padding:0;margin:0}
+    .pubs li{margin:0 0 12px;line-height:1.55}
+    .ack{font-size:14px;color:var(--muted)}
+
+    footer{margin:12px auto 0;max-width:1100px;width:100%;padding:16px 0;border-top:1px solid var(--border);
+           color:var(--muted);font-size:14px;text-align:center}
+    .foot-links{display:flex;gap:16px;justify-content:center;margin-top:6px}
+    .foot-links a{text-decoration:none}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="card">
-      <h1>SYMFLUENCE</h1>
-      <h2>SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration</h2>
-      <p>
-        SYMFLUENCE is a developing research and modeling framework for integrated Earth-system simulation,
-        designed and led at the <strong>University of Calgary</strong>.
-      </p>
-      <a class="button" href="https://github.com/DarriEy/SYMFLUENCE" target="_blank">View on GitHub</a>
-      <div class="footer">
-        © <script>document.write(new Date().getFullYear())</script> SYMFLUENCE • Formerly CONFLUENCE
+    <header>
+      <div class="brand">
+        <h1 class="brand__title">SYMFLUENCE</h1>
+        <span class="chip" title="Formerly CONFLUENCE">Formerly CONFLUENCE</span>
       </div>
-    </div>
+      <nav aria-label="Primary">
+        <a href="#about">About</a>
+        <a href="#docs">Docs</a>
+        <a href="#publications">Publications</a>
+        <a href="#acknowledgements">Acknowledgements</a>
+        <a href="https://github.com/DarriEy/SYMFLUENCE" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" id="about">
+        <div class="hero__inner">
+          <h1>SYnergistic Modelling Framework for Linking and Unifying Earth-system Nexii for Computational Exploration</h1>
+          <h2>A research and modeling framework for integrated Earth-system simulation</h2>
+          <p>SYMFLUENCE is a developing open research framework for composing, calibrating, and running
+             coupled Earth-system models at scale. The effort is designed and led at the
+             <strong>University of Calgary</strong> in collaboration with partners.</p>
+          <div class="tags">
+            <span class="tag">University of Calgary</span><span class="tag">Open‑source</span><span class="tag">Earth‑system modeling</span>
+          </div>
+          <div class="cta" role="group" aria-label="Primary calls to action">
+            <a class="btn btn--primary" href="https://symfluence.readthedocs.io/" target="_blank" rel="noopener">Read the Docs</a>
+            <a class="btn" href="https://github.com/DarriEy/SYMFLUENCE" target="_blank" rel="noopener">View on GitHub</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section id="docs" class="card">
+          <h3>Documentation</h3>
+          <p>Looking for installation instructions, tutorials, or the API reference? Visit our documentation on Read the Docs.
+             If the docs are not yet live, this link will become active once the first build is published.</p>
+          <p><a href="https://symfluence.readthedocs.io/" target="_blank" rel="noopener">symfluence.readthedocs.io</a></p>
+          <p>For development status and issue tracking, see the
+             <a href="https://github.com/DarriEy/SYMFLUENCE" target="_blank" rel="noopener">project repository</a>.</p>
+        </section>
+
+        <section id="publications" class="card">
+          <h3>Related Publications</h3>
+          <ul class="pubs">
+            <li>
+              Eythorsson, D., &amp; Clark, M. (2025).
+              <em>Toward automated scientific discovery in hydrology: The opportunities and dangers of AI‑augmented research frameworks</em>.
+              <em>Hydrological Processes</em>, 39(1), e70065.
+              <a href="https://onlinelibrary.wiley.com/doi/pdf/10.1002/hyp.70065" target="_blank" rel="noopener">PDF</a> ·
+              <a href="https://onlinelibrary.wiley.com/doi/10.1002/hyp.70065" target="_blank" rel="noopener">Publisher page</a>
+            </li>
+          </ul>
+          <p class="ack">Note: SYMFLUENCE builds on experience from prior work referred to as <em>CONFLUENCE</em> and is evolving
+             to support broader coupling, calibration, and workflows.</p>
+        </section>
+      </div>
+
+      <section id="acknowledgements" class="card">
+        <h3>Acknowledgements</h3>
+        <p class="ack">This research was supported by the Cooperative Institute for Research to Operations in Hydrology (CIROH)
+          with funding under award NA22NWS4320003 from the NOAA Cooperative Institute Program. The statements, findings,
+          conclusions, and recommendations are those of the author(s) and do not necessarily reflect the opinions of NOAA.</p>
+      </section>
+    </main>
+
+    <footer>
+      <div>&copy; <span id="year"></span> SYMFLUENCE · <span class="chip">Formerly CONFLUENCE</span></div>
+      <div class="foot-links">
+        <a href="https://github.com/DarriEy/SYMFLUENCE" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://symfluence.readthedocs.io/" target="_blank" rel="noopener">Docs</a>
+        <a href="https://opensource.org/license/mit/" target="_blank" rel="noopener">License</a>
+      </div>
+    </footer>
   </div>
+
+  <script>document.getElementById('year').textContent=new Date().getFullYear()</script>
 </body>
 </html>
