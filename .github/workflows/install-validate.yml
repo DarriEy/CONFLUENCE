@@ -39,7 +39,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential gfortran cmake ninja-build \
-            python3-dev python3.11-dev \
+            python3-dev \
             libnetcdf-dev libnetcdff-dev netcdf-bin \
             libhdf5-openmpi-dev \
             libopenmpi-dev openmpi-bin \
@@ -50,18 +50,25 @@ jobs:
             libfmt-dev libspdlog-dev \
             libcurl4-openssl-dev zlib1g-dev \
             pkg-config
-          
-          # Set environment variables for discovery
+          # Make pkg-configs and headers easy to find
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
           echo "CPLUS_INCLUDE_PATH=/usr/include/gdal:/usr/include:${CPLUS_INCLUDE_PATH}" >> $GITHUB_ENV
           echo "C_INCLUDE_PATH=/usr/include/gdal:/usr/include:${C_INCLUDE_PATH}" >> $GITHUB_ENV
+          # Helpful discovery variables for builds that call gdal-config
           echo "GDAL_CONFIG=$(command -v gdal-config)" >> $GITHUB_ENV
           echo "GDAL_VERSION=$(gdal-config --version)" >> $GITHUB_ENV
+          echo "CFLAGS=$(gdal-config --cflags)" >> $GITHUB_ENV
+          echo "LDFLAGS=$(gdal-config --libs)" >> $GITHUB_ENV
+          # NetCDF/HDF5 helpers for FUSE detection
+          echo "NF_CONFIG=$(command -v nf-config || true)" >> $GITHUB_ENV
+          echo "NC_CONFIG=$(command -v nc-config || true)" >> $GITHUB_ENV
           echo "HDF5_ROOT=/usr" >> $GITHUB_ENV
           echo "NETCDF_FORTRAN=/usr" >> $GITHUB_ENV
           echo "NETCDF=/usr" >> $GITHUB_ENV
+          # System Python site-packages containing python3-gdal (osgeo)
+          echo "SYSTEM_PY_SITE=/usr/lib/python3/dist-packages" >> $GITHUB_ENV
 
-      # ---- R for rpy2 ----
+      # ---- R for rpy2 (installer manages Python env inside) ----
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -83,6 +90,40 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
+      # ---- Pre-create venv and inject sitecustomize to see system osgeo ----
+      - name: Pre-create venv with GDAL shim
+        run: |
+          python -m venv venv
+          ./venv/bin/python -m pip install -U pip
+          VENV_SITE=$(./venv/bin/python -c "import site,sys; print([p for p in site.getsitepackages() if 'site-packages' in p][0])")
+          cat > "${VENV_SITE}/sitecustomize.py" <<'PY'
+          import os, sys
+          sys_paths = set(sys.path)
+          # Allow venv to import system-installed python3-gdal (osgeo)
+          for p in (os.environ.get("SYSTEM_PY_SITE", "/usr/lib/python3/dist-packages"),):
+              if p and p not in sys_paths:
+                  sys.path.append(p)
+          PY
+
+      - name: Diagnostics (GDAL via venv)
+        run: |
+          echo "GDAL_CONFIG: $GDAL_CONFIG"
+          echo "GDAL_VERSION: $GDAL_VERSION"
+          ./venv/bin/python - <<'PY'
+          import sys
+          print("PY:", sys.version)
+          try:
+              import osgeo, osgeo.gdal as g
+              print("osgeo path:", osgeo.__file__)
+              print("GDAL py VersionInfo:", g.VersionInfo())
+          except Exception as e:
+              print("osgeo import failed:", e)
+              raise
+          PY
+          gdalinfo --version || true
+          nc-config --all || true
+          nf-config --all || true
+
       - name: Prepare workspace
         run: |
           mkdir -p "$GITHUB_WORKSPACE/SYMFLUENCE_data"
@@ -90,36 +131,23 @@ jobs:
           echo "CI=1" >> $GITHUB_ENV
           echo "NONINTERACTIVE=1" >> $GITHUB_ENV
 
-      - name: Install binaries (with system site-packages)
+      - name: Install binaries
         run: |
           set -euo pipefail
-          
-          # Create venv with system site-packages access
-          python3 -m venv venv --system-site-packages
-          source venv/bin/activate
-          
-          # Upgrade pip
-          pip install --upgrade pip wheel setuptools
-          
-          # Install requirements WITHOUT GDAL or rpy2 first
-          grep -v -E "^(GDAL|gdal|rpy2)" requirements.txt > requirements_filtered.txt || true
-          if [[ -s requirements_filtered.txt ]]; then
-            pip install -r requirements_filtered.txt
-          fi
-          
-          # Install rpy2 (should work with R already set up)
-          pip install rpy2 || echo "rpy2 installation failed, continuing..."
-          
-          # GDAL is already available from system packages via --system-site-packages
-          # Verify it's accessible
-          python -c "from osgeo import gdal; print(f'GDAL version: {gdal.__version__}')"
-          
-          # Now run the symfluence installer (it should detect GDAL is already available)
+          # Ensure discovery vars are available to the installer
+          export HDF5_ROOT="${HDF5_ROOT:-/usr}"
+          export NETCDF_FORTRAN="${NETCDF_FORTRAN:-/usr}"
+          export NETCDF="${NETCDF:-/usr}"
+          export NF_CONFIG="${NF_CONFIG:-$(command -v nf-config || true)}"
+          export NC_CONFIG="${NC_CONFIG:-$(command -v nc-config || true)}"
+          export GDAL_CONFIG="${GDAL_CONFIG}"
+          export CFLAGS="${CFLAGS}"
+          export LDFLAGS="${LDFLAGS}"
+          # Call your installer (it should detect and reuse ./venv)
           ./symfluence --install --noninteractive
 
       - name: Validate install
         run: |
-          source venv/bin/activate
           ./symfluence --validate
 
       - name: Upload build logs and artifacts
