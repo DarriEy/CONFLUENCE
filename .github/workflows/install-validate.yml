@@ -352,7 +352,7 @@ jobs:
           print("API status OK:", s['total_steps'], "steps")
           PY
 
-  step_tests:domain:
+  step_tests-domain:
     needs: smoke-tests
     runs-on: ubuntu-latest
     env:
