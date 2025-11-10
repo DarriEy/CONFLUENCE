@@ -50,34 +50,67 @@ jobs:
         shell: bash
         run: |
           set -e
-          # pkg-config search paths
+
+          # pkg-config search paths (cover Ubuntu placements)
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
 
-          # NetCDF prefixes
-          echo "NETCDF=$(nc-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
-          echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
+          # ---- NetCDF discovery (C & Fortran) ----
+          NETCDF_PREFIX=$(nc-config --prefix 2>/dev/null || echo /usr)
+          NETCDF_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
+          NETCDF_INC=$(nc-config --includedir 2>/dev/null || echo /usr/include)
 
-          # IMPORTANT: HDF5 lives under the 'serial' multiarch prefix on Ubuntu
-          # This is where libhdf5(.so) and libhdf5_hl(.so) actually are.
+          echo "NETCDF=${NETCDF_PREFIX}" >> $GITHUB_ENV
+          echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo ${NETCDF_PREFIX})" >> $GITHUB_ENV
+          echo "NETCDF_DIR=${NETCDF_PREFIX}" >> $GITHUB_ENV
+          echo "NETCDF_LIBDIR=${NETCDF_LIBDIR}" >> $GITHUB_ENV
+          echo "NETCDF_INCLUDE=${NETCDF_INC}" >> $GITHUB_ENV
+
+          # ---- HDF5 discovery (Ubuntu 'serial' multiarch layout) ----
+          # Libraries live here; includes under /usr/include/hdf5/serial
           echo "HDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/serial" >> $GITHUB_ENV
+          echo "HDF5_LIBDIR=/usr/lib/x86_64-linux-gnu/hdf5/serial" >> $GITHUB_ENV
+          echo "HDF5_INCLUDE_DIR=/usr/include/hdf5/serial" >> $GITHUB_ENV
 
-          # UDUNITS2 prefix (nice hint for CMake find scripts)
+          # UDUNITS2 prefix (helps CMake find scripts)
           echo "UDUNITS2_DIR=$(pkg-config --variable=prefix udunits2 2>/dev/null || echo /usr)" >> $GITHUB_ENV
 
-          # Linker search dirs (for old Makefiles)
-          NC_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
-          echo "LD_LIBRARY_PATH=${NC_LIBDIR}:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=${NC_LIBDIR}:${LIBRARY_PATH}" >> $GITHUB_ENV
+          # General linker paths for old Makefiles
+          echo "LD_LIBRARY_PATH=${NETCDF_LIBDIR}:${HDF5_LIBDIR}:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=${NETCDF_LIBDIR}:${HDF5_LIBDIR}:${LIBRARY_PATH}" >> $GITHUB_ENV
 
-          # R for rpy2
+          # R for rpy2 (if present)
           if command -v R >/dev/null 2>&1; then
             echo "R_HOME=$(R RHOME)" >> $GITHUB_ENV
             echo "PATH=$(dirname "$(command -v R)"):${PATH}" >> $GITHUB_ENV
           fi
 
-          # Make MPI compilers explicit for TauDEM/CMake discovery
+          # MPI compilers for TauDEM/CMake discovery
           echo "CC=mpicc"  >> $GITHUB_ENV
           echo "CXX=mpicxx" >> $GITHUB_ENV
+
+          # ------- Convenience flags for FUSE (used if your wrapper picks them up) -------
+          NF_FLIBS="$(nf-config --flibs 2>/dev/null || echo "-L${NETCDF_LIBDIR} -lnetcdff")"
+          NC_LIBS="$(nc-config --libs  2>/dev/null || echo "-L${NETCDF_LIBDIR} -lnetcdf")"
+          H5_LIBS="$(pkg-config --libs hdf5_hl hdf5 2>/dev/null || echo "-L${HDF5_LIBDIR} -lhdf5_hl -lhdf5")"
+          echo "FUSE_LIBRARIES=${NF_FLIBS} ${NC_LIBS} ${H5_LIBS}" >> $GITHUB_ENV
+
+          NF_FFLAGS="$(nf-config --fflags 2>/dev/null || true)"
+          NC_CFLAGS="$(nc-config --cflags 2>/dev/null || true)"
+          H5_CFLAGS="$(pkg-config --cflags hdf5 2>/dev/null || echo "-I${HDF5_INCLUDE_DIR}")"
+          echo "FUSE_INCLUDE=${NC_CFLAGS} ${NF_FFLAGS} ${H5_CFLAGS} -I${NETCDF_INCLUDE}" >> $GITHUB_ENV
+
+          # Extra Fortran compatibility for old NetCDF calls
+          echo "FUSE_FFLAGS_EXTRA=-fallow-argument-mismatch -std=legacy -ffree-line-length-none -fmax-errors=0" >> $GITHUB_ENV
+
+          # Debug prints (will show in logs)
+          echo "NETCDF_PREFIX=${NETCDF_PREFIX}"
+          echo "NETCDF_LIBDIR=${NETCDF_LIBDIR}"
+          echo "NETCDF_INCLUDE=${NETCDF_INC}"
+          echo "HDF5_LIBDIR=${HDF5_LIBDIR}"
+          echo "HDF5_INCLUDE_DIR=${HDF5_INCLUDE_DIR}"
+          echo "FUSE_LIBRARIES=${FUSE_LIBRARIES}"
+          echo "FUSE_INCLUDE=${FUSE_INCLUDE}"
+
 
 
       # -----------------------------------------------------------------
@@ -121,8 +154,17 @@ jobs:
           CMAKE_PREFIX_PATH: "${{ env.UDUNITS2_DIR }}:${{ env.HDF5_ROOT }}:${{ env.NETCDF }}:${{ env.NETCDF_FORTRAN }}"
           UDUNITS2_DIR: "${{ env.UDUNITS2_DIR }}"
           HDF5_ROOT: "${{ env.HDF5_ROOT }}"
+          HDF5_LIBDIR: "${{ env.HDF5_LIBDIR }}"
+          HDF5_INCLUDE_DIR: "${{ env.HDF5_INCLUDE_DIR }}"
           NETCDF: "${{ env.NETCDF }}"
           NETCDF_FORTRAN: "${{ env.NETCDF_FORTRAN }}"
+          NETCDF_DIR: "${{ env.NETCDF_DIR }}"
+          NETCDF_LIBDIR: "${{ env.NETCDF_LIBDIR }}"
+          NETCDF_INCLUDE: "${{ env.NETCDF_INCLUDE }}"
+          # FUSE build helpers (your wrapper can read these if present)
+          FUSE_LIBRARIES: "${{ env.FUSE_LIBRARIES }}"
+          FUSE_INCLUDE: "${{ env.FUSE_INCLUDE }}"
+          FUSE_FFLAGS_EXTRA: "${{ env.FUSE_FFLAGS_EXTRA }}"
           # MPI compilers for TauDEM
           CC: mpicc
           CXX: mpicxx
@@ -133,6 +175,7 @@ jobs:
           mkdir -p "${SYMFLUENCE_DATA}"
           chmod +x ./symfluence
           ./symfluence --install
+
 
       # ----------------
       # Validate binaries
