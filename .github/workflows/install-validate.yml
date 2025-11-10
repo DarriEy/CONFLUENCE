@@ -29,6 +29,7 @@ jobs:
       # -------------------------------
       - name: Install system build deps
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y \
             build-essential gfortran cmake make pkg-config \
@@ -39,9 +40,7 @@ jobs:
             libopenblas-dev liblapack-dev \
             libgdal-dev libproj-dev \
             curl ca-certificates \
-            # NEW: R for rpy2
             r-base r-base-dev \
-            # NEW: MPI for TauDEM
             mpich libmpich-dev
 
       # ------------------------------------------------
@@ -51,30 +50,23 @@ jobs:
         shell: bash
         run: |
           set -e
-          # pkg-config search paths (broader, includes udunits2)
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-
-          # NetCDF/HDF5/UDUNITS2 prefixes
           echo "NETCDF=$(nc-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
           echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo /usr)" >> $GITHUB_ENV
           echo "HDF5_ROOT=$(pkg-config --variable=prefix hdf5 2>/dev/null || echo /usr)" >> $GITHUB_ENV
           echo "UDUNITS2_DIR=$(pkg-config --variable=prefix udunits2 2>/dev/null || echo /usr)" >> $GITHUB_ENV
 
-          # Library dirs for linkers that don't use pkg-config
           NC_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
           echo "LD_LIBRARY_PATH=${NC_LIBDIR}:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
           echo "LIBRARY_PATH=${NC_LIBDIR}:${LIBRARY_PATH}" >> $GITHUB_ENV
 
-          # NEW: R_HOME for rpy2 (safe if R is present)
           if command -v R >/dev/null 2>&1; then
             echo "R_HOME=$(R RHOME)" >> $GITHUB_ENV
-            # Handy: ensure R is on PATH (usually already is)
             echo "PATH=$(dirname "$(command -v R)"):${PATH}" >> $GITHUB_ENV
           fi
 
       # -----------------------------------------------------------------
       # Compatibility shim: some legacy makefiles look in /usr/lib64
-      # On Ubuntu this doesn't exist; link to the multiarch lib dir.
       # -----------------------------------------------------------------
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
         run: |
@@ -116,7 +108,7 @@ jobs:
           HDF5_ROOT: "${{ env.HDF5_ROOT }}"
           NETCDF: "${{ env.NETCDF }}"
           NETCDF_FORTRAN: "${{ env.NETCDF_FORTRAN }}"
-          # NEW: MPI compilers for TauDEM
+          # MPI compilers for TauDEM
           CC: mpicc
           CXX: mpicxx
         run: |
