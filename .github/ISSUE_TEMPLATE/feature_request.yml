@@ -1,0 +1,17 @@
+name: 💡 Feature Request
+description: Suggest a new feature or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: Describe what you'd like to see improved.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this important?
+      placeholder: Explain how this benefits users or the workflow.
+
