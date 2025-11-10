@@ -177,25 +177,6 @@ jobs:
       # --------------------------
       - name: Full install (build venv + tools)
         shell: bash
-        env:
-          # Explicitly set MPI compilers for the build script
-          CC: mpicc
-          CXX: mpicxx
-
-          # Clear out any potentially harmful inherited flags from the environment
-          CFLAGS: ""
-          CXXFLAGS: ""
-          FFLAGS: ""
-          LDFLAGS: ""
-
-          # Define robust CMake flags to disable LTO and set a safe optimization level.
-          # These will be passed to the symfluence install script.
-          # This is often more reliable than relying on environment variables alone.
-          SYMFLUENCE_CMAKE_ARGS: >-
-            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
-            -DCMAKE_C_FLAGS="-O2"
-            -DCMAKE_CXX_FLAGS="-O2"
-
         run: |
           set -e
           echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
@@ -205,10 +186,9 @@ jobs:
           # Ensure the installer script is executable
           chmod +x ./symfluence
           
-          # Run the installation. The symfluence script must be able to pick up
-          # the SYMFLUENCE_CMAKE_ARGS environment variable and pass it to its CMake calls.
+          # Run the installation in a clean environment.
+          # The symfluence script itself is now responsible for all build logic.
           ./symfluence --install
-
 
 
       # ----------------
@@ -236,3 +216,49 @@ jobs:
             **/*build*.log
             **/cmake_build/**/*.log
           if-no-files-found: warn
+
+jobs:
+  smoke-tests:
+    needs: install-validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # If your install/setup already happened in install-validate, you can remove this block.
+      - name: Install SYMFLUENCE (wrapper)
+        run: |
+          set -e
+          chmod +x ./symfluence
+          ./symfluence --install
+
+      - name: CLI help (parses and exits 0)
+        run: |
+          set -e
+          ./symfluence --help > /dev/null
+
+      - name: Dry-run (no execution, just plan)
+        run: |
+          set -e
+          ./symfluence --dry_run
+
+      - name: Wrapper info (env sanity)
+        run: |
+          set -e
+          ./symfluence --wrapper-info
+
+      - name: Python API import + status keys
+        run: |
+          set -e
+          . ./venv/bin/activate || . ./.venv/bin/activate || true
+          python - << 'PY'
+          from pathlib import Path
+          from symfluence import SYMFLUENCE
+          c = SYMFLUENCE(Path('./0_config_files/config_template.yaml'))
+          s = c.get_workflow_status()
+          assert isinstance(s, dict) and {'total_steps','step_details'}.issubset(s), s
+          print("API status OK:", s['total_steps'], "steps")
+          PY

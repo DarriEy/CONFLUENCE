@@ -561,9 +561,8 @@ echo "Compiler: $(command -v ${CXX})"
 echo "Relying on CMake's built-in find_package(GDAL) to locate dependencies."
 echo "---------------------------------"
 
-# Clean any previous attempts and configure the build.
-# This simple invocation allows CMake to correctly find the GDAL package
-# provided by `libgdal-dev` without interference.
+# Clean any previous attempts and configure the build in a pristine state.
+# This simple invocation allows CMake to correctly find all dependencies.
 rm -rf build && mkdir -p build && cd build
 cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release
 
@@ -590,7 +589,7 @@ if [ "$copied_count" -gt 0 ] && [ -x "../bin/pitremove" ]; then
   echo "✅ Successfully built and staged $copied_count TauDEM executables."
   ls -la ../bin/
 else
-  echo "❌ Staging failed. The build appears to have failed silently."
+  echo "❌ Staging failed. The build completed but no executables were found in ./src."
   exit 1
 fi
                 '''
