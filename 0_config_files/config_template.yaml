@@ -197,7 +197,7 @@ FLASH_USE_ATTENTION: True                                      # Use attention
 FLASH_USE_SNOW: False                                          # Use snow data
 
 ###  4.5 Model Specific settings: NextGen 
-NGEN_INSTALL_PATH: '/anvil/projects/x-ees240082/data/CONFLUENCE_data/installs/ngen/build'
+NGEN_INSTALL_PATH: default
 NGEN_EXE: ngen
 NGEN_MODULES_TO_CALIBRATE: CFE                                 # Options: CFE, NOAH, PET (or combinations like "CFE,PET")
 NGEN_CFE_PARAMS_TO_CALIBRATE: smcmax,satdk,bb,slop,Cgw,expon,max_gw_storage,K_nash,K_lf
