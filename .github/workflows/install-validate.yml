@@ -24,8 +24,7 @@ jobs:
       NONINTERACTIVE: "1"
       # Repo root (already /home/runner/work/SYMFLUENCE/SYMFLUENCE)
       SYMFLUENCE_CODE: ${{ github.workspace }}
-      # Data is a sibling of the repo dir
-      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
+      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data   # <= no ..
 
     steps:
       - name: Checkout
@@ -174,18 +173,6 @@ jobs:
           echo "FUSE_LIBRARIES=${FUSE_LIBRARIES}"
           echo "FUSE_INCLUDE=${FUSE_INCLUDE}"
 
-      - name: Disable distro LTO flags (match earlier working TauDEM build)
-        if: steps.symf_cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -e
-          # Disable Debian/Ubuntu’s default LTO in dpkg-buildflags consumers (like CMake toolchains)
-          echo "DEB_BUILD_MAINT_OPTIONS=optimize=-lto" >> $GITHUB_ENV
-          # Also pin “set” overrides so nothing re-injects LTO later
-          echo "DEB_CFLAGS_SET=-O2"       >> $GITHUB_ENV
-          echo "DEB_CXXFLAGS_SET=-O2"     >> $GITHUB_ENV
-          echo "DEB_LDFLAGS_SET="         >> $GITHUB_ENV
-
       - name: Show dpkg-buildflags (sanity)
         if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
@@ -291,7 +278,8 @@ jobs:
     needs: install-validate
     runs-on: ubuntu-22.04
     env:
-      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
+      SYMFLUENCE_CODE: ${{ github.workspace }}
+      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data   # <= no ..
 
     steps:
       - uses: actions/checkout@v4
@@ -343,7 +331,7 @@ jobs:
       CI: "1"
       NONINTERACTIVE: "1"
       SYMFLUENCE_CODE: ${{ github.workspace }}
-      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
+      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data   # <= no ..
       DOMAIN: Bow_at_Banff
       DOMAIN_DEF: delineate
     steps:
