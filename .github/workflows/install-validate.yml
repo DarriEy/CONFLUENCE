@@ -22,9 +22,8 @@ jobs:
       TZ: UTC
       CI: "1"
       NONINTERACTIVE: "1"
-      # Repo root (already /home/runner/work/SYMFLUENCE/SYMFLUENCE)
       SYMFLUENCE_CODE: ${{ github.workspace }}
-      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data   # <= no ..
+      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data
 
     steps:
       - name: Checkout
@@ -39,223 +38,98 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-    # -------------------------------
-    # Core system build dependencies
-    # -------------------------------
-
-      # Only install system deps when cache is cold
+      # ----- System deps (always run now) -----
       - name: Install system build deps
-        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           set -e
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:ubuntugis/ppa
           sudo apt-get update
-
-          # ------------------------------------------------------------------
-          # Core compilation and parallel libraries
-          # ------------------------------------------------------------------
           sudo apt-get install -y \
             build-essential gfortran cmake make pkg-config \
             ninja-build autoconf automake libtool \
-            git wget curl unzip tar
-
-          # ------------------------------------------------------------------
-          # OpenMPI stack (choose ONE MPI implementation)
-          # ------------------------------------------------------------------
-          sudo apt-get install -y \
-            openmpi-bin libopenmpi-dev
-
-          # ------------------------------------------------------------------
-          # GDAL / PROJ / NetCDF / HDF5 (via UbuntuGIS Stable)
-          # ------------------------------------------------------------------
-          sudo apt-get install -y \
+            git wget curl unzip tar \
+            openmpi-bin libopenmpi-dev \
             gdal-bin libgdal-dev libproj-dev \
             libnetcdf-dev libnetcdff-dev \
-            libhdf5-dev hdf5-tools \
-            libudunits2-dev
-
-          # ------------------------------------------------------------------
-          # Python bindings and CMake helpers (optional but useful for tools)
-          # ------------------------------------------------------------------
-          sudo apt-get install -y \
+            libhdf5-dev hdf5-tools libudunits2-dev \
             python3-dev python3-pip python3-numpy python3-gdal
-
-          # ------------------------------------------------------------------
-          # Sanity checks for MPI and GDAL
-          # ------------------------------------------------------------------
           mpicc --version
           mpirun --version
           gdal-config --version
-          echo "✅ System dependencies installed successfully"
 
-
-      # ------------------------------------------------
-      # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)
-      # ------------------------------------------------
       - name: Configure compiler and library env
-        if: steps.symf_cache.outputs.cache-hit != 'true'
-        shell: bash
         run: |
           set -e
-
-          # pkg-config search paths (cover Ubuntu placements)
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-
-          # ---- NetCDF discovery (C & Fortran) ----
           NETCDF_PREFIX=$(nc-config --prefix 2>/dev/null || echo /usr)
           NETCDF_LIBDIR=$(nc-config --libdir 2>/dev/null || echo /usr/lib/x86_64-linux-gnu)
           NETCDF_INC=$(nc-config --includedir 2>/dev/null || echo /usr/include)
-
           echo "NETCDF=${NETCDF_PREFIX}" >> $GITHUB_ENV
           echo "NETCDF_FORTRAN=$(nf-config --prefix 2>/dev/null || echo ${NETCDF_PREFIX})" >> $GITHUB_ENV
           echo "NETCDF_DIR=${NETCDF_PREFIX}" >> $GITHUB_ENV
           echo "NETCDF_LIBDIR=${NETCDF_LIBDIR}" >> $GITHUB_ENV
           echo "NETCDF_INCLUDE=${NETCDF_INC}" >> $GITHUB_ENV
-
-          # ---- HDF5 discovery (Ubuntu 'serial' multiarch layout) ----
-          # Libraries live here; includes under /usr/include/hdf5/serial
           echo "HDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/serial" >> $GITHUB_ENV
           echo "HDF5_LIBDIR=/usr/lib/x86_64-linux-gnu/hdf5/serial" >> $GITHUB_ENV
           echo "HDF5_INCLUDE_DIR=/usr/include/hdf5/serial" >> $GITHUB_ENV
-
-          # UDUNITS2 prefix (helps CMake find scripts)
           echo "UDUNITS2_DIR=$(pkg-config --variable=prefix udunits2 2>/dev/null || echo /usr)" >> $GITHUB_ENV
-
-          # General linker paths for old Makefiles
           echo "LD_LIBRARY_PATH=${NETCDF_LIBDIR}:${HDF5_LIBDIR}:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
           echo "LIBRARY_PATH=${NETCDF_LIBDIR}:${HDF5_LIBDIR}:${LIBRARY_PATH}" >> $GITHUB_ENV
-
-          # R for rpy2 (if present)
-          if command -v R >/dev/null 2>&1; then
-            echo "R_HOME=$(R RHOME)" >> $GITHUB_ENV
-            echo "PATH=$(dirname "$(command -v R)"):${PATH}" >> $GITHUB_ENV
-          fi
-
-          # MPI compilers for TauDEM/CMake discovery
           echo "CC=mpicc"  >> $GITHUB_ENV
           echo "CXX=mpicxx" >> $GITHUB_ENV
-
-          # ------- Convenience flags for FUSE (used if your wrapper picks them up) -------
           NF_FLIBS="$(nf-config --flibs 2>/dev/null || echo "-L${NETCDF_LIBDIR} -lnetcdff")"
           NC_LIBS="$(nc-config --libs  2>/dev/null || echo "-L${NETCDF_LIBDIR} -lnetcdf")"
           H5_LIBS="$(pkg-config --libs hdf5_hl hdf5 2>/dev/null || echo "-L${HDF5_LIBDIR} -lhdf5_hl -lhdf5")"
           echo "FUSE_LIBRARIES=${NF_FLIBS} ${NC_LIBS} ${H5_LIBS}" >> $GITHUB_ENV
-
           NF_FFLAGS="$(nf-config --fflags 2>/dev/null || true)"
           NC_CFLAGS="$(nc-config --cflags 2>/dev/null || true)"
           H5_CFLAGS="$(pkg-config --cflags hdf5 2>/dev/null || echo "-I${HDF5_INCLUDE_DIR}")"
           echo "FUSE_INCLUDE=${NC_CFLAGS} ${NF_FFLAGS} ${H5_CFLAGS} -I${NETCDF_INCLUDE}" >> $GITHUB_ENV
-
-          # Extra Fortran compatibility for old NetCDF calls
           echo "FUSE_FFLAGS_EXTRA=-fallow-argument-mismatch -std=legacy -ffree-line-length-none -fmax-errors=0" >> $GITHUB_ENV
 
-          # Debug prints (will show in logs)
-          echo "NETCDF_PREFIX=${NETCDF_PREFIX}"
-          echo "NETCDF_LIBDIR=${NETCDF_LIBDIR}"
-          echo "NETCDF_INCLUDE=${NETCDF_INC}"
-          echo "HDF5_LIBDIR=${HDF5_LIBDIR}"
-          echo "HDF5_INCLUDE_DIR=${HDF5_INCLUDE_DIR}"
-          echo "FUSE_LIBRARIES=${FUSE_LIBRARIES}"
-          echo "FUSE_INCLUDE=${FUSE_INCLUDE}"
-
-
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
-        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           set -e
           sudo mkdir -p /usr/lib64
-
-          # NetCDF
           for so in /usr/lib/x86_64-linux-gnu/libnetcdf.so* /usr/lib/x86_64-linux-gnu/libnetcdff.so*; do
-            [ -e "$so" ] || continue
-            base=$(basename "$so")
+            [ -e "$so" ] || continue; base=$(basename "$so")
             [ -e "/usr/lib64/${base}" ] || sudo ln -s "$so" "/usr/lib64/${base}" || true
           done
-
-          # HDF5 (Ubuntu stores in hdf5/serial)
           for so in /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so* \
                     /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_hl.so* \
                     /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_fortran.so* \
                     /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5hl_fortran.so*; do
-            [ -e "$so" ] || continue
-            base=$(basename "$so")
+            [ -e "$so" ] || continue; base=$(basename "$so")
             [ -e "/usr/lib64/${base}" ] || sudo ln -s "$so" "/usr/lib64/${base}" || true
           done
 
-      # --------------------------
-      # Run your full installation
-      # --------------------------
-
       - name: Ensure data dir exists
-        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: mkdir -p "${{ env.SYMFLUENCE_DATA }}"
 
-      # Only build when cache is cold
       - name: Full install (build venv + tools)
-        if: steps.symf_cache.outputs.cache-hit != 'true'
         env:
           CC: mpicc
           CXX: mpicxx
-          CFLAGS: ""
-          CXXFLAGS: ""
-          LDFLAGS: ""
-          LD_LIBRARY_PATH: ""
-          DEB_BUILD_MAINT_OPTIONS: ""
         run: |
           set -e
           chmod +x ./symfluence
           ./symfluence --install
 
-
-      - name: Wrapper info
+      - name: Validate binaries
         run: |
           set -e
-          ./symfluence --wrapper-info || true
-
-      # ----------------
-      # Validate binaries
-      # ----------------
-      - name: Validate
-        run: |
-          set -e
-          test -x ./symfluence
           . ./venv/bin/activate || . ./.venv/bin/activate
           python --version
           python symfluence.py --validate_binaries
-
-
-      # --------------------------
-      # Upload logs on failure only
-      # --------------------------
-      - name: Upload build logs (on fail)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: symfluence-build-logs
-          path: |
-            **/build/**/CMakeFiles/CMakeOutput.log
-            **/build/**/CMakeFiles/CMakeError.log
-            **/logs/**
-            **/*build*.log
-            **/cmake_build/**/*.log
-          if-no-files-found: warn
 
       - name: Verify venv & package import
         run: |
           set -e
           . ./venv/bin/activate || . ./.venv/bin/activate
           which python
-          python --version
           python -c "import symfluence; print('symfluence OK')"
 
-      - name: Ensure wrapper is executable
-        run: chmod +x ./symfluence
-
-      - name: CLI help
-        run: bash ./symfluence --help > /dev/null
-
       - name: Wrapper info
-        run: bash ./symfluence --wrapper-info
-
+        run: ./symfluence --wrapper-info
