@@ -49,7 +49,7 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/venv
-            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+            ${{ github.workspace }}/SYMFLUENCE_data/installs
 
           key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
           restore-keys: |
@@ -181,22 +181,6 @@ jobs:
           echo "CXXFLAGS: $(dpkg-buildflags --get CXXFLAGS || true)"
           echo "LDFLAGS:  $(dpkg-buildflags --get LDFLAGS || true)"
 
-      # --------------------
-      # Sanity prints (logs)
-      # --------------------
-      - name: Print discovery info
-        if: steps.symf_cache.outputs.cache-hit != 'true'
-        run: |
-          which nc-config || true
-          which nf-config || true
-          pkg-config --modversion hdf5 || true
-          pkg-config --modversion udunits2 || true
-          echo "nc-config --libs: $(nc-config --libs 2>/dev/null || echo 'N/A')"
-          echo "nf-config --flibs: $(nf-config --flibs 2>/dev/null || echo 'N/A')"
-          echo "pkg-config hdf5 libs: $(pkg-config --libs hdf5 2>/dev/null || echo 'N/A')"
-          echo "pkg-config udunits2 cflags: $(pkg-config --cflags udunits2 2>/dev/null || echo 'N/A')"
-
-
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
         if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
@@ -223,6 +207,11 @@ jobs:
       # --------------------------
       # Run your full installation
       # --------------------------
+
+      - name: Ensure data dir exists
+        if: steps.symf_cache.outputs.cache-hit != 'true'
+        run: mkdir -p "${{ env.SYMFLUENCE_DATA }}"
+
       # Only build when cache is cold
       - name: Full install (build venv + tools)
         if: steps.symf_cache.outputs.cache-hit != 'true'
@@ -255,6 +244,41 @@ jobs:
           . ./venv/bin/activate || . ./.venv/bin/activate
           python --version
           python symfluence.py --validate_binaries
+
+      - name: Prune installs and venv (shrink cache)
+        run: |
+          set -e
+          INST="${SYMFLUENCE_DATA}/installs"
+          # Drop heavy build trees & VCS metadata
+          find "${INST}" -type d \( -name build -o -name cmake_build -o -name .git \) -prune -exec rm -rf {} + || true
+          # Move final ngen binary out of build dir if present
+          if [ -f "${INST}/ngen/cmake_build/ngen" ]; then
+            mkdir -p "${INST}/ngen/bin"
+            cp -f "${INST}/ngen/cmake_build/ngen" "${INST}/ngen/bin/ngen"
+            rm -rf "${INST}/ngen/cmake_build" || true
+          fi
+          # Remove .o/.a/.la etc. and __pycache__/pyc
+          find "${INST}" -type f \( -name '*.o' -o -name '*.a' -o -name '*.la' \) -delete || true
+          find ./venv -type f -name '*.pyc' -delete || true
+          find ./venv -type d -name '__pycache__' -prune -exec rm -rf {} + || true
+          # Strip ELF executables to cut size (best effort)
+          if command -v strip >/dev/null 2>&1; then
+            find "${INST}" -type f -perm -111 -exec bash -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1" || true' _ {} \; || true
+          fi
+
+      - name: Package install artifacts (pruned)
+        run: |
+          set -e
+          tar -C "${GITHUB_WORKSPACE}" -I 'zstd -19' -cf symfluence-install.tar.zst \
+            venv \
+            SYMFLUENCE_data
+      - name: Upload install artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: symfluence-install-22_04
+          path: symfluence-install.tar.zst
+          retention-days: 1
+          if-no-files-found: error
 
       # --------------------------
       # Upload logs on failure only
@@ -298,11 +322,26 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/venv
-            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+            ${{ github.workspace }}/SYMFLUENCE_data/installs
           key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
           restore-keys: |
             symfluence-22_04-${{ runner.os }}-
             symfluence-22_04-
+
+      - name: Download install artifacts (fallback)
+        uses: actions/download-artifact@v4
+        with:
+          name: symfluence-install-22_04
+        continue-on-error: true
+
+      - name: Restore install artifacts (if present)
+        run: |
+          set -e
+          if [ -f symfluence-install.tar.zst ]; then
+            tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
+          fi
+
+
 
       - name: Verify venv & package import
         run: |
@@ -351,11 +390,24 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/venv
-            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+            ${{ github.workspace }}/SYMFLUENCE_data/installs
           key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
           restore-keys: |
             symfluence-22_04-${{ runner.os }}-
             symfluence-22_04-
+
+      - name: Download install artifacts (fallback)
+        uses: actions/download-artifact@v4
+        with:
+          name: symfluence-install-22_04
+        continue-on-error: true
+
+      - name: Restore install artifacts (if present)
+        run: |
+          set -e
+          if [ -f symfluence-install.tar.zst ]; then
+            tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
+          fi
 
       - name: Verify venv & package import
         run: |

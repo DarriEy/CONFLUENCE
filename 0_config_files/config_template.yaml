@@ -97,7 +97,7 @@ EM_PRCP: prcp                                                  # EM-EARTH precip
 
 ### ============================================= 4. Model Specific settings: =============================================================
 
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH 
+HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH, NGEN 
 ROUTING_MODEL: mizuRoute                                       # Routing model, options: mizuRoute
 
 ### 4.1 Model Specific settings: SUMMA 
@@ -196,7 +196,16 @@ FLASH_L2_REGULARIZATION: 1e-6                                  # L2 regularizati
 FLASH_USE_ATTENTION: True                                      # Use attention
 FLASH_USE_SNOW: False                                          # Use snow data
 
-###  4.5 Model Specific settings: MizuRoute 
+###  4.5 Model Specific settings: NextGen 
+NGEN_INSTALL_PATH: '/anvil/projects/x-ees240082/data/CONFLUENCE_data/installs/ngen/build'
+NGEN_EXE: ngen
+NGEN_MODULES_TO_CALIBRATE: CFE                                 # Options: CFE, NOAH, PET (or combinations like "CFE,PET")
+NGEN_CFE_PARAMS_TO_CALIBRATE: smcmax,satdk,bb,slop,Cgw,expon,max_gw_storage,K_nash,K_lf
+NGEN_NOAH_PARAMS_TO_CALIBRATE: rain_snow_thresh,ZREF,noah_refdk,noah_refkdt,noah_czil,noah_z0,noah_frzk,noah_salp
+NGEN_PET_PARAMS_TO_CALIBRATE: pet_albedo,pet_z0_mom,pet_z0_heat,pet_veg_h,pet_d0
+NGEN_ACTIVE_CATCHMENT_ID: cat-1
+
+###  4.6 Model Specific settings: MizuRoute 
 SETTINGS_MIZU_WITHIN_BASIN: 0                                  # '0' (no) or '1' (IRF routing). Flag to enable within-basin routing by mizuRoute. Should be set to 0 if SUMMA is run with "subRouting" decision "timeDlay".
 SETTINGS_MIZU_ROUTING_DT: 86400                                # Duration of the routing time step [s].
 SETTINGS_MIZU_ROUTING_UNITS: mm/d                              # Units of the variable to be routed.
