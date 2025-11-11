@@ -140,33 +140,34 @@ jobs:
           echo "---- WRAPPER INFO ----"
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
-      - name: Run setup_project (with debug)
+      - name: Run setup_project (with debug + robust logging)
         run: |
-          # Avoid nounset tripping on activate scripts
           set -eo pipefail
-          export PYTHONPATH="${PYTHONPATH-}"
-
+          export PYTHONPATH="${PYTHONPATH-}"     # avoid unbound variable
           . ./venv/bin/activate
-          set -x  # echo commands
-          # Use explicit python to capture full tracebacks from the module
-          python -c "import sys; print(sys.executable)"
-          python symfluence.py --version || true
 
-          # Run with highest verbosity if supported
-          python symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project --log-level DEBUG \
-          2> _setup_stderr.log | tee _setup_stdout.log
+          echo "---- CLI HELP (to confirm flags) ----"
+          python symfluence.py --help | sed -n '1,200p' || true
 
-          # If the command exited non-zero, show logs and fail
-          STATUS=${PIPESTATUS[0]}
-          set +x
+          echo "---- Running setup_project ----"
+          # Capture both stdout and stderr; don't rely on a separate tee line
+          set +e
+          python symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project \
+            > _setup_stdout.log 2> _setup_stderr.log
+          STATUS=$?
+          set -e
+
           if [ "$STATUS" -ne 0 ]; then
-            echo "❌ setup_project failed (exit $STATUS). Showing first 300 lines of stdout/stderr:"
-            head -n 300 _setup_stdout.log || true
-            head -n 300 _setup_stderr.log || true
+            echo "❌ setup_project failed (exit $STATUS). Showing first 200 lines of logs:"
+            echo "---- STDOUT ----"; sed -n '1,200p' _setup_stdout.log || true
+            echo "---- STDERR ----"; sed -n '1,200p' _setup_stderr.log || true
             echo "---- Work logs, if any ----"
             ls -R _workLog_* 2>/dev/null || echo "(no _workLog_* directory created)"
             exit $STATUS
+          else
+            echo "✅ setup_project finished OK"
           fi
+
 
       - name: Assert domain directory exists
         run: |
