@@ -353,17 +353,17 @@ jobs:
           cache: 'pip'  # small speedup
 
       - name: Install runtime libs (GDAL/PROJ + NetCDF/HDF5)
-      run: |
-        set -e
-        sudo add-apt-repository -y ppa:ubuntugis/ppa
-        sudo apt-get update
-        # GDAL/PROJ (for osgeo)
-        sudo apt-get install -y gdal-bin libgdal-dev libproj-dev proj-data
-        # NetCDF/HDF5 (if your binaries/py deps need them)
-        sudo apt-get install -y libnetcdf-dev libnetcdff-dev libhdf5-dev hdf5-tools libudunits2-dev
-        # MPI only if you actually run MPI jobs in this job
-        # sudo apt-get install -y openmpi-bin libopenmpi-dev
-        sudo ldconfig -v
+        run: |
+          set -e
+          sudo add-apt-repository -y ppa:ubuntugis/ppa
+          sudo apt-get update
+          # GDAL/PROJ (for osgeo)
+          sudo apt-get install -y gdal-bin libgdal-dev libproj-dev proj-data
+          # NetCDF/HDF5 (if your binaries/py deps need them)
+          sudo apt-get install -y libnetcdf-dev libnetcdff-dev libhdf5-dev hdf5-tools libudunits2-dev
+          # MPI only if you actually run MPI jobs in this job
+          # sudo apt-get install -y openmpi-bin libopenmpi-dev
+          sudo ldconfig -v
 
       - name: Download install artifacts
         uses: actions/download-artifact@v4
@@ -442,7 +442,7 @@ jobs:
           # MPI only if you actually run MPI jobs in this job
           # sudo apt-get install -y openmpi-bin libopenmpi-dev
           sudo ldconfig -v
-          
+
       - name: Download install artifacts
         uses: actions/download-artifact@v4
         with:
