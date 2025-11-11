@@ -28,8 +28,11 @@ jobs:
 
       - name: Set up Python
         uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Meets the 3.11+ requirement
+          python-version: '3.11'
+          cache: 'pip'
+
 
 
     # -------------------------------
@@ -278,29 +281,57 @@ jobs:
             **/cmake_build/**/*.log
           if-no-files-found: warn
 
+      - name: Package install artifacts
+        shell: bash
+        run: |
+          set -e
+          ls -la ./venv
+          ls -la "${SYMFLUENCE_DATA}"
+          # zstd usually halves time/size vs gzip on big trees
+          tar -C "${GITHUB_WORKSPACE}" -I 'zstd -19' -cf symfluence-install.tar.zst \
+            venv \
+            ../SYMFLUENCE_data
+
+      - name: Upload install artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: symfluence-install-22_04
+          path: symfluence-install.tar.zst
+          if-no-files-found: error
+
 
   smoke-tests:
     needs: install-validate
     runs-on: ubuntu-22.04
+    env:
+      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'  # small speedup
 
+      - name: Download install artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: symfluence-install-22_04
 
-      # If your install/setup already happened in install-validate, you can remove this block.
-      - name: Install SYMFLUENCE (wrapper)
+      - name: Restore install artifacts
+        shell: bash
         run: |
           set -e
-          chmod +x ./symfluence
-          ./symfluence --install
+          mkdir -p "${SYMFLUENCE_DATA}"
+          tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
+          . ./venv/bin/activate || . ./.venv/bin/activate
+          python --version
+          ls -R "${SYMFLUENCE_DATA}/installs" || true
+
 
       - name: CLI help (parses and exits 0)
         run: |
@@ -329,45 +360,30 @@ jobs:
           assert isinstance(s, dict) and {'total_steps','step_details'}.issubset(s), s
           print("API status OK:", s['total_steps'], "steps")
           PY
-      
-      - name: Package install artifacts
-        shell: bash
-        run: |
-          set -e
-          # Ensure we have the same paths later; you're using ../SYMFLUENCE_data here
-          ls -la ./venv
-          ls -la "${SYMFLUENCE_DATA}"
-          tar -C "${GITHUB_WORKSPACE}" -czf symfluence-install.tgz \
-            venv \
-            ../SYMFLUENCE_data
 
-      
-      - name: Upload install artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: symfluence-install-22_04
-          path: symfluence-install.tgz
-          if-no-files-found: error
+    step_tests-domain:
+      needs: smoke-tests
+      runs-on: ubuntu-22.04
+      env:
+        TZ: UTC
+        CI: "1"
+        NONINTERACTIVE: "1"
+        SYMFLUENCE_CODE: ${{ github.workspace }}
+        SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
+        DOMAIN: Bow_at_Banff
+        DOMAIN_DEF: delineate
 
 
-  step_tests-domain:
-    needs: smoke-tests
-    runs-on: ubuntu-22.04
-    env:
-      TZ: UTC
-      CI: "1"
-      NONINTERACTIVE: "1"
-      SYMFLUENCE_CODE: ${{ github.workspace }}
-      # Put CI working data outside the repo tree
-      SYMFLUENCE_DATA: ${{ github.workspace }}/.sym_data
-      DOMAIN: Bow_at_Banff
-      DOMAIN_DEF: delineate
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'  # small speedup
 
       - name: Download install artifacts
         uses: actions/download-artifact@v4
@@ -378,13 +394,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Recreate the sibling data dir, then extract to the repository root
-          mkdir -p "${GITHUB_WORKSPACE}/../SYMFLUENCE_data"
-          tar -C "${GITHUB_WORKSPACE}" -xzf symfluence-install.tgz
-          # Sanity
+          mkdir -p "${SYMFLUENCE_DATA}"
+          tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
           . ./venv/bin/activate || . ./.venv/bin/activate
           python --version
-          ls -R "${GITHUB_WORKSPACE}/../SYMFLUENCE_data/installs" || true
+          ls -R "${SYMFLUENCE_DATA}/installs" || true
 
       - name: Create CI config for Bow at Banff
         run: |
