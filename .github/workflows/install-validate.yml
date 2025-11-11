@@ -136,7 +136,7 @@ jobs:
 
       - name: Create CI config overriding domain (deterministic)
         run: |
-          set -euo pipefail
+          set -eo pipefail
           mkdir -p 0_config_files
           cat > 0_config_files/config_ci_bow.yaml <<'YAML'
           SYMFLUENCE_CODE_DIR: "${{ env.SYMFLUENCE_CODE }}"
@@ -148,14 +148,14 @@ jobs:
 
       - name: Run --setup_project
         run: |
-          set -euo pipefail
+          set -eo pipefail
           . ./venv/bin/activate
           ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project \
             || { echo "setup_project failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
 
       - name: Assert domain directory exists
         run: |
-          set -euo pipefail
+          set -eo pipefail
           TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff"
           if [ -d "$TARGET" ]; then
             echo "✅ Found ${TARGET}"
@@ -167,7 +167,7 @@ jobs:
 
       - name: Copy test data into domain directory
         run: |
-          set -euo pipefail
+          set -eo pipefail
           SRC="${SYMFLUENCE_CODE}/src/data/domain_Bow_at_Banff"
           DEST="${SYMFLUENCE_DATA}/domain_Bow_at_Banff"
           echo "📦 Copying test data from ${SRC} → ${DEST}"
@@ -184,14 +184,14 @@ jobs:
 
       - name: Run --create_pour_point
         run: |
-          set -euo pipefail
+          set -eo pipefail
           . ./venv/bin/activate
           ./symfluence --config 0_config_files/config_ci_bow.yaml --create_pour_point \
             || { echo "create_pour_point failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
 
       - name: Assert pour point exists
         run: |
-          set -euo pipefail
+          set -eo pipefail
           BASE="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles/pour_point"
           if compgen -G "${BASE}/Bow_at_Banff_pourPoint."{shp,gpkg,geojson} > /dev/null; then
             echo "✅ Found pour point file in ${BASE}"
@@ -204,14 +204,14 @@ jobs:
 
       - name: Run --define_domain
         run: |
-          set -euo pipefail
+          set -eo pipefail
           . ./venv/bin/activate
           ./symfluence --config 0_config_files/config_ci_bow.yaml --define_domain \
             || { echo "define_domain failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
 
       - name: Assert define_domain output exists
         run: |
-          set -euo pipefail
+          set -eo pipefail
           TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles/river_basins/Bow_at_Banff_riverBasins.shp"
           if [ -f "$TARGET" ]; then
             echo "✅ Found domain shapefile: ${TARGET}"
@@ -223,7 +223,7 @@ jobs:
 
       - name: Run --discretize_domain
         run: |
-          set -euo pipefail
+          set -eo pipefail
           . ./venv/bin/activate
           ./symfluence --config 0_config_files/config_ci_bow.yaml --discretize_domain \
             || { echo "discretize_domain failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
