@@ -140,19 +140,41 @@ jobs:
           echo "---- WRAPPER INFO ----"
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
-      - name: Run setup_project (with debug + robust logging)
+      - name: Create CI config overriding domain (deterministic)
         run: |
           set -eo pipefail
-          export PYTHONPATH="${PYTHONPATH-}"     # avoid unbound variable
+          mkdir -p 0_config_files
+          cat > 0_config_files/config_ci_bow.yaml <<'YAML'
+          SYMFLUENCE_CODE_DIR: "/home/runner/work/SYMFLUENCE/SYMFLUENCE"
+          SYMFLUENCE_DATA_DIR: "/home/runner/work/SYMFLUENCE/SYMFLUENCE/SYMFLUENCE_data"
+          DOMAIN_NAME: "Bow_at_Banff"
+          DOMAIN_DEFINITION_METHOD: "delineate"
+          LOG_LEVEL: "INFO"
+          YAML
+          echo "Wrote config_ci_bow.yaml:"
+          sed -n '1,120p' 0_config_files/config_ci_bow.yaml
+
+      - name: Run setup_project (absolute config path + diagnostics)
+        run: |
+          set -eo pipefail
           . ./venv/bin/activate
 
+          CONFIG="${GITHUB_WORKSPACE}/0_config_files/config_ci_bow.yaml"
+
+          echo "Checking config at: ${CONFIG}"
+          if [ ! -f "${CONFIG}" ]; then
+            echo "❌ Config file missing"
+            echo "Listing 0_config_files:"
+            ls -la "${GITHUB_WORKSPACE}/0_config_files" || true
+            exit 1
+          fi
+
           echo "---- CLI HELP (to confirm flags) ----"
-          python symfluence.py --help | sed -n '1,200p' || true
+          python symfluence.py --help | sed -n '1,120p' || true
 
           echo "---- Running setup_project ----"
-          # Capture both stdout and stderr; don't rely on a separate tee line
           set +e
-          python symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project \
+          python symfluence.py --config "${CONFIG}" --setup_project \
             > _setup_stdout.log 2> _setup_stderr.log
           STATUS=$?
           set -e
@@ -161,12 +183,13 @@ jobs:
             echo "❌ setup_project failed (exit $STATUS). Showing first 200 lines of logs:"
             echo "---- STDOUT ----"; sed -n '1,200p' _setup_stdout.log || true
             echo "---- STDERR ----"; sed -n '1,200p' _setup_stderr.log || true
-            echo "---- Work logs, if any ----"
+            echo "---- Work logs (if any) ----"
             ls -R _workLog_* 2>/dev/null || echo "(no _workLog_* directory created)"
             exit $STATUS
           else
             echo "✅ setup_project finished OK"
           fi
+
 
 
       - name: Assert domain directory exists
