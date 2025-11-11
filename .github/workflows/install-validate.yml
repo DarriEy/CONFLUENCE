@@ -140,19 +140,41 @@ jobs:
           echo "---- WRAPPER INFO ----"
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
-      - name: Create CI config overriding domain (deterministic)
+      - name: Create CI config from template + overrides
         run: |
           set -eo pipefail
           mkdir -p 0_config_files
-          cat > 0_config_files/config_ci_bow.yaml <<'YAML'
-          SYMFLUENCE_CODE_DIR: "/home/runner/work/SYMFLUENCE/SYMFLUENCE"
-          SYMFLUENCE_DATA_DIR: "/home/runner/work/SYMFLUENCE/SYMFLUENCE/SYMFLUENCE_data"
-          DOMAIN_NAME: "Bow_at_Banff"
-          DOMAIN_DEFINITION_METHOD: "delineate"
-          LOG_LEVEL: "INFO"
-          YAML
-          echo "Wrote config_ci_bow.yaml:"
+
+          # Merge the template with CI overrides via a tiny Python script
+          python - <<'PY'
+          import os, sys, yaml
+          tpl_path = "0_config_files/config_template.yaml"
+          out_path = "0_config_files/config_ci_bow.yaml"
+          with open(tpl_path, "r") as f:
+              cfg = yaml.safe_load(f) or {}
+
+          # Minimal overrides for CI
+          cfg["SYMFLUENCE_CODE_DIR"] = os.environ.get("SYMFLUENCE_CODE", "")
+          cfg["SYMFLUENCE_DATA_DIR"] = os.environ.get("SYMFLUENCE_DATA", "")
+          cfg["DOMAIN_NAME"] = "Bow_at_Banff"
+          cfg["DOMAIN_DEFINITION_METHOD"] = "delineate"
+          cfg["LOG_LEVEL"] = "INFO"
+
+          with open(out_path, "w") as f:
+              yaml.safe_dump(cfg, f, sort_keys=False)
+
+          # Quick sanity checks for keys that must exist
+          required = ["DEM_NAME", "SYMFLUENCE_CODE_DIR", "SYMFLUENCE_DATA_DIR", "DOMAIN_NAME", "DOMAIN_DEFINITION_METHOD"]
+          missing = [k for k in required if k not in cfg or cfg[k] in ("", None)]
+          if missing:
+              print("Missing required keys in merged config:", missing, file=sys.stderr)
+              sys.exit(1)
+          print("Wrote", out_path)
+          PY
+
+          echo "---- First 120 lines of merged config ----"
           sed -n '1,120p' 0_config_files/config_ci_bow.yaml
+
 
       - name: Run setup_project (absolute config path + diagnostics)
         run: |
