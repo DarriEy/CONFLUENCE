@@ -14,8 +14,10 @@ jobs:
       TZ: UTC
       CI: "1"
       NONINTERACTIVE: "1"
-      SYMFLUENCE_CODE: ${{ github.workspace }}/SYMFLUENCE
-      SYMFLUENCE_DATA: ${{ github.workspace }}/SYMFLUENCE_data
+      # Repo root (already /home/runner/work/SYMFLUENCE/SYMFLUENCE)
+      SYMFLUENCE_CODE: ${{ github.workspace }}
+      # Data is a sibling of the repo dir
+      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
 
     steps:
       - name: Checkout
@@ -247,6 +249,8 @@ jobs:
         shell: bash
         run: |
           set -e
+          echo "CODE=$SYMFLUENCE_CODE"
+          echo "DATA=$SYMFLUENCE_DATA"
           chmod +x ./symfluence
           ./symfluence --validate_binaries
 

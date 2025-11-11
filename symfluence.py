@@ -338,7 +338,7 @@ def main():
                     except TypeError:
                         # Last resort: legacy positional config_path
                         result = cli_manager.validate_binaries(config_path)
-                sys.exit(0 if result else 1)
+                sys.exit(0 if (result is True) else 1)
             
             if binary_ops.get('get_executables') is not None:
                 symfluence_instance = SYMFLUENCE(config_path, debug_mode=plan['settings'].get('debug', False))
