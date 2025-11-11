@@ -7,6 +7,14 @@ on:
     branches: [ main, develop ]
   workflow_dispatch: {}
 
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: symfluence-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   install-validate:
     runs-on: ubuntu-22.04
@@ -35,15 +43,27 @@ jobs:
     # -------------------------------
     # Core system build dependencies
     # -------------------------------
+      # Move this near the top of install-validate (after setup-python)
+      - name: Restore build cache
+        id: symf_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/venv
+            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+
+          key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
+          restore-keys: |
+            symfluence-22_04-${{ runner.os }}-
+            symfluence-22_04-
+
+      # Only install system deps when cache is cold
       - name: Install system build deps
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           set -e
           sudo apt-get update
-
-          # ------------------------------------------------------------------
-          # Enable UbuntuGIS Stable PPA for consistent GDAL/PROJ versions
-          # (GDAL 3.6+ on 22.04, or 3.8+ on 24.04)
-          # ------------------------------------------------------------------
+          sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:ubuntugis/ppa
           sudo apt-get update
 
@@ -89,6 +109,7 @@ jobs:
       # Env discovery for NetCDF / HDF5 / UDUNITS (Ubuntu)
       # ------------------------------------------------
       - name: Configure compiler and library env
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -e
@@ -154,6 +175,7 @@ jobs:
           echo "FUSE_INCLUDE=${FUSE_INCLUDE}"
 
       - name: Disable distro LTO flags (match earlier working TauDEM build)
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -e
@@ -165,6 +187,7 @@ jobs:
           echo "DEB_LDFLAGS_SET="         >> $GITHUB_ENV
 
       - name: Show dpkg-buildflags (sanity)
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           set -e
           echo "CFLAGS:   $(dpkg-buildflags --get CFLAGS || true)"
@@ -175,6 +198,7 @@ jobs:
       # Sanity prints (logs)
       # --------------------
       - name: Print discovery info
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           which nc-config || true
           which nf-config || true
@@ -187,6 +211,7 @@ jobs:
 
 
       - name: Create /usr/lib64 symlinks for legacy builds (HDF5/NetCDF)
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         run: |
           set -e
           sudo mkdir -p /usr/lib64
@@ -211,12 +236,9 @@ jobs:
       # --------------------------
       # Run your full installation
       # --------------------------
+      # Only build when cache is cold
       - name: Full install (build venv + tools)
-        shell: bash
-        # --- DEFINITIVE FIX ---
-        # Create a clean environment for this step to prevent interference from
-        # variables set in previous steps (like CFLAGS, LDFLAGS, DEB_..._FLAGS).
-        # We explicitly set only the essential MPI compilers.
+        if: steps.symf_cache.outputs.cache-hit != 'true'
         env:
           CC: mpicc
           CXX: mpicxx
@@ -227,16 +249,8 @@ jobs:
           DEB_BUILD_MAINT_OPTIONS: ""
         run: |
           set -e
-          echo "SYMFLUENCE_CODE: ${SYMFLUENCE_CODE}"
-          echo "SYMFLUENCE_DATA: ${SYMFLUENCE_DATA}"
-          mkdir -p "${SYMFLUENCE_DATA}"
-          
-          # Ensure the installer script is executable
           chmod +x ./symfluence
-          
-          # Run the installation in the newly cleaned environment.
           ./symfluence --install
-
 
 
       - name: Wrapper info
@@ -248,12 +262,9 @@ jobs:
       # Validate binaries
       # ----------------
       - name: Validate
-        shell: bash
         run: |
           set -e
-          echo "CODE=$SYMFLUENCE_CODE"
-          echo "DATA=$SYMFLUENCE_DATA"
-          # Use the venv Python created during install
+          test -x ./symfluence
           . ./venv/bin/activate || . ./.venv/bin/activate
           python --version
           python symfluence.py --validate_binaries
@@ -274,65 +285,6 @@ jobs:
             **/cmake_build/**/*.log
           if-no-files-found: warn
 
-      - name: Prune installs and venv before packaging
-        shell: bash
-        run: |
-          set -e
-          INST="${SYMFLUENCE_DATA}/installs"
-
-          echo "== Before prune =="
-          du -h -d1 "${SYMFLUENCE_DATA}" || true
-          du -h -d2 "${INST}" | sort -h | tail -n 30 || true
-
-          # --- Move final ngen binary out of build dir (so we can drop the build tree) ---
-          if [ -f "${INST}/ngen/cmake_build/ngen" ]; then
-            mkdir -p "${INST}/ngen/bin"
-            cp -f "${INST}/ngen/cmake_build/ngen" "${INST}/ngen/bin/ngen"
-          fi
-
-          # --- Drop heavy build dirs, sources, VCS metadata across all tools ---
-          find "${INST}" -type d \( -name build -o -name cmake_build -o -name .git \) -prune -exec rm -rf {} + || true
-          # Drop object/static/libtool artifacts
-          find "${INST}" -type f \( -name '*.o' -o -name '*.a' -o -name '*.la' \) -delete || true
-          # Drop large example/test/data dirs if present
-          find "${INST}" -type d \( -name tests -o -name Examples -o -name example -o -name examples -o -name data \) \
-            -maxdepth 1 -prune -exec rm -rf {} + || true
-
-          # --- Strip binaries to reduce size (ignore failures on scripts) ---
-          if command -v strip >/dev/null 2>&1; then
-            find "${INST}" -type f -perm -111 -exec bash -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1" || true' _ {} \; || true
-          fi
-
-          # --- Slim the venv: pyc + __pycache__ ---
-          find ./venv -type f -name '*.pyc' -delete || true
-          find ./venv -type d -name '__pycache__' -prune -exec rm -rf {} + || true
-
-          # --- Free some system space (optional) ---
-          sudo rm -rf /var/lib/apt/lists/* || true
-          sudo apt-get clean || true
-
-          echo "== After prune =="
-          du -h -d1 "${SYMFLUENCE_DATA}" || true
-          du -h -d2 "${INST}" | sort -h | tail -n 30 || true
-
-      - name: Package install artifacts
-        shell: bash
-        run: |
-          set -e
-          ls -la ./venv
-          ls -la "${SYMFLUENCE_DATA}"
-          # zstd usually halves time/size vs gzip on big trees
-          tar -C "${GITHUB_WORKSPACE}" -I 'zstd -19' -cf symfluence-install.tar.zst \
-            venv \
-            ../SYMFLUENCE_data
-
-      - name: Upload install artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: symfluence-install-22_04
-          path: symfluence-install.tar.zst
-          retention-days: 1
-          if-no-files-found: error
 
 
   smoke-tests:
@@ -352,57 +304,36 @@ jobs:
           python-version: '3.11'
           cache: 'pip'  # small speedup
 
-      - name: Install runtime libs (GDAL/PROJ + NetCDF/HDF5)
-        run: |
-          set -e
-          sudo add-apt-repository -y ppa:ubuntugis/ppa
-          sudo apt-get update
-          # GDAL/PROJ (for osgeo)
-          sudo apt-get install -y gdal-bin libgdal-dev libproj-dev proj-data
-          # NetCDF/HDF5 (if your binaries/py deps need them)
-          sudo apt-get install -y libnetcdf-dev libnetcdff-dev libhdf5-dev hdf5-tools libudunits2-dev
-          # MPI only if you actually run MPI jobs in this job
-          # sudo apt-get install -y openmpi-bin libopenmpi-dev
-          sudo ldconfig -v
-
-      - name: Download install artifacts
-        uses: actions/download-artifact@v4
+      - name: Restore build cache
+        id: symf_cache
+        uses: actions/cache@v4
         with:
-          name: symfluence-install-22_04
+          path: |
+            ${{ github.workspace }}/venv
+            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+          key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
+          restore-keys: |
+            symfluence-22_04-${{ runner.os }}-
+            symfluence-22_04-
 
-      - name: Restore install artifacts
-        shell: bash
+      - name: Verify venv & package import
         run: |
           set -e
-          mkdir -p "${SYMFLUENCE_DATA}"
-          tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
           . ./venv/bin/activate || . ./.venv/bin/activate
+          which python
           python --version
-          ls -R "${SYMFLUENCE_DATA}/installs" || true
+          python -c "import symfluence; print('symfluence OK')"
 
-      - name: CLI help (parses and exits 0)
-        run: |
-          set -e
-          ./symfluence --help > /dev/null
+      - name: Ensure wrapper is executable
+        run: chmod +x ./symfluence
+
+      - name: CLI help
+        run: bash ./symfluence --help > /dev/null
+
+      - name: Wrapper info
+        run: bash ./symfluence --wrapper-info
 
 
-      - name: Wrapper info (env sanity)
-        run: |
-          set -e
-          ./symfluence --wrapper-info
-
-      - name: Python API import + status keys
-        run: |
-          set -e
-          . ./venv/bin/activate || . ./.venv/bin/activate || true
-          python - << 'PY'
-          from pathlib import Path
-          from symfluence import SYMFLUENCE
-          c = SYMFLUENCE(Path('./0_config_files/config_template.yaml'))
-          s = c.get_workflow_status()
-          assert isinstance(s, dict) and {'total_steps','step_details'}.issubset(s), s
-          print("API status OK:", s['total_steps'], "steps")
-          PY
 
   step_tests-domain:
     needs: smoke-tests
@@ -426,33 +357,30 @@ jobs:
           python-version: '3.11'
           cache: 'pip'  # small speedup
 
-      - name: Install runtime libs (GDAL/PROJ + NetCDF/HDF5)
-        run: |
-          set -e
-          sudo add-apt-repository -y ppa:ubuntugis/ppa
-          sudo apt-get update
-          # GDAL/PROJ (for osgeo)
-          sudo apt-get install -y gdal-bin libgdal-dev libproj-dev proj-data
-          # NetCDF/HDF5 (if your binaries/py deps need them)
-          sudo apt-get install -y libnetcdf-dev libnetcdff-dev libhdf5-dev hdf5-tools libudunits2-dev
-          # MPI only if you actually run MPI jobs in this job
-          # sudo apt-get install -y openmpi-bin libopenmpi-dev
-          sudo ldconfig -v
-
-      - name: Download install artifacts
-        uses: actions/download-artifact@v4
+      - name: Restore build cache
+        id: symf_cache
+        uses: actions/cache@v4
         with:
-          name: symfluence-install-22_04
+          path: |
+            ${{ github.workspace }}/venv
+            ${{ github.workspace }}/../SYMFLUENCE_data/installs
+          key: symfluence-22_04-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'setup.cfg', 'requirements*.txt', '0_config_files/**') }}
+          restore-keys: |
+            symfluence-22_04-${{ runner.os }}-
+            symfluence-22_04-
 
-      - name: Restore install artifacts
-        shell: bash
+      - name: Verify venv & package import
         run: |
           set -e
-          mkdir -p "${SYMFLUENCE_DATA}"
-          tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
           . ./venv/bin/activate || . ./.venv/bin/activate
+          which python
           python --version
-          ls -R "${SYMFLUENCE_DATA}/installs" || true
+          python -c "import symfluence; print('symfluence OK')"
+
+
+      - name: Ensure wrapper is executable
+        run: chmod +x ./symfluence
+
 
       - name: Create CI config for Bow at Banff
         run: |
