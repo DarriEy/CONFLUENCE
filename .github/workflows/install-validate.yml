@@ -140,16 +140,24 @@ jobs:
           echo "---- WRAPPER INFO ----"
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
-      - name: Create CI config from template + overrides
+      - name: Create CI config from template + overrides (venv python)
         run: |
-          set -eo pipefail
-          mkdir -p 0_config_files
+          set -euo pipefail
+          . ./venv/bin/activate
 
-          # Merge the template with CI overrides via a tiny Python script
           python - <<'PY'
-          import os, sys, yaml
+          import os, sys
+          try:
+              import yaml
+          except ImportError:
+              # safety: ensure pyyaml is present
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml"])
+              import yaml
+
           tpl_path = "0_config_files/config_template.yaml"
           out_path = "0_config_files/config_ci_bow.yaml"
+
           with open(tpl_path, "r") as f:
               cfg = yaml.safe_load(f) or {}
 
@@ -163,17 +171,18 @@ jobs:
           with open(out_path, "w") as f:
               yaml.safe_dump(cfg, f, sort_keys=False)
 
-          # Quick sanity checks for keys that must exist
-          required = ["DEM_NAME", "SYMFLUENCE_CODE_DIR", "SYMFLUENCE_DATA_DIR", "DOMAIN_NAME", "DOMAIN_DEFINITION_METHOD"]
-          missing = [k for k in required if k not in cfg or cfg[k] in ("", None)]
+          # quick sanity checks
+          required = ["DEM_NAME","SYMFLUENCE_CODE_DIR","SYMFLUENCE_DATA_DIR","DOMAIN_NAME","DOMAIN_DEFINITION_METHOD"]
+          missing = [k for k in required if not cfg.get(k)]
           if missing:
               print("Missing required keys in merged config:", missing, file=sys.stderr)
               sys.exit(1)
+
           print("Wrote", out_path)
           PY
 
-          echo "---- First 120 lines of merged config ----"
-          sed -n '1,120p' 0_config_files/config_ci_bow.yaml
+              echo "---- First 120 lines of merged config ----"
+              sed -n '1,120p' 0_config_files/config_ci_bow.yaml
 
 
       - name: Run setup_project (absolute config path + diagnostics)
