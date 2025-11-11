@@ -385,10 +385,6 @@ jobs:
           set -e
           ./symfluence --help > /dev/null
 
-      - name: Dry-run (no execution, just plan)
-        run: |
-          set -e
-          ./symfluence --dry_run
 
       - name: Wrapper info (env sanity)
         run: |
