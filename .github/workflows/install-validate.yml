@@ -242,6 +242,12 @@ jobs:
           ./symfluence --install
 
 
+
+      - name: Wrapper info
+        run: |
+          set -e
+          ./symfluence --wrapper-info || true
+
       # ----------------
       # Validate binaries
       # ----------------
@@ -251,8 +257,10 @@ jobs:
           set -e
           echo "CODE=$SYMFLUENCE_CODE"
           echo "DATA=$SYMFLUENCE_DATA"
-          chmod +x ./symfluence
-          ./symfluence --validate_binaries
+          # Use the venv Python created during install
+          . ./venv/bin/activate || . ./.venv/bin/activate
+          python --version
+          python symfluence.py --validate_binaries
 
       # --------------------------
       # Upload logs on failure only
