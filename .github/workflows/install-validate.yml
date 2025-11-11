@@ -133,3 +133,33 @@ jobs:
 
       - name: Wrapper info
         run: ./symfluence --wrapper-info
+
+      - name: Run setup_project from template
+        run: |
+          set -e
+          . ./venv/bin/activate
+          ./symfluence --config 0_config_files/config_template.yaml --setup_project
+
+      - name: Assert domain directory exists (Bow_at_Banff or any domain_*)
+        run: |
+          set -e
+          TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff"
+          if [ -d "$TARGET" ]; then
+            echo "✅ Found ${TARGET}"
+            exit 0
+          fi
+          # Fallback: accept any created domain_* if template uses a different name
+          ANY=$(ls -d "${SYMFLUENCE_DATA}"/domain_* 2>/dev/null || true)
+          if [ -n "$ANY" ]; then
+            echo "ℹ️ Bow_at_Banff not found, but a domain dir exists:"
+            echo "$ANY"
+            exit 0
+          fi
+          echo "❌ Expected a domain directory under ${SYMFLUENCE_DATA} (e.g., domain_Bow_at_Banff)"
+          exit 1
+
+      - name: List created domain content (for logs)
+        run: |
+          set -e
+          ls -la "${SYMFLUENCE_DATA}" || true
+          ls -la "${SYMFLUENCE_DATA}"/domain_* || true
