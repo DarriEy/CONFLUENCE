@@ -153,8 +153,6 @@ jobs:
           echo "FUSE_LIBRARIES=${FUSE_LIBRARIES}"
           echo "FUSE_INCLUDE=${FUSE_INCLUDE}"
 
-
-
       - name: Disable distro LTO flags (match earlier working TauDEM build)
         shell: bash
         run: |
@@ -166,14 +164,12 @@ jobs:
           echo "DEB_CXXFLAGS_SET=-O2"     >> $GITHUB_ENV
           echo "DEB_LDFLAGS_SET="         >> $GITHUB_ENV
 
-
       - name: Show dpkg-buildflags (sanity)
         run: |
           set -e
           echo "CFLAGS:   $(dpkg-buildflags --get CFLAGS || true)"
           echo "CXXFLAGS: $(dpkg-buildflags --get CXXFLAGS || true)"
           echo "LDFLAGS:  $(dpkg-buildflags --get LDFLAGS || true)"
-
 
       # --------------------
       # Sanity prints (logs)
@@ -277,6 +273,48 @@ jobs:
             **/*build*.log
             **/cmake_build/**/*.log
           if-no-files-found: warn
+
+
+      - name: Prune installs and venv before packaging
+        shell: bash
+        run: |
+          set -e
+          INST="${SYMFLUENCE_DATA}/installs"
+
+          echo "== Before prune =="
+          du -h -d1 "${SYMFLUENCE_DATA}" || true
+          du -h -d2 "${INST}" | sort -h | tail -n 30 || true
+
+          # --- Move final ngen binary out of build dir (so we can drop the build tree) ---
+          if [ -f "${INST}/ngen/cmake_build/ngen" ]; then
+            mkdir -p "${INST}/ngen/bin"
+            cp -f "${INST}/ngen/cmake_build/ngen" "${INST}/ngen/bin/ngen"
+          fi
+
+          # --- Drop heavy build dirs, sources, VCS metadata across all tools ---
+          find "${INST}" -type d \( -name build -o -name cmake_build -o -name .git \) -prune -exec rm -rf {} + || true
+          # Drop object/static/libtool artifacts
+          find "${INST}" -type f \( -name '*.o' -o -name '*.a' -o -name '*.la' \) -delete || true
+          # Drop large example/test/data dirs if present
+          find "${INST}" -type d \( -name tests -o -name Examples -o -name example -o -name examples -o -name data \) \
+            -maxdepth 1 -prune -exec rm -rf {} + || true
+
+          # --- Strip binaries to reduce size (ignore failures on scripts) ---
+          if command -v strip >/dev/null 2>&1; then
+            find "${INST}" -type f -perm -111 -exec bash -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1" || true' _ {} \; || true
+          fi
+
+          # --- Slim the venv: pyc + __pycache__ ---
+          find ./venv -type f -name '*.pyc' -delete || true
+          find ./venv -type d -name '__pycache__' -prune -exec rm -rf {} + || true
+
+          # --- Free some system space (optional) ---
+          sudo rm -rf /var/lib/apt/lists/* || true
+          sudo apt-get clean || true
+
+          echo "== After prune =="
+          du -h -d1 "${SYMFLUENCE_DATA}" || true
+          du -h -d2 "${INST}" | sort -h | tail -n 30 || true
 
       - name: Package install artifacts
         shell: bash
