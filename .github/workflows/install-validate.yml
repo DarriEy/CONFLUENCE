@@ -131,27 +131,42 @@ jobs:
           which python
           python -c "import symfluence; print('symfluence OK')"
 
-      - name: Wrapper info
-        run: ./symfluence --wrapper-info
-
-      - name: Create CI config overriding domain (deterministic)
-        run: |
-          set -eo pipefail
-          mkdir -p 0_config_files
-          cat > 0_config_files/config_ci_bow.yaml <<'YAML'
-          SYMFLUENCE_CODE_DIR: "${{ env.SYMFLUENCE_CODE }}"
-          SYMFLUENCE_DATA_DIR: "${{ env.SYMFLUENCE_DATA }}"
-          DOMAIN_NAME: "Bow_at_Banff"
-          DOMAIN_DEFINITION_METHOD: "delineate"
-          LOG_LEVEL: "INFO"
-          YAML
-
-      - name: Run --setup_project
+      - name: Wrapper info (with config)
         run: |
           set -eo pipefail
           . ./venv/bin/activate
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project \
-            || { echo "setup_project failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
+          echo "---- CONFIG CONTENT ----"
+          sed -n '1,200p' 0_config_files/config_ci_bow.yaml || true
+          echo "---- WRAPPER INFO ----"
+          ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
+
+      - name: Run setup_project (with debug)
+        run: |
+          # Avoid nounset tripping on activate scripts
+          set -eo pipefail
+          export PYTHONPATH="${PYTHONPATH-}"
+
+          . ./venv/bin/activate
+          set -x  # echo commands
+          # Use explicit python to capture full tracebacks from the module
+          python -c "import sys; print(sys.executable)"
+          python symfluence.py --version || true
+
+          # Run with highest verbosity if supported
+          python symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project --log-level DEBUG \
+          2> _setup_stderr.log | tee _setup_stdout.log
+
+          # If the command exited non-zero, show logs and fail
+          STATUS=${PIPESTATUS[0]}
+          set +x
+          if [ "$STATUS" -ne 0 ]; then
+            echo "❌ setup_project failed (exit $STATUS). Showing first 300 lines of stdout/stderr:"
+            head -n 300 _setup_stdout.log || true
+            head -n 300 _setup_stderr.log || true
+            echo "---- Work logs, if any ----"
+            ls -R _workLog_* 2>/dev/null || echo "(no _workLog_* directory created)"
+            exit $STATUS
+          fi
 
       - name: Assert domain directory exists
         run: |
@@ -161,7 +176,11 @@ jobs:
             echo "✅ Found ${TARGET}"
           else
             echo "❌ Expected domain directory at ${TARGET}"
+            echo "Listing ${SYMFLUENCE_DATA}:"
             ls -la "${SYMFLUENCE_DATA}" || true
+            echo "Tail of setup logs (if present):"
+            tail -n 200 _setup_stdout.log 2>/dev/null || true
+            tail -n 200 _setup_stderr.log 2>/dev/null || true
             exit 1
           fi
 
