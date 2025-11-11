@@ -9,7 +9,7 @@
 # 3. Model Agnostic settings: Configurations required for data pre-processing that is common to all models
 # 4. Model Specific settings: Configurations required for data preprocessing that is specific depending on model selection
 # 5. Evaluation settings: Configurations required to evaluate the model output
-# 6. Optimisation settings: Configurations required for calibrating the hydrological model setup, including sensitivity and decision analysis
+# 6. Optimization settings: Configurations required for calibrating the hydrological model setup, including sensitivity and decision analysis
 # 7. Data and path settings: Configurations for data characteristics and path specifications. Note: if deviating from default paths, an absolute path must be defined
 #
 ### ============================================= 1. Global settings: =======================================================================

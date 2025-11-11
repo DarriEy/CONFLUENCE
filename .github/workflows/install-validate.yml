@@ -266,19 +266,7 @@ jobs:
             find "${INST}" -type f -perm -111 -exec bash -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1" || true' _ {} \; || true
           fi
 
-      - name: Package install artifacts (pruned)
-        run: |
-          set -e
-          tar -C "${GITHUB_WORKSPACE}" -I 'zstd -19' -cf symfluence-install.tar.zst \
-            venv \
-            SYMFLUENCE_data
-      - name: Upload install artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: symfluence-install-22_04
-          path: symfluence-install.tar.zst
-          retention-days: 1
-          if-no-files-found: error
+
 
       # --------------------------
       # Upload logs on failure only
@@ -327,19 +315,6 @@ jobs:
           restore-keys: |
             symfluence-22_04-${{ runner.os }}-
             symfluence-22_04-
-
-      - name: Download install artifacts (fallback)
-        uses: actions/download-artifact@v4
-        with:
-          name: symfluence-install-22_04
-        continue-on-error: true
-
-      - name: Restore install artifacts (if present)
-        run: |
-          set -e
-          if [ -f symfluence-install.tar.zst ]; then
-            tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
-          fi
 
 
 
@@ -395,19 +370,6 @@ jobs:
           restore-keys: |
             symfluence-22_04-${{ runner.os }}-
             symfluence-22_04-
-
-      - name: Download install artifacts (fallback)
-        uses: actions/download-artifact@v4
-        with:
-          name: symfluence-install-22_04
-        continue-on-error: true
-
-      - name: Restore install artifacts (if present)
-        run: |
-          set -e
-          if [ -f symfluence-install.tar.zst ]; then
-            tar -C "${GITHUB_WORKSPACE}" -I zstd -xf symfluence-install.tar.zst
-          fi
 
       - name: Verify venv & package import
         run: |
