@@ -134,32 +134,128 @@ jobs:
       - name: Wrapper info
         run: ./symfluence --wrapper-info
 
-      - name: Run setup_project from template
+      - name: Create CI config overriding domain (deterministic)
         run: |
-          set -e
-          . ./venv/bin/activate
-          ./symfluence --config 0_config_files/config_template.yaml --setup_project
+          set -euo pipefail
+          mkdir -p 0_config_files
+          cat > 0_config_files/config_ci_bow.yaml <<'YAML'
+          SYMFLUENCE_CODE_DIR: "${{ env.SYMFLUENCE_CODE }}"
+          SYMFLUENCE_DATA_DIR: "${{ env.SYMFLUENCE_DATA }}"
+          DOMAIN_NAME: "Bow_at_Banff"
+          DOMAIN_DEFINITION_METHOD: "lumped"
+          LOG_LEVEL: "INFO"
+          YAML
 
-      - name: Assert domain directory exists (Bow_at_Banff or any domain_*)
+      - name: Run setup_project (CI config)
         run: |
-          set -e
+          set -euo pipefail
+          . ./venv/bin/activate
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project \
+            || { echo "setup_project failed — printing logs:"; ls -R _workLog_* || true; find _workLog_* -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \; || true; exit 1; }
+
+      - name: Assert domain directory exists
+        run: |
+          set -euo pipefail
           TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff"
           if [ -d "$TARGET" ]; then
             echo "✅ Found ${TARGET}"
-            exit 0
+          else
+            echo "❌ Expected domain directory at ${TARGET}"
+            ls -la "${SYMFLUENCE_DATA}" || true
+            exit 1
           fi
-          # Fallback: accept any created domain_* if template uses a different name
-          ANY=$(ls -d "${SYMFLUENCE_DATA}"/domain_* 2>/dev/null || true)
-          if [ -n "$ANY" ]; then
-            echo "ℹ️ Bow_at_Banff not found, but a domain dir exists:"
-            echo "$ANY"
-            exit 0
+
+      - name: Copy test data into domain directory
+        run: |
+          set -euo pipefail
+          SRC="${SYMFLUENCE_CODE}/src/data/domain_Bow_at_Banff"
+          DEST="${SYMFLUENCE_DATA}/domain_Bow_at_Banff"
+          echo "📦 Copying test data from ${SRC} → ${DEST}"
+          if [ -d "${SRC}" ]; then
+            mkdir -p "${DEST}"
+            cp -a "${SRC}/." "${DEST}/"
+            echo "✅ Copied contents:"
+            ls -R "${DEST}" || true
+          else
+            echo "❌ Source directory not found: ${SRC}"
+            ls -la "${SYMFLUENCE_CODE}/src/data" || true
+            exit 1
           fi
-          echo "❌ Expected a domain directory under ${SYMFLUENCE_DATA} (e.g., domain_Bow_at_Banff)"
-          exit 1
+
+      - name: Run --create_pour_point
+        run: |
+          set -euo pipefail
+          . ./venv/bin/activate
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --create_pour_point
+
+      - name: Assert pour point file exists
+        run: |
+          set -euo pipefail
+          BASE="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles/pour_point"
+          # Accept common formats: SHP, GPKG, GEOJSON
+          if compgen -G "${BASE}/Bow_at_Banff_pourPoint."{shp,gpkg,geojson} > /dev/null; then
+            echo "✅ Found pour point file in ${BASE}"
+            ls -la "${BASE}" || true
+          else
+            echo "❌ Expected pour point file (Bow_at_Banff_pourPoint.{shp|gpkg|geojson}) under ${BASE}"
+            ls -la "${BASE}" || true
+            exit 1
+          fi
+
+      - name: Run --define_domain
+        run: |
+          set -euo pipefail
+          . ./venv/bin/activate
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --define_domain
+
+      - name: Assert define_domain output exists
+        run: |
+          set -euo pipefail
+          TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles/river_basins/Bow_at_Banff_riverBasins_lumped.shp"
+          if [ -f "$TARGET" ]; then
+            echo "✅ Found domain shapefile: ${TARGET}"
+          else
+            echo "❌ Expected output not found: ${TARGET}"
+            ls -R "${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles" || true
+            exit 1
+          fi
+
+      - name: Run --discretize_domain
+        run: |
+          set -euo pipefail
+          . ./venv/bin/activate
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --discretize_domain
+
+      - name: Assert discretize_domain output exists
+        run: |
+          set -euo pipefail
+          TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles/catchment/Bow_at_Banff_HRUs_GRUs.shp"
+          if [ -f "$TARGET" ]; then
+            echo "✅ Found discretization shapefile: ${TARGET}"
+          else
+            echo "❌ Expected output not found: ${TARGET}"
+            ls -R "${SYMFLUENCE_DATA}/domain_Bow_at_Banff/shapefiles" || true
+            exit 1
+          fi
+
+
+
+      - name: Upload step-test artifacts (on fail)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: step-test-artifacts
+          path: |
+            _workLog_*/**
+            ${{ env.SYMFLUENCE_DATA }}/domain_Bow_at_Banff/**/*
+          if-no-files-found: warn
+
 
       - name: List created domain content (for logs)
         run: |
           set -e
           ls -la "${SYMFLUENCE_DATA}" || true
           ls -la "${SYMFLUENCE_DATA}"/domain_* || true
+
+
+      
