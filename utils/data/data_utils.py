@@ -1620,15 +1620,18 @@ class gistoolRunner:
     
     def create_gistool_command(self, dataset, output_dir, lat_lims, lon_lims, variables, start_date=None, end_date=None):
         dataset_dir = dataset
+        root = self.config['GISTOOL_DATASET_ROOT']
+
         if dataset == 'soil_class':
             dataset_dir = 'soil_classes'
+            root = '/anvil/projects/x-ees240082/data/geospatial-data/'
         if dataset == 'MODIS':
             dataset_dir = "" #'MODIS_MCD12Q1.061'
 
         gistool_command = [
             f"{self.gistool_path}/extract-gis.sh",
             f"--dataset={dataset}",
-            f"--dataset-dir={self.config['GISTOOL_DATASET_ROOT']}{dataset_dir}",
+            f"--dataset-dir={root}{dataset_dir}",
             f"--output-dir={output_dir}",
             f"--lat-lims={lat_lims}",
             f"--lon-lims={lon_lims}",
