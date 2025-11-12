@@ -120,19 +120,34 @@ jobs:
       - name: Fix TauDEM permissions and verify execution
         run: |
           set -e
+          
+          echo "=== Checking if TauDEM directory exists ==="
+          ls -la ${SYMFLUENCE_DATA}/installs/ || echo "No installs directory"
+          
+          echo "=== Checking TauDEM specifically ==="
+          ls -la ${SYMFLUENCE_DATA}/installs/TauDEM/ || echo "No TauDEM directory"
+          
+          echo "=== Checking TauDEM/bin ==="
+          ls -la ${SYMFLUENCE_DATA}/installs/TauDEM/bin/ || echo "No bin directory"
+          
           TAUDEM_DIR="${SYMFLUENCE_DATA}/installs/TauDEM/bin"
           
-          # Make all TauDEM binaries executable
-          chmod +x ${TAUDEM_DIR}/*
-          
-          echo "=== Testing TauDEM binary directly ==="
-          ${TAUDEM_DIR}/pitremove -h || echo "pitremove help returned: $?"
-          
-          echo "=== Testing with mpirun ==="
-          mpirun -n 1 ${TAUDEM_DIR}/pitremove -h || echo "mpirun pitremove returned: $?"
-          
-          echo "=== Checking library dependencies ==="
-          ldd ${TAUDEM_DIR}/pitremove || true
+          echo "=== Contents of TauDEM bin (if exists) ==="
+          if [ -d "$TAUDEM_DIR" ]; then
+            ls -la "$TAUDEM_DIR"
+            
+            echo "=== Making TauDEM binaries executable ==="
+            chmod +x ${TAUDEM_DIR}/*
+            
+            echo "=== Testing TauDEM binary directly ==="
+            ${TAUDEM_DIR}/pitremove -h || echo "pitremove help returned: $?"
+            
+            echo "=== Testing with mpirun ==="
+            mpirun -n 1 ${TAUDEM_DIR}/pitremove -h || echo "mpirun pitremove returned: $?"
+          else
+            echo "TauDEM bin directory doesn't exist!"
+            echo "Full path checked: $TAUDEM_DIR"
+          fi
 
       - name: Debug TauDEM executable
         run: |
