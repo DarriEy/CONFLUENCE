@@ -25,7 +25,6 @@ jobs:
       SYMFLUENCE_CODE: ${{ github.workspace }}
       SYMFLUENCE_DATA: /home/runner/work/SYMFLUENCE/SYMFLUENCE_data
 
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -347,6 +346,13 @@ jobs:
           echo "=== Verification ==="
           ls -lah moveoutlets*
 
+      - name: Export TauDEM on PATH (before define_domain)
+        run: |
+          set -e
+          echo "${{ env.SYMFLUENCE_DATA }}/installs/TauDEM/bin" >> $GITHUB_PATH
+          echo "PATH now: $PATH"
+          which pitremove || true
+          which moveoutletstostreams || true
 
       - name: Run --define_domain
         run: |
@@ -368,7 +374,7 @@ jobs:
       - name: Run --discretize_domain
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --discretize_domain || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --discretize_domain 
 
       - name: Assert discretize_domain output exists
         run: |
@@ -385,7 +391,7 @@ jobs:
       - name: Run --model_agnostic_preprocessing
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --model_agnostic_preprocessing || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --model_agnostic_preprocessing 
 
       - name: Assert --model_agnostic_preprocessing output exists
         run: |
@@ -399,10 +405,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run ---model_specific_preprocessing
+      - name: Run --model_specific_preprocessing
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --model_specific_preprocessing || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --model_specific_preprocessing 
 
       - name: Assert --model_specific_preprocessing output exists
         run: |
@@ -419,7 +425,7 @@ jobs:
       - name: Run --run_model
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --run_model || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --run_model 
 
       - name: Assert --run_model output exists
         run: |
@@ -436,7 +442,7 @@ jobs:
       - name: Run --calibrate_model
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --calibrate_model || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --calibrate_model 
 
       - name: Assert --calibrate_model output exists
         run: |
@@ -453,7 +459,7 @@ jobs:
       - name: Run --run_benchmarking
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --run_benchmarking || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --run_benchmarking 
 
       - name: Assert --run_benchmarking output exists
         run: |
