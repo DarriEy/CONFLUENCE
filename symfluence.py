@@ -129,119 +129,113 @@ class SYMFLUENCE:
             raise RuntimeError(f"Manager initialization failed: {str(e)}")
     
     def run_workflow(self) -> None:
-        """Execute the complete SYMFLUENCE workflow."""
+        """Execute the complete SYMFLUENCE workflow (CLI wrapper)."""
+        start = datetime.now()
+        steps_completed = []
+        errors = []
+        warns = []
+
         try:
-            start_time = datetime.now()
             self.logger.info("Starting complete SYMFLUENCE workflow execution")
-            
-            # Execute the full workflow
+
+            # Run the workflow; if your orchestrator exposes steps executed, collect them
             self.workflow_orchestrator.run_workflow()
-            
-            # Create run summary
-            end_time = datetime.now()
-            status = self.workflow_orchestrator.get_workflow_status()
-            self.logging_manager.create_run_summary(start_time, end_time, status)
-            
+            steps_completed = getattr(self.workflow_orchestrator, "steps_executed", []) or []
+
+            status = getattr(self.workflow_orchestrator, "get_workflow_status", lambda: "completed")()
             self.logger.info("Complete SYMFLUENCE workflow execution completed")
-            
+
         except Exception as e:
-            self.logger.error(f"Workflow execution failed: {str(e)}")
-            raise RuntimeError(f"Workflow execution error: {str(e)}")
+            status = "failed"
+            errors.append({"where": "run_workflow", "error": str(e)})
+            self.logger.error(f"Workflow execution failed: {e}")
+            # re-raise after summary so the CI can fail meaningfully if needed
+            raise
+        finally:
+            end = datetime.now()
+            elapsed_s = (end - start).total_seconds()
+            # Call with the expected signature:
+            self.logging_manager.create_run_summary(
+                steps_completed=steps_completed,
+                errors=errors,
+                warnings=warns,
+                execution_time=elapsed_s,
+                status=status,
+            )
         
     def run_individual_steps(self, step_names: List[str]) -> None:
-        """
-        Execute specific workflow steps.
-        
-        Args:
-            step_names: List of step names to execute
-        """
+        """Execute specific workflow steps (CLI wrapper)."""
+        start = datetime.now()
+        steps_completed = []
+        errors = []
+        warns = []
+
+        # Resolve workflow functions once
+        workflow_steps = self.workflow_orchestrator.define_workflow_steps()
+        name_to_fn = {}
+        for item in workflow_steps:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                fn, _check = item[0], item[1]
+                if hasattr(fn, "__name__"):
+                    name_to_fn[fn.__name__] = fn
+
+        cli_to_function = {
+            "setup_project": "setup_project",
+            "create_pour_point": "create_pour_point",
+            "acquire_attributes": "acquire_attributes",
+            "define_domain": "define_domain",
+            "discretize_domain": "discretize_domain",
+            "setup_model": "preprocess_models",
+            "run_model": "run_models",
+            "calibrate_model": "calibrate_model",
+            "run_emulation": "run_emulation",
+            "run_benchmarking": "run_benchmarking",
+            "run_decision_analysis": "run_decision_analysis",
+            "run_sensitivity_analysis": "run_sensitivity_analysis",
+            "postprocess_results": "postprocess_results",
+            "process_observed_data": "process_observed_data",
+            "acquire_forcings": "acquire_forcings",
+            "model_agnostic_preprocessing": "run_model_agnostic_preprocessing",
+            "model_specific_preprocessing": "preprocess_models",
+        }
+
+        status = "completed"
         try:
-            start_time = datetime.now()
             self.logger.info(f"Starting individual step execution: {', '.join(step_names)}")
-            
-            # Get the complete workflow definition
-            workflow_steps = self.workflow_orchestrator.define_workflow_steps()
-            
-            # Create a mapping from function names to workflow steps
-            step_name_to_function = {}
-            
-            for step_item in workflow_steps:
-                try:
-                    # Handle variable tuple lengths safely
-                    if isinstance(step_item, (tuple, list)) and len(step_item) >= 2:
-                        step_func = step_item[0]
-                        check_func = step_item[1] 
-                        # Ignore any additional elements beyond the first 2
-                        
-                        if hasattr(step_func, '__name__'):
-                            function_name = step_func.__name__
-                            step_name_to_function[function_name] = (step_func, check_func)
-                            self.logger.debug(f"Mapped workflow function: {function_name}")
-                        else:
-                            self.logger.warning(f"Step function does not have __name__ attribute: {step_func}")
-                    else:
-                        self.logger.warning(f"Unexpected step format: {step_item} (type: {type(step_item)}, length: {len(step_item) if hasattr(step_item, '__len__') else 'unknown'})")
-                        
-                except Exception as e:
-                    self.logger.error(f"Error processing workflow step {step_item}: {str(e)}")
+
+            for cli_name in step_names:
+                impl = cli_to_function.get(cli_name)
+                if not impl:
+                    self.logger.warning(f"Step '{cli_name}' not recognized; skipping")
                     continue
-            
-            # Create mapping from CLI step names to actual function names
-            cli_to_function_map = {
-                'setup_project': 'setup_project',
-                'create_pour_point': 'create_pour_point',
-                'acquire_attributes': 'acquire_attributes',
-                'define_domain': 'define_domain',
-                'discretize_domain': 'discretize_domain',
-                'setup_model': 'preprocess_models',  
-                'run_model': 'run_models',           
-                'calibrate_model': 'calibrate_model', 
-                'run_emulation': 'run_emulation',
-                'run_benchmarking': 'run_benchmarking',
-                'run_decision_analysis': 'run_decision_analysis',
-                'run_sensitivity_analysis': 'run_sensitivity_analysis',
-                'postprocess_results': 'postprocess_results',
-                'process_observed_data': 'process_observed_data',
-                'acquire_forcings': 'acquire_forcings',
-                'model_agnostic_preprocessing': 'run_model_agnostic_preprocessing',
-                'model_specific_preprocessing': 'preprocess_models',
-            }
-            
-            self.logger.info(f"Available workflow functions: {list(step_name_to_function.keys())}")
-            
-            # Execute requested steps
-            for step_name in step_names:
-                if step_name in cli_to_function_map:
-                    function_name = cli_to_function_map[step_name]
-                    
-                    if function_name in step_name_to_function:
-                        step_function, check_function = step_name_to_function[function_name]
-                        
-                        self.logger.info(f"Executing step: {step_name} -> {function_name}")
-                        
-                        # FORCE RUN: Skip completion checks for individual steps
-                        # When someone explicitly requests a step, they want it to run
-                        self.logger.info(f"Individual step mode: forcing execution of {step_name} (skipping completion check)")
-                        
-                        # Execute the step
-                        step_function()
-                        
-                        self.logger.info(f"✓ Completed step: {step_name}")
-                    else:
-                        self.logger.warning(f"Function '{function_name}' not found in workflow. Skipping step: {step_name}")
-                else:
-                    self.logger.warning(f"Step name '{step_name}' not recognized. Available steps: {list(cli_to_function_map.keys())}")
-            
-            # Create run summary
-            end_time = datetime.now()
-            status = self.workflow_orchestrator.get_workflow_status()
-            self.logging_manager.create_run_summary(start_time, end_time, status)
-            
-            self.logger.info("Individual step execution completed")
-            
-        except Exception as e:
-            self.logger.error(f"Individual step execution failed: {str(e)}")
-            raise RuntimeError(f"Step execution error: {str(e)}")
+
+                fn = name_to_fn.get(impl)
+                if not fn:
+                    self.logger.warning(f"Function '{impl}' not found; skipping step '{cli_name}'")
+                    continue
+
+                self.logger.info(f"Executing step: {cli_name} -> {impl}")
+                # Force execution; skip completion checks in CLI wrapper
+                try:
+                    fn()
+                    steps_completed.append(cli_name)
+                    self.logger.info(f"✓ Completed step: {cli_name}")
+                except Exception as e:
+                    status = "partial" if steps_completed else "failed"
+                    errors.append({"step": cli_name, "error": str(e)})
+                    self.logger.error(f"Step '{cli_name}' failed: {e}")
+                    # You can either continue or re-raise; the wrapper flag decides
+                    raise
+        finally:
+            end = datetime.now()
+            elapsed_s = (end - start).total_seconds()
+            self.logging_manager.create_run_summary(
+                steps_completed=steps_completed,
+                errors=errors,
+                warnings=warns,
+                execution_time=elapsed_s,
+                status=status,
+            )
 
 
 def main():
