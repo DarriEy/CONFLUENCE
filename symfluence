@@ -433,6 +433,7 @@ check_virtual_env() {
         if [[ -f "${venv_path}/bin/activate" ]]; then
             print_info "Found virtual environment: ${venv_path}"
             print_info "Activating virtual environment..."
+            export PYTHONPATH="${PYTHONPATH-}"
             source "${venv_path}/bin/activate"
             if [[ -n "$PYTHONPATH" ]]; then
                 export PYTHONPATH=""
@@ -564,6 +565,7 @@ main() {
         fi
 
         # Activate venv
+        export PYTHONPATH="${PYTHONPATH-}"
         source "${venv_path}/bin/activate"
 
         # Clear PYTHONPATH to isolate venv
@@ -621,9 +623,16 @@ EOF
     # ---------------- Normal execution ----------------
     check_virtual_env "$symfluence_script"
 
-    if ! python_cmd=$(find_python); then
-        print_error "Python ${MIN_PYTHON_VERSION}+ not found"
-        exit 1
+    # Prefer venv interpreter if present; otherwise fall back to system python
+    if [[ -x "$(dirname "$symfluence_script")/venv/bin/python" ]]; then
+        python_cmd="$(dirname "$symfluence_script")/venv/bin/python"
+    elif [[ -x "$(dirname "$symfluence_script")/.venv/bin/python" ]]; then
+        python_cmd="$(dirname "$symfluence_script")/.venv/bin/python"
+    else
+        if ! python_cmd=$(find_python); then
+            print_error "Python ${MIN_PYTHON_VERSION}+ not found"
+            exit 1
+        fi
     fi
 
     # Change to SYMFLUENCE directory if needed
@@ -631,6 +640,7 @@ EOF
         cd "$(dirname "$symfluence_script")"
     fi
 
+    print_info "Launching with interpreter: $python_cmd"
     exec "$python_cmd" "$SYMFLUENCE_SCRIPT" "$@"
 }
 
