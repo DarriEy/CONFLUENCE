@@ -1,0 +1,63 @@
+# Core scientific and data processing libraries
+numpy
+pandas
+scipy
+xarray
+pint_xarray
+distributed
+pyviscous
+ipykernel
+jupyterlab
+
+# Machine learning and data science libraries
+torch
+scikit-learn
+pyswarms
+
+# Geospatial libraries
+geopandas
+rasterio
+pyproj
+shapely
+fiona
+easymore
+rasterstats
+pvlib
+cdo
+seaborn
+plotly
+findlibs
+
+# Hydrological modeling libraries
+netCDF4
+hydrobm
+baseflow 
+
+# Visualization
+matplotlib
+
+# Optimization and analysis
+SALib
+
+# Utility libraries
+psutil
+alive-progress
+tqdm
+contextily
+
+# Configuration management
+pyyaml
+
+# Web APIs (if used for data acquisition)
+requests
+cdsapi
+hs_restclient
+
+# Testing
+pytest
+
+# Documentation
+sphinx
+
+numexpr
+cftime

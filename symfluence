@@ -7,6 +7,14 @@
 #
 set -e
 
+# Error handler for better debugging
+error_handler() {
+    local line=$1
+    echo "Error: Script failed at line $line" >&2
+    exit 1
+}
+trap 'error_handler $LINENO' ERR
+
 # ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
@@ -520,9 +528,15 @@ main() {
     done
 
     # Set sane defaults for SYMFLUENCE_* based on working dir
-    # Update config.yaml with PWD-based paths if current values are bad/missing
-    local CONFIG_YAML="./0_config_files/config_template.yaml"   # <-- change if needed
-    update_config_paths_in_yaml "$CONFIG_YAML"
+    set_default_symfluence_paths
+    
+    # Update config.yaml with PWD-based paths if current values are bad/missing (optional)
+    local CONFIG_YAML="./0_config_files/config_template.yaml"
+    if [[ -f "$CONFIG_YAML" ]] && declare -f update_config_paths_in_yaml >/dev/null 2>&1; then
+        update_config_paths_in_yaml "$CONFIG_YAML" || {
+            print_warning "Config update failed, continuing without update"
+        }
+    fi
 
     # Find symfluence.py
     local symfluence_script
@@ -621,29 +635,44 @@ EOF
     fi
 
     # ---------------- Normal execution ----------------
-    check_virtual_env "$symfluence_script"
-
-    # Hard-pin to venv interpreter (CI expects this). If missing, error out clearly.
-    symfluence_dir="$(dirname "$symfluence_script")"
+    # Prefer venv interpreter; fall back to system python
+    local symfluence_dir
+    symfluence_dir=$(dirname "$symfluence_script")
+    
     if [[ -x "${symfluence_dir}/venv/bin/python" ]]; then
         python_cmd="${symfluence_dir}/venv/bin/python"
+        print_info "Using venv Python: ${python_cmd}"
     elif [[ -x "${symfluence_dir}/.venv/bin/python" ]]; then
         python_cmd="${symfluence_dir}/.venv/bin/python"
+        print_info "Using .venv Python: ${python_cmd}"
     else
-        print_error "No venv found at ${symfluence_dir}/venv or ${symfluence_dir}/.venv."
-        print_info  "Run:  ./symfluence --install"
-        exit 1
+        if ! python_cmd=$(find_python); then
+            print_error "Python ${MIN_PYTHON_VERSION}+ not found"
+            print_info "Please install Python ${MIN_PYTHON_VERSION}+ or run: ./symfluence --install"
+            exit 1
+        fi
+        print_warning "No venv found, using system Python: ${python_cmd}"
     fi
 
-    # Change to SYMFLUENCE directory if needed
-    if [[ "$(dirname "$symfluence_script")" != "." ]]; then
-        cd "$(dirname "$symfluence_script")"
+    # Change to SYMFLUENCE directory
+    local target_dir
+    target_dir=$(dirname "$symfluence_script")
+    if [[ "$target_dir" != "." && -d "$target_dir" ]]; then
+        cd "$target_dir" || {
+            print_error "Failed to change to directory: $target_dir"
+            exit 1
+        }
+        print_info "Changed directory to: $(pwd)"
     fi
 
-    # 👇 add these lines, right before exec:
-    print_info "Launching with interpreter: ${python_cmd}"
-    print_info "Args: ${SYMFLUENCE_SCRIPT} $*"
+    # Debug output
+    print_info "Launching SYMFLUENCE..."
+    print_info "  Interpreter: ${python_cmd}"
+    print_info "  Script: ${SYMFLUENCE_SCRIPT}"
+    print_info "  Args: $*"
+    print_info "  Working dir: $(pwd)"
 
+    # Execute (replace current process with Python)
     exec "$python_cmd" "$SYMFLUENCE_SCRIPT" "$@"
 }
 
