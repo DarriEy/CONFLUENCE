@@ -23,7 +23,7 @@ jobs:
       CI: "1"
       NONINTERACTIVE: "1"
       SYMFLUENCE_CODE: ${{ github.workspace }}
-      SYMFLUENCE_DATA: /home/runner/work/SYMFLUENCE/SYMFLUENCE_data
+      SYMFLUENCE_DATA: ${{ github.workspace }}/../SYMFLUENCE_data
 
     steps:
       - name: Checkout
