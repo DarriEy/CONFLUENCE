@@ -1703,11 +1703,11 @@ class datatoolRunner:
         f"--lon-lims={lon_lims}",
         f"--variable={variables}",
         f"--prefix=domain_{self.domain_name}_",
-        f"--submit-job",
+        #f"--submit-job",
         f"--cache={self.tool_cache}",
         f"--cluster={self.config['CLUSTER_JSON']}",
         ] 
-
+        self.logger.info(f"{datatool_command}")
         return datatool_command
 
     def execute_datatool_command(self, datatool_command):
@@ -1724,46 +1724,46 @@ class datatoolRunner:
             self.logger.info("datatool job submitted successfully.")
             
             # Extract job ID from the output
-            job_id = None
-            for line in result.stdout.split('\n'):
-                if 'Submitted batch job' in line:
-                    try:
-                        job_id = line.split()[-1].strip()
-                        break
-                    except (IndexError, ValueError):
-                        pass
-            
-            if not job_id:
-                self.logger.error("Could not extract job ID from submission output")
-                self.logger.debug(f"Submission output: {result.stdout}")
-                raise RuntimeError("Could not extract job ID from submission output")
-            
-            self.logger.info(f"Monitoring job ID: {job_id}")
+            #job_id = None
+            #for line in result.stdout.split('\n'):
+            #    if 'Submitted batch job' in line:
+            #        try:
+            #            job_id = line.split()[-1].strip()
+            #            break
+            #        except (IndexError, ValueError):
+            #            pass
+            #
+            #if not job_id:
+            #    self.logger.error("Could not extract job ID from submission output")
+            #    self.logger.debug(f"Submission output: {result.stdout}")
+            #    raise RuntimeError("Could not extract job ID from submission output")
+            #
+            #self.logger.info(f"Monitoring job ID: {job_id}")
             
             # Wait for job to no longer be in the queue
-            wait_time = 30  # seconds between checks
-            max_checks = 1000  # Maximum number of checks
-            check_count = 0
+            #wait_time = 30  # seconds between checks
+            #max_checks = 1000  # Maximum number of checks
+            #check_count = 0
             
-            while check_count < max_checks:
-                # Check if job is still in the queue
-                check_cmd = ['squeue', '-j', job_id, '-h']
-                status_result = subprocess.run(check_cmd, capture_output=True, text=True)
-                
-                # If no output, the job is no longer in the queue
-                if not status_result.stdout.strip():
-                    self.logger.info(f"Job {job_id} is no longer in the queue, assuming completed.")
-                    # Wait an additional minute to allow for any file system operations to complete
-                    break
-                
-                self.logger.info(f"Job {job_id} still in queue. Waiting {wait_time} seconds. Check {check_count+1}/{max_checks}")
-                time.sleep(wait_time)
-                check_count += 1
+            #while check_count < max_checks:
+            #    # Check if job is still in the queue
+            #    check_cmd = ['squeue', '-j', job_id, '-h']
+            #    status_result = subprocess.run(check_cmd, capture_output=True, text=True)
+            #    
+            #    # If no output, the job is no longer in the queue
+            #    if not status_result.stdout.strip():
+            #        self.logger.info(f"Job {job_id} is no longer in the queue, assuming completed.")
+            #        # Wait an additional minute to allow for any file system operations to complete
+            #        break
+            #    
+            #    self.logger.info(f"Job {job_id} still in queue. Waiting {wait_time} seconds. Check {check_count+1}/{max_checks}")
+            #    time.sleep(wait_time)
+            #    check_count += 1
+            #
+            #if check_count >= max_checks:
+            #    self.logger.warning(f"Reached maximum checks ({max_checks}) for job {job_id}, but continuing anyway")
             
-            if check_count >= max_checks:
-                self.logger.warning(f"Reached maximum checks ({max_checks}) for job {job_id}, but continuing anyway")
-            
-            self.logger.info("datatool job monitoring completed.")
+            #self.logger.info("datatool job monitoring completed.")
             
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error running datatool: {e}")

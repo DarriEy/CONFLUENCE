@@ -88,9 +88,9 @@ FORCING_SHAPE_LON_NAME: lon                                    # Name of the lon
 PET_METHOD: 'oudin'                                            # Method for PET estimation, options: 'oudin', 'hamon', 'hargreaves'
 
 # EM-Earth forcing supplementation settings
-SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
-EM_EARTH_PRCP_DIR: /path/to/EM-EARTH/prcp/data                 # Path to EM-Earth precipitation data
-EM_EARTH_TMEAN_DIR: /path/to/EM-EARTH/tmean/data               # Path to EM-Earth temperature data
+SUPPLEMENT_FORCING: True
+EM_EARTH_PRCP_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/prcp/NorthAmerica"  # Path to EM-Earth precipitation data
+EM_EARTH_TMEAN_DIR: "/anvil/datasets/meteorological/EM-Earth/EM_Earth_v1/deterministic_hourly/tmean/NorthAmerica" # Path to EM-Earth temperature data
 EM_EARTH_MIN_BBOX_SIZE: 0.1                                    # Minimum bounding box size in degrees for EM-Earth extraction (~10km)
 EM_EARTH_MAX_EXPANSION: 0.2                                    # Maximum expansion for small watersheds in degrees (~20km)
 EM_PRCP: prcp                                                  # EM-EARTH precip variable to use
@@ -514,9 +514,9 @@ RADIATION_PATH: default                                        # Path to radiati
 DATATOOL_PATH: default                                         # Path to datatool executable
 GISTOOL_PATH: default                                          # Path to gistool executable
 EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
-DATATOOL_DATASET_ROOT: /anvil/datasets/meteorological/    # Path to datatool datasets root directory
+DATATOOL_DATASET_ROOT: /anvil/projects/x-ees240082/data/meteorological-data/    # Path to datatool datasets root directory
 DATATOOL_CACHE: /tmp/anvil/projects/x-ees240082/data/CONFLUENCE_data/cache/                             # Cache directory used in datatool
-TOOL_ACCOUNT: def-mclark                                   # HPC account for running datatool
+TOOL_ACCOUNT: x-ees250064                                   # HPC account for running datatool
 GISTOOL_DATASET_ROOT: /anvil/datasets/geospatial/         # Path to gistool datasets root directory
 GISTOOL_LIB_PATH: /work/comphyd_lab/envs/r-env/                     # Path to gistool libraries
 TOOL_CACHE: /anvil/projects/x-ees240082/data/SYMFLUENCE_data/cache/                                      # Path to gistool cache directory
