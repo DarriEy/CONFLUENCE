@@ -117,6 +117,38 @@ jobs:
           chmod +x ./symfluence
           ./symfluence --install
 
+      - name: Fix TauDEM permissions and verify execution
+        run: |
+          set -e
+          TAUDEM_DIR="${SYMFLUENCE_DATA}/installs/TauDEM/bin"
+          
+          # Make all TauDEM binaries executable
+          chmod +x ${TAUDEM_DIR}/*
+          
+          echo "=== Testing TauDEM binary directly ==="
+          ${TAUDEM_DIR}/pitremove -h || echo "pitremove help returned: $?"
+          
+          echo "=== Testing with mpirun ==="
+          mpirun -n 1 ${TAUDEM_DIR}/pitremove -h || echo "mpirun pitremove returned: $?"
+          
+          echo "=== Checking library dependencies ==="
+          ldd ${TAUDEM_DIR}/pitremove || true
+
+      - name: Debug TauDEM executable
+        run: |
+          set -e
+          TAUDEM="${SYMFLUENCE_DATA}/installs/TauDEM/bin/pitremove"
+          
+          echo "=== File info ==="
+          ls -lah $TAUDEM
+          file $TAUDEM
+          
+          echo "=== Library dependencies ==="
+          ldd $TAUDEM
+          
+          echo "=== Can we execute it? ==="
+          $TAUDEM -h 2>&1 || echo "Exit code: $?"
+
       - name: Validate binaries
         run: |
           set -e
