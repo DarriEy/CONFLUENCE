@@ -229,7 +229,7 @@ jobs:
       - name: Run --create_pour_point
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --create_pour_point || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --create_pour_point 
 
       - name: Assert pour point exists
         run: |
@@ -247,7 +247,7 @@ jobs:
       - name: Run --define_domain
         run: |
           set -eo pipefail
-          ./symfluence --config 0_config_files/config_ci_bow.yaml --define_domain || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --define_domain 
 
       - name: Assert define_domain output exists
         run: |
