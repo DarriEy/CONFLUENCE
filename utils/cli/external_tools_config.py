@@ -454,15 +454,29 @@ def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
 pipi("install","--break-system-packages","cython<3.0","numpy<2")
 PY
 
+# Use the same Python that SYMFLUENCE is running to invoke Cython
+if [ -n "$SYMFLUENCE_PYTHON" ]; then
+  CYTHON_CMD="$SYMFLUENCE_PYTHON -m cython"
+else
+  # Fallback: whatever 'python' is (should still be the venv in normal use)
+  CYTHON_CMD="python -m cython"
+fi
+
+echo "Using Cython via: $CYTHON_CMD"
+
 # --- Pre-cythonize troute-network ---
 echo ""
 echo "=== Step 6a: Pre-cythonize troute-network ==="
 cd src/troute-network
 # language_level=3 to avoid Py2 warnings
 find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
-  c="${1%.pyx}.c";
-  [ -f "$c" ] || (echo "Cythonizing $1"; cython -3 "$1" -o "$c" || true)
-' -- {}
+  set -e
+  c="${1%.pyx}.c"
+  if [ ! -f "$c" ]; then
+    echo "Cythonizing $1 -> $c"
+    '"$CYTHON_CMD"' -3 "$1" -o "$c"
+  fi
+' sh {}
 cd ../..
 
 # --- Pre-cythonize troute-routing (FIXED include paths) ---
@@ -470,17 +484,23 @@ echo ""
 echo "=== Step 6b: Pre-cythonize troute-routing ==="
 cd src/troute-routing
 
-# Point Cython at both the troute-network source and the local fast_reach headers
 export CYTHON_INCLUDE_PATH="$PWD/../troute-network:$PWD/troute/routing/fast_reach"
 export PYTHONPATH="$PWD/../troute-network:${PYTHONPATH:-}"
 
 find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
-  c="${1%.pyx}.c";
-  # Use language_level=3 and include dirs for network + fast_reach (fortran_wrappers)
-  [ -f "$c" ] || (echo "Cythonizing $1"; cython -3 -I "$PWD/../troute-network" -I "$PWD/troute/routing/fast_reach" "$1" -o "$c" || true)
-' -- {}
+  set -e
+  c="${1%.pyx}.c"
+  if [ ! -f "$c" ]; then
+    echo "Cythonizing $1 -> $c"
+    '"$CYTHON_CMD"' -3 \
+      -I "$PWD/../troute-network" \
+      -I "$PWD/troute/routing/fast_reach" \
+      "$1" -o "$c"
+  fi
+' sh {}
 
 cd ../..
+
 
 
 # --- Install in order: config -> network -> routing ---
