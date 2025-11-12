@@ -21,7 +21,7 @@ from utils.data.archive_utils import tar_directory # type: ignore
 
 class DataManager:
     """
-    Manages all data acquisition and preprocessing operations for SYMFLUENCE.
+    Manages all data acquisition and preprocessing operations for CONFLUENCE.
     
     The DataManager is responsible for acquiring, processing, and preparing all the 
     data required for hydrological modeling. This includes geospatial attributes 
@@ -39,13 +39,13 @@ class DataManager:
     - Managing input/output variable transformations
     
     The DataManager acts as a bridge between external data sources and the 
-    SYMFLUENCE modeling system, ensuring that all required data is available
+    CONFLUENCE modeling system, ensuring that all required data is available
     in the correct format before model execution begins.
     
     Attributes:
         config (Dict[str, Any]): Configuration dictionary
         logger (logging.Logger): Logger instance
-        data_dir (Path): Path to the SYMFLUENCE data directory
+        data_dir (Path): Path to the CONFLUENCE data directory
         domain_name (str): Name of the hydrological domain
         project_dir (Path): Path to the project directory
         variable_handler (VariableHandler): Handler for variable transformations
@@ -155,7 +155,7 @@ class DataManager:
         """
         self.logger.info("Acquiring elevation data")
         gistool_command = gistool_runner.create_gistool_command(
-            dataset='MERIT-Hydro',
+            dataset='MERIT_Hydro',
             output_dir=output_dir,
             lat_lims=lat_lims,
             lon_lims=lon_lims,
@@ -191,7 +191,7 @@ class DataManager:
         end_year = 2020
         
         # Select MODIS dataset
-        modis_var = "MCD12Q1.006"
+        modis_var = "MODIS_MCD12Q1.061"
         
         # Create gistool command
         gistool_command = gistool_runner.create_gistool_command(
@@ -694,7 +694,7 @@ class DataManager:
                 'watershed_size_deg': f"{lat_range:.6f}x{lon_range:.6f}",
                 'watershed_size_km': f"{lat_range*111:.2f}x{lon_range*111:.2f}",
                 'subset_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'processing_script': 'SYMFLUENCE EM-Earth subset and merge with small watershed handling',
+                'processing_script': 'CONFLUENCE EM-Earth subset and merge with small watershed handling',
                 'merged_variables': f"prcp: {list(prcp_subset.data_vars.keys())}, tmean: {list(tmean_subset.data_vars.keys())}"
             })
             
@@ -768,7 +768,7 @@ class DataManager:
         
         This method performs preprocessing operations that are common across different
         hydrological models. These operations convert the raw input data into formats
-        that can be used by any model in the SYMFLUENCE framework.
+        that can be used by any model in the CONFLUENCE framework.
         
         The preprocessing includes:
         1. Geospatial statistics: Computing zonal statistics to aggregate geospatial

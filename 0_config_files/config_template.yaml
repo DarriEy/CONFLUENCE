@@ -14,8 +14,8 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/code/SYMFLUENCE_data
-SYMFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/code/SYMFLUENCE
+SYMFLUENCE_DATA_DIR: /anvil/projects/x-ees240082/data/SYMFLUENCE_data
+SYMFLUENCE_CODE_DIR: /anvil/projects/x-ees240082/data/SYMFLUENCE
 
 # Experiment settings
 DOMAIN_NAME: Bow_at_Banff                                      # Name of modeled domain
@@ -502,13 +502,26 @@ LAND_CLASS_NAME: default                                       # Name of land cl
 RADIATION_PATH: default                                        # Path to radiation classification raster. If 'default', uses root_path/domain_[name]/attributes/radiation 
 
 # MAF Tool paths
-DATATOOL_PATH: default                                         # Path to datatool executable 
+#DATATOOL_PATH: default                                         # Path to datatool executable 
+#GISTOOL_PATH: default                                          # Path to gistool executable
+#EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
+#DATATOOL_DATASET_ROOT: /anvil/projects/x-ees240082/data/meteorological-data/           # Path to datatool datasets root directory
+#GISTOOL_DATASET_ROOT: /anvil/datasets/geospatial/                # Path to gistool datasets root directory
+#TOOL_CACHE: /anvil/projects/x-ees240082/data/SYMFLUENCE_data/cache/                                 # Path to gistool cache directory
+#EASYMORE_CACHE: /path/to/cache/dir                             # Path to easymore cache directory
+
+# Tool paths
+DATATOOL_PATH: default                                         # Path to datatool executable
 GISTOOL_PATH: default                                          # Path to gistool executable
 EASYMORE_CLIENT: easymore cli                                  # Name of easymore client
-DATATOOL_DATASET_ROOT: /path/to/meteorological-data/           # Path to datatool datasets root directory
-GISTOOL_DATASET_ROOT: /path/to/geospatial-data/                # Path to gistool datasets root directory
-TOOL_CACHE: /path/to/cache/dir                                 # Path to gistool cache directory
-EASYMORE_CACHE: /path/to/cache/dir                             # Path to easymore cache directory
-EASYMORE_JOB_CONF: /path/to/esmr/job_config                    # Path to easymore job config
-CLUSTER_JSON: /path/to/cluster.json                            # Path to cluster json config
-GISTOOL_LIB_PATH: /path/to/r-env/                              # Path to gistool libraries
+DATATOOL_DATASET_ROOT: /anvil/datasets/meteorological/    # Path to datatool datasets root directory
+DATATOOL_CACHE: /tmp/anvil/projects/x-ees240082/data/CONFLUENCE_data/cache/                             # Cache directory used in datatool
+TOOL_ACCOUNT: def-mclark                                   # HPC account for running datatool
+GISTOOL_DATASET_ROOT: /anvil/datasets/geospatial/         # Path to gistool datasets root directory
+GISTOOL_LIB_PATH: /work/comphyd_lab/envs/r-env/                     # Path to gistool libraries
+TOOL_CACHE: /anvil/projects/x-ees240082/data/SYMFLUENCE_data/cache/                                      # Path to gistool cache directory
+EASYMORE_CACHE: /anvil/projects/x-ees240082/data/SYMFLUENCE_data/cache/                          # Path to easymore cache directory
+EASYMORE_JOB_CONF: "installs/MAF/02_model_agnostic_component/easymore-job.slurm" #Path to easymore job config
+CLUSTER_JSON: /anvil/projects/x-ees240082/data/SYMFLUENCE_data/installs/datatool/etc/clusters/perdue-anvil.json
+
+

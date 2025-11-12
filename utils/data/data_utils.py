@@ -14,6 +14,7 @@ import csv
 from datetime import datetime
 import time
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils.data.variable_utils import VariableHandler # type: ignore
 
 class DataAcquisitionProcessor:
@@ -1621,7 +1622,9 @@ class gistoolRunner:
         dataset_dir = dataset
         if dataset == 'soil_class':
             dataset_dir = 'soil_classes'
- 
+        if dataset == 'MODIS':
+            dataset_dir = "" #'MODIS_MCD12Q1.061'
+
         gistool_command = [
             f"{self.gistool_path}/extract-gis.sh",
             f"--dataset={dataset}",
@@ -1638,7 +1641,6 @@ class gistoolRunner:
             f"--cluster={self.config['CLUSTER_JSON']}"
         ] 
         
-        self.logger.info(f'gistool command: {gistool_command}')
         if start_date and end_date:
             gistool_command.extend([
                 f"--start-date={start_date}",
