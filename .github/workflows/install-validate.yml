@@ -316,6 +316,37 @@ jobs:
             fi
           done
 
+      - name: Check TauDEM binary naming variations
+        run: |
+          set -e
+          echo "=== All TauDEM binaries ==="
+          ls -1 ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
+          
+          echo ""
+          echo "=== Checking for moveoutlets variations ==="
+          ls -1 ${SYMFLUENCE_DATA}/installs/TauDEM/bin/moveoutlets* || echo "No moveoutlets binaries found"
+          
+          echo ""
+          echo "=== Creating symlinks for naming variations ==="
+          cd ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
+          
+          # Handle moveoutletstostrms -> moveoutletstostreams
+          if [ -f "moveoutletstostrms" ] && [ ! -f "moveoutletstostreams" ]; then
+            ln -s moveoutletstostrms moveoutletstostreams
+            echo "✅ Created symlink: moveoutletstostreams -> moveoutletstostrms"
+          fi
+          
+          # Check for other common variations
+          if [ -f "streamnet" ] && [ ! -f "streamnetwork" ]; then
+            ln -s streamnet streamnetwork
+            echo "✅ Created symlink: streamnetwork -> streamnet"
+          fi
+          
+          echo ""
+          echo "=== Verification ==="
+          ls -lah moveoutlets*
+
+
       - name: Run --define_domain
         run: |
           set -eo pipefail
