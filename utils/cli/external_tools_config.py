@@ -557,37 +557,41 @@ set -e
 export CC=mpicc
 export CXX=mpicxx
 
-# Clean build
 rm -rf build && mkdir -p build
 cd build
 
-# Let CMake find MPI and GDAL on its own (no manual linker flags)
+# Let CMake find MPI and GDAL
 cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release
 
-# Build (TauDEM targets live under src/)
+# Build everything plus the two tools that sometimes get skipped by default
 cmake --build . -j 2
+cmake --build . --target moveoutletstostreams gagewatershed -j 2 || true
 
-# Stage executables
 echo "Staging executables..."
 mkdir -p ../bin
-copied=0
-for exe in pitremove d8flowdir d8converge dinfconverge dinfflowdir aread8 areadinf threshold streamnet slopearea gridnet peukerdouglas lengtharea; do
-  if [ -x "./src/${exe}" ]; then cp -f "./src/${exe}" ../bin/ && copied=$((copied+1)); fi
-done
-if [ "$copied" -eq 0 ]; then
-  for f in ./src/*; do
-    if [ -f "$f" ] && [ -x "$f" ]; then cp -f "$f" ../bin/ && copied=$((copied+1)); fi
-  done
-fi
 
-# Sanity check
-if [ "$copied" -gt 0 ] && [ -x "../bin/pitremove" ]; then
-  echo "✅ TauDEM executables staged:"
-  ls -la ../bin/
-else
-  echo "❌ TauDEM build/stage failed: pitremove not found" >&2
+# List of expected TauDEM tools (superset — some may not exist on older commits)
+tools="pitremove d8flowdir d8converge dinfconverge dinfflowdir aread8 areadinf threshold \
+       streamnet slopearea gridnet peukerdouglas lengtharea moveoutletstostreams gagewatershed"
+
+copied=0
+for exe in $tools; do
+  # Find anywhere under build tree and copy if executable
+  p="$(find . -type f -perm -111 -name "$exe" | head -n1 || true)"
+  if [ -n "$p" ]; then
+    cp -f "$p" ../bin/
+    copied=$((copied+1))
+  fi
+done
+
+# Final sanity
+ls -la ../bin/ || true
+if [ ! -x "../bin/pitremove" ] || [ ! -x "../bin/streamnet" ]; then
+  echo "❌ TauDEM stage failed: core binaries missing" >&2
   exit 1
 fi
+echo "✅ TauDEM executables staged"
+
                 '''
             ],
             'dependencies': [],
