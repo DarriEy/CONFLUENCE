@@ -291,6 +291,31 @@ jobs:
             exit 1
           fi
 
+      - name: List all TauDEM binaries
+        run: |
+          set -e
+          echo "=== TauDEM binaries installed ==="
+          ls -lah ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
+          
+          echo "=== Required binaries check ==="
+          REQUIRED_BINS=(
+            "pitremove"
+            "d8flowdir"
+            "aread8"
+            "threshold"
+            "moveoutletstostreams"
+            "gagewatershed"
+            "streamnet"
+          )
+          
+          for bin in "${REQUIRED_BINS[@]}"; do
+            if [ -x "${SYMFLUENCE_DATA}/installs/TauDEM/bin/${bin}" ]; then
+              echo "✅ ${bin}"
+            else
+              echo "❌ ${bin} (missing or not executable)"
+            fi
+          done
+
       - name: Run --define_domain
         run: |
           set -eo pipefail
