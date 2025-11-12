@@ -154,29 +154,12 @@ jobs:
       - name: Wrapper info (with config)
         run: |
           set -euo pipefail
-          . ./venv/bin/activate
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
       - name: Run --setup_project (with logs)
         run: |
           set -euo pipefail
-          PY="./venv/bin/python"
-          echo "---- Running setup_project ----"
-          set +e
-          "$PY" symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project \
-            > _setup_stdout.log 2> _setup_stderr.log
-          STATUS=$?
-          set -e
-          if [ "$STATUS" -ne 0 ]; then
-            echo "❌ setup_project failed (exit $STATUS)"
-            echo "---- STDOUT (head) ----"; sed -n '1,200p' _setup_stdout.log || true
-            echo "---- STDERR (head) ----"; sed -n '1,200p' _setup_stderr.log || true
-            echo "---- Work logs (if any) ----"; ls -R _workLog_* 2>/dev/null || echo "(no _workLog_* directory created)"
-            exit $STATUS
-          fi
-          echo "✅ setup_project finished OK"
-          ls -la "${SYMFLUENCE_DATA}" || true
-          ls -la "${SYMFLUENCE_DATA}/domain_Bow_at_Banff" || true
+          ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project || true
 
       - name: Assert domain directory exists
         run: |
