@@ -24,22 +24,30 @@ from typing import Dict, Any
 def get_common_build_environment() -> str:
     """
     Get common build environment setup used across multiple tools.
-    
-    Returns:
-        Shell script snippet for environment configuration
     """
     return r'''
 set -e
 # Compiler: force short name to satisfy Makefile sanity checks
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
+
 # Discover libraries (fallback to /usr)
 export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
 export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
 export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print $2}" || echo /usr)}"
+
 # Threads
 export NCORES="${NCORES:-4}"
+
+# Python: prefer active virtualenv; fall back to python3/python
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    export SYMFLUENCE_PYTHON="$VIRTUAL_ENV/bin/python"
+else
+    export SYMFLUENCE_PYTHON="$(command -v python3 || command -v python)"
+fi
+echo "Using Python for builds: ${SYMFLUENCE_PYTHON}"
     '''.strip()
+
 
 
 def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
@@ -439,7 +447,7 @@ echo "Found libs in src/troute-network/libs:"
 ls -1 src/troute-network/libs || true
 
 # --- Build deps for Python extensions (keep this as you have it) ---
-python - <<'PY'
+"$SYMFLUENCE_PYTHON" - <<'PY'
 import sys, subprocess
 def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
 # cython<3 works best with this codebase; numpy<2 avoids API mismatches at build time
@@ -478,7 +486,7 @@ cd ../..
 # --- Install in order: config -> network -> routing ---
 echo ""
 echo "=== Step 8: pip install (editable) ==="
-python - <<'PY'
+"$SYMFLUENCE_PYTHON" - <<'PY'
 import sys, subprocess
 def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
 pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-config")
@@ -486,8 +494,9 @@ pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute
 pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-routing")
 PY
 
+
 # --- Verify ---
-python - <<'PY'
+"$SYMFLUENCE_PYTHON" - <<'PY'
 import troute.network, troute.routing
 print("✓ T-route Python modules import OK")
 PY
