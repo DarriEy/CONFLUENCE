@@ -154,10 +154,8 @@ jobs:
       - name: Wrapper info (with config)
         run: |
           set -euo pipefail
-          PY="./venv/bin/python"
-          echo "---- WRAPPER INFO ----"
-          "$PY" symfluence.py --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
-
+          . ./venv/bin/activate
+          ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
       - name: Run --setup_project (with logs)
         run: |

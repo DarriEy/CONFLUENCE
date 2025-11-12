@@ -102,14 +102,13 @@ class SYMFLUENCE:
         
     
     def _load_and_merge_config(self) -> Dict[str, Any]:
-        """Load configuration file and apply CLI overrides."""
-        with open(self.config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        
-        # Apply overrides
+        try:
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
         if self.config_overrides:
             config.update(self.config_overrides)
-        
         return config
     
     def _initialize_managers(self) -> Dict[str, Any]:
@@ -218,14 +217,15 @@ class SYMFLUENCE:
                 # Force execution; skip completion checks in CLI wrapper
                 try:
                     fn()
-                    steps_completed.append(cli_name)
+                    steps_completed.append({"cli": cli_name, "fn": impl})
                     self.logger.info(f"✓ Completed step: {cli_name}")
                 except Exception as e:
                     status = "partial" if steps_completed else "failed"
                     errors.append({"step": cli_name, "error": str(e)})
                     self.logger.error(f"Step '{cli_name}' failed: {e}")
-                    # You can either continue or re-raise; the wrapper flag decides
-                    raise
+                    if not self.config_overrides.get("continue_on_error", False):
+                        raise
+                    # else: continue to the next step
         finally:
             end = datetime.now()
             elapsed_s = (end - start).total_seconds()
