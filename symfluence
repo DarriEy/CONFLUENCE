@@ -640,7 +640,10 @@ EOF
         cd "$(dirname "$symfluence_script")"
     fi
 
-    print_info "Launching with interpreter: $python_cmd"
+    # ✨ add these 2 lines:
+    print_info "Launching with interpreter: ${python_cmd}"
+    print_info "Args: ${SYMFLUENCE_SCRIPT} $*"
+
     exec "$python_cmd" "$SYMFLUENCE_SCRIPT" "$@"
 }
 

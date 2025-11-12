@@ -155,23 +155,47 @@ jobs:
           set -euo pipefail
           ./symfluence --wrapper-info --config 0_config_files/config_ci_bow.yaml || true
 
-      - name: Run --setup_project (with logs)
+      - name: Run --setup_project (direct venv probe + wrapper)
         run: |
           set -euo pipefail
-          echo "---- running: --setup_project ----"
+
+          echo "---- sanity: config exists? ----"
+          ls -la 0_config_files
+          sed -n '1,120p' 0_config_files/config_ci_bow.yaml
+
+          echo "---- PROBE A: run via venv python (should produce logs) ----"
+          set +e
+          ./venv/bin/python symfluence.py --config 0_config_files/config_ci_bow.yaml --setup_project \
+            > _setup_stdout_A.log 2> _setup_stderr_A.log
+          rcA=$?
+          set -e
+          echo "rcA=$rcA"
+          echo "---- STDOUT A (head) ----"; sed -n '1,120p' _setup_stdout_A.log || true
+          echo "---- STDERR A (head) ----"; sed -n '1,120p' _setup_stderr_A.log || true
+
+          echo "---- PROBE B: run via wrapper (should match A) ----"
           set +e
           ./symfluence --config 0_config_files/config_ci_bow.yaml --setup_project \
-            > _setup_stdout.log 2> _setup_stderr.log
-          rc=$?
+            > _setup_stdout_B.log 2> _setup_stderr_B.log
+          rcB=$?
           set -e
-          if [ $rc -ne 0 ]; then
-            echo "❌ setup_project failed (exit $rc)"
-            echo "---- STDOUT (head) ----"; sed -n '1,200p' _setup_stdout.log || true
-            echo "---- STDERR (head) ----"; sed -n '1,200p' _setup_stderr.log || true
-            echo "---- work logs (if any) ----"; ls -R "${SYMFLUENCE_DATA}"/domain_*/_workLog_* 2>/dev/null || echo "(none)"
-            exit $rc
+          echo "rcB=$rcB"
+          echo "---- STDOUT B (head) ----"; sed -n '1,120p' _setup_stdout_B.log || true
+          echo "---- STDERR B (head) ----"; sed -n '1,120p' _setup_stderr_B.log || true
+
+          # Fail if wrapper fails but direct venv python works
+          if [ "$rcA" -eq 0 ] && [ "$rcB" -ne 0 ]; then
+            echo "❌ Wrapper failed but direct venv python succeeded: wrapper needs a fix"
+            exit $rcB
           fi
-          echo "✅ setup_project OK"
+
+          if [ "$rcA" -ne 0 ]; then
+            echo "❌ Even direct venv python failed — not a wrapper problem"
+            exit $rcA
+          fi
+
+          echo "✅ setup_project OK (via both paths)"
+
 
       - name: Assert domain directory exists
         run: |
