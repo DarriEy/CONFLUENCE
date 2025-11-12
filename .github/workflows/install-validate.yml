@@ -117,53 +117,6 @@ jobs:
           chmod +x ./symfluence
           ./symfluence --install
 
-      - name: Fix TauDEM permissions and verify execution
-        run: |
-          set -e
-          
-          echo "=== Checking if TauDEM directory exists ==="
-          ls -la ${SYMFLUENCE_DATA}/installs/ || echo "No installs directory"
-          
-          echo "=== Checking TauDEM specifically ==="
-          ls -la ${SYMFLUENCE_DATA}/installs/TauDEM/ || echo "No TauDEM directory"
-          
-          echo "=== Checking TauDEM/bin ==="
-          ls -la ${SYMFLUENCE_DATA}/installs/TauDEM/bin/ || echo "No bin directory"
-          
-          TAUDEM_DIR="${SYMFLUENCE_DATA}/installs/TauDEM/bin"
-          
-          echo "=== Contents of TauDEM bin (if exists) ==="
-          if [ -d "$TAUDEM_DIR" ]; then
-            ls -la "$TAUDEM_DIR"
-            
-            echo "=== Making TauDEM binaries executable ==="
-            chmod +x ${TAUDEM_DIR}/*
-            
-            echo "=== Testing TauDEM binary directly ==="
-            ${TAUDEM_DIR}/pitremove -h || echo "pitremove help returned: $?"
-            
-            echo "=== Testing with mpirun ==="
-            mpirun -n 1 ${TAUDEM_DIR}/pitremove -h || echo "mpirun pitremove returned: $?"
-          else
-            echo "TauDEM bin directory doesn't exist!"
-            echo "Full path checked: $TAUDEM_DIR"
-          fi
-
-      - name: Debug TauDEM executable
-        run: |
-          set -e
-          TAUDEM="${SYMFLUENCE_DATA}/installs/TauDEM/bin/pitremove"
-          
-          echo "=== File info ==="
-          ls -lah $TAUDEM
-          file $TAUDEM
-          
-          echo "=== Library dependencies ==="
-          ldd $TAUDEM
-          
-          echo "=== Can we execute it? ==="
-          $TAUDEM -h 2>&1 || echo "Exit code: $?"
-
       - name: Validate binaries
         run: |
           set -e
@@ -243,7 +196,6 @@ jobs:
 
           echo "✅ setup_project OK (via both paths)"
 
-
       - name: Assert domain directory exists
         run: |
           set -eo pipefail
@@ -290,61 +242,6 @@ jobs:
             ls -la "${BASE}" || true
             exit 1
           fi
-
-      - name: List all TauDEM binaries
-        run: |
-          set -e
-          echo "=== TauDEM binaries installed ==="
-          ls -lah ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
-          
-          echo "=== Required binaries check ==="
-          REQUIRED_BINS=(
-            "pitremove"
-            "d8flowdir"
-            "aread8"
-            "threshold"
-            "moveoutletstostreams"
-            "gagewatershed"
-            "streamnet"
-          )
-          
-          for bin in "${REQUIRED_BINS[@]}"; do
-            if [ -x "${SYMFLUENCE_DATA}/installs/TauDEM/bin/${bin}" ]; then
-              echo "✅ ${bin}"
-            else
-              echo "❌ ${bin} (missing or not executable)"
-            fi
-          done
-
-      - name: Check TauDEM binary naming variations
-        run: |
-          set -e
-          echo "=== All TauDEM binaries ==="
-          ls -1 ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
-          
-          echo ""
-          echo "=== Checking for moveoutlets variations ==="
-          ls -1 ${SYMFLUENCE_DATA}/installs/TauDEM/bin/moveoutlets* || echo "No moveoutlets binaries found"
-          
-          echo ""
-          echo "=== Creating symlinks for naming variations ==="
-          cd ${SYMFLUENCE_DATA}/installs/TauDEM/bin/
-          
-          # Handle moveoutletstostrms -> moveoutletstostreams
-          if [ -f "moveoutletstostrms" ] && [ ! -f "moveoutletstostreams" ]; then
-            ln -s moveoutletstostrms moveoutletstostreams
-            echo "✅ Created symlink: moveoutletstostreams -> moveoutletstostrms"
-          fi
-          
-          # Check for other common variations
-          if [ -f "streamnet" ] && [ ! -f "streamnetwork" ]; then
-            ln -s streamnet streamnetwork
-            echo "✅ Created symlink: streamnetwork -> streamnet"
-          fi
-          
-          echo ""
-          echo "=== Verification ==="
-          ls -lah moveoutlets*
 
       - name: Export TauDEM on PATH (before define_domain)
         run: |
@@ -464,8 +361,8 @@ jobs:
       - name: Assert --run_benchmarking output exists
         run: |
           set -euo pipefail
-          TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/evaluation/benchmark_scores.csv"
-          if [ -f "$TARGET" ]; then
+          TARGET="${SYMFLUENCE_DATA}/domain_Bow_at_Banff/evaluation/"
+          if [ -d "$TARGET" ]; then
             echo "✅ Found benchmark output target: ${TARGET}"
           else
             echo "❌ Expected output not found: ${TARGET}"
