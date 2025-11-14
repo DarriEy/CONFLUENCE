@@ -243,82 +243,144 @@ class DataManager:
             variables='soil_classes'
         )
         gistool_runner.execute_gistool_command(gistool_command)
-    
+        
     def acquire_forcings(self):
         """
         Acquire forcing data for the model simulation.
         
-        This method downloads meteorological forcing data required for hydrological
-        modeling, such as precipitation, temperature, humidity, wind, and radiation.
-        The data is acquired using the datatool utility, which handles downloading
-        and initial preprocessing.
+        This method supports two acquisition pathways:
+        1. Cloud-based direct access (DATA_ACCESS: cloud) - Downloads data 
+        directly from S3/Zarr stores without intermediate processing
+        2. Traditional MAF workflow (DATA_ACCESS: MAF) - Uses datatool 
+        for conventional download and preprocessing
         
-        The method supports both point-scale and distributed simulations. For 
-        point-scale simulations with user-supplied data, the acquisition is skipped.
+        Cloud access is currently supported for:
+        - AORC (Analysis of Record for Calibration)
         
-        The forcing dataset and variables are specified in the configuration. If the
-        variables are set to 'default', the method uses the VariableHandler to
-        determine the appropriate variables for the specified dataset and model.
+        The forcing dataset and variables are specified in the configuration.
+        Data is clipped to the domain's bounding box and time period, and saved 
+        in the project's forcing directory.
         
-        The data is clipped to the domain's bounding box and the specified time period,
-        and saved in the project's forcing directory.
+        If SUPPLEMENT_FORCING is enabled, also acquires EM-Earth precipitation 
+        and temperature data for supplementing the primary forcing dataset.
         
-        If SUPPLEMENT_FORCING is enabled, also acquires EM-Earth precipitation and
-        temperature data for supplementing the primary forcing dataset.
-        
-        Returns:
-            None: If data is user-supplied for point simulations
+        Returns
+        -------
+        None
+            If data is user-supplied for point simulations
             
-        Raises:
-            FileNotFoundError: If external data sources cannot be accessed
-            ValueError: If coordinate bounds or time period are invalid
-            Exception: For other errors during data acquisition
+        Raises
+        ------
+        FileNotFoundError
+            If external data sources cannot be accessed
+        ValueError
+            If coordinate bounds or time period are invalid, or if unsupported
+            dataset is specified for cloud access
+        Exception
+            For other errors during data acquisition
         """
         self.logger.info("Starting forcing data acquisition")
+        
+        # Check data access method
+        data_access = self.config.get('DATA_ACCESS', 'MAF').upper()
+        forcing_dataset = self.config.get('FORCING_DATASET', '').upper()
+        
+        if data_access == 'CLOUD':
+            self.logger.info(f"Cloud data access enabled for {forcing_dataset}")
+            
+            # Import cloud data utilities
+            try:
+                from utils.data.cloud_data_utils import (
+                    CloudForcingDownloader, 
+                    check_cloud_access_availability
+                )
+            except ImportError:
+                self.logger.error("Failed to import cloud_data_utils. Ensure the module exists in utils/data/")
+                raise
+            
+            # Check if dataset supports cloud access
+            if not check_cloud_access_availability(forcing_dataset, self.logger):
+                raise ValueError(
+                    f"Dataset '{forcing_dataset}' does not support DATA_ACCESS: cloud. "
+                    f"Either set DATA_ACCESS: MAF or use a supported dataset (AORC, ERA5, EM-EARTH)"
+                )
+            
+            # Create output directory for raw forcing data
+            raw_data_dir = self.project_dir / 'forcing' / 'raw_forcing'
+            raw_data_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                # Initialize cloud downloader
+                downloader = CloudForcingDownloader(self.config, self.logger)
                 
-        # Initialize datatool runner
-        dr = datatoolRunner(self.config, self.logger)
+                # Download forcing data
+                output_file = downloader.download_forcing_data(raw_data_dir)
+                
+                self.logger.info(f"✓ Cloud forcing data acquisition completed: {output_file}")
+                
+            except Exception as e:
+                self.logger.error(f"Error during cloud data acquisition: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
         
-        # Create output directory
-        raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
-        raw_data_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Get lat and lon limits
-        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
-        latlims = f"{bbox[2]},{bbox[0]}"
-        lonlims = f"{bbox[1]},{bbox[3]}"
-        
-        # Get variables to download
-        variables = self.config.get('FORCING_VARIABLES', 'default')
-        if variables == 'default':
-            variables = self.variable_handler.get_dataset_variables(dataset=self.config['FORCING_DATASET'])
-        
-        try:
-            # Create and execute datatool command
-            datatool_command = dr.create_datatool_command(
-                dataset=self.config['FORCING_DATASET'],
-                output_dir=raw_data_dir,
-                lat_lims=latlims,
-                lon_lims=lonlims,
-                variables=variables,
-                start_date=self.config['EXPERIMENT_TIME_START'],
-                end_date=self.config['EXPERIMENT_TIME_END']
-            )
-            dr.execute_datatool_command(datatool_command)
+        else:
+            self.logger.info("Using traditional MAF data acquisition workflow")
             
-            self.logger.info("Primary forcing data acquisition completed successfully")
+            # Check if AORC is being used with MAF (not supported)
+            if forcing_dataset == 'AORC':
+                raise ValueError(
+                    "AORC is not supported with DATA_ACCESS: MAF. "
+                    "Please set DATA_ACCESS: cloud to use AORC, or choose a different dataset."
+                )
             
-            # Acquire EM-Earth data if supplementation is enabled
-            if self.config.get('SUPPLEMENT_FORCING', False):
-                self.logger.info("SUPPLEMENT_FORCING enabled - acquiring EM-Earth data")
-                self.acquire_em_earth_forcings()
+            # Traditional MAF workflow (existing code)
+            # Initialize datatool runner
+            from utils.data.datatool_utils import datatoolRunner
+            dr = datatoolRunner(self.config, self.logger)
             
-        except Exception as e:
-            self.logger.error(f"Error during forcing data acquisition: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
-
+            # Create output directory
+            raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
+            raw_data_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Get lat and lon limits
+            bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+            latlims = f"{bbox[2]},{bbox[0]}"
+            lonlims = f"{bbox[1]},{bbox[3]}"
+            
+            # Get variables to download
+            variables = self.config.get('FORCING_VARIABLES', 'default')
+            if variables == 'default':
+                variables = self.variable_handler.get_dataset_variables(
+                    dataset=self.config['FORCING_DATASET']
+                )
+            
+            try:
+                # Create and execute datatool command
+                datatool_command = dr.create_datatool_command(
+                    dataset=self.config['FORCING_DATASET'],
+                    output_dir=raw_data_dir,
+                    lat_lims=latlims,
+                    lon_lims=lonlims,
+                    variables=variables,
+                    start_date=self.config['EXPERIMENT_TIME_START'],
+                    end_date=self.config['EXPERIMENT_TIME_END']
+                )
+                dr.execute_datatool_command(datatool_command)
+                
+                self.logger.info("Primary forcing data acquisition completed successfully")
+                
+            except Exception as e:
+                self.logger.error(f"Error during forcing data acquisition: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
+        
+        # Acquire EM-Earth data if supplementation is enabled (works with both pathways)
+        if self.config.get('SUPPLEMENT_FORCING', False):
+            self.logger.info("SUPPLEMENT_FORCING enabled - acquiring EM-Earth data")
+            self.acquire_em_earth_forcings()
+            
     def acquire_em_earth_forcings(self):
         """
         Acquire EM-Earth precipitation and temperature data for supplementing primary forcing.
