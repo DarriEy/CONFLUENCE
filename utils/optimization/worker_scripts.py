@@ -225,14 +225,27 @@ def _evaluate_parameters_worker(task_data: Dict) -> Dict:
         debug_info['individual_id'] = individual_id
         debug_info['proc_id'] = proc_id
         
-        # Setup process logger
-        logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
-        if not logger.handlers:
-            logger.setLevel(logging.DEBUG)
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+        # Setup process logger only if LOG_LEVEL is DEBUG
+        config = task_data.get('config', {})
+        enable_worker_logging = config.get('LOG_LEVEL', 'INFO').upper() == 'DEBUG'
+        
+        if enable_worker_logging:
+            logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
+            if not logger.handlers:
+                logger.setLevel(logging.DEBUG)
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+        else:
+            # Use a minimal logger that only logs errors
+            logger = logging.getLogger(f'worker_{proc_id}_{individual_id}')
+            if not logger.handlers:
+                logger.setLevel(logging.ERROR)
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter(f'[P{proc_id:02d}-I{individual_id:03d}] %(levelname)s: %(message)s')
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
         
         logger.info(f"Starting evaluation of individual {individual_id}")
         
