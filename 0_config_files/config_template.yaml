@@ -76,8 +76,9 @@ ASPECT_CLASS_NUMBER: 8                                         # Number of aspec
 ASPECT_PATH: default                                           # Path to aspect classification raster. If 'default', uses root_path/domain_[name]/attributes/aspect
 
 ### ============================================= 3. Model Agnostic settings: =============================================================
+DATA_ACCESS: cloud
 
-FORCING_DATASET: ERA5                                          # Forcing dataset to use
+FORCING_DATASET: ERA5                                          # Forcing dataset to use. options ERA5 (cloud and MAF), CASR v3.1, 
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.

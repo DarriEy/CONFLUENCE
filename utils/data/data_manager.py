@@ -336,7 +336,6 @@ class DataManager:
             
             # Traditional MAF workflow (existing code)
             # Initialize datatool runner
-            from utils.data.datatool_utils import datatoolRunner
             dr = datatoolRunner(self.config, self.logger)
             
             # Create output directory
