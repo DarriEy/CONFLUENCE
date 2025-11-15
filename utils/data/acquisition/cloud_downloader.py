@@ -650,25 +650,31 @@ class CloudForcingDownloader:
     
     def _download_era5(self, output_dir: Path) -> Path:
         """
-        Download ERA5 data from Google Cloud ARCO-ERA5, in monthly chunks.
+        Download ERA5 data from Google Cloud ARCO-ERA5, in monthly chunks,
+        and write NetCDF files that already match the SUMMA forcing schema
+        expected by the agnostic preprocessor.
 
-        Uses the ARCO-ERA5 analysis-ready Zarr store on GCS and writes
-        one NetCDF file per monthly chunk containing only the requested
-        spatial and temporal subset plus a hydrology-relevant variable subset.
+        This function:
+          * reads ARCO-ERA5 Zarr with ARCO variable names,
+          * subsets to the user bbox and experiment window,
+          * applies optional temporal thinning,
+          * converts variables to SUMMA-style names/units:
+              - airpres   [Pa]
+              - LWRadAtm  [W m-2]
+              - SWRadAtm  [W m-2]
+              - pptrate   [m s-1]
+              - airtemp   [K]
+              - spechum   [kg kg-1] (from dewpoint + pressure)
+              - windspd   [m s-1]   (from 10m U/V),
+          * writes one NetCDF file per monthly chunk.
 
-        Config options (optional)
-        -------------------------
-        ERA5_ZARR_PATH : str
-            Override default ARCO-ERA5 Zarr store path.
-        ERA5_VARS : list[str]
-            List of ERA5 variable names to keep. Defaults to a hydrology-
-            focused subset compatible with ARCO-ERA5 variable names.
-        ERA5_TIME_STEP_HOURS : int
-            Temporal thinning factor (1 = hourly, 3 = every 3 hours, etc.).
+        The resulting NetCDFs can be consumed directly by the agnostic
+        preprocessor without additional renaming or unit conversion.
         """
         self.logger.info("Downloading ERA5 data from Google Cloud ARCO-ERA5")
         self.logger.info(f"  Bounding box: {self.bbox}")
         self.logger.info(f"  Time period: {self.start_date} to {self.end_date}")
+        domain_name = self.config.get("DOMAIN_NAME", "domain")
 
         try:
             import gcsfs
@@ -704,7 +710,7 @@ class CloudForcingDownloader:
 
             self.logger.info("Successfully opened ERA5 Zarr store")
 
-            # ---- NEW: explicitly load coordinate axes (small but avoids lazy coord ops)
+            # Load coordinate axes (small) to avoid lazy coord ops
             ds = ds.assign_coords(
                 longitude=ds.longitude.load(),
                 latitude=ds.latitude.load(),
@@ -719,7 +725,6 @@ class CloudForcingDownloader:
             )
 
             # ----------------- Robust bbox handling -----------------------------
-            # Raw bbox from config (order may be swapped)
             raw_lon1 = float(self.bbox["lon_min"])
             raw_lon2 = float(self.bbox["lon_max"])
             raw_lat1 = float(self.bbox["lat_min"])
@@ -730,7 +735,6 @@ class CloudForcingDownloader:
                     "ERA5 dataset does not have 'longitude' and 'latitude' coordinates"
                 )
 
-            # Normalise longitude order: ensure lon_min_raw <= lon_max_raw
             lon_min_raw, lon_max_raw = sorted([raw_lon1, raw_lon2])
 
             # Convert to 0..360 if needed (ARCO-ERA5 uses 0..360)
@@ -740,7 +744,6 @@ class CloudForcingDownloader:
             else:
                 lon_min, lon_max = lon_min_raw, lon_max_raw
 
-            # Normalise latitude order: min, max in conventional sense
             lat_min_raw, lat_max_raw = sorted([raw_lat1, raw_lat2])
 
             self.logger.info(
@@ -773,7 +776,10 @@ class CloudForcingDownloader:
                     chunks.append((chunk_start, chunk_end))
 
                 # Move to next calendar month
-                current_month_start = (current_month_start.replace(day=28) + pd.Timedelta(days=4)).replace(
+                current_month_start = (
+                    current_month_start.replace(day=28)
+                    + pd.Timedelta(days=4)
+                ).replace(
                     day=1, hour=0, minute=0, second=0, microsecond=0
                 )
 
@@ -788,22 +794,21 @@ class CloudForcingDownloader:
             )
 
             # ------------------- Variable selection -----------------------------
-            # Use ARCO-ERA5-style names (not GRIB short names)
             default_required_vars = [
-                "2m_temperature",                       # near-surface T
-                "2m_dewpoint_temperature",             # near-surface Td
-                "10m_u_component_of_wind",             # 10m U
-                "10m_v_component_of_wind",             # 10m V
-                "surface_pressure",                    # Psfc
-                "total_precipitation",                 # precip accum
-                "surface_solar_radiation_downwards",   # SW down
-                "surface_thermal_radiation_downwards", # LW down
+                "2m_temperature",
+                "2m_dewpoint_temperature",
+                "10m_u_component_of_wind",
+                "10m_v_component_of_wind",
+                "surface_pressure",
+                "total_precipitation",
+                "surface_solar_radiation_downwards",
+                "surface_thermal_radiation_downwards",
             ]
 
             requested_vars = self.config.get(
                 "ERA5_VARS", default_required_vars
             )
-            self.logger.info(f"Requested ERA5 variables: {requested_vars}")
+            self.logger.debug(f"Requested ERA5 variables: {requested_vars}")
 
             available_vars = [
                 v for v in requested_vars if v in ds.data_vars
@@ -814,7 +819,7 @@ class CloudForcingDownloader:
                     f"Requested: {requested_vars}. "
                     f"Available (sample): {sample_vars}"
                 )
-            self.logger.info(f"Variables present in dataset: {available_vars}")
+            self.logger.debug(f"Variables present in dataset: {available_vars}")
 
             # ------------------- Output directory -------------------------------
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -833,14 +838,14 @@ class CloudForcingDownloader:
                 # 1) Subset in time
                 ds_t = ds.sel(time=slice(chunk_start, chunk_end))
 
-                if "time" not in ds_t.dims or ds_t.sizes["time"] == 0:
+                if "time" not in ds_t.dims or ds_t.sizes["time"] < 2:
                     self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] No timesteps in this chunk; skipping."
+                        f"[ERA5 {i}/{total_chunks}] Fewer than 2 timesteps "
+                        f"in this chunk; skipping."
                     )
                     continue
 
                 # 2) Subset in space for this time slice only
-                # ERA5 latitude is descending (90 -> -90), so we slice (max, min)
                 ds_ts = ds_t.sel(
                     latitude=slice(lat_max_raw, lat_min_raw),
                     longitude=slice(lon_min, lon_max),
@@ -854,13 +859,14 @@ class CloudForcingDownloader:
                     )
                     ds_ts = ds_ts.isel(time=slice(0, None, step))
 
-                if "time" not in ds_ts.dims or ds_ts.sizes["time"] == 0:
+                if "time" not in ds_ts.dims or ds_ts.sizes["time"] < 2:
                     self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] No timesteps after thinning; skipping."
+                        f"[ERA5 {i}/{total_chunks}] Fewer than 2 timesteps "
+                        f"after thinning; skipping."
                     )
                     continue
 
-                # 4) Select variables
+                # 4) Select variables (ARCO names)
                 missing = [v for v in available_vars if v not in ds_ts.data_vars]
                 if missing:
                     self.logger.warning(
@@ -868,35 +874,57 @@ class CloudForcingDownloader:
                     )
 
                 chunk_vars = [v for v in available_vars if v in ds_ts.data_vars]
-                ds_chunk = ds_ts[chunk_vars]
+                ds_chunk_raw = ds_ts[chunk_vars]
 
-                chunk_start_str = chunk_start.strftime("%Y%m%d%H")
-                chunk_end_str = chunk_end.strftime("%Y%m%d%H")
+                # 5) Convert to SUMMA schema (rename, derive, convert units)
+                ds_chunk = self._era5_to_summa_schema(ds_chunk_raw)
+
+                # If conversion dropped to <1 timestep, skip
+                if "time" not in ds_chunk.dims or ds_chunk.sizes["time"] < 1:
+                    self.logger.info(
+                        f"[ERA5 {i}/{total_chunks}] No timesteps left after "
+                        f"SUMMA conversion; skipping."
+                    )
+                    continue
+
+                # Build filename from actual (post-diff) time bounds
+                start_time = pd.to_datetime(ds_chunk.time.values[0])
+                end_time = pd.to_datetime(ds_chunk.time.values[-1])
+                chunk_start_str = start_time.strftime("%Y%m%d%H")
+                chunk_end_str = end_time.strftime("%Y%m%d%H")
+
+                # Derive year/month for filename (legacy ERA5 convention)
+                file_year = chunk_start.year
+                file_month = chunk_start.month
+
+                # expected pattern:
+                #   domain_{DOMAIN_NAME}_ERA5_merged_{YYYYMM}.nc
                 chunk_file = (
                     output_dir
-                    / f"{domain_name}_ERA5_{chunk_start_str}-{chunk_end_str}.nc"
+                    / f"domain_{domain_name}_ERA5_merged_{file_year}{file_month:02d}.nc"
                 )
 
-                self.logger.info(
+                self.logger.debug(
                     f"[ERA5 {i}/{total_chunks}] Saving chunk to: {chunk_file}"
                 )
 
-                # Set up delayed/lazy writing with reasonable chunk sizes
+                # Set up encoding for SUMMA-style variables
                 encoding = {}
-                for var in chunk_vars:
+                for var in ds_chunk.data_vars:
                     encoding[var] = {
-                        'zlib': True,
-                        'complevel': 1,  # Light compression for speed
-                        'chunksizes': (
-                            min(168, ds_chunk.sizes['time']),  # ~1 week of hourly data
-                            ds_chunk.sizes['latitude'],
-                            ds_chunk.sizes['longitude']
-                        )
+                        "zlib": True,
+                        "complevel": 1,
+                        "chunksizes": (
+                            min(168, ds_chunk.sizes["time"]),
+                            ds_chunk.sizes["latitude"],
+                            ds_chunk.sizes["longitude"],
+                        ),
                     }
 
                 # Try to use dask progress bar if available
                 try:
                     from dask.diagnostics import ProgressBar
+
                     self.logger.info(
                         f"[ERA5 {i}/{total_chunks}] Writing with progress monitoring..."
                     )
@@ -904,32 +932,32 @@ class CloudForcingDownloader:
                         ds_chunk.to_netcdf(
                             chunk_file,
                             encoding=encoding,
-                            compute=True
+                            compute=True,
                         )
                 except ImportError:
                     self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Writing to NetCDF (may take 1-2 min for first chunk)..."
+                        f"[ERA5 {i}/{total_chunks}] Writing NetCDF (no dask progress bar)..."
                     )
                     ds_chunk.to_netcdf(
                         chunk_file,
                         encoding=encoding,
-                        compute=True
+                        compute=True,
                     )
 
                 self.logger.info(
-                    f"[ERA5 {i}/{total_chunks}] ✓ Chunk saved successfully"
+                    f"[ERA5 {i}/{total_chunks}] ✓ SUMMA-format chunk saved successfully"
                 )
 
                 chunk_files.append(chunk_file)
 
             if not chunk_files:
                 raise ValueError(
-                    "ERA5: after subsetting, no data was written. "
-                    "Check bbox and time window."
+                    "ERA5: after subsetting and SUMMA conversion, no data was written. "
+                    "Check bbox, time window, and variable availability."
                 )
 
             # ------------------- Final summary ----------------------------------
-            self.logger.info("ERA5 data extraction (chunked, per-file) summary:")
+            self.logger.info("ERA5 data extraction (chunked, SUMMA-format) summary:")
             self.logger.info(f"  Output directory: {output_dir}")
             self.logger.info(f"  Chunk files written: {len(chunk_files)}")
             self.logger.info(f"  Temporal thinning (hours): {step}")
@@ -939,7 +967,8 @@ class CloudForcingDownloader:
             # If only one file, return that; otherwise return the directory
             if len(chunk_files) == 1:
                 self.logger.info(
-                    f"✓ ERA5 data download complete (single chunk): {chunk_files[0]}"
+                    f"✓ ERA5 data download complete (single SUMMA-format chunk): "
+                    f"{chunk_files[0]}"
                 )
                 return chunk_files[0]
             else:
@@ -956,6 +985,7 @@ class CloudForcingDownloader:
         except Exception as e:
             self.logger.error(f"Error downloading ERA5 data: {str(e)}")
             raise
+
 
 
     # ------------------------------------------------------------------
@@ -2197,7 +2227,205 @@ class CloudForcingDownloader:
         
         self.logger.info(f"✓ FABDEM downloaded: {out_path}")
         return out_path
-    
+
+    def _era5_to_summa_schema(self, ds_chunk):
+        """
+        Convert an ERA5 ARCO-ERA5 chunk (ARCO variable names) into the
+        SUMMA-style forcing schema expected by the agnostic pre-processor.
+
+        Input variables (if present):
+            2m_temperature                      [K]
+            2m_dewpoint_temperature            [K]
+            10m_u_component_of_wind            [m s-1]
+            10m_v_component_of_wind            [m s-1]
+            surface_pressure                   [Pa]
+            total_precipitation                [m]   (accumulated)
+            surface_solar_radiation_downwards  [J m-2] (accumulated)
+            surface_thermal_radiation_downwards[J m-2] (accumulated)
+
+        Output variables:
+            airpres   [Pa]
+            LWRadAtm  [W m-2]
+            SWRadAtm  [W m-2]
+            pptrate   [m s-1]
+            airtemp   [K]
+            spechum   [kg kg-1]
+            windspd   [m s-1]
+
+        Notes
+        -----
+        * For accumulated variables (precipitation + radiation) we take a
+          temporal derivative using finite differences and drop the first
+          time step so that all variables share the same time coordinate.
+        * Specific humidity is derived from dew point temperature and surface
+          pressure assuming saturation at the dew point.
+        """
+        if "time" not in ds_chunk.dims or ds_chunk.sizes["time"] < 2:
+            self.logger.warning(
+                "ERA5 chunk has fewer than 2 time steps; skipping SUMMA "
+                "conversion and returning original chunk."
+            )
+            return ds_chunk
+
+        # Ensure time is sorted
+        ds_chunk = ds_chunk.sortby("time")
+
+        # We'll ultimately drop the first time step (needed for finite
+        # differences of accumulated fields).
+        ds_base = ds_chunk.isel(time=slice(1, None))
+
+        # Preserve coords (time/lat/lon, etc.) after dropping first step
+        out = xr.Dataset(coords={c: ds_base.coords[c] for c in ds_base.coords})
+
+        # ------------------------------------------------------------------
+        # Simple renames / direct copies
+        # ------------------------------------------------------------------
+        if "surface_pressure" in ds_base:
+            airpres = ds_base["surface_pressure"].astype("float32")
+            airpres.name = "airpres"
+            airpres.attrs.update(
+                {
+                    "units": "Pa",
+                    "long_name": "air pressure",
+                    "standard_name": "air_pressure",
+                }
+            )
+            out["airpres"] = airpres
+
+        if "2m_temperature" in ds_base:
+            airtemp = ds_base["2m_temperature"].astype("float32")
+            airtemp.name = "airtemp"
+            airtemp.attrs.update(
+                {
+                    "units": "K",
+                    "long_name": "air temperature",
+                    "standard_name": "air_temperature",
+                }
+            )
+            out["airtemp"] = airtemp
+
+        # ------------------------------------------------------------------
+        # Wind speed from U/V components
+        # ------------------------------------------------------------------
+        if (
+            "10m_u_component_of_wind" in ds_base
+            and "10m_v_component_of_wind" in ds_base
+        ):
+            u = ds_base["10m_u_component_of_wind"]
+            v = ds_base["10m_v_component_of_wind"]
+            windspd = np.sqrt(u ** 2 + v ** 2).astype("float32")
+            windspd.name = "windspd"
+            windspd.attrs.update(
+                {
+                    "units": "m s-1",
+                    "long_name": "wind speed",
+                    "standard_name": "wind_speed",
+                }
+            )
+            out["windspd"] = windspd
+
+        # ------------------------------------------------------------------
+        # Specific humidity from dew point + surface pressure
+        # ------------------------------------------------------------------
+        if "2m_dewpoint_temperature" in ds_base and "surface_pressure" in ds_base:
+            Td = ds_base["2m_dewpoint_temperature"]        # K
+            p = ds_base["surface_pressure"]                # Pa
+
+            # Convert to Celsius for Magnus formula
+            Td_C = Td - 273.15
+
+            # Saturation vapor pressure (Magnus, over water)
+            # es in hPa, then convert to Pa
+            es_hPa = 6.112 * np.exp((17.67 * Td_C) / (Td_C + 243.5))
+            es = es_hPa * 100.0
+
+            eps = 0.622
+            # Guard against p - es <= 0
+            denom = xr.where((p - es) <= 1.0, 1.0, p - es)
+            r = eps * es / denom             # mixing ratio
+            q = (r / (1.0 + r)).astype("float32")
+
+            spechum = q
+            spechum.name = "spechum"
+            spechum.attrs.update(
+                {
+                    "units": "kg kg-1",
+                    "long_name": "specific humidity",
+                    "standard_name": "specific_humidity",
+                }
+            )
+            out["spechum"] = spechum
+
+        # ------------------------------------------------------------------
+        # Helper for accumulated → rate conversion
+        # ------------------------------------------------------------------
+        time = ds_chunk["time"]
+        dt = (time.diff("time") / np.timedelta64(1, "s")).astype("float32")
+
+        def _accum_to_rate(var_name, out_name, units, long_name, standard_name):
+            if var_name not in ds_chunk:
+                return
+
+            accum = ds_chunk[var_name]
+            diff = accum.diff("time")
+            rate = (diff / dt).astype("float32")
+            # After diff, the time coord is aligned with ds_base.time
+            rate.name = out_name
+            rate.attrs.update(
+                {
+                    "units": units,
+                    "long_name": long_name,
+                    "standard_name": standard_name,
+                }
+            )
+            out[out_name] = rate
+
+        # Precipitation: m -> m s-1
+        _accum_to_rate(
+            "total_precipitation",
+            "pptrate",
+            "m s-1",
+            "precipitation rate",
+            "precipitation_rate",
+        )
+
+        # Shortwave radiation: J m-2 -> W m-2
+        _accum_to_rate(
+            "surface_solar_radiation_downwards",
+            "SWRadAtm",
+            "W m-2",
+            "surface downwelling shortwave radiation",
+            "surface_downwelling_shortwave_flux_in_air",
+        )
+
+        # Longwave radiation: J m-2 -> W m-2
+        _accum_to_rate(
+            "surface_thermal_radiation_downwards",
+            "LWRadAtm",
+            "W m-2",
+            "surface downwelling longwave radiation",
+            "surface_downwelling_longwave_flux_in_air",
+        )
+
+        # Ensure required variables exist (warn if missing)
+        required = [
+            "airpres",
+            "LWRadAtm",
+            "SWRadAtm",
+            "pptrate",
+            "airtemp",
+            "spechum",
+            "windspd",
+        ]
+        missing = [v for v in required if v not in out.data_vars]
+        if missing:
+            self.logger.warning(
+                f"ERA5 SUMMA conversion: missing variables in output: {missing}"
+            )
+
+        return out
+
+
     def _download_fabdem_alternative(self) -> Path:
         """
         Alternative FABDEM download using OpenTopography or COG access.

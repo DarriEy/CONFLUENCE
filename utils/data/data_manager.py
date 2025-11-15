@@ -394,7 +394,7 @@ class DataManager:
                 )
             
             # Create output directory for raw forcing data
-            raw_data_dir = self.project_dir / 'forcing' / 'raw_forcing'
+            raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
             raw_data_dir.mkdir(parents=True, exist_ok=True)
             
             try:
@@ -970,52 +970,6 @@ class DataManager:
             #     dap.run_data_acquisition()
 
             # Archive raw forcing data to save storage space
-            """
-            self.logger.info("Archiving raw forcing data to save storage space")
-            try:
-                raw_data_dir = self.project_dir / 'forcing' / 'raw_data'
-                if raw_data_dir.exists():
-                    success = tar_directory(
-                        raw_data_dir, 
-                        "raw_forcing_data.tar.gz",
-                        remove_original=True,
-                        logger=self.logger
-                    )
-                    if success:
-                        self.logger.info("Raw forcing data archived successfully")
-                    else:
-                        self.logger.warning("Failed to archive raw forcing data")
-                
-                # Also archive EM-Earth raw data if it exists
-                if self.config.get('SUPPLEMENT_FORCING', False):
-                    em_earth_dir = self.project_dir / 'forcing' / 'raw_data_em_earth'
-                    if em_earth_dir.exists():
-                        success = tar_directory(
-                            em_earth_dir,
-                            "raw_em_earth_data.tar.gz", 
-                            remove_original=True,
-                            logger=self.logger
-                        )
-                        if success:
-                            self.logger.info("Raw EM-Earth data archived successfully")
-                        else:
-                            self.logger.warning("Failed to archive raw EM-Earth data")
-                        
-                        # Also archive remapped EM-Earth data if it exists
-                        remapped_dir = self.project_dir / 'forcing' / 'em_earth_remapped'
-                        if remapped_dir.exists():
-                            success = tar_directory(
-                                remapped_dir,
-                                "remapped_em_earth_data.tar.gz",
-                                remove_original=True, 
-                                logger=self.logger
-                            )
-                            if success:
-                                self.logger.info("Remapped EM-Earth data archived successfully")
-                
-            except Exception as e:
-                self.logger.warning(f"Error during raw data archiving: {str(e)}")
-            """
 
                 # Continue execution even if archiving fails
             self.logger.info("Model-agnostic preprocessing completed successfully")
