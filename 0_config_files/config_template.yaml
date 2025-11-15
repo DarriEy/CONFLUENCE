@@ -14,7 +14,7 @@
 #
 ### ============================================= 1. Global settings: =======================================================================
 
-SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/code/SYMFLUENCE_data
+SYMFLUENCE_DATA_DIR: /Users/darrieythorsson/compHydro/data/SYMFLUENCE_data
 SYMFLUENCE_CODE_DIR: /Users/darrieythorsson/compHydro/code/SYMFLUENCE
 
 # Experiment settings

@@ -3,6 +3,19 @@
 All notable changes to SYMFLUENCE are documented here.
 
 ---
+## [0.5.3] - DEVELOP: 2025-11-15
+
+### Added
+- Support for cloud acquisition of 
+  - Copernicus DEM
+  - MODIS land cover
+  - Global USDA-NRCS soil texture class map
+  - Forcing datasets ERA5, NEX-GDDP, CONUS404, AORC
+  - Agnostic pipeline for cloud based era5 matched
+  - Full cloud integraed workflow tested with ERA5
+
+- made mpi_worker log generation optional
+- Working on t-route support
 
 ## [0.5.2] - 2025-11-12
 

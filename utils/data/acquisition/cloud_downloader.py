@@ -129,8 +129,8 @@ class CloudForcingDownloader:
         """
         Helper to create attribute subdirs such as:
           - attributes/elevation
-          - attributes/soilclasses
-          - attributes/landcover
+          - attributes/soilclass
+          - attributes/landclass
         """
         d = self.domain_dir / "attributes" / subdir
         d.mkdir(parents=True, exist_ok=True)
@@ -1074,48 +1074,63 @@ class CloudForcingDownloader:
     # ------------------------------------------------------------------
     def download_modis_landcover(self) -> Path:
         """
-        Acquire MODIS MCD12Q1 v061-style land cover, crop to domain bbox,
-        and write a per-domain GeoTIFF:
+        Acquire MODIS MCD12Q1 v061-style land cover for the domain and write a
+        MAF-style landclass GeoTIFF:
 
-          domain_dir / attributes / landcover /
-              <DOMAIN_NAME>_landcover.tif
+          domain_dir / attributes / landclass / landclass.tif
 
-        Two modes:
-
+        Behaviour
+        ---------
         1) If LANDCOVER_LOCAL_FILE is set in config:
-           - Treat it as a local or remote (vsicurl/http) raster that is already
-             EPSG:4326 and crop it to the domain bbox.
+           - Treat it as an existing EPSG:4326 raster (local or /vsicurl/http),
+             crop to bbox, and write landclass.tif.
 
         2) If LANDCOVER_LOCAL_FILE is NOT set:
-           - Use a default MCD12Q1 v061 COG from Zenodo (IGBP-type classes,
-             500 m, EPSG:4326) via /vsicurl, and crop directly from that COG.
-
-        In both cases, only the domain bbox window is read; we never download
-        the full global raster to disk by default.
+           - Use annual MCD12Q1 v061 land cover COGs from Zenodo (IGBP classes),
+             one file per year, at native 500 m resolution (EPSG:4326).
+           - Crop each year to bbox, stack across years, and compute the
+             per-pixel MODE of land class (ignoring nodata).
+           - Write the mode field to landclass.tif (MAF-style).
         """
-        lc_dir = self._attribute_dir("landcover")
+        lc_dir = self._attribute_dir("landclass")
 
         # ------------------------------------------------------------------
-        # Decide source raster (local/remote from config vs default remote COG)
+        # Bounding box
+        # ------------------------------------------------------------------
+        bbox = self.bbox  # e.g. {'lat_min', 'lat_max', 'lon_min', 'lon_max'}
+
+        lon_min = float(bbox["lon_min"])
+        lon_max = float(bbox["lon_max"])
+        lat_min = float(bbox["lat_min"])
+        lat_max = float(bbox["lat_max"])
+
+        # Normalise in case user reversed coordinates
+        if lon_min > lon_max:
+            self.logger.info(
+                f"Swapping lon_min ({lon_min}) and lon_max ({lon_max}) - they were reversed"
+            )
+            lon_min, lon_max = lon_max, lon_min
+        if lat_min > lat_max:
+            self.logger.info(
+                f"Swapping lat_min ({lat_min}) and lat_max ({lat_max}) - they were reversed"
+            )
+            lat_min, lat_max = lat_max, lat_min
+
+        self.logger.info(
+            "Preparing MODIS landcover for bbox "
+            f"lon [{lon_min}, {lon_max}], lat [{lat_min}, {lat_max}]"
+        )
+
+        from rasterio.windows import from_bounds
+
+        # ------------------------------------------------------------------
+        # Case 1: user supplied a local/remote raster
         # ------------------------------------------------------------------
         src_path = self.config.get("LANDCOVER_LOCAL_FILE", None)
         is_remote = False
 
-        if src_path is None:
-            # Default: Zenodo-hosted global COG (property 1 / IGBP-type classes)
-            default_url = (
-                "https://zenodo.org/records/8367523/files/"
-                "lc_mcd12q1v061.p1_c_500m_s_20150101_20151231_go_epsg.4326_v20230818.tif"
-                "?download=1"
-            )
-            src_path = f"/vsicurl/{default_url}"
-            is_remote = True
-            self.logger.info(
-                "LANDCOVER_LOCAL_FILE not set; using default remote MODIS landcover "
-                f"COG via vsicurl: {default_url}"
-            )
-        else:
-            # Allow the user to give a vsicurl/http path in the config
+        if src_path is not None:
+            # Allow vsicurl/http here too
             if (
                 isinstance(src_path, str)
                 and (
@@ -1125,74 +1140,185 @@ class CloudForcingDownloader:
                 )
             ):
                 is_remote = True
+            else:
+                src_path = Path(src_path)
+                if not src_path.exists():
+                    raise FileNotFoundError(
+                        f"LANDCOVER_LOCAL_FILE does not exist: {src_path}"
+                    )
 
-        # For local on-disk files, enforce existence
-        if not is_remote:
-            from pathlib import Path
-            src_path = Path(src_path)
-            if not src_path.exists():
-                raise FileNotFoundError(
-                    f"LANDCOVER_LOCAL_FILE does not exist: {src_path}"
+            self.logger.info(
+                f"LANDCOVER_LOCAL_FILE set; cropping provided raster: {src_path}"
+            )
+
+            with rasterio.open(src_path) as src:
+                if src.crs is None or src.crs.to_epsg() != 4326:
+                    self.logger.warning(
+                        "Landcover source raster is not EPSG:4326. "
+                        "Cropping may be incorrect unless it was reprojected beforehand."
+                    )
+
+                window = from_bounds(lon_min, lat_min, lon_max, lat_max, src.transform)
+                out_transform = src.window_transform(window)
+                out_data = src.read(1, window=window)
+
+                out_meta = src.meta.copy()
+                out_meta.update(
+                    {
+                        "driver": "GTiff",
+                        "height": out_data.shape[0],
+                        "width": out_data.shape[1],
+                        "transform": out_transform,
+                        "count": 1,
+                    }
                 )
 
+            # MAF-style output name
+            out_path = lc_dir / "landclass.tif"
+            self.logger.info(f"Writing cropped landclass raster to {out_path}")
+
+            with rasterio.open(out_path, "w", **out_meta) as dst:
+                dst.write(out_data, 1)
+
+            return out_path
+
         # ------------------------------------------------------------------
-        # Crop to domain bbox (subset from the get-go)
+        # Case 2: multi-year MODIS MCD12Q1 from Zenodo COGs → per-pixel mode
         # ------------------------------------------------------------------
-        bbox = self.bbox  # e.g. {'lat_min', 'lat_max', 'lon_min', 'lon_max'}
-
-        # Make sure we are working with floats, not strings
-        lon_min = float(bbox["lon_min"])
-        lon_max = float(bbox["lon_max"])
-        lat_min = float(bbox["lat_min"])
-        lat_max = float(bbox["lat_max"])
-
-        # Fix reversed longitudes if necessary (like we do for SoilGrids)
-        if lon_min > lon_max:
-            self.logger.info(
-                f"Swapping lon_min ({lon_min}) and lon_max ({lon_max}) - they were reversed"
-            )
-            lon_min, lon_max = lon_max, lon_min
-
         self.logger.info(
-            "Cropping MODIS landcover raster "
-            f"{src_path} to bbox lon [{lon_min}, {lon_max}], "
-            f"lat [{lat_min}, {lat_max}]"
+            "LANDCOVER_LOCAL_FILE not set; using multi-year MODIS MCD12Q1 v061 "
+            "COGs from Zenodo to compute per-pixel MODE of land cover."
         )
 
-        import rasterio
-        from rasterio.windows import from_bounds
+        # Years to include in the mode calculation (configurable)
+        default_years = list(range(2001, 2020))  # 2001–2019
+        years = self.config.get("MODIS_LANDCOVER_YEARS", default_years)
 
-        with rasterio.open(src_path) as src:
-            # For the Zenodo MCD12Q1 COGs, crs is EPSG:4326
-            if src.crs is None or src.crs.to_epsg() != 4326:
+        # Base URL + filename pattern (can be overridden in config)
+        # OpenGeoHub MCD12Q1 v061 LC_Type1 (IGBP) mosaics, 500 m, EPSG:4326
+        base_url = self.config.get(
+            "MODIS_LANDCOVER_BASE_URL",
+            "https://zenodo.org/records/8367523/files",
+        )
+        filename_template = self.config.get(
+            "MODIS_LANDCOVER_TEMPLATE",
+            "lc_mcd12q1v061.t1_c_500m_s_{year}0101_{year}1231_go_epsg.4326_v20230818.tif",
+        )
+
+
+        arrays = []
+        out_meta = None
+        nodata_val = None
+        window = None
+        out_transform = None
+        first_shape = None
+
+        for year in years:
+            fname = filename_template.format(year=year)
+            url = f"/vsicurl/{base_url}/{fname}"
+
+            self.logger.info(f"  Opening MODIS landcover COG for year {year}: {url}")
+
+            try:
+                with rasterio.open(url) as src:
+                    if src.crs is None or src.crs.to_epsg() != 4326:
+                        self.logger.warning(
+                            f"Year {year} MODIS landcover raster is not EPSG:4326; "
+                            "bbox cropping assumes EPSG:4326."
+                        )
+
+                    # Use the first year to define the crop window & transform
+                    if window is None:
+                        window = from_bounds(
+                            lon_min, lat_min, lon_max, lat_max, src.transform
+                        )
+                        out_transform = src.window_transform(window)
+                        out_meta = src.meta.copy()
+
+                    data = src.read(1, window=window)
+
+                    if first_shape is None:
+                        first_shape = data.shape
+                    elif data.shape != first_shape:
+                        self.logger.warning(
+                            f"Year {year} landcover window shape {data.shape} "
+                            f"does not match first shape {first_shape}; skipping year."
+                        )
+                        continue
+
+                    arrays.append(data)
+
+                    # Capture nodata value from first successful year
+                    if nodata_val is None:
+                        nodata_val = src.nodata
+                        if nodata_val is None:
+                            nodata_val = 255  # fallback for MODIS MCD12Q1
+                            self.logger.info(
+                                "MODIS landcover nodata not set; defaulting to 255."
+                            )
+
+            except Exception as e:
                 self.logger.warning(
-                    "Landcover source raster is not EPSG:4326. "
-                    "Cropping will be incorrect unless it is reprojected "
-                    "beforehand."
+                    f"  Could not read MODIS COG for year {year}: {e}; skipping."
                 )
+                continue
 
-            window = from_bounds(lon_min, lat_min, lon_max, lat_max, src.transform)
-            out_transform = src.window_transform(window)
-            out_data = src.read(1, window=window)
-
-            out_meta = src.meta.copy()
-            out_meta.update(
-                {
-                    "driver": "GTiff",
-                    "height": out_data.shape[0],
-                    "width": out_data.shape[1],
-                    "transform": out_transform,
-                    "count": 1,
-                }
+        if not arrays:
+            raise RuntimeError(
+                "No MODIS landcover rasters could be opened for the requested years. "
+                "Check network access, base URL, and year list."
             )
 
-        out_path = lc_dir / f"{self.config.get('DOMAIN_NAME','domain')}_landcover.tif"
-        self.logger.info(f"Writing cropped landcover raster to {out_path}")
+        self.logger.info(
+            f"Computing per-pixel mode of MODIS landcover across {len(arrays)} year(s): "
+            f"{years}"
+        )
+
+        stack = np.stack(arrays, axis=0)  # (nyears, ny, nx)
+
+        if nodata_val is None:
+            nodata_val = 255
+
+        def _mode_1d(vals: np.ndarray) -> int:
+            """Mode of a 1D array ignoring nodata; returns nodata if all missing."""
+            valid = vals[vals != nodata_val]
+            if valid.size == 0:
+                return nodata_val
+            # np.unique is fine for small number of years
+            uniq, counts = np.unique(valid, return_counts=True)
+            # In case of ties, np.argmax picks the first occurrence
+            return int(uniq[np.argmax(counts)])
+
+        # Apply along the "years" axis → result shape (ny, nx)
+        mode_data = np.apply_along_axis(_mode_1d, 0, stack)
+        mode_data = mode_data.astype(out_meta["dtype"] if "dtype" in out_meta else stack.dtype)
+
+        # Update metadata for output raster
+        out_meta.update(
+            {
+                "driver": "GTiff",
+                "height": mode_data.shape[0],
+                "width": mode_data.shape[1],
+                "transform": out_transform,
+                "count": 1,
+                "nodata": nodata_val,
+            }
+        )
+
+        out_path = lc_dir / f"domain_{self.config.get('DOMAIN_NAME')}_land_classes.tif"
+        self.logger.info(
+            f"Writing MODIS landcover MODE raster (MAF-style) to {out_path}"
+        )
 
         with rasterio.open(out_path, "w", **out_meta) as dst:
-            dst.write(out_data, 1)
+            dst.write(mode_data, 1)
 
+        self.logger.info(
+            "✓ MODIS landcover mode computation complete; "
+            f"landclass written to {out_path}"
+        )
         return out_path
+
 
 
 
@@ -1879,7 +2005,7 @@ class CloudForcingDownloader:
         mosaic, transform = rio_merge(sources)
 
         # Write clipped raster to elevation directory
-        out_path = elev_dir / f"{self.config.get('DOMAIN_NAME','domain')}_copdem30m.tif"
+        out_path = elev_dir / 'dem' / f"domain_{self.config.get('DOMAIN_NAME','domain')}_elv.tif"
         meta = sources[0].meta.copy()
         meta.update(
             {
@@ -2072,7 +2198,7 @@ class CloudForcingDownloader:
         
         bbox_geom = box(lon_min, lat_min, lon_max, lat_max)
         
-        out_path = elev_dir / f"{self.config.get('DOMAIN_NAME','domain')}_copernicus30m.tif"
+        out_path = elev_dir / 'dem' / f"domain_{self.config.get('DOMAIN_NAME','domain')}_elv.tif"
         
         meta = rasters[0].meta.copy()
         meta.update({
@@ -2483,119 +2609,98 @@ class CloudForcingDownloader:
 
     def download_global_soilclasses(self) -> Path:
         """
-        Download / subset soil class rasters from SoilGrids and save to:
-          domain_dir / attributes / soilclasses / <domain>_soilclasses.tif
-        
-        Strategy (following CWARHM approach):
-        1. Download/cache global VRT from ISRIC WebDAV
-        2. Crop to domain extent using GDAL
-        
-        This is more reliable than WCS and doesn't require authentication.
-        
-        SoilGrids provides WRB (World Reference Base) soil classification at 250m resolution.
-        Available at: https://files.isric.org/soilgrids/latest/data/wrb/
-        
-        Returns
-        -------
-        Path
-            Path to the downloaded soil classification GeoTIFF
+        Download / subset the USDA global soil texture class map used by MAF
+        and save to:
+            domain_dir / attributes / soilclasses / <domain>_soilclasses.tif
+
+        Source:
+        HydroShare resource:
+            1361509511e44adfba814f6950c6e742
+        File inside resource:
+            usda_mode_soilclass_250m_ll.tif
+
+        We assume this resource is public and accessible via a direct file URL.
+        No HydroShare credentials are required.
+
+        Behaviour
+        ---------
+        - Read the global map via GDAL's /vsicurl/ HTTP access.
+        - Crop to the domain bbox (EPSG:4326).
+        - Write a single-band GeoTIFF with the cropped soil classes.
         """
-        soil_dir = self._attribute_dir("soilclasses")
-        
-        # Get bounding box coordinates
-        lon_min = self.bbox['lon_min']
-        lat_min = self.bbox['lat_min']
-        lon_max = self.bbox['lon_max']
-        lat_max = self.bbox['lat_max']
-        
-        # Normalize bbox (ensure min < max)
+        soil_dir = self._attribute_dir("soilclass")
+
+        # Domain bbox
+        lon_min = float(self.bbox["lon_min"])
+        lon_max = float(self.bbox["lon_max"])
+        lat_min = float(self.bbox["lat_min"])
+        lat_max = float(self.bbox["lat_max"])
+
+        # Normalise in case bbox is reversed
         if lon_min > lon_max:
-            self.logger.warning(f"Swapping lon_min ({lon_min}) and lon_max ({lon_max}) - they were reversed")
+            self.logger.info(
+                f"Swapping lon_min ({lon_min}) and lon_max ({lon_max}) - they were reversed"
+            )
             lon_min, lon_max = lon_max, lon_min
         if lat_min > lat_max:
-            self.logger.warning(f"Swapping lat_min ({lat_min}) and lat_max ({lat_max}) - they were reversed")
+            self.logger.info(
+                f"Swapping lat_min ({lat_min}) and lat_max ({lat_max}) - they were reversed"
+            )
             lat_min, lat_max = lat_max, lat_min
-        
-        out_path = soil_dir / f"{self.config.get('DOMAIN_NAME','domain')}_soilclasses.tif"
-        
-        self.logger.info(f"Acquiring SoilGrids soil classification data")
-        self.logger.info(f"Domain bbox: [{lon_min}, {lat_min}, {lon_max}, {lat_max}]")
-        
-        try:
-            # Try COG (Cloud Optimized GeoTIFF) approach first - fastest for small domains
-            self.logger.info("Attempting COG-based download...")
-            self._download_soilgrids_cog(lon_min, lat_min, lon_max, lat_max, out_path)
-            
-        except Exception as e:
-            self.logger.warning(f"COG download failed: {e}")
-            self.logger.info("Falling back to VRT + GDAL crop approach...")
-            
-            try:
-                # Fallback: Download VRT and crop with GDAL
-                global_vrt = self._get_soilgrids_vrt()
-                self._crop_with_gdal(global_vrt, lon_min, lat_min, lon_max, lat_max, out_path)
-                
-            except Exception as e2:
-                self.logger.error(f"All SoilGrids download methods failed: {e2}")
-                raise
-        
-        self.logger.info(f"✓ SoilGrids soil classification acquired: {out_path}")
+
+        self.logger.info(
+            "Preparing global USDA soilclass map for bbox "
+            f"lon [{lon_min}, {lon_max}], lat [{lat_min}, {lat_max}]"
+        )
+
+        # Hard-coded HydroShare resource + file used by MAF
+        resource_id = "1361509511e44adfba814f6950c6e742"
+        filename = "usda_mode_soilclass_250m_ll.tif"
+
+        # Direct public file URL (no auth), accessed via GDAL /vsicurl/
+        base_url = (
+            f"https://www.hydroshare.org/resource/{resource_id}/data/contents"
+        )
+        hs_url = f"/vsicurl/{base_url}/{filename}"
+
+        from rasterio.windows import from_bounds
+
+        self.logger.info(f"Opening USDA soilclass global map from {hs_url}")
+
+        with rasterio.open(hs_url) as src:
+            if src.crs is None or src.crs.to_epsg() != 4326:
+                self.logger.warning(
+                    "USDA soilclass global map is not EPSG:4326; "
+                    "cropping assumes lat/lon in EPSG:4326."
+                )
+
+            # Window over our bbox
+            window = from_bounds(lon_min, lat_min, lon_max, lat_max, src.transform)
+            out_transform = src.window_transform(window)
+            data = src.read(1, window=window)
+
+            meta = src.meta.copy()
+            meta.update(
+                {
+                    "driver": "GTiff",
+                    "height": data.shape[0],
+                    "width": data.shape[1],
+                    "transform": out_transform,
+                    "count": 1,
+                }
+            )
+
+        out_path = soil_dir / f"domain_{self.config.get('DOMAIN_NAME','domain')}_soil_classes.tif"
+        self.logger.info(f"Writing cropped USDA soilclass raster to {out_path}")
+
+        with rasterio.open(out_path, "w", **meta) as dst:
+            dst.write(data, 1)
+
+        self.logger.info(
+            f"✓ USDA global soilclass map cropped & saved: {out_path}"
+        )
         return out_path
 
-    def _download_soilgrids_cog(self, lon_min: float, lat_min: float,
-                                lon_max: float, lat_max: float, out_path: Path):
-        """
-        Download SoilGrids data using Cloud Optimized GeoTIFF (COG).
-        This allows efficient partial reading of the global dataset.
-        """
-        from rasterio.windows import from_bounds
-        
-        # ISRIC provides COG files via HTTPS
-        # Use GDAL's /vsicurl/ to read remote files efficiently
-        cog_url = "/vsicurl/https://files.isric.org/soilgrids/latest/data/wrb/MostProbable.vrt"
-
-        
-        self.logger.info(f"Reading from SoilGrids COG...")
-        
-        with rasterio.open(cog_url) as src:
-            # Calculate window for our bounding box
-            window = from_bounds(lon_min, lat_min, lon_max, lat_max, src.transform)
-            
-            # Read only the data we need
-            data = src.read(1, window=window)
-            
-            # Get transform for the windowed data
-            window_transform = src.window_transform(window)
-            
-            # Write cropped data
-            with rasterio.open(
-                out_path,
-                'w',
-                driver='GTiff',
-                height=data.shape[0],
-                width=data.shape[1],
-                count=1,
-                dtype=data.dtype,
-                crs=src.crs,
-                transform=window_transform,
-                compress='deflate',
-                tiled=True
-            ) as dst:
-                dst.write(data, 1)
-        
-        self.logger.info(f"✓ COG download successful")
-
-    def _get_soilgrids_vrt(self) -> str:
-        """
-        Return a /vsicurl/ URL to the global SoilGrids WRB 'MostProbable' VRT.
-
-        We do NOT cache the VRT locally, because it uses relative paths to the
-        tiled GeoTIFFs (MostProbable/xxx.tif). Keeping it remote ensures GDAL
-        resolves those paths correctly on the server.
-        """
-        vrt_url = "/vsicurl/https://files.isric.org/soilgrids/latest/data/wrb/MostProbable.vrt"
-        self.logger.info(f"Using remote SoilGrids VRT via vsicurl: {vrt_url}")
-        return vrt_url
 
 
     def _crop_with_gdal(self, global_vrt: Path, lon_min: float, lat_min: float,

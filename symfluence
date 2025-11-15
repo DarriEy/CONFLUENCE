@@ -528,7 +528,7 @@ main() {
     done
 
     # Set sane defaults for SYMFLUENCE_* based on working dir
-    set_default_symfluence_paths
+    #set_default_symfluence_paths
     
     # Update config.yaml with PWD-based paths if current values are bad/missing (optional)
     local CONFIG_YAML="./0_config_files/config_template.yaml"
