@@ -78,7 +78,7 @@ ASPECT_PATH: default                                           # Path to aspect 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 DATA_ACCESS: cloud
 
-FORCING_DATASET: ERA5                                          # Forcing dataset to use. options ERA5 (cloud and MAF), CASR v3.1 (MAF), CONUS404 (cloud), HRRR (cloud), AORC (cloud), 
+FORCING_DATASET: ERA5                                          # Forcing dataset to use. options ERA5 (cloud and MAF), CASR v3.1 (MAF), CONUS404 (cloud), HRRR (cloud), AORC (cloud) NASA-NEX-GDDP (cloud) 
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.

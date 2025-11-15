@@ -40,7 +40,7 @@ from utils.reporting.reporting_utils import VisualizationReporter # type: ignore
 from utils.reporting.result_vizualisation_utils import TimeseriesVisualizer # type: ignore
 
 # Data management
-from utils.data.archive_utils import tar_directory # type: ignore
+from utils.data.utilities.archive_utils import tar_directory # type: ignore
 
 class ModelManager:
     """

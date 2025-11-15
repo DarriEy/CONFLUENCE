@@ -13,11 +13,13 @@ import numpy as np
 import pandas as pd 
 import multiprocessing as mp
 import time
-from utils.data.data_utils import ObservedDataProcessor, gistoolRunner, datatoolRunner # type: ignore 
-from utils.data.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
-from utils.data.variable_utils import VariableHandler # type: ignore 
+from utils.data.preprocessing.agnosticPreProcessor import forcingResampler, geospatialStatistics # type: ignore 
+from utils.data.utilities.variable_utils import VariableHandler # type: ignore 
 from utils.geospatial.raster_utils import calculate_landcover_mode # type: ignore 
-from utils.data.archive_utils import tar_directory # type: ignore
+from utils.data.utilities.archive_utils import tar_directory
+from utils.data.acquisition.cloud_downloader import CloudForcingDownloader, check_cloud_access_availability
+from utils.data.acquisition.maf_pipeline import gistoolRunner, datatoolRunner 
+from utils.data.acquisition.data_utils import ObservedDataProcessor 
 
 class DataManager:
     """
@@ -125,16 +127,6 @@ class DataManager:
             self.logger.info(
                 f"Cloud data access enabled for attributes (DEM_SOURCE: {dem_source})"
             )
-            
-            # Import cloud data utilities
-            try:
-                from utils.data.cloud_data_utils import CloudForcingDownloader
-            except ImportError:
-                self.logger.error(
-                    "Failed to import cloud_data_utils. "
-                    "Ensure the module exists in utils/data/"
-                )
-                raise
             
             try:
                 # Initialize cloud downloader
@@ -393,15 +385,6 @@ class DataManager:
         if data_access == 'CLOUD':
             self.logger.info(f"Cloud data access enabled for {forcing_dataset}")
             
-            # Import cloud data utilities
-            try:
-                from utils.data.cloud_data_utils import (
-                    CloudForcingDownloader, 
-                    check_cloud_access_availability
-                )
-            except ImportError:
-                self.logger.error("Failed to import cloud_data_utils. Ensure the module exists in utils/data/")
-                raise
             
             # Check if dataset supports cloud access
             if not check_cloud_access_availability(forcing_dataset, self.logger):

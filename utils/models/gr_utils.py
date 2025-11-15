@@ -12,7 +12,7 @@ import rasterio
 #from rpy2.robjects.conversion import localconverter
 import shutil
 
-from utils.data.variable_utils import VariableHandler
+from utils.data.utilities.variable_utils import VariableHandler
 
 class GRPreProcessor:
     """
