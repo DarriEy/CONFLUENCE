@@ -2135,7 +2135,10 @@ class BaseOptimizer(ABC):
             tasks_file = work_dir / f'mpi_tasks_{unique_id}.pkl'
             results_file = work_dir / f'mpi_results_{unique_id}.pkl'
             worker_script = work_dir / f'mpi_worker_{unique_id}.py'
-            worker_log = work_dir / f'mpi_worker_{unique_id}.log'  # Add log file
+            
+            # Only create worker log file if LOG_LEVEL is DEBUG
+            enable_worker_logging = self.config.get('LOG_LEVEL', 'INFO').upper() == 'DEBUG'
+            worker_log = work_dir / f'mpi_worker_{unique_id}.log' if enable_worker_logging else None
             
             try:
                 self.logger.info(f"Using working directory: {work_dir}")
@@ -2144,8 +2147,8 @@ class BaseOptimizer(ABC):
                 with open(tasks_file, 'wb') as f:
                     pickle.dump(batch_tasks, f)
                 
-                # Create worker script
-                self._create_mpi_worker_script(worker_script, tasks_file, work_dir)
+                # Create worker script with LOG_LEVEL setting
+                self._create_mpi_worker_script(worker_script, tasks_file, work_dir, enable_worker_logging)
                 
                 # Make script executable
                 os.chmod(worker_script, 0o755)
@@ -2168,11 +2171,23 @@ class BaseOptimizer(ABC):
                 # Execute MPI process with log capture
                 start_time = time.time()
                 
-                with open(worker_log, 'w') as log_f:
+                if enable_worker_logging:
+                    # Capture output to log file when DEBUG is enabled
+                    with open(worker_log, 'w') as log_f:
+                        result = subprocess.run(
+                            mpi_cmd,
+                            stdout=log_f,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            #timeout=7200,  # 2 hour timeout
+                            env=os.environ.copy()
+                        )
+                else:
+                    # Discard output when DEBUG is not enabled
                     result = subprocess.run(
                         mpi_cmd,
-                        stdout=log_f,
-                        stderr=subprocess.STDOUT,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                         text=True,
                         #timeout=7200,  # 2 hour timeout
                         env=os.environ.copy()
@@ -2182,8 +2197,8 @@ class BaseOptimizer(ABC):
                 
                 if result.returncode != 0:
                     self.logger.error(f"MPI execution failed with return code {result.returncode}")
-                    # Show last 20 lines of worker log for debugging
-                    if worker_log.exists():
+                    # Show last 20 lines of worker log for debugging (only if log exists)
+                    if enable_worker_logging and worker_log.exists():
                         with open(worker_log, 'r') as f:
                             lines = f.readlines()
                             self.logger.error("Last 20 lines of MPI worker log:")
@@ -2196,23 +2211,24 @@ class BaseOptimizer(ABC):
                     with open(results_file, 'rb') as f:
                         results = pickle.load(f)
                     
-                    # Check for errors and log worker debug info
+                    # Check for errors and log worker debug info (only if worker logging is enabled)
                     errors = [r.get('error') for r in results if r.get('score') is None]
                     if errors:
                         self.logger.error(f"MPI worker errors (showing up to 3): {errors[:3]}")
                         
-                        # If we have NaN scores, show some worker debug output
-                        nan_scores = [r for r in results if r.get('score') is not None and np.isnan(r.get('score'))]
-                        if nan_scores:
-                            self.logger.error(f"Found {len(nan_scores)} results with NaN scores")
-                            self.logger.error("Showing worker log for debugging NaN scores:")
-                            if worker_log.exists():
-                                with open(worker_log, 'r') as f:
-                                    lines = f.readlines()
-                                    # Show lines containing DEBUG metrics info
-                                    debug_lines = [line for line in lines if 'DEBUG:' in line and ('metrics' in line.lower() or 'nse' in line.lower() or 'kge' in line.lower())]
-                                    for line in debug_lines[:10]:  # Show first 10 debug lines
-                                        self.logger.error(f"WORKER_DEBUG: {line.rstrip()}")
+                        # If we have NaN scores and logging is enabled, show some worker debug output
+                        if enable_worker_logging:
+                            nan_scores = [r for r in results if r.get('score') is not None and np.isnan(r.get('score'))]
+                            if nan_scores:
+                                self.logger.error(f"Found {len(nan_scores)} results with NaN scores")
+                                self.logger.error("Showing worker log for debugging NaN scores:")
+                                if worker_log.exists():
+                                    with open(worker_log, 'r') as f:
+                                        lines = f.readlines()
+                                        # Show lines containing DEBUG metrics info
+                                        debug_lines = [line for line in lines if 'DEBUG:' in line and ('metrics' in line.lower() or 'nse' in line.lower() or 'kge' in line.lower())]
+                                        for line in debug_lines[:10]:  # Show first 10 debug lines
+                                            self.logger.error(f"WORKER_DEBUG: {line.rstrip()}")
                     
                     successful_count = sum(1 for r in results if r.get('score') is not None)
                     self.logger.info(f"MPI batch completed in {elapsed:.1f}s: {successful_count}/{len(results)} successful")
@@ -2230,8 +2246,8 @@ class BaseOptimizer(ABC):
                     except Exception as e:
                         self.logger.warning(f"Could not remove {file_path}: {e}")
                 
-                # Keep worker log if there were NaN scores for debugging
-                if worker_log.exists():
+                # Keep worker log if there were NaN scores for debugging (only if logging was enabled)
+                if enable_worker_logging and worker_log is not None and worker_log.exists():
                     try:
                         # Check if we had NaN issues
                         with open(worker_log, 'r') as f:
@@ -2251,8 +2267,36 @@ class BaseOptimizer(ABC):
             self.logger.error(f"MPI spawn execution failed: {str(e)}")
             return self._create_error_results(batch_tasks, f"MPI spawn error: {str(e)}")
 
-    def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path) -> None:
-        """MPI worker script with extensive debugging"""
+    def _create_mpi_worker_script(self, script_path: Path, tasks_file: Path, temp_dir: Path, enable_worker_logging: bool = True) -> None:
+        """MPI worker script with optional logging based on LOG_LEVEL"""
+        
+        # Conditional logging setup
+        if enable_worker_logging:
+            logging_setup = '''
+# Setup logging for MPI debugging - CAPTURE ALL DEBUG MESSAGES
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='[MPI-%(process)d] %(levelname)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # Ensure output goes to stdout
+        logging.FileHandler(f'/tmp/mpi_worker_debug_{{os.getpid()}}.log')  # Also log to file
+    ]
+)
+logger = logging.getLogger(__name__)
+'''
+        else:
+            logging_setup = '''
+# Minimal logging setup - only errors
+logging.basicConfig(
+    level=logging.ERROR,
+    format='[MPI-%(process)d] %(levelname)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr)  # Only errors to stderr
+    ]
+)
+logger = logging.getLogger(__name__)
+'''
+        
         script_content = f'''#!/usr/bin/env python3
 import sys
 import pickle
@@ -2261,16 +2305,7 @@ from pathlib import Path
 from mpi4py import MPI
 import logging
 
-# Setup logging for MPI debugging - CAPTURE ALL DEBUG MESSAGES
-logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG
-    format='[MPI-%(process)d] %(levelname)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),  # Ensure output goes to stdout
-        logging.FileHandler(f'/tmp/mpi_worker_debug_{{os.getpid()}}.log')  # Also log to file
-    ]
-)
-logger = logging.getLogger(__name__)
+{logging_setup}
 
 # Add SYMFLUENCE path
 sys.path.append(r"{Path(__file__).parent}")

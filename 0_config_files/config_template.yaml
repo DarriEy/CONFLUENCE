@@ -43,7 +43,7 @@ BOUNDING_BOX_COORDS: 51.76/-116.55/50.95/-115.5                # Bounding box of
 
 # Domain definition settings (GRU level)
 DOMAIN_DEFINITION_METHOD: lumped                               # Define domain representation method, options: subset, delineate (delineates distributed river network), lumped
-ROUTING_DELINEATION: lumped                                    # Spatial discretisation of river network for routing
+ROUTING_DELINEATION: lumped                                    # Spatial discretisation of river network for routing, options: lumped, delineate
 GEOFABRIC_TYPE: na                                             # Source geofabric if subsetting, options: Merit, TDX, NWS
 
 ## Delineation settings
@@ -112,8 +112,8 @@ DEM_SOURCE: fabdem   # options: merit_hydro (MAF), fabdem (cloud), copernicus (d
 SOILGRIDS_LAYER: wrb_0-5cm_mode  # Optional, defaults to WRB 0-5cm classification
 ### ============================================= 4. Model Specific settings: =============================================================
 
-HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH, NGEN 
-ROUTING_MODEL: mizuRoute                                       # Routing model, options: mizuRoute
+HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH, NGEN, (HYPE - in development), (MESH - in development) 
+ROUTING_MODEL: mizuRoute                                       # Routing model, options: mizuRoute, troute
 
 ### 4.1 Model Specific settings: SUMMA 
 SUMMA_EXE: summa_sundials.exe                                  # Name of SUMMA executable
@@ -316,7 +316,7 @@ DE_CROSSOVER_RATE: 0.9                                         # CR parameter (c
 POPULATION_SIZE: 30                                            # Optional - will auto-size to 4*num_params if not set
 
   # -- DDS specific settings
-DDS_R:  0.4                                                    # DDS perturbation parameter
+DDS_R:  0.2                                                    # DDS perturbation parameter
 ASYNC_DDS_POOL_SIZE: 10                                        # Size of shared solution pool
 ASYNC_DDS_BATCH_SIZE: 10                                       # Evaluations per batch  
 MAX_STAGNATION_BATCHES: 10                                     # Stop after N batches without improvement

@@ -9,6 +9,7 @@ Tools include:
 - SUNDIALS: Differential equation solver library
 - SUMMA: Hydrological model with SUNDIALS integration
 - mizuRoute: River network routing model
+- T-route: NOAA's OWP river network routing model
 - FUSE: Framework for Understanding Structural Errors
 - TauDEM: Terrain Analysis Using Digital Elevation Models
 - GIStool: Geospatial data extraction tool
@@ -23,22 +24,30 @@ from typing import Dict, Any
 def get_common_build_environment() -> str:
     """
     Get common build environment setup used across multiple tools.
-    
-    Returns:
-        Shell script snippet for environment configuration
     """
     return r'''
 set -e
 # Compiler: force short name to satisfy Makefile sanity checks
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
+
 # Discover libraries (fallback to /usr)
 export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
 export NETCDF_FORTRAN="${NETCDF_FORTRAN:-$(nf-config --prefix 2>/dev/null || echo /usr)}"
 export HDF5_ROOT="${HDF5_ROOT:-$(h5cc -showconfig 2>/dev/null | awk -F': ' "/Installation point/{print $2}" || echo /usr)}"
+
 # Threads
 export NCORES="${NCORES:-4}"
+
+# Python: prefer active virtualenv; fall back to python3/python
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    export SYMFLUENCE_PYTHON="$VIRTUAL_ENV/bin/python"
+else
+    export SYMFLUENCE_PYTHON="$(command -v python3 || command -v python)"
+fi
+echo "Using Python for builds: ${SYMFLUENCE_PYTHON}"
     '''.strip()
+
 
 
 def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
@@ -309,6 +318,229 @@ fi
         },
 
         # ================================================================
+        # T-route - NOAA's OWP Routing Model
+        # ================================================================
+        'troute': {
+            'description': 'NOAA OWP T-route river network routing model',
+            'config_path_key': 'INSTALL_PATH_TROUTE',
+            'config_exe_key': 'EXE_NAME_TROUTE',
+            'default_path_suffix': 'installs/t-route',
+            'default_exe': 'python',  # T-route is invoked via Python
+            'repository': 'https://github.com/NOAA-OWP/t-route.git',
+            'branch': 'master',
+            'install_dir': 't-route',
+            'build_commands': [
+            get_common_build_environment(),
+    r'''
+set -e
+
+echo "========================================="
+echo "Building T-route (full reservoir support)"
+echo "========================================="
+
+# --- NetCDF detection (Fortran + C) ---
+if command -v nf-config >/dev/null 2>&1; then
+  NETCDF_FORTRAN_PATH="$(nf-config --prefix)"
+  NETCDF_FORTRAN_INC="$(nf-config --includedir)"
+  FLIBS="$(nf-config --flibs 2>/dev/null || true)"
+  NETCDF_FORTRAN_LIB="$(echo "$FLIBS" | tr ' ' '\n' | grep '^-L' | head -1 | sed 's/^-L//')"
+  [ -z "$NETCDF_FORTRAN_LIB" ] && NETCDF_FORTRAN_LIB="${NETCDF_FORTRAN_PATH}/lib"
+else
+  for candidate in /opt/homebrew/opt/netcdf-fortran /opt/homebrew /usr/local /usr ; do
+    if [ -d "${candidate}/include" ] && ls "${candidate}/include" 2>/dev/null | grep -qi 'netcdf'; then
+      NETCDF_FORTRAN_PATH="${candidate}"
+      NETCDF_FORTRAN_INC="${candidate}/include"
+      NETCDF_FORTRAN_LIB="${candidate}/lib"
+      break
+    fi
+  done
+fi
+[ -z "${NETCDF_FORTRAN_PATH}" ] && echo "❌ NetCDF-Fortran not found" && exit 1
+
+if command -v nc-config >/dev/null 2>&1; then
+  NETCDF_C_PATH="$(nc-config --prefix)"
+  NETCDF_C_INC="$(nc-config --includedir)"
+  NETCDF_C_LIB="$(nc-config --libdir)"
+else
+  NETCDF_C_PATH="${NETCDF:-${NETCDF_FORTRAN_PATH}}"
+  NETCDF_C_INC="${NETCDF_C_PATH}/include"
+  NETCDF_C_LIB="${NETCDF_C_PATH}/lib"
+fi
+
+# --- gfortran runtime location (fix ld: library 'gfortran' not found) ---
+GFORTRAN_LIB_DIR="$(gfortran -print-file-name=libgfortran.dylib 2>/dev/null || true)"
+if [ -n "$GFORTRAN_LIB_DIR" ] && [ "$GFORTRAN_LIB_DIR" != "libgfortran.dylib" ]; then
+  GFORTRAN_LIB="$(dirname "$GFORTRAN_LIB_DIR")"
+else
+  for try in /opt/homebrew/Cellar/gcc/*/lib/gcc/current /opt/homebrew/Cellar/gcc/*/lib/gcc/* /opt/homebrew/lib/gcc/* ; do
+    if [ -f "$try/libgfortran.dylib" ]; then GFORTRAN_LIB="$try"; break; fi
+  done
+fi
+
+# --- Global flags respected by pip/setuptools ---
+export F90="${FC:-gfortran}"
+export CC="${CC:-gcc}"
+export NETCDFINC="${NETCDF_FORTRAN_INC}"
+# Some t-route scripts look at NETCDF directly for -I path; make it the include dir to be safe
+export NETCDF="${NETCDF_FORTRAN_INC}"
+export CPPFLAGS="-I${NETCDF_FORTRAN_INC} -I${NETCDF_C_INC} ${CPPFLAGS:-}"
+export CFLAGS="${CPPFLAGS}"
+export LDFLAGS="-L${NETCDF_FORTRAN_LIB} -L${NETCDF_C_LIB} ${LDFLAGS:-}"
+[ -n "$GFORTRAN_LIB" ] && export LDFLAGS="-L${GFORTRAN_LIB} ${LDFLAGS}"
+export LIBRARY_PATH="${NETCDF_FORTRAN_LIB}:${NETCDF_C_LIB}:${LIBRARY_PATH:-}"
+[ -n "$GFORTRAN_LIB" ] && export LIBRARY_PATH="${GFORTRAN_LIB}:${LIBRARY_PATH}"
+export DYLD_FALLBACK_LIBRARY_PATH="${NETCDF_FORTRAN_LIB}:${NETCDF_C_LIB}:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+[ -n "$GFORTRAN_LIB" ] && export DYLD_FALLBACK_LIBRARY_PATH="${GFORTRAN_LIB}:${DYLD_FALLBACK_LIBRARY_PATH}"
+
+echo "F90: ${F90}"
+echo "CC:  ${CC}"
+echo "NETCDFINC: ${NETCDFINC}"
+echo "NETCDF:    ${NETCDF}"
+echo "LDFLAGS:   ${LDFLAGS}"
+
+# --- Patch compiler.sh so NETCDFINC/NETCDF cannot be clobbered ---
+cp compiler.sh compiler.sh.backup || (echo "compiler.sh missing"; exit 1)
+
+# 1) Prepend a hard export so any later assignment is ineffective
+TMP=$(mktemp)
+printf '%s\n' '#!/bin/bash' > "$TMP"
+printf '%s\n' "NETCDFINC=\"${NETCDFINC}\"; export NETCDFINC" >> "$TMP"
+printf '%s\n' "NETCDF=\"${NETCDF}\"; export NETCDF" >> "$TMP"
+cat compiler.sh >> "$TMP"
+mv "$TMP" compiler.sh
+chmod +x compiler.sh
+
+# 2) Remove any later lines that assign NETCDFINC or NETCDF
+# (BSD sed compatible)
+sed -i.bak -E '/^[[:space:]]*NETCDFINC=/d' compiler.sh || true
+sed -i.bak -E '/^[[:space:]]*NETCDF=/d' compiler.sh || true
+# 3) Replace any -I$NETCDF or -I ${NETCDF} with -I$NETCDFINC
+sed -i.bak -E 's/-I[[:space:]]*\$NETCDF\b/-I$NETCDFINC/g' compiler.sh || true
+sed -i.bak -E 's/-I[[:space:]]*\$\{NETCDF\}/-I$NETCDFINC/g' compiler.sh || true
+# 4) Replace literal /opt/homebrew/opt/netcdf includes with the real include dir
+sed -i.bak -E "s@-I[[:space:]]*/opt/homebrew/opt/netcdf\b@-I${NETCDFINC}@g" compiler.sh || true
+# 5) Ensure netcdf libs are linked properly if script uses NETCDFLIB/NETCDF_LIB
+sed -i.bak -E "s@-L[[:space:]]*/opt/homebrew/opt/netcdf(/lib)?@-L${NETCDF_C_LIB}@g" compiler.sh || true
+
+echo "✓ compiler.sh patched; forcing NETCDFINC=${NETCDFINC}"
+
+# --- Fortran build (objects & reservoir libs) ---
+./compiler.sh 2>&1 | tee fortran_build.log || (echo "❌ Fortran build failed"; exit 1)
+[ -f "src/troute-routing/troute/routing/fast_reach/mc_single_seg.o" ] || (echo "❌ missing mc_single_seg.o"; exit 1)
+
+# --- Locate/alias reservoir static libs so Python can link them ---
+mkdir -p src/troute-network/libs
+# Levelpool (common names)
+for cand in libs/binding_lp.a libs/bind_lp.a src/troute-network/libs/binding_lp.a src/troute-network/libs/bind_lp.a; do
+  [ -f "$cand" ] && cp -f "$cand" src/troute-network/libs/binding_lp.a && break
+done
+# RFC
+for cand in libs/bind_rfc.a src/troute-network/libs/bind_rfc.a libs/binding_rfc.a; do
+  [ -f "$cand" ] && cp -f "$cand" src/troute-network/libs/bind_rfc.a && break
+done
+# Hybrid
+for cand in libs/bind_hybrid.a src/troute-network/libs/bind_hybrid.a libs/binding_hybrid.a; do
+  [ -f "$cand" ] && cp -f "$cand" src/troute-network/libs/bind_hybrid.a && break
+done
+
+echo "Found libs in src/troute-network/libs:"
+ls -1 src/troute-network/libs || true
+
+# --- Build deps for Python extensions (keep this as you have it) ---
+"$SYMFLUENCE_PYTHON" - <<'PY'
+import sys, subprocess
+def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
+# cython<3 works best with this codebase; numpy<2 avoids API mismatches at build time
+pipi("install","--break-system-packages","cython<3.0","numpy<2")
+PY
+
+# Use the same Python that SYMFLUENCE is running to invoke Cython
+if [ -n "$SYMFLUENCE_PYTHON" ]; then
+  CYTHON_CMD="$SYMFLUENCE_PYTHON -m cython"
+else
+  # Fallback: whatever 'python' is (should still be the venv in normal use)
+  CYTHON_CMD="python -m cython"
+fi
+
+echo "Using Cython via: $CYTHON_CMD"
+
+# --- Pre-cythonize troute-network ---
+echo ""
+echo "=== Step 6a: Pre-cythonize troute-network ==="
+cd src/troute-network
+# language_level=3 to avoid Py2 warnings
+find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
+  set -e
+  c="${1%.pyx}.c"
+  if [ ! -f "$c" ]; then
+    echo "Cythonizing $1 -> $c"
+    '"$CYTHON_CMD"' -3 "$1" -o "$c"
+  fi
+' sh {}
+cd ../..
+
+# --- Pre-cythonize troute-routing (FIXED include paths) ---
+echo ""
+echo "=== Step 6b: Pre-cythonize troute-routing ==="
+cd src/troute-routing
+
+export CYTHON_INCLUDE_PATH="$PWD/../troute-network:$PWD/troute/routing/fast_reach"
+export PYTHONPATH="$PWD/../troute-network:${PYTHONPATH:-}"
+
+find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
+  set -e
+  c="${1%.pyx}.c"
+  if [ ! -f "$c" ]; then
+    echo "Cythonizing $1 -> $c"
+    '"$CYTHON_CMD"' -3 \
+      -I "$PWD/../troute-network" \
+      -I "$PWD/troute/routing/fast_reach" \
+      "$1" -o "$c"
+  fi
+' sh {}
+
+cd ../..
+
+
+
+# --- Install in order: config -> network -> routing ---
+echo ""
+echo "=== Step 8: pip install (editable) ==="
+"$SYMFLUENCE_PYTHON" - <<'PY'
+import sys, subprocess
+def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
+pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-config")
+pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-network")
+pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-routing")
+PY
+
+
+# --- Verify ---
+"$SYMFLUENCE_PYTHON" - <<'PY'
+import troute.network, troute.routing
+print("✓ T-route Python modules import OK")
+PY
+
+echo "========================================="
+echo "T-route build completed!"
+echo "========================================="
+    '''
+],
+
+            'dependencies': [],
+            'test_command': None,
+            'verify_install': {
+                'file_paths': [
+                    'src/troute-network/troute/network/__init__.py',
+                    'src/troute-routing/troute/routing/__init__.py',
+                    'src/troute-routing/troute/routing/fast_reach/mc_single_seg.o'
+                ],
+                'check_type': 'exists_all'
+            },
+            'order': 4
+        },
+
+        # ================================================================
         # FUSE - Framework for Understanding Structural Errors
         # ================================================================
         "fuse": {
@@ -533,7 +765,7 @@ fi
             "file_paths": ["bin/fuse.exe"],
             "check_type": "exists"
         },
-        "order": 4
+        "order": 5
             },
 
 
@@ -600,7 +832,7 @@ echo "✅ TauDEM executables staged"
                 'file_paths': ['bin/pitremove'],
                 'check_type': 'exists'
             },
-            'order': 5
+            'order': 6
         },
 
         # ================================================================
@@ -627,7 +859,7 @@ chmod +x extract-gis.sh
             },
             'dependencies': [],
             'test_command': None,
-            'order': 6
+            'order': 7
         },
 
         # ================================================================
@@ -654,7 +886,7 @@ chmod +x extract-dataset.sh
                 'file_paths': ['extract-dataset.sh'],
                 'check_type': 'exists'
             },
-            'order': 7
+            'order': 8
         },
 
         # ================================================================
@@ -721,7 +953,7 @@ cmake --build cmake_build --target ngen -j ${NCORES:-4}
                 'file_paths': ['cmake_build/ngen'],
                 'check_type': 'exists'
             },
-            'order': 8
+            'order': 9
         },
 
         # ================================================================
@@ -770,7 +1002,7 @@ cd ngiab
                 'file_paths': ['guide.sh'],
                 'check_type': 'exists'
             },
-            'order': 9
+            'order': 10
         },
     }
 
