@@ -80,26 +80,38 @@ class DataManager:
         """
         Acquire geospatial attributes including DEM, soil, and land cover data.
         
+        This method supports two acquisition pathways:
+        1. Cloud-based direct access (DATA_ACCESS: cloud) - Downloads attributes
+           directly from cloud sources with DEM_SOURCE selection:
+           - copernicus: Copernicus DEM GLO-30 (30m, AWS S3, no registration)
+           - fabdem: FABDEM (30m, vegetation/building removed, no registration)
+           - merit_hydro: MERIT-Hydro (90m, hydrologically conditioned, via MAF)
+           - nasadem: NASADEM (30m, requires local tiles and NASADEM_LOCAL_DIR)
+        2. Traditional MAF workflow (DATA_ACCESS: MAF) - Uses gistool for 
+           conventional download via MERIT-Hydro, MODIS, etc.
+        
         This method coordinates the acquisition of essential geospatial attributes
         required for hydrological modeling:
-        1. Digital Elevation Model (DEM) data from MERIT-Hydro
+        1. Digital Elevation Model (DEM) - source based on DEM_SOURCE config
         2. Land cover data from MODIS
-        3. Soil classification data from SoilGrids
+        3. Soil classification data from SoilGrids (cloud) or via gistool (MAF)
         
-        The data is acquired using the gistool utility, which handles downloading,
-        preprocessing, and georeferencing. The method creates the necessary directory
-        structure and configures the acquisition parameters based on the domain's
-        bounding box.
+        The method creates the necessary directory structure and configures the 
+        acquisition parameters based on the domain's bounding box.
         
         For land cover, if multiple years are specified, the method calculates the
         mode (most common value) across years to create a single representative layer.
         
         Raises:
             FileNotFoundError: If external data sources cannot be accessed
-            ValueError: If coordinate bounds are invalid
+            ValueError: If coordinate bounds are invalid or DEM_SOURCE is unsupported
             Exception: For other errors during data acquisition
         """
         self.logger.info("Starting attribute acquisition")
+        
+        # Check data access method
+        data_access = self.config.get('DATA_ACCESS', 'MAF').upper()
+        dem_source = self.config.get('DEM_SOURCE', 'merit_hydro').lower()
         
         # Create attribute directories
         dem_dir = self.project_dir / 'attributes' / 'elevation' / 'dem'
@@ -109,31 +121,124 @@ class DataManager:
         for dir_path in [dem_dir, soilclass_dir, landclass_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
         
-        # Initialize the gistool runner
-        gr = gistoolRunner(self.config, self.logger)
+        if data_access == 'CLOUD':
+            self.logger.info(
+                f"Cloud data access enabled for attributes (DEM_SOURCE: {dem_source})"
+            )
+            
+            # Import cloud data utilities
+            try:
+                from utils.data.cloud_data_utils import CloudForcingDownloader
+            except ImportError:
+                self.logger.error(
+                    "Failed to import cloud_data_utils. "
+                    "Ensure the module exists in utils/data/"
+                )
+                raise
+            
+            try:
+                # Initialize cloud downloader
+                downloader = CloudForcingDownloader(self.config, self.logger)
+                
+                # ---------------------------------------------------------
+                # Elevation (DEM) acquisition
+                # ---------------------------------------------------------
+                if dem_source == 'copernicus':
+                    self.logger.info("Acquiring Copernicus DEM GLO-30 (30m) from AWS")
+                    elev_file = downloader.download_copernicus_dem()
+                    self.logger.info(f"✓ Copernicus DEM acquired: {elev_file}")
+                    
+                elif dem_source == 'fabdem':
+                    self.logger.info("Acquiring FABDEM (30m, vegetation/building removed)")
+                    elev_file = downloader.download_fabdem()
+                    self.logger.info(f"✓ FABDEM acquired: {elev_file}")
+                    
+                elif dem_source == 'nasadem':
+                    if self.config.get('NASADEM_LOCAL_DIR'):
+                        self.logger.info("Acquiring NASADEM (30m) from local tiles")
+                        elev_file = downloader.download_nasadem_local()
+                        self.logger.info(f"✓ NASADEM acquired: {elev_file}")
+                    else:
+                        raise ValueError(
+                            "DEM_SOURCE set to 'nasadem' but NASADEM_LOCAL_DIR not "
+                            "configured. Either set NASADEM_LOCAL_DIR or use "
+                            "DEM_SOURCE: copernicus/fabdem/merit_hydro"
+                        )
+                        
+                elif dem_source == 'merit_hydro':
+                    self.logger.info(
+                        "DEM_SOURCE is merit_hydro - using MAF/gistool for elevation"
+                    )
+                    gr = gistoolRunner(self.config, self.logger)
+                    bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+                    latlims = f"{bbox[0]},{bbox[2]}"
+                    lonlims = f"{bbox[1]},{bbox[3]}"
+                    self._acquire_elevation_data(gr, dem_dir, latlims, lonlims)
+                    self.logger.info("✓ MERIT-Hydro elevation acquired via MAF")
+                    
+                else:
+                    raise ValueError(
+                        f"Unsupported DEM_SOURCE: '{dem_source}'. "
+                        f"Valid options: copernicus, fabdem, nasadem, merit_hydro"
+                    )
+                
+                # ---------------------------------------------------------
+                # Soil class data (SoilGrids via cloud access)
+                # ---------------------------------------------------------
+                self.logger.info("Acquiring soil class data from SoilGrids")
+                soil_file = downloader.download_global_soilclasses()
+                self.logger.info(f"✓ SoilGrids data acquired: {soil_file}")
+                
+                # ---------------------------------------------------------
+                # Land cover data (cloud mode via MODIS)
+                # ---------------------------------------------------------
+                self.logger.info("Acquiring land cover data (cloud mode)")
+                try:
+                    lc_file = downloader.download_modis_landcover()
+                    self.logger.info(f"✓ Land cover data acquired: {lc_file}")
+                except Exception as e_lc:
+                    self.logger.error(
+                        f"Land cover acquisition via download_modis_landcover() failed: {e_lc}"
+                    )
+                    raise
+                
+            except Exception as e:
+                self.logger.error(
+                    f"Error during cloud attribute acquisition: {str(e)}"
+                )
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
+
         
-        # Get lat and lon limits from bounding box
-        bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
-        latlims = f"{bbox[0]},{bbox[2]}"
-        lonlims = f"{bbox[1]},{bbox[3]}"
-        
-        try:
-            # Acquire elevation data
-            self._acquire_elevation_data(gr, dem_dir, latlims, lonlims)
+        else:
+            self.logger.info("Using traditional MAF attribute acquisition workflow")
             
-            # Acquire land cover data
-            self._acquire_landcover_data(gr, landclass_dir, latlims, lonlims)
+            # Initialize the gistool runner
+            gr = gistoolRunner(self.config, self.logger)
             
-            # Acquire soil class data
-            self._acquire_soilclass_data(gr, soilclass_dir, latlims, lonlims)
+            # Get lat and lon limits from bounding box
+            bbox = self.config['BOUNDING_BOX_COORDS'].split('/')
+            latlims = f"{bbox[0]},{bbox[2]}"
+            lonlims = f"{bbox[1]},{bbox[3]}"
             
-            self.logger.info("Attribute acquisition completed successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Error during attribute acquisition: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
+            try:
+                # Acquire elevation data (MERIT-Hydro via MAF)
+                self._acquire_elevation_data(gr, dem_dir, latlims, lonlims)
+                
+                # Acquire land cover data
+                self._acquire_landcover_data(gr, landclass_dir, latlims, lonlims)
+                
+                # Acquire soil class data
+                self._acquire_soilclass_data(gr, soilclass_dir, latlims, lonlims)
+                
+                self.logger.info("Attribute acquisition completed successfully")
+                
+            except Exception as e:
+                self.logger.error(f"Error during attribute acquisition: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                raise
     
     def _acquire_elevation_data(self, gistool_runner, output_dir: Path, lat_lims: str, lon_lims: str):
         """

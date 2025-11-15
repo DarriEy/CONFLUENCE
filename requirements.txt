@@ -29,11 +29,13 @@ plotly
 rpy2
 findlibs
 gcsfs
+intake-xarray
 
 # Hydrological modeling libraries
 netCDF4
 hydrobm
 baseflow 
+h5netcdf
 
 # Visualization
 matplotlib

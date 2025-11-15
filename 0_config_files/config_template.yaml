@@ -78,7 +78,7 @@ ASPECT_PATH: default                                           # Path to aspect 
 ### ============================================= 3. Model Agnostic settings: =============================================================
 DATA_ACCESS: cloud
 
-FORCING_DATASET: ERA5                                          # Forcing dataset to use. options ERA5 (cloud and MAF), CASR v3.1, 
+FORCING_DATASET: ERA5                                          # Forcing dataset to use. options ERA5 (cloud and MAF), CASR v3.1 (MAF), CONUS404 (cloud), HRRR (cloud), AORC (cloud), 
 FORCING_VARIABLES: default                                     # Forcing dataset variables to use or acquire                                                                    
 FORCING_MEASUREMENT_HEIGHT: 2                                  # Reference height for forcing measurements [m].
 FORCING_TIME_STEP_SIZE: 3600                                   # Size of the forcing time step in [s]. Must be constant.
@@ -88,6 +88,12 @@ FORCING_SHAPE_LAT_NAME: lat                                    # Name of the lat
 FORCING_SHAPE_LON_NAME: lon                                    # Name of the longitude field that contains the latitude of forcing.
 PET_METHOD: 'oudin'                                            # Method for PET estimation, options: 'oudin', 'hamon', 'hargreaves'
 
+# NEX-GDDP settings
+NEX_MODELS: [ACCESS-CM2,GFDL-ESM4]                             # Options: ACCESS-CM2, GFDL-ESM4, IPSL-CM6A-LR, ...
+NEX_SCENARIOS: [historical]                                    # Options: historical, ssp126, ssp245, ssp370, ssp585
+NEX_ENSEMBLES: [r1i1p1f1]                                      # Options: r1i1p1f1, r2i1p1f1, r3i1p1f1
+NEX_VARIABLES: [hurs, huss, pr, rlds, rsds, sfcWind, tas, tasmax, tasmin]  # Subset as needed, e.g. [pr, tas, tasmax, tasmin]
+ 
 # EM-Earth forcing supplementation settings
 SUPPLEMENT_FORCING: False                                      # Supplement forcing data with precip and temperature from EM-EARTH
 EM_EARTH_PRCP_DIR: /path/to/EM-EARTH/prcp/data                 # Path to EM-Earth precipitation data
@@ -95,7 +101,15 @@ EM_EARTH_TMEAN_DIR: /path/to/EM-EARTH/tmean/data               # Path to EM-Eart
 EM_EARTH_MIN_BBOX_SIZE: 0.1                                    # Minimum bounding box size in degrees for EM-Earth extraction (~10km)
 EM_EARTH_MAX_EXPANSION: 0.2                                    # Maximum expansion for small watersheds in degrees (~20km)
 EM_PRCP: prcp                                                  # EM-EARTH precip variable to use
+EM_EARTH_DATA_TYPE: deterministic   # or "ensemble" if you really want the ensembles
 
+
+
+# For elevation data:
+DEM_SOURCE: fabdem   # options: merit_hydro (MAF), fabdem (cloud), copernicus (dem)
+
+# For soil data:
+SOILGRIDS_LAYER: wrb_0-5cm_mode  # Optional, defaults to WRB 0-5cm classification
 ### ============================================= 4. Model Specific settings: =============================================================
 
 HYDROLOGICAL_MODEL: SUMMA                                      # Hydrological model, options: SUMMA, FUSE, GR, FLASH, NGEN 
