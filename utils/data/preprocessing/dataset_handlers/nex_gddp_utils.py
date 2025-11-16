@@ -52,105 +52,124 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
 
     def process_dataset(self, ds: xr.Dataset) -> xr.Dataset:
         """
-        Process NEX-GDDP-CMIP6 dataset into SUMMA-friendly forcing:
-          - rename variables
-          - convert precipitation to m s-1
-          - standardize metadata
+        Process a single NEX-GDDP-CMIP6 dataset:
+
+          - Rename native NEX variables to SYMFLUENCE / SUMMA names
+          - Convert units where needed
+          - Ensure presence of the standard forcing variables expected downstream.
         """
+        # --- NEW: clean problematic attrs that conflict with xarray encodings ---
+        # NEX-GDDP files often carry 'missing_value' in attrs *and* encodings.
+        # xarray will error on to_netcdf if both exist, so we strip the attr copy.
+        ds = ds.copy()  # avoid mutating caller’s dataset
+        for vname, var in ds.variables.items():
+            if "missing_value" in var.attrs:
+                # optional debug log if you like
+                # self.logger.debug(f"Removing 'missing_value' from attrs of {vname}")
+                var.attrs.pop("missing_value", None)
+
         var_map = self.get_variable_mapping()
-        rename_map = {old: new for old, new in var_map.items() if old in ds.data_vars}
-        ds = ds.rename(rename_map)
 
-        # ---- Precipitation flux: kg m-2 s-1 → m s-1 ----
-        if "pptrate" in ds:
-            p = ds["pptrate"]
-            units = p.attrs.get("units", "").lower()
+        # Only rename variables that exist in this dataset
+        rename_map = {
+            src: tgt for src, tgt in var_map.items()
+            if src in ds.data_vars
+        }
+        if rename_map:
+            self.logger.debug(
+                f"Renaming NEX-GDDP-CMIP6 variables: {rename_map}"
+            )
+            ds = ds.rename(rename_map)
 
-            # Many CMIP6 datasets use "kg m-2 s-1"
-            if "kg m-2 s-1" in units or "kg m-2 s^-1" in units:
-                ds["pptrate"] = p / 1000.0
-                ds["pptrate"].attrs["units"] = "m s-1"
-            elif "mm" in units:
-                # mm/s → m/s
-                ds["pptrate"] = p / 1000.0
-                ds["pptrate"].attrs["units"] = "m s-1"
-            else:
-                # Fall back: treat as already m s-1
-                ds["pptrate"].attrs.setdefault("units", "m s-1")
+        # ---------------- Variable-specific handling ----------------
 
+        # Precipitation: pr -> pptrate [kg m-2 s-1] (equivalent to mm/s)
+        if "pptrate" in ds.data_vars:
+            pr = ds["pptrate"]
+            # Ensure we end up with float and clean metadata
+            ds["pptrate"] = pr.astype("float32")
             ds["pptrate"].attrs.update(
-                {
-                    "long_name": "precipitation rate",
-                    "standard_name": "precipitation_rate",
-                }
+                long_name="Total precipitation rate",
+                units="kg m-2 s-1",
+                standard_name="precipitation_flux",
             )
 
-        # ---- Temperature, humidity, pressure ----
-        if "airtemp" in ds:
-            ds["airtemp"].attrs.update(
-                {
-                    "units": "K",
-                    "long_name": "air temperature",
-                    "standard_name": "air_temperature",
-                }
-            )
-
-        if "spechum" in ds:
-            ds["spechum"].attrs.update(
-                {
-                    "units": "kg kg-1",
-                    "long_name": "specific humidity",
-                    "standard_name": "specific_humidity",
-                }
-            )
-
-        if "airpres" in ds:
-            ds["airpres"].attrs.update(
-                {
-                    "units": "Pa",
-                    "long_name": "air pressure",
-                    "standard_name": "air_pressure",
-                }
-            )
-
-        # ---- Radiation ----
-        if "LWRadAtm" in ds:
+        # Longwave radiation: rlds -> LWRadAtm [W m-2]
+        if "LWRadAtm" in ds.data_vars:
+            lw = ds["LWRadAtm"]
+            ds["LWRadAtm"] = lw.astype("float32")
             ds["LWRadAtm"].attrs.update(
-                {
-                    "units": "W m-2",
-                    "long_name": "downward longwave radiation at the surface",
-                    "standard_name": "surface_downwelling_longwave_flux_in_air",
-                }
+                long_name="Downwelling longwave radiation at surface",
+                units="W m-2",
             )
 
-        if "SWRadAtm" in ds:
+        # Shortwave radiation: rsds -> SWRadAtm [W m-2]
+        if "SWRadAtm" in ds.data_vars:
+            sw = ds["SWRadAtm"]
+            ds["SWRadAtm"] = sw.astype("float32")
             ds["SWRadAtm"].attrs.update(
-                {
-                    "units": "W m-2",
-                    "long_name": "downward shortwave radiation at the surface",
-                    "standard_name": "surface_downwelling_shortwave_flux_in_air",
-                }
+                long_name="Downwelling shortwave radiation at surface",
+                units="W m-2",
             )
 
-        # ---- Wind speed ----
-        if "windspd" in ds:
+        # Near-surface air temperature: tas -> airtemp [K]
+        if "airtemp" in ds.data_vars:
+            ta = ds["airtemp"]
+            ds["airtemp"] = ta.astype("float32")
+            ds["airtemp"].attrs.update(
+                long_name="Near-surface air temperature",
+                units="K",
+            )
+
+        # Near-surface specific humidity / relative humidity:
+        #   - if hurs (relative humidity) is available, we keep it as-is for now
+        #   - if huss is available in some variants, you could map it to spechum
+        if "hurs" in ds.data_vars and "spechum" not in ds.data_vars:
+            hurs = ds["hurs"].astype("float32")
+            ds["spechum"] = hurs
+            ds["spechum"].attrs.update(
+                long_name="Near-surface relative humidity",
+                units="percent",
+            )
+
+        # Wind speed at 10m: sfcWind -> windspd [m s-1]
+        if "windspd" in ds.data_vars:
+            ws = ds["windspd"]
+            ds["windspd"] = ws.astype("float32")
             ds["windspd"].attrs.update(
-                {
-                    "units": "m s-1",
-                    "long_name": "wind speed",
-                    "standard_name": "wind_speed",
-                }
+                long_name="Near-surface wind speed",
+                units="m s-1",
             )
 
-        # Add common metadata and clean attributes
-        ds = self.setup_time_encoding(ds)
-        ds = self.add_metadata(
-            ds,
-            "NEX-GDDP-CMIP6 data standardized for SUMMA-compatible forcing (SYMFLUENCE)",
-        )
-        ds = self.clean_variable_attributes(ds)
+        # Keep only the standardized forcing variables plus coordinates
+        keep_vars = [
+            v for v in [
+                "pptrate",
+                "LWRadAtm",
+                "SWRadAtm",
+                "airtemp",
+                "spechum",
+                "windspd",
+            ]
+            if v in ds.data_vars
+        ]
 
-        return ds
+        if not keep_vars:
+            self.logger.warning(
+                "NEX-GDDP-CMIP6 process_dataset produced no forcing variables; "
+                "dataset will be empty."
+            )
+            return ds
+
+        ds_out = ds[keep_vars]
+
+        # Make sure lat/lon coords are preserved
+        for coord in ("lat", "lon"):
+            if coord in ds.coords and coord not in ds_out.coords:
+                ds_out = ds_out.assign_coords({coord: ds.coords[coord]})
+
+        return ds_out
+
 
     # --------------------- Coordinates -------------------------
 
@@ -179,9 +198,9 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
         """
         Standardize NEX-GDDP-CMIP6 forcings:
 
-          - Find NEX-GDDP-CMIP6 NetCDF files in raw_forcing_path
-          - Apply process_dataset()
-          - Save processed files into merged_forcing_path
+        - Find NEX-GDDP-CMIP6 NetCDF files in raw_forcing_path
+        - Apply process_dataset()
+        - Save processed files into merged_forcing_path
 
         We do not (yet) merge across different models/scenarios/ensembles;
         each file is processed independently and later remapped.
@@ -190,8 +209,12 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
 
         merged_forcing_path.mkdir(parents=True, exist_ok=True)
 
+        # Support both the "domain + dataset" naming convention *and*
+        # the NEXGDDP_all_YYYYMM.nc files produced by the downloader.
         patterns: List[str] = [
-            f"{self.domain_name}_NEX-GDDP-CMIP6_*.nc",
+            f"{self.domain_name}_NEX-GDDP-CMIP6_*.nc",  # future / more explicit naming
+            "NEXGDDP_all_*.nc",                         # current downloader output
+            "*NEXGDDP*.nc",                             # any other NEXGDDP-style names
             "*NEX-GDDP-CMIP6*.nc",
             "*nex-gddp*.nc",
         ]
@@ -208,7 +231,10 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
                 break
 
         if not files:
-            msg = f"No NEX-GDDP-CMIP6 forcing files found in {raw_forcing_path} with patterns {patterns}"
+            msg = (
+                f"No NEX-GDDP-CMIP6 forcing files found in {raw_forcing_path} "
+                f"with patterns {patterns}"
+            )
             self.logger.error(msg)
             raise FileNotFoundError(msg)
 
@@ -226,11 +252,14 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
                 ds_proc.to_netcdf(out_name)
                 self.logger.info(f"Saved processed NEX-GDDP-CMIP6 forcing: {out_name}")
             except Exception as e:
-                self.logger.error(f"Error processing NEX-GDDP-CMIP6 dataset from {f}: {e}")
+                self.logger.error(
+                    f"Error processing NEX-GDDP-CMIP6 dataset from {f}: {e}"
+                )
             finally:
                 ds.close()
 
         self.logger.info("NEX-GDDP-CMIP6 forcing standardization completed")
+
 
     # --------------------- Shapefile creation -----------------
 

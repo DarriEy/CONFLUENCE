@@ -503,6 +503,7 @@ class CloudForcingDownloader:
             with coordinates `model(ensemble)`, `scenario(ensemble)`, `member(ensemble)`,
           * writes ONE monthly NetCDF4 file per month containing ALL variables and
             ALL ensembles,
+          * adds a synthetic surface pressure variable `airpres` if missing,
           * cleans up the NCSS cache.
         """
 
@@ -794,6 +795,41 @@ class CloudForcingDownloader:
 
             if "time" not in ds_m.dims or ds_m.sizes["time"] == 0:
                 continue
+
+            # --- Add synthetic surface air pressure if NEX-GDDP-CMIP6 does not provide it ---
+            if "airpres" not in ds_m.data_vars:
+                self.logger.info(
+                    "Adding synthetic surface air pressure 'airpres' to NEX-GDDP-CMIP6 "
+                    f"monthly slice for {ms:%Y-%m} as constant 101325 Pa."
+                )
+
+                if "tas" not in ds_m.data_vars:
+                    raise KeyError(
+                        "Cannot synthesize 'airpres' for NEX-GDDP-CMIP6: 'tas' not found "
+                        f"in monthly dataset for {ms:%Y-%m}."
+                    )
+
+                template = ds_m["tas"]
+                airpres = xr.full_like(template, 101325.0)  # 1013.25 hPa = 101325 Pa
+
+                airpres.attrs.update(
+                    {
+                        "long_name": (
+                            "synthetic surface air pressure; constant sea-level "
+                            "reference value (101325 Pa). NEX-GDDP-CMIP6 does not "
+                            "provide surface pressure."
+                        ),
+                        "units": "Pa",
+                        "note": (
+                            "Synthetic field inserted in SYMFLUENCE cloud_downloader "
+                            "for compatibility with hydrologic model forcing "
+                            "expectations. Consider replacing with pressure from "
+                            "reanalysis or GCM-specific fields when available."
+                        ),
+                    }
+                )
+
+                ds_m["airpres"] = airpres
 
             month_fname = f"{base_prefix}_{ms.year:04d}{ms.month:02d}.nc"
             month_path = output_dir / month_fname
