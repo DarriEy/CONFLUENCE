@@ -817,38 +817,91 @@ class SummaPreProcessor:
         4. Write the sorted file list to a text file
 
         The resulting file list is used by SUMMA to locate and read the forcing data.
+
+        Raises:
+            FileNotFoundError: If no forcing files are found.
+            IOError: If there are issues writing the file list.
         """
         self.logger.info("Creating forcing file list")
-        forcing_dataset = self.config.get('FORCING_DATASET')
-        domain_name = self.config.get('DOMAIN_NAME')
-        forcing_path = self.project_dir / 'forcing/SUMMA_input'
-        file_list_path = self.summa_setup_dir / self.config.get('SETTINGS_SUMMA_FORCING_LIST')
 
-        dataset_upper = forcing_dataset.upper()
+        forcing_dataset = self.config.get("FORCING_DATASET")
+        domain_name = self.config.get("DOMAIN_NAME")
+        forcing_path = self.project_dir / "forcing" / "SUMMA_input"
+        file_list_path = (
+            self.summa_setup_dir / self.config.get("SETTINGS_SUMMA_FORCING_LIST")
+        )
 
-        supported = ['CARRA', 'ERA5', 'RDRS', 'CASR', 'AORC']
-        if dataset_upper in supported:
-            # We expect files like: domain_paradise_AORC_*.nc (or ERA5/RDRS/etc)
-            forcing_files = [
-                f for f in os.listdir(forcing_path)
-                if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')
-            ]
+        forcing_dataset_upper = forcing_dataset.upper()
+
+        # All datasets we *know* about and expect to behave like the others
+        supported_datasets = {
+            "CARRA",
+            "ERA5",
+            "RDRS",
+            "CASR",
+            "AORC",
+            "CONUS404",
+            "NEX-GDDP-CMIP6",
+            "HRRR", 
+        }
+
+        if forcing_dataset_upper in supported_datasets:
+            prefix = f"{domain_name}_{forcing_dataset}"
         else:
-            self.logger.error(f"Unsupported forcing dataset: {forcing_dataset}")
-            raise ValueError(f"Unsupported forcing dataset: {forcing_dataset}")
+            # Fall back to a generic prefix so future datasets still work,
+            # but emit a warning so we notice.
+            self.logger.warning(
+                "Forcing dataset %s is not in the supported list %s; "
+                "using generic prefix '%s_' for SUMMA forcing files.",
+                forcing_dataset,
+                supported_datasets,
+                domain_name,
+            )
+            prefix = f"{domain_name}_"
+
+        self.logger.info(
+            "Looking for SUMMA forcing files in %s with prefix '%s' and extension '.nc'",
+            forcing_path,
+            prefix,
+        )
+
+        if not forcing_path.exists():
+            self.logger.error("Forcing SUMMA_input directory does not exist: %s", forcing_path)
+            raise FileNotFoundError(f"SUMMA forcing directory not found: {forcing_path}")
+
+        forcing_files = [
+            f for f in os.listdir(forcing_path)
+            if f.startswith(prefix) and f.endswith(".nc")
+        ]
 
         if not forcing_files:
-            self.logger.error(f"No {forcing_dataset} forcing files found in {forcing_path}")
-            raise FileNotFoundError(f"No {forcing_dataset} forcing files found in {forcing_path}")
+            self.logger.error(
+                "No forcing files found for dataset %s in %s (prefix '%s')",
+                forcing_dataset,
+                forcing_path,
+                prefix,
+            )
+            raise FileNotFoundError(
+                f"No {forcing_dataset} forcing files found in {forcing_path}"
+            )
 
         forcing_files.sort()
-        self.logger.info(f"Found {len(forcing_files)} {forcing_dataset} forcing files")
+        self.logger.info(
+            "Found %d %s forcing files for SUMMA",
+            len(forcing_files),
+            forcing_dataset,
+        )
 
-        with open(file_list_path, 'w') as f:
-            for file in forcing_files:
-                f.write(f"{file}\n")
+        with open(file_list_path, "w") as fobj:
+            for fname in forcing_files:
+                fobj.write(f"{fname}\n")
 
-        self.logger.info(f"Forcing file list created at {file_list_path} with {len(forcing_files)} files")
+        self.logger.info(
+            "Forcing file list created at %s with %d files",
+            file_list_path,
+            len(forcing_files),
+        )
+
 
 
 

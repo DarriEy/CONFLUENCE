@@ -44,6 +44,7 @@ import tempfile
 import shutil
 import re
 import math
+import intake
 import rasterio
 from rasterio.merge import merge as rio_merge
 from rasterio.windows import from_bounds
@@ -101,10 +102,21 @@ def _process_era5_chunk(
         )
         
         # 1) Subset in time
-        ds_t = ds.sel(time=slice(chunk_start, chunk_end))
-        
+        #    For chunks after the first, pull one extra timestep before the
+        #    nominal chunk_start so that, after we take finite differences of
+        #    accumulated fields and drop the first timestep, the time axis of
+        #    all monthly NetCDFs stays 1-hour continuous for SUMMA.
+        if chunk_idx == 1:
+            time_start = chunk_start
+        else:
+            # step is the temporal step in hours (e.g., 1 for hourly ERA5)
+            time_start = chunk_start - pd.Timedelta(hours=step)
+
+        ds_t = ds.sel(time=slice(time_start, chunk_end))
+
         if "time" not in ds_t.dims or ds_t.sizes["time"] < 2:
             return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: Fewer than 2 timesteps, skipped")
+
         
         # 2) Subset in space
         ds_ts = ds_t.sel(
@@ -1997,187 +2009,197 @@ class CloudForcingDownloader:
             "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end":   end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-    
+        
     def _download_conus404(self, output_dir: Path) -> Path:
         """
-        Download CONUS404 data from HyTEST via intake catalog or direct S3 Zarr.
+        Download CONUS404 data from AWS S3 Zarr (HyTEST) via intake,
+        subset to bounding box + time period, and save as NetCDF.
 
-        Preferred: HyTEST intake catalog using the CONUS404 subcatalog, which
-        exposes OSN (Open Storage Network) datasets that do not require auth.
-
-        Parameters
-        ----------
-        output_dir : Path
-            Directory to save downloaded data
-
-        Returns
-        -------
-        Path
-            Path to the saved NetCDF file
+        This version:
+        * Handles 2D lat/lon (dims like y,x)
+        * Uses a spatial mask on lat/lon to find the sub-domain
+        * Selects variables needed to build 7 SUMMA forcings.
         """
+        import numpy as np
+        import intake
+        import pandas as pd
+
         self.logger.info("Downloading CONUS404 data from AWS S3 Zarr (HyTEST)")
         self.logger.info(f"  Bounding box: {self.bbox}")
         self.logger.info(f"  Time period: {self.start_date} to {self.end_date}")
 
-        try:
-            # Try to use intake catalog first (preferred method)
-            try:
-                import intake
+        # ------------------------------------------------------------------
+        # 1. Open HyTEST intake catalog + CONUS404 dataset
+        # ------------------------------------------------------------------
+        cat_url = self.config.get(
+            "CONUS404_CATALOG_URL",
+            "https://raw.githubusercontent.com/hytest-org/hytest/main/dataset_catalog/hytest_intake_catalog.yml",
+        )
+        self.logger.info("  Loading HyTEST intake catalog...")
+        cat = intake.open_catalog(cat_url)
 
-                # HyTEST catalog URL
-                catalog_url = (
-                    "https://raw.githubusercontent.com/hytest-org/hytest/main/"
-                    "dataset_catalog/hytest_intake_catalog.yml"
-                )
-                self.logger.info("  Loading HyTEST intake catalog...")
-                hytest_cat = intake.open_catalog(catalog_url)
+        # This matches your log: "Opening conus404-hourly-osn dataset from conus404-catalog..."
+        self.logger.info("  Opening conus404-hourly-osn dataset from conus404-catalog...")
+        ds_ref = cat["conus404-catalog"]["conus404-hourly-osn"]
+        ds_full = ds_ref.to_dask()
+        self.logger.info("  Successfully opened CONUS404 dataset")
 
-                # Drill into the CONUS404 subcatalog
-                if "conus404-catalog" not in list(hytest_cat):
-                    available_top = list(hytest_cat)
-                    msg = (
-                        "conus404-catalog not found in HyTEST catalog. "
-                        f"Available top-level entries: {available_top}"
-                    )
-                    self.logger.error("  " + msg)
-                    raise KeyError(msg)
+        # Optional: log some variables
+        all_vars = list(ds_full.data_vars)
+        self.logger.info(f"  Available variables: {all_vars[:10]}...")
 
-                conus404_cat = hytest_cat["conus404-catalog"]
+        # ------------------------------------------------------------------
+        # 2. Spatial subsetting using 2D lat/lon mask
+        # ------------------------------------------------------------------
+        self.logger.info("  Subsetting spatial domain...")
 
-                # Use hourly data by default (can be configured)
-                temporal_res = self.config.get("CONUS404_TEMPORAL_RES", "hourly")
+        # Find lat/lon variable names
+        lat_name = None
+        lon_name = None
+        for cand in ["lat", "latitude", "LAT", "Latitude"]:
+            if cand in ds_full:
+                lat_name = cand
+                break
+        for cand in ["lon", "longitude", "LON", "Longitude"]:
+            if cand in ds_full:
+                lon_name = cand
+                break
 
-                if temporal_res == "daily":
-                    dataset_name = "conus404-daily-osn"
-                else:
-                    # OSN = Open Storage Network (no auth needed)
-                    dataset_name = "conus404-hourly-osn"
-
-                self.logger.info(f"  Opening {dataset_name} dataset from conus404-catalog...")
-
-                if dataset_name not in list(conus404_cat):
-                    available_ds = list(conus404_cat)
-                    msg = (
-                        f"{dataset_name} not found in HyTEST conus404-catalog. "
-                        f"Available datasets: {available_ds}"
-                    )
-                    self.logger.error("  " + msg)
-                    raise KeyError(msg)
-
-                ds = conus404_cat[dataset_name].to_dask()
-
-            except ImportError:
-                # Fallback to direct S3 access if intake not available
-                self.logger.info("  intake-xarray not available, using direct S3 access...")
-
-                temporal_res = self.config.get("CONUS404_TEMPORAL_RES", "hourly")
-                if temporal_res == "daily":
-                    zarr_path = "hytest/conus404/conus404_daily.zarr"
-                else:
-                    zarr_path = "hytest/conus404/conus404_hourly.zarr"
-
-                # Open with anonymous access via OSN/S3-compatible endpoint
-                store = s3fs.S3Map(zarr_path, s3=self.fs)
-                ds = xr.open_zarr(store, consolidated=True)
-
-            self.logger.info("  Successfully opened CONUS404 dataset")
-            self.logger.info(f"  Available variables: {list(ds.data_vars)[:10]}...")  # Show first 10
-
-            # Subset by bounding box
-            # CONUS404 uses 'y' and 'x' coordinates (projection)
-            # We need to work with lat/lon if available
-            self.logger.info("  Subsetting spatial domain...")
-
-            self.logger.info(f"  Subsetting spatial domain...")
-
-            if "lat" in ds.coords and "lon" in ds.coords:
-                # Use lat/lon subsetting with a pre-computed boolean mask
-                self.logger.info("  Using lat/lon coordinates for subsetting...")
-
-                lat = ds["lat"]
-                lon = ds["lon"]
-
-                # Build boolean mask as dask array, then compute to NumPy
-                self.logger.info("  Computing spatial mask for bounding box...")
-                mask = (
-                    (lat >= self.bbox["lat_min"])
-                    & (lat <= self.bbox["lat_max"])
-                    & (lon >= self.bbox["lon_min"])
-                    & (lon <= self.bbox["lon_max"])
-                ).compute()
-
-                # Now apply mask with drop=True
-                ds_subset = ds.where(mask, drop=True)
-
-            else:
-                # Use x/y subsetting (may need adjustment)
-                self.logger.warning("  Using x/y coordinates - results may need verification")
-                ds_subset = ds
-
-            # Subset by time
-            self.logger.info("  Subsetting temporal domain...")
-            ds_subset = ds_subset.sel(time=slice(self.start_date, self.end_date))
-
-            # Select key meteorological variables for hydrological forcing
-            key_vars = [
-                "T2",        # 2m temperature
-                "Q2",        # 2m mixing ratio
-                "PSFC",      # Surface pressure
-                "U10",       # 10m U wind
-                "V10",       # 10m V wind
-                "GLW",       # Downward longwave at surface
-                "SWDOWN",    # Downward shortwave at surface
-                "RAINRATE",  # Precipitation rate (or RAINNC if available)
-            ]
-
-            # Filter to only variables that exist
-            available_vars = [var for var in key_vars if var in ds_subset.data_vars]
-
-            if not available_vars:
-                self.logger.warning("  Key variables not found, using all available variables")
-                ds_final = ds_subset
-            else:
-                ds_final = ds_subset[available_vars]
-                self.logger.info(f"  Selected variables: {available_vars}")
-
-            # Load the data (this triggers the actual download)
-            self.logger.info(
-                "  Loading data from cloud storage (this may take several minutes)..."
-            )
-            ds_final = ds_final.load()
-
-            # Log data summary
-            self.logger.info("CONUS404 data extraction summary:")
-            self.logger.info(f"  Dimensions: {dict(ds_final.dims)}")
-            self.logger.info(f"  Variables: {list(ds_final.data_vars)}")
-            self.logger.info(f"  Time steps: {len(ds_final.time)}")
-
-            # Add metadata
-            ds_final.attrs["source"] = "CONUS404 (NCAR/USGS)"
-            ds_final.attrs["source_url"] = "s3://hytest/conus404"
-            ds_final.attrs["resolution"] = "4km"
-            ds_final.attrs["model"] = "WRF 3.9.1.1"
-            ds_final.attrs["downloaded_by"] = "SYMFLUENCE cloud_data_utils"
-            ds_final.attrs["download_date"] = pd.Timestamp.now().isoformat()
-            ds_final.attrs["bbox"] = str(self.bbox)
-
-            # Save to NetCDF
-            output_dir.mkdir(parents=True, exist_ok=True)
-            domain_name = self.config.get("DOMAIN_NAME", "domain")
-            output_file = (
-                output_dir
-                / f"{domain_name}_CONUS404_{self.start_date.year}-{self.end_date.year}.nc"
+        if lat_name is None or lon_name is None:
+            raise KeyError(
+                f"Could not find lat/lon fields in CONUS404 dataset. "
+                f"Coords: {list(ds_full.coords)}, vars: {list(ds_full.data_vars)}"
             )
 
-            self.logger.info(f"Saving CONUS404 data to: {output_file}")
-            ds_final.to_netcdf(output_file)
+        lat = ds_full[lat_name]
+        lon = ds_full[lon_name]
 
-            self.logger.info(f"✓ CONUS404 data download complete: {output_file}")
-            return output_file
+        # Expect 2D lat/lon (y, x)
+        if lat.ndim != 2 or lon.ndim != 2:
+            raise ValueError(
+                f"Expected 2D lat/lon for CONUS404, got shapes {lat.shape}, {lon.shape}"
+            )
 
-        except Exception as e:
-            self.logger.error(f"Error downloading CONUS404 data: {str(e)}")
-            raise
+        y_dim, x_dim = lat.dims  # e.g., ("y", "x")
+        self.logger.info(
+            f"  Using lat/lon coordinates for subsetting (dims: {y_dim}, {x_dim})..."
+        )
+
+        lat_min = min(self.bbox["lat_min"], self.bbox["lat_max"])
+        lat_max = max(self.bbox["lat_min"], self.bbox["lat_max"])
+        lon_min = min(self.bbox["lon_min"], self.bbox["lon_max"])
+        lon_max = max(self.bbox["lon_min"], self.bbox["lon_max"])
+
+        self.logger.info("  Computing spatial mask for bounding box...")
+        # Load just lat/lon into memory (2D grid) – this is manageable once.
+        lat_vals = lat.values
+        lon_vals = lon.values
+
+        mask = (
+            (lat_vals >= lat_min)
+            & (lat_vals <= lat_max)
+            & (lon_vals >= lon_min)
+            & (lon_vals <= lon_max)
+        )
+
+        iy, ix = np.where(mask)
+        if iy.size == 0 or ix.size == 0:
+            # fallback: choose nearest grid cell to bbox center
+            self.logger.warning(
+                "  Spatial mask selected 0 cells; falling back to nearest grid point."
+            )
+            lat_c = 0.5 * (lat_min + lat_max)
+            lon_c = 0.5 * (lon_min + lon_max)
+            dist2 = (lat_vals - lat_c) ** 2 + (lon_vals - lon_c) ** 2
+            k = np.argmin(dist2)
+            iy0, ix0 = np.unravel_index(k, lat_vals.shape)
+            y0 = y1 = int(iy0)
+            x0 = x1 = int(ix0)
+        else:
+            y0, y1 = int(iy.min()), int(iy.max())
+            x0, x1 = int(ix.min()), int(ix.max())
+
+        self.logger.info(
+            f"  Subsetting indices in {y_dim}/{x_dim}: "
+            f"{y_dim}=[{y0}:{y1+1}], {x_dim}=[{x0}:{x1+1}]"
+        )
+
+        ds_spatial = ds_full.isel({y_dim: slice(y0, y1 + 1), x_dim: slice(x0, x1 + 1)})
+
+        # ------------------------------------------------------------------
+        # 3. Temporal subsetting
+        # ------------------------------------------------------------------
+        self.logger.info("  Subsetting temporal domain...")
+        ds_subset = ds_spatial.sel(time=slice(self.start_date, self.end_date))
+
+        # ------------------------------------------------------------------
+        # 4. Select variables needed for SUMMA forcings
+        # ------------------------------------------------------------------
+        ds_vars = list(ds_subset.data_vars)
+        self.logger.info(f"  Data variables present in CONUS404 subset: {ds_vars}")
+
+        # Base vars (met)
+        base_vars = ["T2", "Q2", "PSFC", "U10", "V10"]
+
+        # Candidate lists for radiation & precipitation (expand as needed)
+        rad_sw_cands = ["ACSWDNB", "ACSWDNT", "SWDOWN", "RSDS", "swdown"]
+        rad_lw_cands = ["ACLWDNB", "ACLWUPB", "LWDOWN", "RLDS", "glw"]
+        pr_cands = ["ACDRIPR", "ACDRIPS", "RAINRATE", "PRATE", "precip"]
+
+        sw_var = next((v for v in rad_sw_cands if v in ds_vars), None)
+        if sw_var:
+            self.logger.info(f"  Using shortwave radiation variable: {sw_var}")
+        else:
+            self.logger.error("No shortwave radiation variable found in CONUS404 subset")
+
+        lw_var = next((v for v in rad_lw_cands if v in ds_vars), None)
+        if lw_var:
+            self.logger.info(f"  Using longwave radiation variable: {lw_var}")
+        else:
+            self.logger.error("No longwave radiation variable found in CONUS404 subset")
+
+        pr_var = next((v for v in pr_cands if v in ds_vars), None)
+        if pr_var:
+            self.logger.info(f"  Using precipitation rate/flux variable: {pr_var}")
+        else:
+            self.logger.error("No precipitation-rate/flux variable found in CONUS404 subset")
+
+        selected_vars = [v for v in base_vars if v in ds_vars]
+        if sw_var:
+            selected_vars.append(sw_var)
+        if lw_var:
+            selected_vars.append(lw_var)
+        if pr_var:
+            selected_vars.append(pr_var)
+
+        self.logger.info(f"  Selected CONUS404 variables to download: {selected_vars}")
+
+        ds_final = ds_subset[selected_vars].load()
+
+        # ------------------------------------------------------------------
+        # 5. Add metadata & save
+        # ------------------------------------------------------------------
+        self.logger.info("CONUS404 data extraction summary:")
+        self.logger.info(f"  Dimensions: {dict(ds_final.dims)}")
+        self.logger.info(f"  Variables: {list(ds_final.data_vars)}")
+        self.logger.info(f"  Time steps: {ds_final.dims.get('time', 'N/A')}")
+
+        ds_final.attrs["source"] = "CONUS404 (HyTEST/USGS)"
+        ds_final.attrs["source_url"] = str(ds_ref)
+        ds_final.attrs["downloaded_by"] = "SYMFLUENCE cloud_downloader"
+        ds_final.attrs["download_date"] = pd.Timestamp.now().isoformat()
+        ds_final.attrs["bbox"] = str(self.bbox)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        domain_name = self.config.get("DOMAIN_NAME", "domain")
+        outfile = output_dir / f"{domain_name}_CONUS404_{self.start_date.year}-{self.end_date.year}.nc"
+
+        self.logger.info(f"Saving CONUS404 data to: {outfile}")
+        ds_final.to_netcdf(outfile)
+        self.logger.info(f"✓ CONUS404 data download complete: {outfile}")
+
+        return outfile
+
 
     # ------------------------------------------------------------------
     # Copernicus DEM GLO-30 (30 m) via AWS COGs
