@@ -49,6 +49,247 @@ from rasterio.merge import merge as rio_merge
 from rasterio.windows import from_bounds
 import requests
 import datetime as dt
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
+import logging
+
+
+def _process_era5_chunk(
+    chunk_info: Tuple[int, Tuple, str, Dict, Path, List[str], int, float, float, float, float]
+) -> Tuple[int, Optional[Path], str]:
+    """
+    Process a single ERA5 chunk for parallel execution.
+    
+    This function is designed to be called by ProcessPoolExecutor workers.
+    
+    Parameters
+    ----------
+    chunk_info : tuple
+        Contains (chunk_idx, chunk_times, zarr_store, config_subset, output_dir, 
+                 available_vars, step, lat_min_raw, lat_max_raw, lon_min, lon_max)
+    
+    Returns
+    -------
+    tuple
+        (chunk_idx, output_file_path or None, status_message)
+    """
+    try:
+        import xarray as xr
+        import pandas as pd
+        import numpy as np
+        import gcsfs
+        from pathlib import Path
+        
+        # Unpack chunk information
+        (chunk_idx, (chunk_start, chunk_end), zarr_store, config_subset, 
+         output_dir, available_vars, step, lat_min_raw, lat_max_raw, 
+         lon_min, lon_max) = chunk_info
+        
+        total_chunks = config_subset.get('total_chunks', 1)
+        domain_name = config_subset.get('DOMAIN_NAME', 'domain')
+        
+        # Open the Zarr store (each worker opens independently)
+        gcs = gcsfs.GCSFileSystem(token="anon")
+        mapper = gcs.get_mapper(zarr_store)
+        ds = xr.open_zarr(mapper, consolidated=True, chunks={})
+        
+        # Load coordinates
+        ds = ds.assign_coords(
+            longitude=ds.longitude.load(),
+            latitude=ds.latitude.load(),
+            time=ds.time.load(),
+        )
+        
+        # 1) Subset in time
+        ds_t = ds.sel(time=slice(chunk_start, chunk_end))
+        
+        if "time" not in ds_t.dims or ds_t.sizes["time"] < 2:
+            return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: Fewer than 2 timesteps, skipped")
+        
+        # 2) Subset in space
+        ds_ts = ds_t.sel(
+            latitude=slice(lat_max_raw, lat_min_raw),
+            longitude=slice(lon_min, lon_max),
+        )
+        
+        # 3) Apply temporal thinning
+        if step > 1 and "time" in ds_ts.dims:
+            ds_ts = ds_ts.isel(time=slice(0, None, step))
+        
+        if "time" not in ds_ts.dims or ds_ts.sizes["time"] < 2:
+            return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: Fewer than 2 timesteps after thinning, skipped")
+        
+        # 4) Select variables
+        chunk_vars = [v for v in available_vars if v in ds_ts.data_vars]
+        if not chunk_vars:
+            return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: No variables available, skipped")
+        
+        ds_chunk_raw = ds_ts[chunk_vars]
+        
+        # 5) Convert to SUMMA schema
+        ds_chunk = _era5_to_summa_schema_standalone(ds_chunk_raw)
+        
+        if "time" not in ds_chunk.dims or ds_chunk.sizes["time"] < 1:
+            return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: No timesteps after SUMMA conversion, skipped")
+        
+        # Build filename
+        file_year = chunk_start.year
+        file_month = chunk_start.month
+        chunk_file = output_dir / f"domain_{domain_name}_ERA5_merged_{file_year}{file_month:02d}.nc"
+        
+        # Set up encoding
+        encoding = {}
+        for var in ds_chunk.data_vars:
+            encoding[var] = {
+                "zlib": True,
+                "complevel": 1,
+                "chunksizes": (
+                    min(168, ds_chunk.sizes["time"]),
+                    ds_chunk.sizes["latitude"],
+                    ds_chunk.sizes["longitude"],
+                ),
+            }
+        
+        # Write to NetCDF
+        ds_chunk.to_netcdf(chunk_file, encoding=encoding, compute=True)
+        
+        return (chunk_idx, chunk_file, f"Chunk {chunk_idx}/{total_chunks}: Success")
+        
+    except Exception as e:
+        return (chunk_idx, None, f"Chunk {chunk_idx}/{total_chunks}: Error - {str(e)}")
+
+
+def _era5_to_summa_schema_standalone(ds_chunk):
+    """
+    Standalone version of ERA5 to SUMMA schema conversion for use in parallel workers.
+    This duplicates the logic from CloudForcingDownloader._era5_to_summa_schema
+    but doesn't require class instance.
+    """
+    import xarray as xr
+    import numpy as np
+    
+    if "time" not in ds_chunk.dims or ds_chunk.sizes["time"] < 2:
+        return ds_chunk
+    
+    # Ensure time is sorted
+    ds_chunk = ds_chunk.sortby("time")
+    
+    # Drop first time step for finite differences
+    ds_base = ds_chunk.isel(time=slice(1, None))
+    
+    # Preserve coords
+    out = xr.Dataset(coords={c: ds_base.coords[c] for c in ds_base.coords})
+    
+    # Simple renames / direct copies
+    if "surface_pressure" in ds_base:
+        airpres = ds_base["surface_pressure"].astype("float32")
+        airpres.name = "airpres"
+        airpres.attrs.update({
+            "units": "Pa",
+            "long_name": "air pressure",
+            "standard_name": "air_pressure",
+        })
+        out["airpres"] = airpres
+    
+    if "2m_temperature" in ds_base:
+        airtemp = ds_base["2m_temperature"].astype("float32")
+        airtemp.name = "airtemp"
+        airtemp.attrs.update({
+            "units": "K",
+            "long_name": "air temperature",
+            "standard_name": "air_temperature",
+        })
+        out["airtemp"] = airtemp
+    
+    # Wind speed from U/V components
+    if "10m_u_component_of_wind" in ds_base and "10m_v_component_of_wind" in ds_base:
+        u = ds_base["10m_u_component_of_wind"]
+        v = ds_base["10m_v_component_of_wind"]
+        windspd = np.sqrt(u ** 2 + v ** 2).astype("float32")
+        windspd.name = "windspd"
+        windspd.attrs.update({
+            "units": "m s-1",
+            "long_name": "wind speed",
+            "standard_name": "wind_speed",
+        })
+        out["windspd"] = windspd
+    
+    # Specific humidity from dew point + surface pressure
+    if "2m_dewpoint_temperature" in ds_base and "surface_pressure" in ds_base:
+        Td = ds_base["2m_dewpoint_temperature"]
+        p = ds_base["surface_pressure"]
+        
+        # Convert to Celsius for Magnus formula
+        Td_C = Td - 273.15
+        
+        # Saturation vapor pressure (Magnus, over water)
+        es_hPa = 6.112 * np.exp((17.67 * Td_C) / (Td_C + 243.5))
+        es = es_hPa * 100.0
+        
+        eps = 0.622
+        denom = xr.where((p - es) <= 1.0, 1.0, p - es)
+        r = eps * es / denom
+        q = (r / (1.0 + r)).astype("float32")
+        
+        spechum = q
+        spechum.name = "spechum"
+        spechum.attrs.update({
+            "units": "kg kg-1",
+            "long_name": "specific humidity",
+            "standard_name": "specific_humidity",
+        })
+        out["spechum"] = spechum
+    
+    # Helper for accumulated → rate conversion
+    time = ds_chunk["time"]
+    dt = (time.diff("time") / np.timedelta64(1, "s")).astype("float32")
+    
+    def _accum_to_rate(var_name, out_name, units, long_name, standard_name):
+        if var_name not in ds_chunk:
+            return
+        
+        accum = ds_chunk[var_name]
+        diff = accum.diff("time")
+        rate = (diff / dt).astype("float32")
+        rate.name = out_name
+        rate.attrs.update({
+            "units": units,
+            "long_name": long_name,
+            "standard_name": standard_name,
+        })
+        out[out_name] = rate
+    
+    # Precipitation: m -> m s-1
+    _accum_to_rate(
+        "total_precipitation",
+        "pptrate",
+        "m s-1",
+        "precipitation rate",
+        "precipitation_rate",
+    )
+    
+    # Shortwave radiation: J m-2 -> W m-2
+    _accum_to_rate(
+        "surface_solar_radiation_downwards",
+        "SWRadAtm",
+        "W m-2",
+        "surface downwelling shortwave radiation",
+        "surface_downwelling_shortwave_flux_in_air",
+    )
+    
+    # Longwave radiation: J m-2 -> W m-2
+    _accum_to_rate(
+        "surface_thermal_radiation_downwards",
+        "LWRadAtm",
+        "W m-2",
+        "surface downwelling longwave radiation",
+        "surface_downwelling_longwave_flux_in_air",
+    )
+    
+    return out
+
+
+
 
 class CloudForcingDownloader:
     """
@@ -756,21 +997,29 @@ class CloudForcingDownloader:
             if step < 1:
                 step = 1
 
+            # For accumulated fields (precip/radiation) we take finite differences and
+            # drop the first step. To ensure the *output* starts exactly at
+            # EXPERIMENT_TIME_START, we request one extra ERA5 step before the
+            # experiment window.
+            era5_start = self.start_date - pd.Timedelta(hours=step)
+            era5_end = self.end_date
+
             # ------------------- Build monthly chunks ---------------------------
-            first_month_start = self.start_date.replace(
+            first_month_start = era5_start.replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
             current_month_start = first_month_start
 
             chunks: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-            while current_month_start <= self.end_date:
+            while current_month_start <= era5_end:
                 month_end = current_month_start + MonthEnd(1)
                 month_end = month_end.replace(
                     hour=23, minute=0, second=0, microsecond=0
                 )
 
-                chunk_start = max(self.start_date, current_month_start)
-                chunk_end = min(self.end_date, month_end)
+                # Use the expanded window [era5_start, era5_end] for selection
+                chunk_start = max(era5_start, current_month_start)
+                chunk_end = min(era5_end, month_end)
 
                 if chunk_start <= chunk_end:
                     chunks.append((chunk_start, chunk_end))
@@ -782,6 +1031,7 @@ class CloudForcingDownloader:
                 ).replace(
                     day=1, hour=0, minute=0, second=0, microsecond=0
                 )
+
 
             if not chunks:
                 raise ValueError(
@@ -825,130 +1075,82 @@ class CloudForcingDownloader:
             output_dir.mkdir(parents=True, exist_ok=True)
             domain_name = self.config.get("DOMAIN_NAME", "domain")
 
-            chunk_files: list[Path] = []
-            total_chunks = len(chunks)
+            # ------------------- Parallel processing setup -------------------
+            # Determine number of parallel workers
+            n_workers = self.config.get('ERA5_PARALLEL_WORKERS', 
+                                       self.config.get('MPI_PROCESSES', 4))
+            n_workers = max(1, int(n_workers))  # At least 1 worker
+            n_workers = min(n_workers, len(chunks))  # No more workers than chunks
+            
+            self.logger.info(f"Processing {len(chunks)} chunks using {n_workers} parallel workers")
 
-            # ------------------- Loop over chunks, one file per chunk -----------
+            # Prepare config subset for workers (only serializable data)
+            config_subset = {
+                'DOMAIN_NAME': domain_name,
+                'total_chunks': len(chunks),
+            }
+            
+            # Prepare chunk information for parallel processing
+            chunk_infos = []
             for i, (chunk_start, chunk_end) in enumerate(chunks, start=1):
-                self.logger.info(
-                    f"[ERA5 {i}/{total_chunks}] "
-                    f"Processing chunk {chunk_start} to {chunk_end}"
+                chunk_info = (
+                    i,  # chunk index
+                    (chunk_start, chunk_end),
+                    zarr_store,
+                    config_subset,
+                    output_dir,
+                    available_vars,
+                    step,
+                    lat_min_raw,
+                    lat_max_raw,
+                    lon_min,
+                    lon_max,
                 )
-
-                # 1) Subset in time
-                ds_t = ds.sel(time=slice(chunk_start, chunk_end))
-
-                if "time" not in ds_t.dims or ds_t.sizes["time"] < 2:
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Fewer than 2 timesteps "
-                        f"in this chunk; skipping."
-                    )
-                    continue
-
-                # 2) Subset in space for this time slice only
-                ds_ts = ds_t.sel(
-                    latitude=slice(lat_max_raw, lat_min_raw),
-                    longitude=slice(lon_min, lon_max),
-                )
-
-                # 3) Apply temporal thinning
-                if step > 1 and "time" in ds_ts.dims:
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Applying temporal thinning: "
-                        f"every {step} hours"
-                    )
-                    ds_ts = ds_ts.isel(time=slice(0, None, step))
-
-                if "time" not in ds_ts.dims or ds_ts.sizes["time"] < 2:
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Fewer than 2 timesteps "
-                        f"after thinning; skipping."
-                    )
-                    continue
-
-                # 4) Select variables (ARCO names)
-                missing = [v for v in available_vars if v not in ds_ts.data_vars]
-                if missing:
-                    self.logger.warning(
-                        f"[ERA5 {i}/{total_chunks}] Missing vars in this chunk: {missing}"
-                    )
-
-                chunk_vars = [v for v in available_vars if v in ds_ts.data_vars]
-                ds_chunk_raw = ds_ts[chunk_vars]
-
-                # 5) Convert to SUMMA schema (rename, derive, convert units)
-                ds_chunk = self._era5_to_summa_schema(ds_chunk_raw)
-
-                # If conversion dropped to <1 timestep, skip
-                if "time" not in ds_chunk.dims or ds_chunk.sizes["time"] < 1:
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] No timesteps left after "
-                        f"SUMMA conversion; skipping."
-                    )
-                    continue
-
-                # Build filename from actual (post-diff) time bounds
-                start_time = pd.to_datetime(ds_chunk.time.values[0])
-                end_time = pd.to_datetime(ds_chunk.time.values[-1])
-                chunk_start_str = start_time.strftime("%Y%m%d%H")
-                chunk_end_str = end_time.strftime("%Y%m%d%H")
-
-                # Derive year/month for filename (legacy ERA5 convention)
-                file_year = chunk_start.year
-                file_month = chunk_start.month
-
-                # expected pattern:
-                #   domain_{DOMAIN_NAME}_ERA5_merged_{YYYYMM}.nc
-                chunk_file = (
-                    output_dir
-                    / f"domain_{domain_name}_ERA5_merged_{file_year}{file_month:02d}.nc"
-                )
-
-                self.logger.debug(
-                    f"[ERA5 {i}/{total_chunks}] Saving chunk to: {chunk_file}"
-                )
-
-                # Set up encoding for SUMMA-style variables
-                encoding = {}
-                for var in ds_chunk.data_vars:
-                    encoding[var] = {
-                        "zlib": True,
-                        "complevel": 1,
-                        "chunksizes": (
-                            min(168, ds_chunk.sizes["time"]),
-                            ds_chunk.sizes["latitude"],
-                            ds_chunk.sizes["longitude"],
-                        ),
+                chunk_infos.append(chunk_info)
+            
+            # ------------------- Process chunks in parallel -------------------
+            chunk_files: list[Path] = []
+            completed = 0
+            total_chunks = len(chunks)
+            
+            if n_workers == 1:
+                # Sequential processing (for debugging or single-core systems)
+                self.logger.info("Using sequential processing (n_workers=1)")
+                for chunk_info in chunk_infos:
+                    chunk_idx, chunk_file, status = _process_era5_chunk(chunk_info)
+                    self.logger.info(f"[ERA5 {chunk_idx}/{total_chunks}] {status}")
+                    if chunk_file is not None:
+                        chunk_files.append(chunk_file)
+                    completed += 1
+                    if completed % 5 == 0 or completed == total_chunks:
+                        self.logger.info(f"Progress: {completed}/{total_chunks} chunks completed")
+            else:
+                # Parallel processing
+                self.logger.info(f"Using parallel processing with {n_workers} workers")
+                with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                    # Submit all chunks
+                    future_to_chunk = {
+                        executor.submit(_process_era5_chunk, chunk_info): chunk_info[0]
+                        for chunk_info in chunk_infos
                     }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_chunk):
+                        chunk_idx = future_to_chunk[future]
+                        try:
+                            chunk_idx_result, chunk_file, status = future.result()
+                            self.logger.info(f"[ERA5 {chunk_idx_result}/{total_chunks}] {status}")
+                            if chunk_file is not None:
+                                chunk_files.append(chunk_file)
+                        except Exception as e:
+                            self.logger.error(f"[ERA5 {chunk_idx}/{total_chunks}] Exception: {str(e)}")
+                        
+                        completed += 1
+                        if completed % 5 == 0 or completed == total_chunks:
+                            self.logger.info(f"Progress: {completed}/{total_chunks} chunks completed")
 
-                # Try to use dask progress bar if available
-                try:
-                    from dask.diagnostics import ProgressBar
-
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Writing with progress monitoring..."
-                    )
-                    with ProgressBar():
-                        ds_chunk.to_netcdf(
-                            chunk_file,
-                            encoding=encoding,
-                            compute=True,
-                        )
-                except ImportError:
-                    self.logger.info(
-                        f"[ERA5 {i}/{total_chunks}] Writing NetCDF (no dask progress bar)..."
-                    )
-                    ds_chunk.to_netcdf(
-                        chunk_file,
-                        encoding=encoding,
-                        compute=True,
-                    )
-
-                self.logger.info(
-                    f"[ERA5 {i}/{total_chunks}] ✓ SUMMA-format chunk saved successfully"
-                )
-
-                chunk_files.append(chunk_file)
+            # Sort chunk files by name for consistent ordering
+            chunk_files.sort()
 
             if not chunk_files:
                 raise ValueError(
@@ -1006,7 +1208,7 @@ class CloudForcingDownloader:
         The function does NOT reproject; it requests WGS84 (EPSG:4326) from
         the WCS server directly.
         """
-        soil_dir = self._attribute_dir("soilclasses")
+        soil_dir = self._attribute_dir("soilclass")
 
         wcs_map   = self.config.get("SOILGRIDS_WCS_MAP")
         coverage  = self.config.get("SOILGRIDS_COVERAGE_ID")
@@ -1058,7 +1260,7 @@ class CloudForcingDownloader:
             )
             raise
 
-        out_path = soil_dir / f"{self.config.get('DOMAIN_NAME','domain')}_soilgrids_soilclasses.tif"
+        out_path = soil_dir / f"domain_{self.config.get('DOMAIN_NAME','domain')}_soil_classes.tif"
         self.logger.info(f"Writing SoilGrids soilclasses GeoTIFF to {out_path}")
 
         with open(out_path, "wb") as f:
