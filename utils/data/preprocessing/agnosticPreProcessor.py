@@ -16,6 +16,21 @@ from rasterstats import zonal_stats # type: ignore
 import multiprocessing as mp
 import time
 import uuid
+import sys
+
+# Add the path to dataset handlers if not already in sys.path
+# Adjust this import based on your actual package structure
+try:
+    from utils.data.preprocessing.dataset_handlers import DatasetRegistry
+except ImportError:
+    # Fallback for development/testing
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'utils' / 'data' / 'preprocessing'))
+        from dataset_handlers import DatasetRegistry
+    except ImportError as e:
+        raise ImportError(
+            f"Cannot import DatasetRegistry. Please ensure dataset handlers are installed. Error: {e}"
+        )
 
 class forcingResampler:
     def __init__(self, config, logger):
@@ -37,8 +52,22 @@ class forcingResampler:
         self.forcing_dataset = self.config.get('FORCING_DATASET').lower()
         self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/raw_data')
         
-        # Merge forcings for both RDRS and CASR
-        if self.forcing_dataset in ['rdrs', 'casr']:
+        # Initialize dataset-specific handler
+        try:
+            self.dataset_handler = DatasetRegistry.get_handler(
+                self.forcing_dataset, 
+                self.config, 
+                self.logger, 
+                self.project_dir
+            )
+            self.logger.info(f"Initialized {self.forcing_dataset.upper()} dataset handler")
+        except ValueError as e:
+            self.logger.error(f"Failed to initialize dataset handler: {str(e)}")
+            raise
+        
+        # Merge forcings if required by dataset
+        if self.dataset_handler.needs_merging():
+            self.logger.info(f"{self.forcing_dataset.upper()} requires merging of raw files")
             self.merge_forcings()
             self.merged_forcing_path = self._get_default_path('FORCING_PATH', 'forcing/merged_path')
             self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
@@ -57,307 +86,36 @@ class forcingResampler:
 
     def merge_forcings(self):
         """
-        Merge forcing data files into monthly files for RDRS and CASR datasets.
+        Merge forcing data files into monthly files using dataset-specific handler.
 
-        This method performs the following steps:
-        1. Determine the year range for processing
-        2. Create output directories
-        3. Process each year and month, merging daily files into monthly files
-        4. Apply dataset-specific variable renaming and unit conversions
-        5. Save the merged and processed data to netCDF files
+        This method delegates to the appropriate dataset handler which contains
+        all dataset-specific logic for variable mapping, unit conversions, and merging.
 
         Raises:
             FileNotFoundError: If required input files are missing.
             ValueError: If there are issues with data processing or merging.
             IOError: If there are issues writing output files.
         """
-        if self.forcing_dataset == 'rdrs':
-            self.logger.info("Starting to merge RDRS forcing data")
-            self._merge_rdrs_forcings()
-        elif self.forcing_dataset == 'casr':
-            self.logger.info("Starting to merge CASR forcing data")
-            self._merge_casr_forcings()
-        else:
-            self.logger.warning(f"Merging not implemented for dataset: {self.forcing_dataset}")
-
-
-            
-
-    def _merge_rdrs_forcings(self):
-        """Merge RDRS forcing data files into monthly files."""
-        years = [
-                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
-                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
-                ]
-        years = range(int(years[0])-1, int(years[1]) + 1)
+        # Extract year range from configuration
+        start_year = int(self.config.get('EXPERIMENT_TIME_START').split('-')[0])
+        end_year = int(self.config.get('EXPERIMENT_TIME_END').split('-')[0])
         
-        file_name_pattern = f"domain_{self.domain_name}_*.nc"
-        
-        self.merged_forcing_path = self.project_dir / 'forcing' / 'merged_path'
         raw_forcing_path = self.project_dir / 'forcing/raw_data/'
-        self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
+        merged_forcing_path = self.project_dir / 'forcing' / 'merged_path'
         
-        variable_mapping = {
-            'RDRS_v2.1_P_FI_SFC': 'LWRadAtm',
-            'RDRS_v2.1_P_FB_SFC': 'SWRadAtm',
-            'RDRS_v2.1_A_PR0_SFC': 'pptrate',
-            'RDRS_v2.1_P_P0_SFC': 'airpres',
-            'RDRS_v2.1_P_TT_09944': 'airtemp',
-            'RDRS_v2.1_P_HU_09944': 'spechum',
-            'RDRS_v2.1_P_UVC_09944': 'windspd',
-            'RDRS_v2.1_P_TT_1.5m': 'airtemp',
-            'RDRS_v2.1_P_HU_1.5m': 'spechum',
-            'RDRS_v2.1_P_UVC_10m': 'windspd',
-            'RDRS_v2.1_P_UUC_10m': 'windspd_u',
-            'RDRS_v2.1_P_VVC_10m': 'windspd_v',
-        }
+        # Delegate to dataset handler
+        self.dataset_handler.merge_forcings(
+            raw_forcing_path=raw_forcing_path,
+            merged_forcing_path=merged_forcing_path,
+            start_year=start_year,
+            end_year=end_year
+        )
 
-        def process_rdrs_data(ds):
-            existing_vars = {old: new for old, new in variable_mapping.items() if old in ds.variables}
-            ds = ds.rename(existing_vars)
-            
-            if 'airpres' in ds:
-                ds['airpres'] = ds['airpres'] * 100
-                ds['airpres'].attrs.update({'units': 'Pa', 'long_name': 'air pressure', 'standard_name': 'air_pressure'})
-            
-            if 'airtemp' in ds:
-                ds['airtemp'] = ds['airtemp'] + 273.15
-                ds['airtemp'].attrs.update({'units': 'K', 'long_name': 'air temperature', 'standard_name': 'air_temperature'})
-            
-            if 'pptrate' in ds:
-                ds['pptrate'] = ds['pptrate'] / 3600
-                ds['pptrate'].attrs.update({'units': 'm s-1', 'long_name': 'precipitation rate', 'standard_name': 'precipitation_rate'})
-            
-            if 'windspd' in ds:
-                ds['windspd'] = ds['windspd'] * 0.514444
-                ds['windspd'].attrs.update({'units': 'm s-1', 'long_name': 'wind speed', 'standard_name': 'wind_speed'})
-            
-            if 'LWRadAtm' in ds:
-                ds['LWRadAtm'].attrs.update({'long_name': 'downward longwave radiation at the surface', 'standard_name': 'surface_downwelling_longwave_flux_in_air'})
-            
-            if 'SWRadAtm' in ds:
-                ds['SWRadAtm'].attrs.update({'long_name': 'downward shortwave radiation at the surface', 'standard_name': 'surface_downwelling_shortwave_flux_in_air'})
-            
-            if 'spechum' in ds:
-                ds['spechum'].attrs.update({'long_name': 'specific humidity', 'standard_name': 'specific_humidity'})
-            
-            return ds
 
-        for year in years:
-            self.logger.info(f"Processing RDRS year {year}")
-            year_folder = raw_forcing_path / str(year)
 
-            for month in range(1, 13):
-                self.logger.info(f"Processing RDRS {year}-{month:02d}")
-                
-                daily_files = sorted(year_folder.glob(file_name_pattern.replace('*', f'{year}{month:02d}*')))         
-
-                if not daily_files:
-                    self.logger.warning(f"No RDRS files found for {year}-{month:02d}")
-                    continue
-                
-                datasets = []
-                for file in daily_files:
-                    try:
-                        ds = xr.open_dataset(file)
-                        datasets.append(ds)
-                    except Exception as e:
-                        self.logger.error(f"Error opening RDRS file {file}: {str(e)}")
-
-                if not datasets:
-                    self.logger.warning(f"No valid RDRS datasets for {year}-{month:02d}")
-                    continue
-
-                processed_datasets = []
-                for ds in datasets:
-                    try:
-                        processed_ds = process_rdrs_data(ds)
-                        processed_datasets.append(processed_ds)
-                    except Exception as e:
-                        self.logger.error(f"Error processing RDRS dataset: {str(e)}")
-
-                if not processed_datasets:
-                    self.logger.warning(f"No processed RDRS datasets for {year}-{month:02d}")
-                    continue
-
-                monthly_data = xr.concat(processed_datasets, dim="time")
-                monthly_data = monthly_data.sortby("time")
-
-                start_time = pd.Timestamp(year, month, 1)
-                if month == 12:
-                    end_time = pd.Timestamp(year + 1, 1, 1) - pd.Timedelta(hours=1)
-                else:
-                    end_time = pd.Timestamp(year, month + 1, 1) - pd.Timedelta(hours=1)
-
-                monthly_data = monthly_data.sel(time=slice(start_time, end_time))
-
-                expected_times = pd.date_range(start=start_time, end=end_time, freq='h')
-                monthly_data = monthly_data.reindex(time=expected_times, method='nearest')
-
-                monthly_data['time'].encoding['units'] = 'hours since 1900-01-01'
-                monthly_data['time'].encoding['calendar'] = 'gregorian'
-
-                monthly_data.attrs.update({
-                    'History': f'Created {time.ctime(time.time())}',
-                    'Language': 'Written using Python',
-                    'Reason': 'RDRS data aggregated to monthly files and variables renamed for SUMMA compatibility'
-                })
-
-                for var in monthly_data.data_vars:
-                    # Remove any existing missing_value or _FillValue attributes that might conflict
-                    if 'missing_value' in monthly_data[var].attrs:
-                        del monthly_data[var].attrs['missing_value']
-                    if '_FillValue' in monthly_data[var].attrs:
-                        del monthly_data[var].attrs['_FillValue']
-                    # Set the new missing_value
-                    monthly_data[var].attrs['missing_value'] = -999
-
-                output_file = self.merged_forcing_path / f"RDRS_monthly_{year}{month:02d}.nc"
-                monthly_data.to_netcdf(output_file)
-
-                for ds in datasets:
-                    ds.close()
-
-        self.logger.info("RDRS forcing data merging completed")
-
-    def _merge_casr_forcings(self):
-        """Merge CASR forcing data files into monthly files."""
-        years = [
-                    self.config.get('EXPERIMENT_TIME_START').split('-')[0],  # Get year from full datetime
-                    self.config.get('EXPERIMENT_TIME_END').split('-')[0]
-                ]
-        years = range(int(years[0])-1, int(years[1]) + 1)
-        
-        # CASR files are all in the same directory, not organized by year
-        self.merged_forcing_path = self.project_dir / 'forcing' / 'merged_path'
-        raw_forcing_path = self.project_dir / 'forcing/raw_data/'
-        self.merged_forcing_path.mkdir(parents=True, exist_ok=True)
-
-        # Get all CASR files in the raw_data directory
-        file_name_pattern = f"domain_{self.domain_name}_*.nc"
-        all_casr_files = sorted(raw_forcing_path.glob(file_name_pattern))
-        
-        if not all_casr_files:
-            self.logger.warning(f"No CASR files found in {raw_forcing_path}")
-            return
-
-        self.logger.info(f"Found {len(all_casr_files)} CASR files in {raw_forcing_path}")
-
-        for year in years:
-            self.logger.info(f"Processing CASR year {year}")
-
-            for month in range(1, 13):
-                self.logger.info(f"Processing CASR {year}-{month:02d}")
-                
-                # Look for daily CASR files for this month - files are all in raw_data directory
-                # Pattern: domain_name_YYYYMMDD*.nc
-                month_pattern = f"domain_{self.domain_name}_{year}{month:02d}"
-                daily_files = sorted([f for f in all_casr_files if month_pattern in f.name])
-
-                if not daily_files:
-                    self.logger.warning(f"No CASR files found for {year}-{month:02d}")
-                    continue
-                
-                self.logger.info(f"Found {len(daily_files)} CASR files for {year}-{month:02d}")
-                
-                datasets = []
-                for file in daily_files:
-                    try:
-                        ds = xr.open_dataset(file)
-                        ds = ds.drop_duplicates(dim='time')
-                        datasets.append(ds)
-                    except Exception as e:
-                        self.logger.error(f"Error opening CASR file {file}: {str(e)}")
-
-                if not datasets:
-                    self.logger.warning(f"No valid CASR datasets for {year}-{month:02d}")
-                    continue
-
-                # Process each dataset using the existing CASR processing method
-                processed_datasets = []
-                for ds in datasets:
-                    try:
-                        processed_ds = self.process_casr_data(ds)
-                        processed_datasets.append(processed_ds)
-                    except Exception as e:
-                        self.logger.error(f"Error processing CASR dataset: {str(e)}")
-
-                if not processed_datasets:
-                    self.logger.warning(f"No processed CASR datasets for {year}-{month:02d}")
-                    continue
-
-                # Concatenate daily files into monthly data
-                monthly_data = xr.concat(processed_datasets, dim="time")
-                monthly_data = monthly_data.sortby("time")
-
-                # Set up time range for the month
-                start_time = pd.Timestamp(year, month, 1)
-                if month == 12:
-                    end_time = pd.Timestamp(year + 1, 1, 1) - pd.Timedelta(hours=1)
-                else:
-                    end_time = pd.Timestamp(year, month + 1, 1) - pd.Timedelta(hours=1)
-
-                # Filter data to the expected time range
-                monthly_data = monthly_data.sel(time=slice(start_time, end_time))
-
-                # Ensure complete hourly time series
-                expected_times = pd.date_range(start=start_time, end=end_time, freq='h')
-                monthly_data = monthly_data.reindex(time=expected_times, method='nearest')
-
-                # Set time encoding
-                monthly_data['time'].encoding['units'] = 'hours since 1900-01-01'
-                monthly_data['time'].encoding['calendar'] = 'gregorian'
-
-                # Add metadata
-                monthly_data.attrs.update({
-                    'History': f'Created {time.ctime(time.time())}',
-                    'Language': 'Written using Python',
-                    'Reason': 'CASR data aggregated to monthly files and variables renamed for SUMMA compatibility'
-                })
-
-                # Aggressively clean up variable attributes and encoding to avoid conflicts
-                for var_name in monthly_data.data_vars:
-                    var = monthly_data[var_name]
-                    # Clear all existing attributes that might cause encoding conflicts
-                    var.attrs.clear()
-                    var.encoding.clear()
-                    
-                    # Set clean attributes based on variable name
-                    if var_name == 'airpres':
-                        var.attrs = {'units': 'Pa', 'long_name': 'air pressure', 'standard_name': 'air_pressure', 'missing_value': -999}
-                    elif var_name == 'airtemp':
-                        var.attrs = {'units': 'K', 'long_name': 'air temperature', 'standard_name': 'air_temperature', 'missing_value': -999}
-                    elif var_name == 'pptrate':
-                        var.attrs = {'units': 'm s-1', 'long_name': 'precipitation rate', 'standard_name': 'precipitation_rate', 'missing_value': -999}
-                    elif var_name == 'windspd':
-                        var.attrs = {'units': 'm s-1', 'long_name': 'wind speed', 'standard_name': 'wind_speed', 'missing_value': -999}
-                    elif var_name == 'windspd_u':
-                        var.attrs = {'units': 'm s-1', 'long_name': 'eastward wind', 'standard_name': 'eastward_wind', 'missing_value': -999}
-                    elif var_name == 'windspd_v':
-                        var.attrs = {'units': 'm s-1', 'long_name': 'northward wind', 'standard_name': 'northward_wind', 'missing_value': -999}
-                    elif var_name == 'LWRadAtm':
-                        var.attrs = {'units': 'W m-2', 'long_name': 'downward longwave radiation at the surface', 'standard_name': 'surface_downwelling_longwave_flux_in_air', 'missing_value': -999}
-                    elif var_name == 'SWRadAtm':
-                        var.attrs = {'units': 'W m-2', 'long_name': 'downward shortwave radiation at the surface', 'standard_name': 'surface_downwelling_shortwave_flux_in_air', 'missing_value': -999}
-                    elif var_name == 'spechum':
-                        var.attrs = {'units': 'kg kg-1', 'long_name': 'specific humidity', 'standard_name': 'specific_humidity', 'missing_value': -999}
-                    else:
-                        # For any other variables, just set missing_value
-                        var.attrs = {'missing_value': -999}
-
-                # Save monthly file
-                output_file = self.merged_forcing_path / f"CASR_monthly_{year}{month:02d}.nc"
-                monthly_data.to_netcdf(output_file)
-                self.logger.info(f"Saved CASR monthly file: {output_file}")
-
-                # Close datasets to free memory
-                for ds in datasets:
-                    ds.close()
-
-        self.logger.info("CASR forcing data merging completed")
 
     def create_shapefile(self):
-        """Create forcing shapefile with check for existing files"""
+        """Create forcing shapefile using dataset-specific handler with check for existing files"""
         self.logger.info(f"Creating {self.forcing_dataset.upper()} shapefile")
         
         # Check if shapefile already exists
@@ -380,208 +138,17 @@ class forcingResampler:
             except Exception as e:
                 self.logger.warning(f"Error checking existing forcing shapefile: {str(e)}. Recreating.")
         
-        # Create appropriate shapefile based on forcing dataset
-        if self.forcing_dataset == 'rdrs':
-            return self._create_rdrs_shapefile()
-        elif self.forcing_dataset.lower() == 'casr':
-            return self._create_casr_shapefile()
-        elif self.forcing_dataset.lower() == 'era5':
-            return self._create_era5_shapefile()
-        elif self.forcing_dataset == 'carra':
-            return self._create_carra_shapefile()
-        else:
-            self.logger.error(f"Unsupported forcing dataset: {self.forcing_dataset}")
-            raise ValueError(f"Unsupported forcing dataset: {self.forcing_dataset}")
+        # Delegate shapefile creation to dataset handler
+        return self.dataset_handler.create_shapefile(
+            shapefile_path=self.shapefile_path,
+            merged_forcing_path=self.merged_forcing_path,
+            dem_path=self.dem_path,
+            elevation_calculator=self._calculate_elevation_stats_safe
+        )
 
-    def process_casr_data(self, ds):
-        """
-        Process CASR dataset by renaming variables and applying unit conversions.
-        
-        Args:
-            ds: xarray Dataset containing CASR data
-            
-        Returns:
-            xarray Dataset with renamed variables and corrected units
-        """
-        # CASR variable mapping to standard names
-        casr_variable_mapping = {
-            # Temperature (choose between analysis A_ or forecast P_ - prefer analysis)
-            'CaSR_v3.1_A_TT_1.5m': 'airtemp',  # Analysis air temperature at 1.5m
-            'CaSR_v3.1_P_TT_1.5m': 'airtemp',  # Forecast air temperature at 1.5m (fallback)
-            
-            # Precipitation 
-            'CaSR_v3.1_A_PR0_SFC': 'pptrate',  # Analysis precipitation (1h)
-            'CaSR_v3.1_P_PR0_SFC': 'pptrate',  # Forecast precipitation (1h) (fallback)
-            
-            # Pressure
-            'CaSR_v3.1_P_P0_SFC': 'airpres',   # Surface pressure
-            
-            # Humidity
-            'CaSR_v3.1_P_HU_1.5m': 'spechum',  # Specific humidity at 1.5m
-            
-            # Wind speed
-            'CaSR_v3.1_P_UVC_10m': 'windspd',  # Wind speed at 10m
-            
-            # Wind components
-            'CaSR_v3.1_P_UUC_10m': 'windspd_u',  # U-component corrected
-            'CaSR_v3.1_P_VVC_10m': 'windspd_v',  # V-component corrected
-            
-            # Radiation
-            'CaSR_v3.1_P_FB_SFC': 'SWRadAtm',   # Downward solar flux
-            'CaSR_v3.1_P_FI_SFC': 'LWRadAtm',   # Surface incoming infrared flux
-        }
-        
-        # Rename variables that exist in the dataset
-        existing_vars = {old: new for old, new in casr_variable_mapping.items() if old in ds.variables}
-        ds = ds.rename(existing_vars)
-        
-        # Apply unit conversions for CASR data
-        if 'airpres' in ds:
-            # CASR pressure is in mb, convert to Pa
-            ds['airpres'] = ds['airpres'] * 100
-            # Clean up attributes to avoid conflicts
-            ds['airpres'].attrs = {}
-            ds['airpres'].attrs.update({'units': 'Pa', 'long_name': 'air pressure', 'standard_name': 'air_pressure'})
-        
-        if 'airtemp' in ds:
-            # CASR temperature is in deg_C, convert to K
-            ds['airtemp'] = ds['airtemp'] + 273.15
-            # Clean up attributes to avoid conflicts
-            ds['airtemp'].attrs = {}
-            ds['airtemp'].attrs.update({'units': 'K', 'long_name': 'air temperature', 'standard_name': 'air_temperature'})
-        
-        if 'pptrate' in ds:
-            # CASR precipitation is in m (per hour), convert to mm/s
-            ds['pptrate'] = ds['pptrate'] * 1000 / 3600
-            # Clean up attributes to avoid conflicts
-            ds['pptrate'].attrs = {}
-            ds['pptrate'].attrs.update({'units': 'm s-1', 'long_name': 'precipitation rate', 'standard_name': 'precipitation_rate'})
-        
-        if 'windspd' in ds:
-            # CASR wind speed is in kts (knots), convert to m/s
-            ds['windspd'] = ds['windspd'] * 0.514444
-            # Clean up attributes to avoid conflicts
-            ds['windspd'].attrs = {}
-            ds['windspd'].attrs.update({'units': 'm s-1', 'long_name': 'wind speed', 'standard_name': 'wind_speed'})
-        
-        if 'windspd_u' in ds:
-            # Convert U-component from kts to m/s
-            ds['windspd_u'] = ds['windspd_u'] * 0.514444
-            # Clean up attributes to avoid conflicts
-            ds['windspd_u'].attrs = {}
-            ds['windspd_u'].attrs.update({'units': 'm s-1', 'long_name': 'eastward wind', 'standard_name': 'eastward_wind'})
-        
-        if 'windspd_v' in ds:
-            # Convert V-component from kts to m/s  
-            ds['windspd_v'] = ds['windspd_v'] * 0.514444
-            # Clean up attributes to avoid conflicts
-            ds['windspd_v'].attrs = {}
-            ds['windspd_v'].attrs.update({'units': 'm s-1', 'long_name': 'northward wind', 'standard_name': 'northward_wind'})
-        
-        # Radiation variables are already in W m**-2, just update attributes
-        if 'LWRadAtm' in ds:
-            # Clean up attributes to avoid conflicts
-            ds['LWRadAtm'].attrs = {}
-            ds['LWRadAtm'].attrs.update({'long_name': 'downward longwave radiation at the surface', 'standard_name': 'surface_downwelling_longwave_flux_in_air'})
-        
-        if 'SWRadAtm' in ds:
-            # Clean up attributes to avoid conflicts
-            ds['SWRadAtm'].attrs = {}
-            ds['SWRadAtm'].attrs.update({'long_name': 'downward shortwave radiation at the surface', 'standard_name': 'surface_downwelling_shortwave_flux_in_air'})
-        
-        if 'spechum' in ds:
-            # Clean up attributes to avoid conflicts
-            ds['spechum'].attrs = {}
-            ds['spechum'].attrs.update({'long_name': 'specific humidity', 'standard_name': 'specific_humidity'})
-        
-        return ds
 
-    def _create_casr_shapefile(self):
-        """Create CASR shapefile with output file checking"""
-        self.logger.info("Creating CASR grid shapefile")
-        
-        # Define output shapefile path
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        
-        try:
-            # Find a CASR file to get grid information
-            casr_files = list(self.merged_forcing_path.glob('*.nc'))
-            if not casr_files:
-                raise FileNotFoundError("No CASR files found")
-            casr_file = casr_files[0]
-            
-            self.logger.info(f"Using CASR file for grid: {casr_file}")
 
-            # Read CASR data - similar structure to RDRS
-            with xr.open_dataset(casr_file) as ds:
-                rlat, rlon = ds.rlat.values, ds.rlon.values
-                lat, lon = ds.lat.values, ds.lon.values
 
-            self.logger.info(f"CASR dimensions: rlat={rlat.shape}, rlon={rlon.shape}")
-            
-            geometries, ids, lats, lons = [], [], [], []
-            
-            # Create grid cells in batches to manage memory
-            batch_size = 100
-            total_cells = len(rlat) * len(rlon)
-            num_batches = (total_cells + batch_size - 1) // batch_size
-            
-            self.logger.info(f"Creating CASR grid cells in {num_batches} batches")
-            
-            cell_count = 0
-            for i in range(len(rlat)):
-                for j in range(len(rlon)):
-                    # Create grid cell corners similar to RDRS
-                    rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
-                    rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
-                    lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
-                                lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
-                                lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
-                    lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
-                                lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
-                                lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
-                    geometries.append(Polygon(zip(lon_corners, lat_corners)))
-                    ids.append(i * len(rlon) + j)
-                    lats.append(lat[i,j])
-                    lons.append(lon[i,j])
-                    
-                    cell_count += 1
-                    if cell_count % batch_size == 0 or cell_count == total_cells:
-                        self.logger.info(f"Created {cell_count}/{total_cells} CASR grid cells")
-
-            # Create GeoDataFrame
-            gdf = gpd.GeoDataFrame({
-                'geometry': geometries,
-                'ID': ids,
-                self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-                self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-            }, crs='EPSG:4326')
-            
-            # Calculate elevation using the safe method
-            self.logger.info("Calculating elevation values using safe method")
-            elevations = self._calculate_elevation_stats_safe(gdf, self.dem_path, batch_size=50)
-            gdf['elev_m'] = elevations
-
-            # Remove rows with invalid elevation values if requested
-            if self.config.get('REMOVE_INVALID_ELEVATION_CELLS', False):
-                valid_count = len(gdf)
-                gdf = gdf[gdf['elev_m'] != -9999].copy()
-                removed_count = valid_count - len(gdf)
-                if removed_count > 0:
-                    self.logger.info(f"Removed {removed_count} cells with invalid elevation values")
-
-            # Save the shapefile
-            output_shapefile.parent.mkdir(parents=True, exist_ok=True)
-            gdf.to_file(output_shapefile)
-            self.logger.info(f"CASR shapefile created and saved to {output_shapefile}")
-            return output_shapefile
-            
-        except Exception as e:
-            self.logger.error(f"Error in create_casr_shapefile: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
-  
     def _calculate_elevation_stats_safe(self, gdf, dem_path, batch_size=50):
         """
         Safely calculate elevation statistics with CRS alignment and batching.
@@ -663,322 +230,8 @@ class forcingResampler:
         
         return elevations
 
-    def _create_era5_shapefile(self):
-        """Create ERA5 shapefile with output file checking"""
-        self.logger.info("Creating ERA5 shapefile")
-        
-        # Define output shapefile path
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        
-        try:
-            # Find an .nc file in the forcing path
-            forcing_files = list(self.merged_forcing_path.glob('*.nc'))
-            if not forcing_files:
-                raise FileNotFoundError("No ERA5 forcing files found")
-            
-            forcing_file = forcing_files[0]
-            self.logger.info(f"Using ERA5 file: {forcing_file}")
 
-            # Set the dimension variable names
-            source_name_lat = "latitude"
-            source_name_lon = "longitude"
 
-            # Open the file and get the dimensions and spatial extent of the domain
-            try:
-                with xr.open_dataset(forcing_file) as src:
-                    lat = src[source_name_lat].values
-                    lon = src[source_name_lon].values
-                
-                self.logger.info(f"ERA5 dimensions: lat={lat.shape}, lon={lon.shape}")
-            except Exception as e:
-                self.logger.error(f"Error reading ERA5 dimensions: {str(e)}")
-                raise
-
-            # Find the spacing
-            try:
-                half_dlat = abs(lat[1] - lat[0])/2 if len(lat) > 1 else 0.125  # Default to 0.25/2 if only one value
-                half_dlon = abs(lon[1] - lon[0])/2 if len(lon) > 1 else 0.125  # Default to 0.25/2 if only one value
-                
-                self.logger.info(f"ERA5 grid spacings: half_dlat={half_dlat}, half_dlon={half_dlon}")
-            except Exception as e:
-                self.logger.error(f"Error calculating grid spacings: {str(e)}")
-                raise
-
-            # Create lists to store the data
-            geometries = []
-            ids = []
-            lats = []
-            lons = []
-
-            # Create grid cells
-            try:
-                self.logger.info("Creating grid cell geometries")
-                if len(lat) == 1:
-                    self.logger.info("Single latitude value detected, creating row of grid cells")
-                    for i, center_lon in enumerate(lon):
-                        center_lat = lat[0]
-                        vertices = [
-                            [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
-                            [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
-                            [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
-                            [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
-                            [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
-                        ]
-                        geometries.append(Polygon(vertices))
-                        ids.append(i)
-                        lats.append(float(center_lat))
-                        lons.append(float(center_lon))
-                else:
-                    self.logger.info("Multiple latitude values, creating grid")
-                    for i, center_lon in enumerate(lon):
-                        for j, center_lat in enumerate(lat):
-                            vertices = [
-                                [float(center_lon)-half_dlon, float(center_lat)-half_dlat],
-                                [float(center_lon)-half_dlon, float(center_lat)+half_dlat],
-                                [float(center_lon)+half_dlon, float(center_lat)+half_dlat],
-                                [float(center_lon)+half_dlon, float(center_lat)-half_dlat],
-                                [float(center_lon)-half_dlon, float(center_lat)-half_dlat]
-                            ]
-                            geometries.append(Polygon(vertices))
-                            ids.append(i * len(lat) + j)
-                            lats.append(float(center_lat))
-                            lons.append(float(center_lon))
-                
-                self.logger.info(f"Created {len(geometries)} grid cell geometries")
-            except Exception as e:
-                self.logger.error(f"Error creating grid cell geometries: {str(e)}")
-                raise
-
-            # Create the GeoDataFrame
-            try:
-                self.logger.info("Creating GeoDataFrame")
-                gdf = gpd.GeoDataFrame({
-                    'geometry': geometries,
-                    'ID': ids,
-                    self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-                    self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-                }, crs='EPSG:4326')
-                
-                self.logger.info(f"GeoDataFrame created with {len(gdf)} rows")
-            except Exception as e:
-                self.logger.error(f"Error creating GeoDataFrame: {str(e)}")
-                raise
-
-            # Calculate elevation using the safe method
-            try:
-                self.logger.info("Calculating elevation values using safe method")
-                if not Path(self.dem_path).exists():
-                    self.logger.error(f"DEM file not found: {self.dem_path}")
-                    raise FileNotFoundError(f"DEM file not found: {self.dem_path}")
-                    
-                elevations = self._calculate_elevation_stats_safe(gdf, self.dem_path, batch_size=20)
-                gdf['elev_m'] = elevations
-                
-                self.logger.info(f"Elevation calculation complete")
-            except Exception as e:
-                self.logger.error(f"Error calculating elevation: {str(e)}")
-                # Continue without elevation data rather than failing completely
-                gdf['elev_m'] = -9999
-                self.logger.warning("Using default elevation values due to calculation error")
-
-            # Save the shapefile
-            try:
-                self.logger.info(f"Saving shapefile to: {output_shapefile}")
-                gdf.to_file(output_shapefile)
-                self.logger.info(f"ERA5 shapefile saved successfully to {output_shapefile}")
-                return output_shapefile
-            except Exception as e:
-                self.logger.error(f"Error saving shapefile: {str(e)}")
-                import traceback
-                self.logger.error(traceback.format_exc())
-                raise
-                
-        except Exception as e:
-            self.logger.error(f"Error in create_era5_shapefile: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
-
-    def _create_rdrs_shapefile(self):
-        """Create RDRS shapefile with output file checking"""
-        # Define output shapefile path
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        
-        try:
-            forcing_file = next((f for f in os.listdir(self.merged_forcing_path) if f.endswith('.nc') and f.startswith('RDRS_monthly_')), None)
-            if not forcing_file:
-                self.logger.error("No RDRS monthly file found")
-                return None
-
-            with xr.open_dataset(self.merged_forcing_path / forcing_file) as ds:
-                rlat, rlon = ds.rlat.values, ds.rlon.values
-                lat, lon = ds.lat.values, ds.lon.values
-
-            self.logger.info(f"RDRS dimensions: rlat={rlat.shape}, rlon={rlon.shape}")
-            
-            geometries, ids, lats, lons = [], [], [], []
-            
-            # Create grid cells in batches to manage memory
-            batch_size = 100
-            total_cells = len(rlat) * len(rlon)
-            num_batches = (total_cells + batch_size - 1) // batch_size
-            
-            self.logger.info(f"Creating RDRS grid cells in {num_batches} batches")
-            
-            cell_count = 0
-            for i in range(len(rlat)):
-                for j in range(len(rlon)):
-                    rlat_corners = [rlat[i], rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i], rlat[i+1] if i+1 < len(rlat) else rlat[i]]
-                    rlon_corners = [rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j+1] if j+1 < len(rlon) else rlon[j], rlon[j]]
-                    lat_corners = [lat[i,j], lat[i,j+1] if j+1 < len(rlon) else lat[i,j], 
-                                lat[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lat[i,j], 
-                                lat[i+1,j] if i+1 < len(rlat) else lat[i,j]]
-                    lon_corners = [lon[i,j], lon[i,j+1] if j+1 < len(rlon) else lon[i,j], 
-                                lon[i+1,j+1] if i+1 < len(rlat) and j+1 < len(rlon) else lon[i,j], 
-                                lon[i+1,j] if i+1 < len(rlat) else lon[i,j]]
-                    geometries.append(Polygon(zip(lon_corners, lat_corners)))
-                    ids.append(i * len(rlon) + j)
-                    lats.append(lat[i,j])
-                    lons.append(lon[i,j])
-                    
-                    cell_count += 1
-                    if cell_count % batch_size == 0 or cell_count == total_cells:
-                        self.logger.info(f"Created {cell_count}/{total_cells} RDRS grid cells")
-
-            # Create GeoDataFrame
-            gdf = gpd.GeoDataFrame({
-                'geometry': geometries,
-                'ID': ids,
-                self.config.get('FORCING_SHAPE_LAT_NAME'): lats,
-                self.config.get('FORCING_SHAPE_LON_NAME'): lons,
-            }, crs='EPSG:4326')
-            
-            # Calculate elevation using the safe method
-            self.logger.info("Calculating elevation values using safe method")
-            elevations = self._calculate_elevation_stats_safe(gdf, self.dem_path, batch_size=50)
-            gdf['elev_m'] = elevations
-
-            # Remove rows with invalid elevation values if requested
-            if self.config.get('REMOVE_INVALID_ELEVATION_CELLS', False):
-                valid_count = len(gdf)
-                gdf = gdf[gdf['elev_m'] != -9999].copy()
-                removed_count = valid_count - len(gdf)
-                if removed_count > 0:
-                    self.logger.info(f"Removed {removed_count} cells with invalid elevation values")
-
-            # Save the shapefile
-            output_shapefile.parent.mkdir(parents=True, exist_ok=True)
-            gdf.to_file(output_shapefile)
-            self.logger.info(f"RDRS shapefile created and saved to {output_shapefile}")
-            return output_shapefile
-            
-        except Exception as e:
-            self.logger.error(f"Error in create_rdrs_shapefile: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
-
-    # For _create_carra_shapefile - replace the elevation calculation section with:
-    def _create_carra_shapefile(self):
-        """Create CARRA shapefile with output file checking"""
-        self.logger.info("Creating CARRA grid shapefile")
-        
-        # Define output shapefile path
-        output_shapefile = self.shapefile_path / f"forcing_{self.config['FORCING_DATASET']}.shp"
-        
-        try:
-            # Find a processed CARRA file
-            carra_files = list(self.merged_forcing_path.glob('*.nc'))
-            if not carra_files:
-                raise FileNotFoundError("No processed CARRA files found")
-            carra_file = carra_files[0]
-
-            # Read CARRA data
-            with xr.open_dataset(carra_file) as ds:
-                lats = ds.latitude.values
-                lons = ds.longitude.values
-
-            self.logger.info(f"CARRA dimensions: {lats.shape}")
-            
-            # Define CARRA projection
-            carra_proj = pyproj.CRS('+proj=stere +lat_0=90 +lat_ts=90 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +a=6378137 +b=6356752.3142 +units=m +no_defs')
-            wgs84 = pyproj.CRS('EPSG:4326')
-
-            transformer = Transformer.from_crs(carra_proj, wgs84, always_xy=True)
-            transformer_to_carra = Transformer.from_crs(wgs84, carra_proj, always_xy=True)
-
-            # Create geometries in memory first to avoid file I/O in the loop
-            self.logger.info("Creating CARRA grid cell geometries")
-            
-            geometries = []
-            ids = []
-            center_lats = []
-            center_lons = []
-            
-            # Process in batches
-            batch_size = 100
-            total_cells = len(lons)
-            num_batches = (total_cells + batch_size - 1) // batch_size
-            
-            self.logger.info(f"Creating {total_cells} CARRA grid cells in {num_batches} batches")
-            
-            for batch_idx in range(num_batches):
-                start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, len(lons))
-                
-                self.logger.info(f"Processing grid cell batch {batch_idx+1}/{num_batches} ({start_idx} to {end_idx-1})")
-                
-                for i in range(start_idx, end_idx):
-                    # Convert lat/lon to CARRA coordinates
-                    x, y = transformer_to_carra.transform(lons[i], lats[i])
-                    
-                    # Define grid cell (assuming 2.5 km resolution)
-                    half_dx = 1250  # meters
-                    half_dy = 1250  # meters
-                    
-                    vertices = [
-                        (x - half_dx, y - half_dy),
-                        (x - half_dx, y + half_dy),
-                        (x + half_dx, y + half_dy),
-                        (x + half_dx, y - half_dy),
-                        (x - half_dx, y - half_dy)
-                    ]
-                    
-                    # Convert vertices back to lat/lon
-                    lat_lon_vertices = [transformer.transform(vx, vy) for vx, vy in vertices]
-                    
-                    geometries.append(Polygon(lat_lon_vertices))
-                    ids.append(i)
-                    
-                    center_lon, center_lat = transformer.transform(x, y)
-                    center_lats.append(center_lat)
-                    center_lons.append(center_lon)
-            
-            # Create GeoDataFrame
-            self.logger.info("Creating GeoDataFrame")
-            gdf = gpd.GeoDataFrame({
-                'geometry': geometries,
-                'ID': ids,
-                self.config.get('FORCING_SHAPE_LAT_NAME'): center_lats,
-                self.config.get('FORCING_SHAPE_LON_NAME'): center_lons,
-            }, crs='EPSG:4326')
-            
-            # Calculate elevation using the safe method
-            self.logger.info("Calculating elevation values using safe method")
-            elevations = self._calculate_elevation_stats_safe(gdf, self.dem_path, batch_size=50)
-            gdf['elev_m'] = elevations
-
-            # Save the shapefile
-            self.logger.info(f"Saving CARRA shapefile to {output_shapefile}")
-            gdf.to_file(output_shapefile)
-            self.logger.info(f"CARRA grid shapefile created and saved to {output_shapefile}")
-            return output_shapefile
-            
-        except Exception as e:
-            self.logger.error(f"Error in create_carra_shapefile: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            raise
 
     def remap_forcing(self):
         self.logger.info("Starting forcing remapping process")
@@ -1163,10 +416,8 @@ class forcingResampler:
             esmr.target_shp_lon = self.config.get('CATCHMENT_SHP_LON')
             
             # NetCDF configuration - use sample file
-            if self.forcing_dataset in ['rdrs', 'casr']:
-                var_lat, var_lon = 'lat', 'lon'
-            else:
-                var_lat, var_lon = 'latitude', 'longitude'
+            # Get coordinate names from dataset handler
+            var_lat, var_lon = self.dataset_handler.get_coordinate_names()
             
             esmr.source_nc = str(sample_forcing_file)
             esmr.var_names = ['airpres', 'LWRadAtm', 'SWRadAtm', 'pptrate', 'airtemp', 'spechum', 'windspd']
@@ -1284,10 +535,8 @@ class forcingResampler:
                 esmr.case_name = f"{self.config['DOMAIN_NAME']}_{self.config['FORCING_DATASET']}"
                 
                 # Coordinate variables
-                if self.forcing_dataset in ['rdrs', 'casr']:
-                    var_lat, var_lon = 'lat', 'lon'
-                else:
-                    var_lat, var_lon = 'latitude', 'longitude'
+                # Get coordinate names from dataset handler
+                var_lat, var_lon = self.dataset_handler.get_coordinate_names()
                 
                 # NetCDF file configuration
                 esmr.source_nc = str(file)
