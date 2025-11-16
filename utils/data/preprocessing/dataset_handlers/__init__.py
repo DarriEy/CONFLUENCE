@@ -30,6 +30,7 @@ from .rdrs_utils import RDRSHandler
 from .casr_utils import CASRHandler
 from .era5_utils import ERA5Handler
 from .carra_utils import CARRAHandler
+from .aorc_utils import AORCHandler
 
 __all__ = [
     'BaseDatasetHandler',

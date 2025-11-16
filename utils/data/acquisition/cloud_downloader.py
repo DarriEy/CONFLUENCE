@@ -810,19 +810,9 @@ class CloudForcingDownloader:
         
         AORC bucket structure:
         s3://noaa-nws-aorc-v1-1-1km/YEAR.zarr
-        
-        Parameters
-        ----------
-        output_dir : Path
-            Directory to save downloaded data
-            
-        Returns
-        -------
-        Path
-            Path to the saved NetCDF file
         """
         self.logger.info("Downloading AORC data from S3")
-        self.logger.info(f"  Bounding box: {self.bbox}")
+        self.logger.info(f"  Bounding box (config): {self.bbox}")
         self.logger.info(f"  Time period: {self.start_date} to {self.end_date}")
         
         # Determine which years we need
@@ -838,10 +828,47 @@ class CloudForcingDownloader:
                 store = s3fs.S3Map(zarr_path, s3=self.fs)
                 ds = xr.open_zarr(store)
                 
+                # -------------------------------
+                # Handle longitude convention
+                # -------------------------------
+                lat_min = self.bbox['lat_min']
+                lat_max = self.bbox['lat_max']
+
+                # Config may have lon_min > lon_max; fix that safely
+                lon1 = self.bbox['lon_min']
+                lon2 = self.bbox['lon_max']
+                lon_min_cfg, lon_max_cfg = sorted([lon1, lon2])
+                
+                lon_vals = ds['longitude'].values
+                lon_min_ds = float(lon_vals.min())
+                lon_max_ds = float(lon_vals.max())
+                self.logger.info(
+                    f"    AORC dataset longitude range: [{lon_min_ds}, {lon_max_ds}]"
+                )
+
+                # If dataset is 0–360 and bbox is in -180–180, convert bbox
+                if lon_max_ds > 180.0:
+                    lon_min = (lon_min_cfg + 360.0) % 360.0
+                    lon_max = (lon_max_cfg + 360.0) % 360.0
+                    self.logger.info(
+                        "    Converting bbox lon from [-180, 180] to [0, 360): "
+                        f"{lon_min_cfg}–{lon_max_cfg} → {lon_min}–{lon_max}"
+                    )
+                else:
+                    # Dataset already uses -180–180 (as here)
+                    lon_min = lon_min_cfg
+                    lon_max = lon_max_cfg
+                    self.logger.info(
+                        "    Using bbox lon directly in dataset convention (sorted): "
+                        f"{lon_min}–{lon_max}"
+                    )
+
+                # -------------------------------
                 # Subset by bounding box and time
+                # -------------------------------
                 ds_subset = ds.sel(
-                    latitude=slice(self.bbox['lat_min'], self.bbox['lat_max']),
-                    longitude=slice(self.bbox['lon_min'], self.bbox['lon_max'])
+                    latitude=slice(lat_min, lat_max),
+                    longitude=slice(lon_min, lon_max)
                 )
                 
                 # Filter by time range for this year
@@ -851,7 +878,15 @@ class CloudForcingDownloader:
                 
                 if len(ds_subset.time) > 0:
                     datasets.append(ds_subset)
-                    self.logger.info(f"    ✓ Extracted {len(ds_subset.time)} timesteps")
+                    self.logger.info(
+                        f"    ✓ Extracted {len(ds_subset.time)} timesteps "
+                        f"and grid {len(ds_subset.latitude)} x {len(ds_subset.longitude)}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"    No timesteps after subsetting for year {year} "
+                        f"(lat {lat_min}–{lat_max}, lon {lon_min}–{lon_max})"
+                    )
                 
             except Exception as e:
                 self.logger.error(f"    ✗ Error processing year {year}: {str(e)}")
@@ -865,11 +900,13 @@ class CloudForcingDownloader:
         ds_combined = xr.concat(datasets, dim='time')
         
         # Log data summary
-        self.logger.info(f"Data extraction summary:")
+        self.logger.info("Data extraction summary:")
         self.logger.info(f"  Dimensions: {dict(ds_combined.dims)}")
         self.logger.info(f"  Variables: {list(ds_combined.data_vars)}")
         self.logger.info(f"  Time steps: {len(ds_combined.time)}")
-        self.logger.info(f"  Grid size: {len(ds_combined.latitude)} x {len(ds_combined.longitude)}")
+        self.logger.info(
+            f"  Grid size: {len(ds_combined.latitude)} x {len(ds_combined.longitude)}"
+        )
         
         # Add metadata
         ds_combined.attrs['source'] = 'NOAA AORC v1.1'
@@ -888,6 +925,7 @@ class CloudForcingDownloader:
         
         self.logger.info(f"✓ AORC data download complete: {output_file}")
         return output_file
+
     
     def _download_era5(self, output_dir: Path) -> Path:
         """

@@ -817,11 +817,6 @@ class SummaPreProcessor:
         4. Write the sorted file list to a text file
 
         The resulting file list is used by SUMMA to locate and read the forcing data.
-
-        Raises:
-            FileNotFoundError: If no forcing files are found.
-            IOError: If there are issues writing the file list.
-            ValueError: If an unsupported forcing dataset is specified.
         """
         self.logger.info("Creating forcing file list")
         forcing_dataset = self.config.get('FORCING_DATASET')
@@ -829,10 +824,15 @@ class SummaPreProcessor:
         forcing_path = self.project_dir / 'forcing/SUMMA_input'
         file_list_path = self.summa_setup_dir / self.config.get('SETTINGS_SUMMA_FORCING_LIST')
 
-        # Define file patterns for different forcing datasets
-        if forcing_dataset.upper() in ['CARRA', 'ERA5', 'RDRS', 'CASR']:
-            forcing_files = [f for f in os.listdir(forcing_path) 
-                            if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')]
+        dataset_upper = forcing_dataset.upper()
+
+        supported = ['CARRA', 'ERA5', 'RDRS', 'CASR', 'AORC']
+        if dataset_upper in supported:
+            # We expect files like: domain_paradise_AORC_*.nc (or ERA5/RDRS/etc)
+            forcing_files = [
+                f for f in os.listdir(forcing_path)
+                if f.startswith(f"{domain_name}_{forcing_dataset}") and f.endswith('.nc')
+            ]
         else:
             self.logger.error(f"Unsupported forcing dataset: {forcing_dataset}")
             raise ValueError(f"Unsupported forcing dataset: {forcing_dataset}")
@@ -849,6 +849,7 @@ class SummaPreProcessor:
                 f.write(f"{file}\n")
 
         self.logger.info(f"Forcing file list created at {file_list_path} with {len(forcing_files)} files")
+
 
 
     def create_initial_conditions(self):
