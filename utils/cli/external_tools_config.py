@@ -41,10 +41,10 @@ detect_compilers() {
     # Strategy 1: Use module environment if EBVERSIONGCC is set (Compute Canada modules)
     if [ -n "$EBVERSIONGCC" ]; then
         echo "  ✓ Found EasyBuild GCC module: $EBVERSIONGCC"
-        export CC="${CC:-gcc}"
-        export CXX="${CXX:-g++}"
-        export FC="${FC:-gfortran}"
-        export FC_EXE="${FC}"
+        export CC="gcc"
+        export CXX="g++"
+        export FC="gfortran"
+        export FC_EXE="$FC"
     # Strategy 2: Detect NetCDF's compiler and use matching version
     elif command -v nf-config >/dev/null 2>&1; then
         NETCDF_FC=$(nf-config --fc 2>/dev/null | awk '{print $1}')
@@ -58,19 +58,20 @@ detect_compilers() {
                 export FC="gfortran-${GCC_VER}"
                 export FC_EXE="${FC}"
             else
-                export CC="${CC:-gcc}"
-                export CXX="${CXX:-g++}"
-                export FC="${FC:-gfortran}"
-                export FC_EXE="${FC}"
+                # NetCDF just says "gfortran" - use plain gcc/g++/gfortran
+                export CC="gcc"
+                export CXX="g++"
+                export FC="gfortran"
+                export FC_EXE="$FC"
             fi
         fi
-    # Strategy 3: Try module-provided gcc/g++/gfortran first
+    # Strategy 3: Use plain compilers from PATH
     else
         echo "  Using default compilers from PATH"
-        export CC="${CC:-gcc}"
-        export CXX="${CXX:-g++}"
-        export FC="${FC:-gfortran}"
-        export FC_EXE="${FC}"
+        export CC="gcc"
+        export CXX="g++"
+        export FC="gfortran"
+        export FC_EXE="$FC"
     fi
     
     export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
@@ -180,6 +181,7 @@ cd sundials-${SUNDIALS_VER}
 rm -rf build && mkdir build && cd build
 cmake .. \
 -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
+-DCMAKE_C_COMPILER="$CC" \
 -DCMAKE_Fortran_COMPILER="$FC" \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
