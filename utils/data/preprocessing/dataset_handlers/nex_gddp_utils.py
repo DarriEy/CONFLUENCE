@@ -150,9 +150,11 @@ class NEXGDDPCMIP6Handler(BaseDatasetHandler):
                 "airtemp",
                 "spechum",
                 "windspd",
+                "airpres",  
             ]
             if v in ds.data_vars
         ]
+
 
         if not keep_vars:
             self.logger.warning(

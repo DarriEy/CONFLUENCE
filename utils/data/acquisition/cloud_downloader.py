@@ -502,8 +502,8 @@ class CloudForcingDownloader:
           * stacks all (model, scenario, member) combos into an `ensemble` dimension
             with coordinates `model(ensemble)`, `scenario(ensemble)`, `member(ensemble)`,
           * writes ONE monthly NetCDF4 file per month containing ALL variables and
-            ALL ensembles,
-          * adds a synthetic surface pressure variable `airpres` if missing,
+            ALL ensembles (currently squeezed to a single ensemble for EASYMORE),
+          * injects a synthetic constant surface air pressure field `airpres` (Pa),
           * cleans up the NCSS cache.
         """
 
@@ -796,47 +796,59 @@ class CloudForcingDownloader:
             if "time" not in ds_m.dims or ds_m.sizes["time"] == 0:
                 continue
 
-            # --- Add synthetic surface air pressure if NEX-GDDP-CMIP6 does not provide it ---
-            if "airpres" not in ds_m.data_vars:
-                self.logger.info(
-                    "Adding synthetic surface air pressure 'airpres' to NEX-GDDP-CMIP6 "
-                    f"monthly slice for {ms:%Y-%m} as constant 101325 Pa."
-                )
-
-                if "tas" not in ds_m.data_vars:
-                    raise KeyError(
-                        "Cannot synthesize 'airpres' for NEX-GDDP-CMIP6: 'tas' not found "
-                        f"in monthly dataset for {ms:%Y-%m}."
+            # ---- DROP ENSEMBLE DIMENSION FOR EASYMORE COMPATIBILITY ----
+            if "ensemble" in ds_m.dims:
+                if ds_m.sizes["ensemble"] == 1:
+                    self.logger.info(
+                        "Dropping 'ensemble' dimension (size 1) from NEX-GDDP-CMIP6 "
+                        "monthly slice %s for EASYMORE compatibility.",
+                        ms.strftime("%Y-%m"),
+                    )
+                    ds_m = ds_m.isel(ensemble=0, drop=True)
+                else:
+                    raise NotImplementedError(
+                        "NEX-GDDP-CMIP6 downloader currently only supports a single "
+                        "ensemble when used with EASYMORE remapping."
                     )
 
-                template = ds_m["tas"]
-                airpres = xr.full_like(template, 101325.0)  # 1013.25 hPa = 101325 Pa
+            # ---- ADD SYNTHETIC SURFACE AIR PRESSURE FIELD ----
+            if "airpres" not in ds_m:
+                if "tas" not in ds_m:
+                    raise KeyError(
+                        "Cannot construct synthetic 'airpres' for NEX-GDDP-CMIP6: "
+                        "'tas' variable is missing in monthly subset."
+                    )
 
+                p0 = 101325.0  # Pa
+                airpres = xr.full_like(ds_m["tas"], p0)
+                airpres.name = "airpres"
                 airpres.attrs.update(
                     {
-                        "long_name": (
-                            "synthetic surface air pressure; constant sea-level "
-                            "reference value (101325 Pa). NEX-GDDP-CMIP6 does not "
-                            "provide surface pressure."
-                        ),
+                        "long_name": "synthetic surface air pressure",
+                        "standard_name": "surface_air_pressure",
                         "units": "Pa",
-                        "note": (
-                            "Synthetic field inserted in SYMFLUENCE cloud_downloader "
-                            "for compatibility with hydrologic model forcing "
-                            "expectations. Consider replacing with pressure from "
-                            "reanalysis or GCM-specific fields when available."
+                        "comment": (
+                            "Constant 101325 Pa used as synthetic surface air pressure "
+                            "for NEX-GDDP-CMIP6 forcings; original dataset does not "
+                            "provide surface pressure. Intended for VIC/EASYMORE preprocessing."
                         ),
                     }
                 )
-
                 ds_m["airpres"] = airpres
+                self.logger.info(
+                    "Adding synthetic surface air pressure 'airpres' to NEX-GDDP-CMIP6 "
+                    "monthly slice for %s as constant %g Pa.",
+                    ms.strftime("%Y-%m"), p0
+                )
 
             month_fname = f"{base_prefix}_{ms.year:04d}{ms.month:02d}.nc"
             month_path = output_dir / month_fname
 
             self.logger.info(
                 f"Writing monthly NetCDF4 (all vars, all ensembles): {month_path} "
-                f"(time={ds_m.sizes['time']}, ensemble={ds_m.sizes['ensemble']})"
+                f"(time={ds_m.sizes['time']}, "
+                f"lat={ds_m.sizes.get('lat', 'NA')}, "
+                f"lon={ds_m.sizes.get('lon', 'NA')})"
             )
             ds_m.to_netcdf(month_path, engine="netcdf4")
 
@@ -850,6 +862,8 @@ class CloudForcingDownloader:
             shutil.rmtree(cache_root)
 
         return output_dir
+
+
 
 
     def _download_aorc(self, output_dir: Path) -> Path:
@@ -2785,6 +2799,7 @@ class CloudForcingDownloader:
         # ------------------------------------------------------------------
         time = ds_chunk["time"]
         dt = (time.diff("time") / np.timedelta64(1, "s")).astype("float32")
+        dt = xr.where(dt <= 0, np.nan, dt)   # avoid 0 or negative
 
         def _accum_to_rate(var_name, out_name, units, long_name, standard_name):
             if var_name not in ds_chunk:
@@ -2793,16 +2808,22 @@ class CloudForcingDownloader:
             accum = ds_chunk[var_name]
             diff = accum.diff("time")
             rate = (diff / dt).astype("float32")
-            # After diff, the time coord is aligned with ds_base.time
+
+            # mask non-finite
+            rate = rate.where(np.isfinite(rate))
+
+            # extra safety: no negative downward flux or precip from resets
+            if var_name in [
+                "total_precipitation",
+                "surface_solar_radiation_downwards",
+                "surface_thermal_radiation_downwards",
+            ]:
+                rate = rate.clip(min=0.0)
+
             rate.name = out_name
-            rate.attrs.update(
-                {
-                    "units": units,
-                    "long_name": long_name,
-                    "standard_name": standard_name,
-                }
-            )
+            rate.attrs.update({...})
             out[out_name] = rate
+
 
         # Precipitation: m -> m s-1
         _accum_to_rate(
