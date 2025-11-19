@@ -87,14 +87,30 @@ detect_compilers() {
     export SYMFLUENCE_COMPILERS_DETECTED="yes"
     echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
     
+    # Verify compilers exist
+    local missing=""
+    command -v "$CC" >/dev/null 2>&1 || missing="$missing CC($CC)"
+    command -v "$CXX" >/dev/null 2>&1 || missing="$missing CXX($CXX)"
+    command -v "$FC" >/dev/null 2>&1 || missing="$missing FC($FC)"
+    
+    if [ -n "$missing" ]; then
+        echo "  ❌ ERROR: Required compilers not found:$missing"
+        echo "  💡 Install missing compilers:"
+        echo "     Ubuntu/Debian: sudo apt-get install gcc g++ gfortran"
+        echo "     RedHat/CentOS: sudo yum install gcc gcc-c++ gcc-gfortran"
+        echo "     macOS: brew install gcc"
+        return 1
+    fi
+    
     # Show actual paths for debugging
-    which "$CC" 2>/dev/null && "$CC" --version | head -1 || echo "  ⚠ $CC not found in PATH"
+    echo "  📍 Compiler paths:"
+    which "$CC" 2>/dev/null && "$CC" --version | head -1 || true
+    which "$FC" 2>/dev/null && "$FC" --version | head -1 || true
 }
 # ================================================================
 
-# Compiler: force short name to satisfy Makefile sanity checks
-export FC="${FC:-gfortran}"
-export FC_EXE="${FC_EXE:-gfortran}"
+# Call compiler detection immediately
+detect_compilers
 
 # Discover libraries (fallback to /usr)
 export NETCDF="${NETCDF:-$(nc-config --prefix 2>/dev/null || echo /usr)}"
@@ -152,13 +168,8 @@ def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
             'branch': None,
             'install_dir': 'sundials',
             'build_commands': [
+                common_env,
                 r'''
-# ================================================================
-# Call compiler detection from common environment
-# ================================================================
-detect_compilers
-# ================================================================
-
 # Build SUNDIALS from release tarball (shared libs OK; SUMMA will link).
 SUNDIALS_VER=7.4.0
 SUNDIALSDIR="$(pwd)/install/sundials"
@@ -210,13 +221,8 @@ cmake --build . --target install -j ${NCORES:-4}
             'install_dir': 'summa',
             'requires': ['sundials'],
             'build_commands': [
+                common_env,
                 r'''
-# ================================================================
-# Call compiler detection from common environment
-# ================================================================
-detect_compilers
-# ================================================================
-
 # Build SUMMA against SUNDIALS + NetCDF, leverage SUMMA's build scripts pattern
 set -e
 export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
@@ -864,13 +870,8 @@ fi
             'branch': None,
             'install_dir': 'TauDEM',
             'build_commands': [
+                common_env,
                 r'''
-# ================================================================
-# Call compiler detection from common environment
-# ================================================================
-detect_compilers
-# ================================================================
-
 set -e
 
 # MPI wrappers will use our detected compilers via OMPI_* env vars (set above)
@@ -993,13 +994,8 @@ chmod +x extract-dataset.sh
             'branch': 'ngiab',
             'install_dir': 'ngen',
             'build_commands': [
+                common_env,
                 r'''
-# ================================================================
-# Call compiler detection from common environment
-# ================================================================
-detect_compilers
-# ================================================================
-
 set -e
 echo "Building ngen..."
 
