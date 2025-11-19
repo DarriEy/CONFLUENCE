@@ -72,7 +72,7 @@ class LocalScratchManager:
         self.config = config
         self.logger = logger
         self.project_dir = project_dir
-        self.algorithm_name = algorithm_name
+        self.algorithm_name = algorithm_name.lower()
         self.domain_name = config.get('DOMAIN_NAME')
         self.experiment_id = config.get('EXPERIMENT_ID')
         self.mpi_rank = mpi_rank if mpi_rank is not None else 0
