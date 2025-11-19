@@ -2123,78 +2123,92 @@ class BaseOptimizer(ABC):
         try:
             # Determine number of processes to use
             num_processes = min(max_workers, self.num_processes, len(batch_tasks))
-            
             self.logger.info(f"Spawning {num_processes} MPI processes for batch execution")
-            
-            # Use current working directory instead of temp directory
+
             import uuid
-            work_dir = Path.cwd()
+
+            # 1) runtime_dir = where MPI temp files live (prefer node-local scratch)
+            scratch_dir = os.environ.get("SLURM_TMPDIR") or os.environ.get("TMPDIR")
+            if scratch_dir:
+                runtime_dir = Path(scratch_dir)
+                self.logger.debug(f"Using MPI runtime_dir={runtime_dir} for batch files")
+            else:
+                runtime_dir = Path.cwd()
+                self.logger.warning(
+                    "SLURM_TMPDIR/TMPDIR not set; using current working directory for MPI files"
+                )
+
+            # 2) project_dir = where code/configs live (this is your CONFLUENCE tree)
+            project_dir = Path.cwd()
+
             unique_id = uuid.uuid4().hex[:8]
-            
-            # Create files in current directory with unique names
-            tasks_file = work_dir / f'mpi_tasks_{unique_id}.pkl'
-            results_file = work_dir / f'mpi_results_{unique_id}.pkl'
-            worker_script = work_dir / f'mpi_worker_{unique_id}.py'
-            
+
+            # Create files in runtime_dir
+            tasks_file = runtime_dir / f"mpi_tasks_{unique_id}.pkl"
+            results_file = runtime_dir / f"mpi_results_{unique_id}.pkl"
+            worker_script = runtime_dir / f"mpi_worker_{unique_id}.py"
+
             # Only create worker log file if LOG_LEVEL is DEBUG
-            enable_worker_logging = self.config.get('LOG_LEVEL', 'INFO').upper() == 'DEBUG'
-            worker_log = work_dir / f'mpi_worker_{unique_id}.log' if enable_worker_logging else None
-            
+            enable_worker_logging = self.config.get("LOG_LEVEL", "INFO").upper() == "DEBUG"
+            worker_log = (
+                runtime_dir / f"mpi_worker_{unique_id}.log"
+                if enable_worker_logging
+                else None
+            )
+
             try:
-                self.logger.info(f"Using working directory: {work_dir}")
-                
+                self.logger.info(f"Using working directory (runtime): {runtime_dir}")
+
                 # Save tasks to file
-                with open(tasks_file, 'wb') as f:
+                with open(tasks_file, "wb") as f:
                     pickle.dump(batch_tasks, f)
-                
-                # Create worker script with LOG_LEVEL setting
-                self._create_mpi_worker_script(worker_script, tasks_file, work_dir, enable_worker_logging)
-                
-                # Make script executable
+
+                # IMPORTANT: pass project_dir here (not runtime_dir)
+                self._create_mpi_worker_script(
+                    worker_script, tasks_file, project_dir, enable_worker_logging
+                )
+
                 os.chmod(worker_script, 0o755)
-                
-                # Verify files were created
+
                 if not tasks_file.exists() or not worker_script.exists():
                     raise RuntimeError("Failed to create MPI files")
-                    
-                self.logger.info(f"Created MPI files: {tasks_file.name}, {worker_script.name}")
-                
-                # Run MPI command with log capture
+
+                self.logger.info(
+                    f"Created MPI files: {tasks_file.name}, {worker_script.name}"
+                )
+
+                # Run MPI command
                 mpi_cmd = [
-                    'mpirun', '-n', str(num_processes),
+                    "mpirun", "-n", str(num_processes),
                     sys.executable, str(worker_script),
-                    str(tasks_file), str(results_file)
+                    str(tasks_file), str(results_file),
                 ]
-                
                 self.logger.debug(f"Running MPI command: {' '.join(mpi_cmd)}")
-                
-                # Execute MPI process with log capture
+
                 start_time = time.time()
-                
+
                 if enable_worker_logging:
-                    # Capture output to log file when DEBUG is enabled
-                    with open(worker_log, 'w') as log_f:
+                    with open(worker_log, "w") as log_f:
                         result = subprocess.run(
                             mpi_cmd,
                             stdout=log_f,
                             stderr=subprocess.STDOUT,
                             text=True,
-                            #timeout=7200,  # 2 hour timeout
-                            env=os.environ.copy()
+                            env=os.environ.copy(),
+                            cwd=str(runtime_dir),
                         )
                 else:
-                    # Discard output when DEBUG is not enabled
                     result = subprocess.run(
                         mpi_cmd,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         text=True,
-                        #timeout=7200,  # 2 hour timeout
-                        env=os.environ.copy()
+                        env=os.environ.copy(),
+                        cwd=str(runtime_dir),
                     )
-                
+
                 elapsed = time.time() - start_time
-                
+
                 if result.returncode != 0:
                     self.logger.error(f"MPI execution failed with return code {result.returncode}")
                     # Show last 20 lines of worker log for debugging (only if log exists)
@@ -2308,7 +2322,15 @@ import logging
 {logging_setup}
 
 # Add SYMFLUENCE path
-sys.path.append(r"{Path(__file__).parent}")
+#sys.path.append(r"{Path(__file__).parent}")
+
+# Ensure CONFLUENCE/SYMFLUENCE project root and optimization dir are on sys.path
+PROJECT_ROOT = r"{temp_dir}"
+OPT_DIR = os.path.join(PROJECT_ROOT, "utils", "optimization")
+
+for _p in (PROJECT_ROOT, OPT_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # Import the worker function
 from iterative_optimizer import _evaluate_parameters_worker_safe
