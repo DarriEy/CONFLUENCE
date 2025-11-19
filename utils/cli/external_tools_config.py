@@ -27,6 +27,71 @@ def get_common_build_environment() -> str:
     """
     return r'''
 set -e
+
+# ================================================================
+# COMPILER DETECTION FUNCTION - MODULE-AWARE
+# ================================================================
+detect_compilers() {
+    if [ -n "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
+        return 0  # Already detected
+    fi
+    
+    echo "🔍 Detecting module-provided or GLIBC-compatible compilers..."
+    
+    # Strategy 1: Use module environment if EBVERSIONGCC is set (Compute Canada modules)
+    if [ -n "$EBVERSIONGCC" ]; then
+        echo "  ✓ Found EasyBuild GCC module: $EBVERSIONGCC"
+        export CC="${CC:-gcc}"
+        export CXX="${CXX:-g++}"
+        export FC="${FC:-gfortran}"
+        export FC_EXE="${FC}"
+    # Strategy 2: Detect NetCDF's compiler and use matching version
+    elif command -v nf-config >/dev/null 2>&1; then
+        NETCDF_FC=$(nf-config --fc 2>/dev/null | awk '{print $1}')
+        if [ -n "$NETCDF_FC" ]; then
+            echo "  ✓ NetCDF compiled with: $NETCDF_FC"
+            # Extract version if present (e.g., gfortran-12 -> 12)
+            if [[ "$NETCDF_FC" =~ gfortran-([0-9]+) ]]; then
+                GCC_VER="${BASH_REMATCH[1]}"
+                export CC="gcc-${GCC_VER}"
+                export CXX="g++-${GCC_VER}"
+                export FC="gfortran-${GCC_VER}"
+                export FC_EXE="${FC}"
+            else
+                export CC="${CC:-gcc}"
+                export CXX="${CXX:-g++}"
+                export FC="${FC:-gfortran}"
+                export FC_EXE="${FC}"
+            fi
+        fi
+    # Strategy 3: Try module-provided gcc/g++/gfortran first
+    else
+        echo "  Using default compilers from PATH"
+        export CC="${CC:-gcc}"
+        export CXX="${CXX:-g++}"
+        export FC="${FC:-gfortran}"
+        export FC_EXE="${FC}"
+    fi
+    
+    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
+    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
+    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
+    
+    export OMPI_CC="$CC"
+    export OMPI_CXX="$CXX"
+    export OMPI_FC="$FC"
+    export MPICH_CC="$CC"
+    export MPICH_CXX="$CXX"
+    export MPICH_F90="$FC"
+    
+    export SYMFLUENCE_COMPILERS_DETECTED="yes"
+    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
+    
+    # Show actual paths for debugging
+    which "$CC" 2>/dev/null && "$CC" --version | head -1 || echo "  ⚠ $CC not found in PATH"
+}
+# ================================================================
+
 # Compiler: force short name to satisfy Makefile sanity checks
 export FC="${FC:-gfortran}"
 export FC_EXE="${FC_EXE:-gfortran}"
@@ -89,73 +154,9 @@ def get_external_tools_definitions() -> Dict[str, Dict[str, Any]]:
             'build_commands': [
                 r'''
 # ================================================================
-# COMPILER DETECTION AND GLIBC COMPATIBILITY SETUP
+# Call compiler detection from common environment
 # ================================================================
-test_compiler_compat() {
-    local compiler="$1"
-    local lang="$2"
-    local test_file="/tmp/test_$$_${lang}"
-    local test_exe="/tmp/test_exe_$$"
-    
-    case "$lang" in
-        c)
-            echo "int main() { return 0; }" > "${test_file}.c"
-            $compiler "${test_file}.c" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.c" "$test_exe"; return 1; }
-            ;;
-        cxx)
-            echo "int main() { return 0; }" > "${test_file}.cpp"
-            $compiler "${test_file}.cpp" -o "$test_exe" -static-libgcc -static-libstdc++ 2>/dev/null || { rm -f "${test_file}.cpp" "$test_exe"; return 1; }
-            ;;
-        fortran)
-            echo "      program test" > "${test_file}.f90"
-            echo "      end program test" >> "${test_file}.f90"
-            $compiler "${test_file}.f90" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.f90" "$test_exe"; return 1; }
-            ;;
-    esac
-    
-    if [ -x "$test_exe" ] && "$test_exe" 2>/dev/null; then
-        rm -f "${test_file}".* "$test_exe"
-        return 0
-    fi
-    rm -f "${test_file}".* "$test_exe"
-    return 1
-}
-
-if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
-    echo "🔍 Detecting GLIBC-compatible compilers..."
-    
-    for cc in gcc-11 gcc-10 gcc-9 gcc cc; do
-        if command -v $cc >/dev/null 2>&1 && test_compiler_compat $cc c; then
-            export CC="$cc"; break
-        fi
-    done
-    
-    for cxx in g++-11 g++-10 g++-9 g++ c++; do
-        if command -v $cxx >/dev/null 2>&1 && test_compiler_compat $cxx cxx; then
-            export CXX="$cxx"; break
-        fi
-    done
-    
-    for fc in gfortran-11 gfortran-10 gfortran-9 gfortran; do
-        if command -v $fc >/dev/null 2>&1 && test_compiler_compat $fc fortran; then
-            export FC="$fc"; export FC_EXE="$fc"; break
-        fi
-    done
-    
-    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
-    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
-    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
-    
-    export OMPI_CC="$CC"
-    export OMPI_CXX="$CXX"
-    export OMPI_FC="$FC"
-    export MPICH_CC="$CC"
-    export MPICH_CXX="$CXX"
-    export MPICH_F90="$FC"
-    
-    export SYMFLUENCE_COMPILERS_DETECTED="yes"
-    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
-fi
+detect_compilers
 # ================================================================
 
 # Build SUNDIALS from release tarball (shared libs OK; SUMMA will link).
@@ -211,73 +212,9 @@ cmake --build . --target install -j ${NCORES:-4}
             'build_commands': [
                 r'''
 # ================================================================
-# COMPILER DETECTION AND GLIBC COMPATIBILITY SETUP
+# Call compiler detection from common environment
 # ================================================================
-test_compiler_compat() {
-    local compiler="$1"
-    local lang="$2"
-    local test_file="/tmp/test_$$_${lang}"
-    local test_exe="/tmp/test_exe_$$"
-    
-    case "$lang" in
-        c)
-            echo "int main() { return 0; }" > "${test_file}.c"
-            $compiler "${test_file}.c" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.c" "$test_exe"; return 1; }
-            ;;
-        cxx)
-            echo "int main() { return 0; }" > "${test_file}.cpp"
-            $compiler "${test_file}.cpp" -o "$test_exe" -static-libgcc -static-libstdc++ 2>/dev/null || { rm -f "${test_file}.cpp" "$test_exe"; return 1; }
-            ;;
-        fortran)
-            echo "      program test" > "${test_file}.f90"
-            echo "      end program test" >> "${test_file}.f90"
-            $compiler "${test_file}.f90" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.f90" "$test_exe"; return 1; }
-            ;;
-    esac
-    
-    if [ -x "$test_exe" ] && "$test_exe" 2>/dev/null; then
-        rm -f "${test_file}".* "$test_exe"
-        return 0
-    fi
-    rm -f "${test_file}".* "$test_exe"
-    return 1
-}
-
-if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
-    echo "🔍 Detecting GLIBC-compatible compilers..."
-    
-    for cc in gcc-11 gcc-10 gcc-9 gcc cc; do
-        if command -v $cc >/dev/null 2>&1 && test_compiler_compat $cc c; then
-            export CC="$cc"; break
-        fi
-    done
-    
-    for cxx in g++-11 g++-10 g++-9 g++ c++; do
-        if command -v $cxx >/dev/null 2>&1 && test_compiler_compat $cxx cxx; then
-            export CXX="$cxx"; break
-        fi
-    done
-    
-    for fc in gfortran-11 gfortran-10 gfortran-9 gfortran; do
-        if command -v $fc >/dev/null 2>&1 && test_compiler_compat $fc fortran; then
-            export FC="$fc"; export FC_EXE="$fc"; break
-        fi
-    done
-    
-    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
-    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
-    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
-    
-    export OMPI_CC="$CC"
-    export OMPI_CXX="$CXX"
-    export OMPI_FC="$FC"
-    export MPICH_CC="$CC"
-    export MPICH_CXX="$CXX"
-    export MPICH_F90="$FC"
-    
-    export SYMFLUENCE_COMPILERS_DETECTED="yes"
-    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
-fi
+detect_compilers
 # ================================================================
 
 # Build SUMMA against SUNDIALS + NetCDF, leverage SUMMA's build scripts pattern
@@ -929,73 +866,9 @@ fi
             'build_commands': [
                 r'''
 # ================================================================
-# COMPILER DETECTION AND GLIBC COMPATIBILITY SETUP
+# Call compiler detection from common environment
 # ================================================================
-test_compiler_compat() {
-    local compiler="$1"
-    local lang="$2"
-    local test_file="/tmp/test_$$_${lang}"
-    local test_exe="/tmp/test_exe_$$"
-    
-    case "$lang" in
-        c)
-            echo "int main() { return 0; }" > "${test_file}.c"
-            $compiler "${test_file}.c" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.c" "$test_exe"; return 1; }
-            ;;
-        cxx)
-            echo "int main() { return 0; }" > "${test_file}.cpp"
-            $compiler "${test_file}.cpp" -o "$test_exe" -static-libgcc -static-libstdc++ 2>/dev/null || { rm -f "${test_file}.cpp" "$test_exe"; return 1; }
-            ;;
-        fortran)
-            echo "      program test" > "${test_file}.f90"
-            echo "      end program test" >> "${test_file}.f90"
-            $compiler "${test_file}.f90" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.f90" "$test_exe"; return 1; }
-            ;;
-    esac
-    
-    if [ -x "$test_exe" ] && "$test_exe" 2>/dev/null; then
-        rm -f "${test_file}".* "$test_exe"
-        return 0
-    fi
-    rm -f "${test_file}".* "$test_exe"
-    return 1
-}
-
-if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
-    echo "🔍 Detecting GLIBC-compatible compilers..."
-    
-    for cc in gcc-11 gcc-10 gcc-9 gcc cc; do
-        if command -v $cc >/dev/null 2>&1 && test_compiler_compat $cc c; then
-            export CC="$cc"; break
-        fi
-    done
-    
-    for cxx in g++-11 g++-10 g++-9 g++ c++; do
-        if command -v $cxx >/dev/null 2>&1 && test_compiler_compat $cxx cxx; then
-            export CXX="$cxx"; break
-        fi
-    done
-    
-    for fc in gfortran-11 gfortran-10 gfortran-9 gfortran; do
-        if command -v $fc >/dev/null 2>&1 && test_compiler_compat $fc fortran; then
-            export FC="$fc"; export FC_EXE="$fc"; break
-        fi
-    done
-    
-    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
-    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
-    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
-    
-    export OMPI_CC="$CC"
-    export OMPI_CXX="$CXX"
-    export OMPI_FC="$FC"
-    export MPICH_CC="$CC"
-    export MPICH_CXX="$CXX"
-    export MPICH_F90="$FC"
-    
-    export SYMFLUENCE_COMPILERS_DETECTED="yes"
-    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
-fi
+detect_compilers
 # ================================================================
 
 set -e
@@ -1122,73 +995,9 @@ chmod +x extract-dataset.sh
             'build_commands': [
                 r'''
 # ================================================================
-# COMPILER DETECTION AND GLIBC COMPATIBILITY SETUP
+# Call compiler detection from common environment
 # ================================================================
-test_compiler_compat() {
-    local compiler="$1"
-    local lang="$2"
-    local test_file="/tmp/test_$$_${lang}"
-    local test_exe="/tmp/test_exe_$$"
-    
-    case "$lang" in
-        c)
-            echo "int main() { return 0; }" > "${test_file}.c"
-            $compiler "${test_file}.c" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.c" "$test_exe"; return 1; }
-            ;;
-        cxx)
-            echo "int main() { return 0; }" > "${test_file}.cpp"
-            $compiler "${test_file}.cpp" -o "$test_exe" -static-libgcc -static-libstdc++ 2>/dev/null || { rm -f "${test_file}.cpp" "$test_exe"; return 1; }
-            ;;
-        fortran)
-            echo "      program test" > "${test_file}.f90"
-            echo "      end program test" >> "${test_file}.f90"
-            $compiler "${test_file}.f90" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.f90" "$test_exe"; return 1; }
-            ;;
-    esac
-    
-    if [ -x "$test_exe" ] && "$test_exe" 2>/dev/null; then
-        rm -f "${test_file}".* "$test_exe"
-        return 0
-    fi
-    rm -f "${test_file}".* "$test_exe"
-    return 1
-}
-
-if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
-    echo "🔍 Detecting GLIBC-compatible compilers..."
-    
-    for cc in gcc-11 gcc-10 gcc-9 gcc cc; do
-        if command -v $cc >/dev/null 2>&1 && test_compiler_compat $cc c; then
-            export CC="$cc"; break
-        fi
-    done
-    
-    for cxx in g++-11 g++-10 g++-9 g++ c++; do
-        if command -v $cxx >/dev/null 2>&1 && test_compiler_compat $cxx cxx; then
-            export CXX="$cxx"; break
-        fi
-    done
-    
-    for fc in gfortran-11 gfortran-10 gfortran-9 gfortran; do
-        if command -v $fc >/dev/null 2>&1 && test_compiler_compat $fc fortran; then
-            export FC="$fc"; export FC_EXE="$fc"; break
-        fi
-    done
-    
-    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
-    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
-    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
-    
-    export OMPI_CC="$CC"
-    export OMPI_CXX="$CXX"
-    export OMPI_FC="$FC"
-    export MPICH_CC="$CC"
-    export MPICH_CXX="$CXX"
-    export MPICH_F90="$FC"
-    
-    export SYMFLUENCE_COMPILERS_DETECTED="yes"
-    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
-fi
+detect_compilers
 # ================================================================
 
 set -e
