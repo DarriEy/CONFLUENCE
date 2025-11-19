@@ -168,11 +168,9 @@ cd sundials-${SUNDIALS_VER}
 rm -rf build && mkdir build && cd build
 cmake .. \
 -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
--DCMAKE_C_COMPILER="$CC" \
 -DCMAKE_Fortran_COMPILER="$FC" \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
--DCMAKE_Fortran_COMPILER=gfortran \
 -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
 -DCMAKE_BUILD_TYPE=Release \
 -DBUILD_SHARED_LIBS=ON \
@@ -282,76 +280,6 @@ if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
 fi
 # ================================================================
 
-# ================================================================
-# COMPILER DETECTION AND GLIBC COMPATIBILITY SETUP
-# ================================================================
-test_compiler_compat() {
-    local compiler="$1"
-    local lang="$2"
-    local test_file="/tmp/test_$$_${lang}"
-    local test_exe="/tmp/test_exe_$$"
-    
-    case "$lang" in
-        c)
-            echo "int main() { return 0; }" > "${test_file}.c"
-            $compiler "${test_file}.c" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.c" "$test_exe"; return 1; }
-            ;;
-        cxx)
-            echo "int main() { return 0; }" > "${test_file}.cpp"
-            $compiler "${test_file}.cpp" -o "$test_exe" -static-libgcc -static-libstdc++ 2>/dev/null || { rm -f "${test_file}.cpp" "$test_exe"; return 1; }
-            ;;
-        fortran)
-            echo "      program test" > "${test_file}.f90"
-            echo "      end program test" >> "${test_file}.f90"
-            $compiler "${test_file}.f90" -o "$test_exe" -static-libgcc 2>/dev/null || { rm -f "${test_file}.f90" "$test_exe"; return 1; }
-            ;;
-    esac
-    
-    if [ -x "$test_exe" ] && "$test_exe" 2>/dev/null; then
-        rm -f "${test_file}".* "$test_exe"
-        return 0
-    fi
-    rm -f "${test_file}".* "$test_exe"
-    return 1
-}
-
-if [ -z "$SYMFLUENCE_COMPILERS_DETECTED" ]; then
-    echo "🔍 Detecting GLIBC-compatible compilers..."
-    
-    for cc in gcc-11 gcc-10 gcc-9 gcc cc; do
-        if command -v $cc >/dev/null 2>&1 && test_compiler_compat $cc c; then
-            export CC="$cc"; break
-        fi
-    done
-    
-    for cxx in g++-11 g++-10 g++-9 g++ c++; do
-        if command -v $cxx >/dev/null 2>&1 && test_compiler_compat $cxx cxx; then
-            export CXX="$cxx"; break
-        fi
-    done
-    
-    for fc in gfortran-11 gfortran-10 gfortran-9 gfortran; do
-        if command -v $fc >/dev/null 2>&1 && test_compiler_compat $fc fortran; then
-            export FC="$fc"; export FC_EXE="$fc"; break
-        fi
-    done
-    
-    export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -static-libgcc"
-    export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -static-libgcc -static-libstdc++"
-    export CMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
-    
-    export OMPI_CC="$CC"
-    export OMPI_CXX="$CXX"
-    export OMPI_FC="$FC"
-    export MPICH_CC="$CC"
-    export MPICH_CXX="$CXX"
-    export MPICH_F90="$FC"
-    
-    export SYMFLUENCE_COMPILERS_DETECTED="yes"
-    echo "  ✅ Compilers: CC=$CC | CXX=$CXX | FC=$FC"
-fi
-# ================================================================
-
 # Build SUMMA against SUNDIALS + NetCDF, leverage SUMMA's build scripts pattern
 set -e
 export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
@@ -381,11 +309,11 @@ else
 fi
 
 rm -rf cmake_build && mkdir -p cmake_build
+cmake -S build -B cmake_build \
 -DCMAKE_C_COMPILER="$CC" \
 -DCMAKE_Fortran_COMPILER="$FC" \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
-cmake -S build -B cmake_build \
 -DUSE_SUNDIALS=ON \
 -DCMAKE_BUILD_TYPE=Release \
 -DSPECIFY_LAPACK_LINKS=$SPECIFY_LINKS \
@@ -393,7 +321,6 @@ cmake -S build -B cmake_build \
 -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
 -DNETCDF_PATH="${NETCDF:-/usr}" \
 -DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}" \
--DCMAKE_Fortran_COMPILER="$FC" \
 -DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
 
 # Build all targets (repo scripts use 'all', not 'summa_sundials')
@@ -1073,13 +1000,11 @@ fi
 
 set -e
 
-# Configure MPI wrappers to use our detected compilers (set via OMPI_* env vars above)
-# These are already set by compiler detection, just use the wrappers
-
+# MPI wrappers will use our detected compilers via OMPI_* env vars (set above)
 rm -rf build && mkdir -p build
 cd build
 
-# Let CMake find MPI and GDAL
+# Use MPI wrappers with our compatible compilers
 cmake -S .. -B . \
 -DCMAKE_C_COMPILER=mpicc \
 -DCMAKE_CXX_COMPILER=mpicxx \
@@ -1304,7 +1229,11 @@ if cmake \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
--DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=ON -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build; then
+-DCMAKE_BUILD_TYPE=Release \
+-DBOOST_ROOT="$BOOST_ROOT" \
+-DNGEN_WITH_PYTHON=ON \
+-DNGEN_WITH_SQLITE3=ON \
+-S . -B cmake_build; then
 echo "Configured with Python ON"
 else
 echo "CMake failed with Python ON; retrying with Python OFF"
@@ -1315,7 +1244,11 @@ cmake \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
--DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$BOOST_ROOT" -DNGEN_WITH_PYTHON=OFF -DNGEN_WITH_SQLITE3=ON -S . -B cmake_build
+-DCMAKE_BUILD_TYPE=Release \
+-DBOOST_ROOT="$BOOST_ROOT" \
+-DNGEN_WITH_PYTHON=OFF \
+-DNGEN_WITH_SQLITE3=ON \
+-S . -B cmake_build
 fi
 
 cmake --build cmake_build --target ngen -j ${NCORES:-4}
