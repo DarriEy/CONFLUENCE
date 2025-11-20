@@ -227,8 +227,39 @@ cmake --build . --target install -j ${NCORES:-4}
                 r'''
 # Build SUMMA against SUNDIALS + NetCDF, leverage SUMMA's build scripts pattern
 set -e
-export SUNDIALS_DIR="$(realpath ../sundials/install/sundials)"
+
+# Locate SUNDIALS installation - be flexible about lib vs lib64
+SUNDIALS_DIR=""
+for try_path in ../sundials/install/sundials ../../sundials/install/sundials ../sundials; do
+    if [ -d "$try_path" ]; then
+        # Check for either lib or lib64
+        if [ -f "$try_path/lib/libsundials_core.a" ] || [ -f "$try_path/lib64/libsundials_core.a" ] || \
+           [ -f "$try_path/lib/libsundials_core.so" ] || [ -f "$try_path/lib64/libsundials_core.so" ]; then
+            SUNDIALS_DIR="$(cd "$try_path" && pwd)"
+            break
+        fi
+    fi
+done
+
+if [ -z "$SUNDIALS_DIR" ] || [ ! -d "$SUNDIALS_DIR" ]; then
+    echo "❌ ERROR: Could not locate SUNDIALS installation"
+    echo "   Searched paths: ../sundials/install/sundials, ../../sundials/install/sundials, ../sundials"
+    echo "   Make sure SUNDIALS is installed first: python SYMFLUENCE.py --get_executables sundials"
+    exit 1
+fi
+
 echo "Using SUNDIALS from: $SUNDIALS_DIR"
+
+# Ensure FC is properly set for CMake
+export FC="${FC:-gfortran}"
+export FC_EXE="$FC"
+echo "Fortran compiler: FC=$FC | FC_EXE=$FC_EXE"
+
+# Verify Fortran compiler exists and works
+if ! command -v "$FC" >/dev/null 2>&1; then
+    echo "❌ ERROR: Fortran compiler '$FC' not found in PATH"
+    exit 1
+fi
 
 # Determine LAPACK strategy based on platform
 SPECIFY_LINKS=OFF
@@ -258,6 +289,7 @@ cmake -S build -B cmake_build \
 -DCMAKE_C_COMPILER="$CC" \
 -DCMAKE_Fortran_COMPILER="$FC" \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
+-DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
 -DUSE_SUNDIALS=ON \
 -DCMAKE_BUILD_TYPE=Release \
@@ -265,8 +297,7 @@ cmake -S build -B cmake_build \
 -DCMAKE_PREFIX_PATH="$SUNDIALS_DIR" \
 -DSUNDIALS_ROOT="$SUNDIALS_DIR" \
 -DNETCDF_PATH="${NETCDF:-/usr}" \
--DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}" \
--DCMAKE_Fortran_FLAGS="-ffree-form -ffree-line-length-none"
+-DNETCDF_FORTRAN_PATH="${NETCDF_FORTRAN:-/usr}"
 
 # Build all targets (repo scripts use 'all', not 'summa_sundials')
 cmake --build cmake_build --target all -j ${NCORES:-4}
@@ -558,51 +589,104 @@ echo "Using Cython via: $CYTHON_CMD"
 echo ""
 echo "=== Step 6a: Pre-cythonize troute-network ==="
 cd src/troute-network
-# language_level=3 to avoid Py2 warnings
-find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
-  set -e
-  c="${1%.pyx}.c"
-  if [ ! -f "$c" ]; then
-    echo "Cythonizing $1 -> $c"
-    '"$CYTHON_CMD"' -3 "$1" -o "$c"
+TROUTE_NETWORK_DIR="$(pwd)"
+# language_level=3 to avoid Py2 warnings, generate .c files with full paths
+find troute -name "*.pyx" -type f | while read pyx_file; do
+  c_file="${pyx_file%.pyx}.c"
+  if [ ! -f "$c_file" ]; then
+    echo "Cythonizing $pyx_file -> $c_file"
+    $CYTHON_CMD -3 "$pyx_file" -o "$c_file"
+  else
+    echo "Skipping $pyx_file (already cythonized)"
   fi
-' sh {}
+done
 cd ../..
 
 # --- Pre-cythonize troute-routing (FIXED include paths) ---
 echo ""
 echo "=== Step 6b: Pre-cythonize troute-routing ==="
 cd src/troute-routing
+TROUTE_ROUTING_DIR="$(pwd)"
 
 export CYTHON_INCLUDE_PATH="$PWD/../troute-network:$PWD/troute/routing/fast_reach"
 export PYTHONPATH="$PWD/../troute-network:${PYTHONPATH:-}"
 
-find troute -name "*.pyx" -type f -print0 | xargs -0 -I{} sh -c '
-  set -e
-  c="${1%.pyx}.c"
-  if [ ! -f "$c" ]; then
-    echo "Cythonizing $1 -> $c"
-    '"$CYTHON_CMD"' -3 \
+find troute -name "*.pyx" -type f | while read pyx_file; do
+  c_file="${pyx_file%.pyx}.c"
+  if [ ! -f "$c_file" ]; then
+    echo "Cythonizing $pyx_file -> $c_file"
+    $CYTHON_CMD -3 \
       -I "$PWD/../troute-network" \
       -I "$PWD/troute/routing/fast_reach" \
-      "$1" -o "$c"
+      "$pyx_file" -o "$c_file"
+  else
+    echo "Skipping $pyx_file (already cythonized)"
   fi
-' sh {}
+done
 
 cd ../..
 
+# --- Verify Cython files were generated ---
+echo ""
+echo "=== Verifying Cythonized files ==="
+MISSING_C_FILES=0
+for pyx in src/troute-network/troute/**/*.pyx src/troute-routing/troute/**/*.pyx; do
+  [ -f "$pyx" ] || continue
+  c_file="${pyx%.pyx}.c"
+  if [ ! -f "$c_file" ]; then
+    echo "❌ Missing: $c_file"
+    MISSING_C_FILES=$((MISSING_C_FILES + 1))
+  fi
+done
+
+if [ $MISSING_C_FILES -gt 0 ]; then
+  echo "❌ ERROR: $MISSING_C_FILES Cython .c files were not generated"
+  exit 1
+fi
+echo "✓ All Cython .c files present"
 
 
 # --- Install in order: config -> network -> routing ---
 echo ""
 echo "=== Step 8: pip install (editable) ==="
-"$SYMFLUENCE_PYTHON" - <<'PY'
-import sys, subprocess
-def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
-pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-config")
-pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-network")
-pipi("install","--break-system-packages","--no-build-isolation","-e","src/troute-routing")
-PY
+
+# Install troute-config first (no Cython deps)
+echo "Installing troute-config..."
+"$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation -e src/troute-config || {
+  echo "❌ Failed to install troute-config"
+  exit 1
+}
+
+# Install troute-network (has Cython extensions)
+echo "Installing troute-network..."
+cd src/troute-network
+pwd
+echo "Contents of troute/network:"
+ls -la troute/network/*.c troute/network/*.pyx 2>/dev/null || echo "(no .c or .pyx files found)"
+cd ../..
+"$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation -e src/troute-network || {
+  echo "❌ Failed to install troute-network"
+  echo "Debug: Checking for .c files in src/troute-network/troute/network:"
+  ls -la src/troute-network/troute/network/ 2>/dev/null || true
+  exit 1
+}
+
+# Install troute-routing (has Cython extensions)
+echo "Installing troute-routing..."
+cd src/troute-routing
+pwd
+echo "Contents of troute/routing:"
+ls -la troute/routing/*.c troute/routing/*.pyx 2>/dev/null || echo "(no .c or .pyx files in routing/)"
+echo "Contents of troute/routing/fast_reach:"
+ls -la troute/routing/fast_reach/*.c troute/routing/fast_reach/*.pyx 2>/dev/null || echo "(no .c or .pyx files in fast_reach/)"
+cd ../..
+"$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation -e src/troute-routing || {
+  echo "❌ Failed to install troute-routing"
+  echo "Debug: Checking for .c files in src/troute-routing/troute/routing:"
+  ls -la src/troute-routing/troute/routing/ 2>/dev/null || true
+  ls -la src/troute-routing/troute/routing/fast_reach/ 2>/dev/null || true
+  exit 1
+}
 
 
 # --- Verify ---
