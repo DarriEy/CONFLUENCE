@@ -179,10 +179,20 @@ wget -q https://github.com/LLNL/sundials/archive/refs/tags/v${SUNDIALS_VER}.tar.
 tar -xzf v${SUNDIALS_VER}.tar.gz
 cd sundials-${SUNDIALS_VER}
 rm -rf build && mkdir build && cd build
+
+# Get full compiler paths for CMake
+CC_PATH=$(which $CC)
+FC_PATH=$(which $FC)
+
+echo "Configuring SUNDIALS with:"
+echo "  CC: $CC_PATH"
+echo "  FC: $FC_PATH"
+echo "  Install: $SUNDIALSDIR"
+
 cmake .. \
 -DBUILD_FORTRAN_MODULE_INTERFACE=ON \
--DCMAKE_C_COMPILER="$CC" \
--DCMAKE_Fortran_COMPILER="$FC" \
+-DCMAKE_C_COMPILER="$CC_PATH" \
+-DCMAKE_Fortran_COMPILER="$FC_PATH" \
 -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
 -DCMAKE_EXE_LINKER_FLAGS="$CMAKE_EXE_LINKER_FLAGS" \
 -DCMAKE_INSTALL_PREFIX="$SUNDIALSDIR" \
@@ -190,10 +200,14 @@ cmake .. \
 -DBUILD_SHARED_LIBS=ON \
 -DEXAMPLES_ENABLE=OFF \
 -DBUILD_TESTING=OFF
+
 cmake --build . --target install -j ${NCORES:-4}
-# print lib dir for debug
+
+# Verify installation
+echo "Checking SUNDIALS installation..."
 [ -d "$SUNDIALSDIR/lib64" ] && ls -la "$SUNDIALSDIR/lib64" | head -20 || true
 [ -d "$SUNDIALSDIR/lib" ] && ls -la "$SUNDIALSDIR/lib" | head -20 || true
+[ -d "$SUNDIALSDIR/include/sundials" ] && echo "✓ Headers installed" || echo "✗ Headers missing"
                 '''
             ],
             'dependencies': [],
@@ -573,6 +587,17 @@ import sys, subprocess
 def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
 # cython<3 works best with this codebase; numpy<2 avoids API mismatches at build time
 pipi("install","--break-system-packages","cython<3.0","numpy<2")
+
+# Compute Canada provides pyarrow via module system - skip if dummy package present
+try:
+    import pyarrow
+    if hasattr(pyarrow, '__version__'):
+        print(f"✓ PyArrow already available: {pyarrow.__version__}")
+    else:
+        print("✓ PyArrow module loaded (from environment)")
+except ImportError:
+    print("⚠ PyArrow not available - troute-network may have limited functionality")
+    print("  On Compute Canada: module load arrow")
 PY
 
 # Use the same Python that SYMFLUENCE is running to invoke Cython
@@ -664,12 +689,36 @@ pwd
 echo "Contents of troute/network:"
 ls -la troute/network/*.c troute/network/*.pyx 2>/dev/null || echo "(no .c or .pyx files found)"
 cd ../..
-"$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation -e src/troute-network || {
+
+# First, try normal installation
+if "$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation -e src/troute-network 2>&1 | tee /tmp/troute_network_install.log; then
+  echo "✓ troute-network installed successfully"
+elif grep -q "pyarrow.*dummy" /tmp/troute_network_install.log || grep -q "Arrow module" /tmp/troute_network_install.log; then
+  echo "⚠ Detected Compute Canada pyarrow conflict - installing without pyarrow dependency"
+  # Install without dependencies first
+  "$SYMFLUENCE_PYTHON" -m pip install --break-system-packages --no-build-isolation --no-deps -e src/troute-network || {
+    echo "❌ Failed to install troute-network"
+    exit 1
+  }
+  # Manually install dependencies except pyarrow
+  "$SYMFLUENCE_PYTHON" - <<'PY'
+import sys, subprocess
+def pipi(*a): subprocess.check_call([sys.executable,"-m","pip"]+list(a))
+deps = ["deprecated", "geopandas", "fiona", "joblib", "netcdf4", "numpy", "pandas", 
+        "pyyaml", "toolz", "typing-extensions", "xarray"]
+for dep in deps:
+    try:
+        pipi("install","--break-system-packages",dep)
+    except:
+        print(f"Warning: Could not install {dep}")
+PY
+  echo "✓ troute-network installed (without pyarrow)"
+else
   echo "❌ Failed to install troute-network"
   echo "Debug: Checking for .c files in src/troute-network/troute/network:"
   ls -la src/troute-network/troute/network/ 2>/dev/null || true
   exit 1
-}
+fi
 
 # Install troute-routing (has Cython extensions)
 echo "Installing troute-routing..."
@@ -985,19 +1034,28 @@ tools="pitremove d8flowdir d8converge dinfconverge dinfflowdir aread8 areadinf t
        streamnet slopearea gridnet peukerdouglas lengtharea moveoutletstostreams gagewatershed"
 
 copied=0
+echo "Searching for executables in build tree..."
 for exe in $tools; do
-  # Find anywhere under build tree and copy if executable
-  p="$(find . -type f -perm -111 -name "$exe" | head -n1 || true)"
-  if [ -n "$p" ]; then
-    cp -f "$p" ../bin/
-    copied=$((copied+1))
-  fi
+  # CMake typically puts executables in src/ subdirectory
+  for try_loc in "./src/$exe" "./$exe" "$(find . -type f -name "$exe" -executable 2>/dev/null | head -n1)"; do
+    if [ -n "$try_loc" ] && [ -f "$try_loc" ] && [ -x "$try_loc" ]; then
+      echo "  Found: $exe -> $try_loc"
+      cp -f "$try_loc" ../bin/
+      copied=$((copied+1))
+      break
+    fi
+  done
 done
 
-# Final sanity
-ls -la ../bin/ || true
+echo "Copied $copied executables to ../bin/"
+ls -la ../bin/ | head -20 || true
+
+# Verify critical binaries
 if [ ! -x "../bin/pitremove" ] || [ ! -x "../bin/streamnet" ]; then
   echo "❌ TauDEM stage failed: core binaries missing" >&2
+  echo "Attempting diagnostic search..."
+  echo "All executables in build tree:"
+  find . -type f -executable | head -30
   exit 1
 fi
 echo "✅ TauDEM executables staged"
