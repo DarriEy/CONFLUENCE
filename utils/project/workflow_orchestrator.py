@@ -137,7 +137,7 @@ class WorkflowOrchestrator:
             (
                 self.managers['data'].acquire_forcings,
                 lambda: (self.project_dir / "forcing" / 
-                        f"{self.domain_name}_forcing.nc").exists(),
+                        f"raw_data").exists(),
                 "Acquiring meteorological forcing data"
             ),
             (
